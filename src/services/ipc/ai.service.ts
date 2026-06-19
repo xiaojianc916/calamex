@@ -51,6 +51,7 @@ import type {
   IAgentSidecarStreamEventPayload,
   IAgentSidecarWarmupPayload,
 } from '@/types/ai/sidecar';
+import { escapeRegExp } from '@/utils/core/regex';
 import { normalizeFileSystemPath } from '@/utils/file/path';
 
 /**
@@ -75,8 +76,6 @@ const resolveSidecarDotenvPath = (workspaceRootPath: string): string =>
     trimTrailingSeparator: true,
     foldWindowsCase: false,
   })}/${SIDECAR_DOTENV_RELATIVE_PATH}`;
-
-const escapeRegExp = (value: string): string => value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 
 const buildDotenvLinePattern = (key: string): RegExp =>
   new RegExp(`^\\s*(?:export\\s+)?${escapeRegExp(key)}\\s*=.*$`, 'u');

@@ -15,6 +15,8 @@ import { pathToFileURL } from 'node:url';
 import { z } from 'zod';
 
 import type { IAgentRuntimeInput } from '../contracts/runtime-input.js';
+import { toNonEmptyString } from '../shared/utils.js';
+import { isTruthyEnv, isFalsyEnv } from '../shared/env-utils.js';
 
 // -----------------------------------------------------------------------------
 // Constants
@@ -141,31 +143,11 @@ export type IMastraMemoryReference = IMastraMemoryScope;
 // Env helpers
 // -----------------------------------------------------------------------------
 
-const toNonEmptyString = (value: string | undefined | null): string | null => {
-    if (typeof value !== 'string') return null;
-    const trimmed = value.trim();
-    return trimmed.length > 0 ? trimmed : null;
-};
 
-const isTruthyEnv = (value: string | undefined | null): boolean => {
-    const normalized = toNonEmptyString(value)?.toLowerCase();
-    return (
-        normalized === '1' ||
-        normalized === 'true' ||
-        normalized === 'yes' ||
-        normalized === 'on'
-    );
-};
 
-const isFalsyEnv = (value: string | undefined | null): boolean => {
-    const normalized = toNonEmptyString(value)?.toLowerCase();
-    return (
-        normalized === '0' ||
-        normalized === 'false' ||
-        normalized === 'no' ||
-        normalized === 'off'
-    );
-};
+
+
+
 
 // -----------------------------------------------------------------------------
 // Resolvers

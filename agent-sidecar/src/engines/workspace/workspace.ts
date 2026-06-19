@@ -12,6 +12,8 @@ import type { IAgentContextReferenceInput, IAgentRuntimeInput } from '../contrac
 import type { IMastraTextModeExecutionPlan, IMastraToolLoadPlan, TMastraToolProfile } from '../shared/types.js';
 import { MASTRA_WORKSPACE_REDACTED_PREVIEW_TOOL_NAMES, WINDOWS_POWERSHELL_CORE_RELATIVE_PATH, WINDOWS_POWERSHELL_RELATIVE_PATH } from '../shared/types.js';
 import { toNonEmptyString } from '../shared/utils.js';
+import { isFalsyEnv } from '../shared/env-utils.js';
+import { normalizeNewlines } from '../shared/normalize-newlines.js';
 import { resolveWorkspaceDirectory } from '../context/context.js';
 import { decideSensitivePathToolPermission, type IToolPermissionPolicy } from '../policy/tool-permission-policy.js';
 import { warmWorkspaceSearchIndex } from './search-index.js';
@@ -112,13 +114,13 @@ export const buildWindowsHostPath = (): string => {
     return mergedPath.join(';');
 };
 
-export const normalizeCommandOutputNewlines = (value: string): string =>
+export const normalizeNewlines = (value: string): string =>
     value.replace(/\r\n/gu, '\n').replace(/\r/gu, '\n');
 
 export const decodeUtf8CommandChunk = (
     decoder: TextDecoder,
     chunk?: Buffer,
-): string => normalizeCommandOutputNewlines(decoder.decode(chunk, { stream: Boolean(chunk) }));
+): string => normalizeNewlines(decoder.decode(chunk, { stream: Boolean(chunk) }));
 
 export const createWindowsPowerShellDecoder = (powerShellExecutable: string): TextDecoder =>
     new TextDecoder(isWindowsPowerShellCoreExecutable(powerShellExecutable) ? 'utf-8' : 'gb18030');
@@ -217,7 +219,7 @@ export const executeWindowsHostCommand = async (
         });
 
         child.on('error', (error) => {
-            const message = normalizeCommandOutputNewlines(error.message);
+            const message = normalizeNewlines(error.message);
             stderr += message;
             options?.onStderr?.(message);
             finish(1);
@@ -286,13 +288,7 @@ export const createHostLocalSandbox = (
 export const shouldRedactWorkspacePreview = (toolName: string): boolean =>
     MASTRA_WORKSPACE_REDACTED_PREVIEW_TOOL_NAMES.has(toolName);
 
-const isDisabledInputTokenLimit = (value: string): boolean => {
-    const normalized = value.trim().toLowerCase();
-    return normalized === '0'
-        || normalized === 'false'
-        || normalized === 'no'
-        || normalized === 'off';
-};
+
 
 export const resolveMastraInputTokenLimit = (
     env: NodeJS.ProcessEnv = process.env,
@@ -302,7 +298,7 @@ export const resolveMastraInputTokenLimit = (
         return DEFAULT_MASTRA_INPUT_TOKEN_LIMIT;
     }
 
-    if (isDisabledInputTokenLimit(configured)) {
+    if (isFalsyEnv(configured)) {
         return null;
     }
 

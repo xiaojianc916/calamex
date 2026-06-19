@@ -2,6 +2,9 @@ import { Store } from '@tauri-apps/plugin-store';
 
 import { AppError } from '@/types/app-error';
 import { SessionSnapshotSchema, type TSessionSnapshot } from '@/types/session';
+import { createUniqueId } from '@/utils/core/id';
+import { toErrorMessage } from '@/utils/error/error';
+import { desktopRuntimeReady } from '@/utils/platform/desktop-runtime';
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -20,44 +23,13 @@ const LEGACY_SESSION_FALLBACK_STORAGE_KEY = 'shell-ide:session-snapshot';
 // Types
 // ---------------------------------------------------------------------------
 
-/** 持久化层读到的、尚未通过 schema 校验的原始值。 */
-type TRawSnapshot = unknown;
-
-// ---------------------------------------------------------------------------
-// Logging helpers
-// ---------------------------------------------------------------------------
-
-const createTraceId = (): string => {
-  return crypto.randomUUID();
-};
-
-/**
- * 把任意 cause 转成人类可读字符串。
- *
- * Error 对象的 message / stack 不可枚举,直接 JSON.stringify(err) 得到 "{}",
- * 这里手动取 stack / message,保住调试信息。
- */
-const stringifyCause = (cause: unknown): string => {
-  if (cause instanceof Error) {
-    return cause.stack ?? `${cause.name}: ${cause.message}`;
-  }
-  if (typeof cause === 'object' && cause !== null) {
-    try {
-      return JSON.stringify(cause);
-    } catch {
-      return String(cause);
-    }
-  }
-  return String(cause);
-};
-
 const logWarn = (event: string, extra?: unknown): void => {
   const payload = {
     timestamp: new Date().toISOString(),
     level: 'warn',
     scope: 'session',
     event,
-    extra: extra === undefined ? undefined : stringifyCause(extra),
+    extra: extra === undefined ? undefined : toErrorMessage(extra, String(extra)),
   };
   console.warn(JSON.stringify(payload));
 };
@@ -71,7 +43,7 @@ const createSessionValidationError = (cause: unknown): AppError =>
     code: 'SESSION_VALIDATION_FAILED',
     message: '会话快照不符合 schema,已拒绝保存。',
     scope: 'ipc',
-    traceId: createTraceId(),
+    traceId: createUniqueId(),
     cause,
   });
 
@@ -80,7 +52,7 @@ const createSessionPersistError = (cause: unknown): AppError =>
     code: 'SESSION_PERSIST_FAILED',
     message: '保存会话快照失败:主存储与降级存储均无法写入。',
     scope: 'ipc',
-    traceId: createTraceId(),
+    traceId: createUniqueId(),
     cause,
   });
 
@@ -133,23 +105,14 @@ const getStore = (): Promise<Store> => {
 // Fallback storage (localStorage)
 // ---------------------------------------------------------------------------
 
-const isFallbackStorageAvailable = (): boolean => {
-  if (typeof window === 'undefined') {
-    return false;
-  }
-  try {
-    return Boolean(window.localStorage);
-  } catch {
-    return false;
-  }
-};
-
 /**
  * 一次性迁移旧版兜底键 (shell-ide:session-snapshot) 到新键 (calamex:session-snapshot)。
  * 仅当新键尚无值时搬运,随后移除旧键。失败只警告。
  */
 const migrateLegacyFallbackKey = (): void => {
-  if (!isFallbackStorageAvailable()) {
+  if (
+    !(desktopRuntimeReady.value && typeof window !== 'undefined' && Boolean(window.localStorage))
+  ) {
     return;
   }
   try {
@@ -167,7 +130,9 @@ const migrateLegacyFallbackKey = (): void => {
 };
 
 const readFallbackSnapshot = (): TRawSnapshot | null => {
-  if (!isFallbackStorageAvailable()) {
+  if (
+    !(desktopRuntimeReady.value && typeof window !== 'undefined' && Boolean(window.localStorage))
+  ) {
     return null;
   }
   migrateLegacyFallbackKey();
@@ -184,14 +149,18 @@ const readFallbackSnapshot = (): TRawSnapshot | null => {
 };
 
 const writeFallbackSnapshot = (snapshot: TSessionSnapshot): void => {
-  if (!isFallbackStorageAvailable()) {
+  if (
+    !(desktopRuntimeReady.value && typeof window !== 'undefined' && Boolean(window.localStorage))
+  ) {
     throw new Error('fallback storage unavailable');
   }
   window.localStorage.setItem(SESSION_FALLBACK_STORAGE_KEY, JSON.stringify(snapshot));
 };
 
 const clearFallbackSnapshot = (): void => {
-  if (!isFallbackStorageAvailable()) {
+  if (
+    !(desktopRuntimeReady.value && typeof window !== 'undefined' && Boolean(window.localStorage))
+  ) {
     return;
   }
   window.localStorage.removeItem(SESSION_FALLBACK_STORAGE_KEY);
@@ -316,8 +285,8 @@ export const saveSession = async (snapshot: TSessionSnapshot): Promise<void> => 
     logWarn('snapshot-save-via-fallback');
   } catch (fallbackCause) {
     throw createSessionPersistError({
-      store: stringifyCause(storeFailedCause),
-      fallback: stringifyCause(fallbackCause),
+      store: toErrorMessage(storeFailedCause, String(storeFailedCause)),
+      fallback: toErrorMessage(fallbackCause, String(fallbackCause)),
     });
   }
 };
