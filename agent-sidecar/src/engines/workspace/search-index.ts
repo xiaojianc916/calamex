@@ -79,6 +79,32 @@ export const collectIndexableFilePaths = async (
     return files;
 };
 
+// 并发 I/O 控制器：限制同时读取的文件数，避免一次 Promise.all 几千个 readFile 撑爆 fd。
+// 无新依赖，纯手写信号量。
+const runWithConcurrency = async <T>(
+    items: readonly T[],
+    limit: number,
+    fn: (item: T) => Promise<void>,
+): Promise<void> => {
+    if (items.length === 0) {
+        return;
+    }
+    let cursor = 0;
+    const concurrency = Math.min(limit, items.length);
+    const worker = async (): Promise<void> => {
+        while (cursor < items.length) {
+            const current = items[cursor] as T;
+            cursor += 1;
+            await fn(current);
+        }
+    };
+    await Promise.allSettled(Array.from({ length: concurrency }, worker));
+};
+
+// BM25 预热并发读取文件数。8 是 I/O 密集型任务的常见并发度：
+// 足以让磁盘调度器合并相邻请求，又不至于在低端机器上耗尽 fd。
+const SEARCH_INDEX_WARM_CONCURRENCY = 8;
+
 // 后台预热 BM25 索引：遍历（剪枝后）的全部文本文件并逐个 workspace.index()。
 // 设计取舍（与用户确认一致，刻意从简）：
 //  - 不用 autoIndexPaths：它无法排除目录、也不读 .gitignore，递归 getAllFiles 会 walk 进嵌套

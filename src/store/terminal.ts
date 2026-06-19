@@ -206,23 +206,16 @@ export const useTerminalRuntimeStore = defineStore('terminal-runtime', () => {
 
   /** 写入/更新某会话的活动运行镜像。重新赋值 Map 以可靠触发依赖它的 computed/watcher。 */
   const setSessionActiveRun = (run: ITerminalRunHandle): void => {
-    const next = new Map(sessionActiveRuns.value);
-    next.set(run.sessionId, run);
-    sessionActiveRuns.value = next;
+    sessionActiveRuns.value.set(run.sessionId, run);
   };
 
   /** 按 runId 移除活动运行镜像（运行完成/派发失败）。 */
   const removeSessionActiveRunByRunId = (runId: string): void => {
-    let mutated = false;
-    const next = new Map(sessionActiveRuns.value);
-    for (const [sessionId, handle] of next) {
+    const current = sessionActiveRuns.value;
+    for (const [sessionId, handle] of current) {
       if (handle.runId === runId) {
-        next.delete(sessionId);
-        mutated = true;
+        current.delete(sessionId);
       }
-    }
-    if (mutated) {
-      sessionActiveRuns.value = next;
     }
   };
 
@@ -322,25 +315,15 @@ export const useTerminalRuntimeStore = defineStore('terminal-runtime', () => {
    * 里不再校验转移合法性,只记录目标态。
    */
   const applySessionStateChanged = (payload: ITerminalSessionStateChangedPayload): void => {
-    const next = new Map(sessionStates.value);
-    next.set(payload.sessionId, payload.to);
-    sessionStates.value = next;
+    sessionStates.value.set(payload.sessionId, payload.to);
     markEvent(`terminal:session-state-changed:${payload.sessionId}:${payload.from}->${payload.to}`);
   };
 
   /** 会话退出 / 关闭时清除其镜像态,避免遗留陈旧会话。 */
   const clearSessionState = (sessionId: string): void => {
-    if (sessionStates.value.has(sessionId)) {
-      const next = new Map(sessionStates.value);
-      next.delete(sessionId);
-      sessionStates.value = next;
-    }
+    sessionStates.value.delete(sessionId);
     // 同步清理该会话的活动运行镜像 (FE-1)：会话退出后其运行不可能再收输入。
-    if (sessionActiveRuns.value.has(sessionId)) {
-      const nextRuns = new Map(sessionActiveRuns.value);
-      nextRuns.delete(sessionId);
-      sessionActiveRuns.value = nextRuns;
-    }
+    sessionActiveRuns.value.delete(sessionId);
   };
 
   const getSessionState = (sessionId: string): TTerminalRuntimeState | null =>

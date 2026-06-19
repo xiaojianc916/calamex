@@ -332,7 +332,7 @@ export class MastraRuntimeBase {
         browser?: MastraBrowser,
         workflowTracker?: IPlanWorkflowStepTracker,
     ): Promise<IMastraTextStreamSummary> {
-        let visibleText = '';
+        const visibleTextParts: string[] = [];
         let streamErrorMessage: string | null = null;
         let pendingApproval = false;
         let releaseResources = true;
@@ -388,7 +388,7 @@ export class MastraRuntimeBase {
                     continue;
                 }
 
-                visibleText += nextText;
+                visibleTextParts.push(nextText);
                 // 仅发射增量富事件 agent.text.delta（visibility:'user'）；
                 // 正文增量经 egress 投影为 ACP agent_message_chunk，完整结果由 prompt 响应承载。
                 if (createRuntimeEvent) {
@@ -575,7 +575,7 @@ export class MastraRuntimeBase {
             pendingApproval,
             releaseResources,
             streamErrorMessage,
-            visibleText,
+            visibleText: visibleTextParts.join(''),
             ...(doneTokenSnapshot ? { doneTokenSnapshot } : {}),
         };
     }
