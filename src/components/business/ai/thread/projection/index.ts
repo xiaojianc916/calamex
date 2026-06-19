@@ -12,6 +12,7 @@ export * from './from-acp-events';
 export * from './from-acp-terminal';
 export * from './from-acp-tool-call';
 export * from './from-acp-usage';
+export * from './from-patch-summary';
 export * from './from-runtime-tool-call';
 export * from './from-sidecar-events';
 export * from './from-wire-tool-call';
