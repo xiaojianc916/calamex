@@ -1,33 +1,48 @@
-// scripts/optimize-p2-micro.mjs
+// 1.mjs  —  P2 微优化（性能向，零行为变更）
 //
-// P2 微优化（性能向，零行为变更）：
 //   ① src/services/editor/codemirror-static-highlight.ts
 //      escapeHtml：3 次 replace 全量扫描 → 单遍 replace(/[&<>]/gu, fn)
 //   ② src/utils/core/hash.ts
 //      computeFnv1a32CodePoints：for...of → 索引遍历 codePointAt（hash 输出逐位一致）
 //
-// 用法（默认 dry-run，只打印 diff，不落盘）：
-//   node scripts/optimize-p2-micro.mjs            # 预览
-//   node scripts/optimize-p2-micro.mjs --write    # 写入
-//   node scripts/optimize-p2-micro.mjs --revert   # 回滚（把新代码换回旧代码）
-//
-// 安全保证：
-//   - 每个锚点要求在文件中“唯一出现一次”，否则该文件跳过并报错（防止误改）。
-//   - --write 前若目标新代码已存在 → 视为已应用，幂等跳过。
-//   - --revert 是 --write 的精确逆操作。
+// 用法（默认 dry-run）：
+//   node 1.mjs            # 预览
+//   node 1.mjs --write    # 写入
+//   node 1.mjs --revert   # 回滚
 
 import { readFile, writeFile } from 'node:fs/promises';
+import { existsSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
-const REPO_ROOT = join(__dirname, '..');
 
 const MODE = process.argv.includes('--write')
   ? 'write'
   : process.argv.includes('--revert')
     ? 'revert'
     : 'dry';
+
+// 从 cwd / 脚本目录向上探测仓库根（含 src/utils/core/hash.ts 的目录）
+const findRepoRoot = (startDirs) => {
+  for (const start of startDirs) {
+    let dir = start;
+    for (let depth = 0; depth < 8; depth += 1) {
+      if (existsSync(join(dir, 'src', 'utils', 'core', 'hash.ts'))) return dir;
+      const parent = dirname(dir);
+      if (parent === dir) break;
+      dir = parent;
+    }
+  }
+  return null;
+};
+
+const REPO_ROOT = findRepoRoot([process.cwd(), __dirname]);
+if (!REPO_ROOT) {
+  console.error('✗ 未能定位仓库根目录（未找到 src/utils/core/hash.ts）。请在仓库内运行。');
+  process.exit(1);
+}
+console.log(`仓库根：${REPO_ROOT}`);
 
 /** @type {{file: string, before: string, after: string}[]} */
 const EDITS = [
@@ -104,7 +119,6 @@ for (const edit of EDITS) {
     continue;
   }
 
-  // 幂等：目标态已存在且源态不存在 → 跳过
   if (!src.includes(from) && src.includes(to)) {
     console.log(`• 已是目标状态，跳过：${edit.file}`);
     skipped += 1;
@@ -132,7 +146,5 @@ for (const edit of EDITS) {
   changed += 1;
 }
 
-console.log(
-  `\n[${MODE}] 变更 ${changed} · 跳过 ${skipped} · 失败 ${failed}`,
-);
+console.log(`\n[${MODE}] 变更 ${changed} · 跳过 ${skipped} · 失败 ${failed}`);
 if (failed > 0) process.exitCode = 1;
