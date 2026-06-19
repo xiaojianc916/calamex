@@ -129,6 +129,23 @@ const isPromptModelSaving = ref(false);
 type TSessionAgentBackend = 'builtin' | 'kimi';
 const sessionAgentBackend = ref<TSessionAgentBackend>('builtin');
 
+// 各 Agent 的会话级模型记忆：
+// - builtin 直接复用 ai.json 的全局 selectedModel（保留既有持久化与 mastra 运行时语义）。
+// - 其它 Agent（如 kimi）在此各记一份，互不影响；切它们的模型不会触碰 builtin 的全局模型。
+// - 未记忆过的 Agent 回退到当前选中模型（config.selectedModel），即「默认用当前模型」。
+// - 按 key 存的 Record：未来接入新 Agent 自动获得隔离 + 默认回退，无需改这里。
+const agentModelOverrides = ref<Record<string, string>>({});
+
+const activeAgentModelId = computed<string>(() => {
+  const globalModel = assistant.config.value.selectedModel?.trim() ?? '';
+  const agent = sessionAgentBackend.value;
+  if (agent === 'builtin') {
+    return globalModel;
+  }
+  const remembered = agentModelOverrides.value[agent]?.trim();
+  return remembered || globalModel;
+});
+
 const {
   isHistoryOpen,
   historyAnchorRef,
@@ -769,11 +786,25 @@ const handleFetchWebSource = async (sourceId: string): Promise<void> => {
 
 const handlePromptModelChange = async (modelId: string): Promise<void> => {
   const normalizedModelId = modelId.trim();
+  const agent = sessionAgentBackend.value;
 
-  if (!normalizedModelId || normalizedModelId === assistant.config.value.selectedModel) {
+  // 与「当前 Agent 实际生效的模型」比较（而非全局 selectedModel），避免其它 Agent
+  // 切到与 builtin 相同的模型时被误判为 no-op。
+  if (!normalizedModelId || normalizedModelId === activeAgentModelId.value) {
     return;
   }
 
+  // 非 builtin Agent：只更新该 Agent 的会话级模型记忆，绝不写回 ai.json，
+  // 因此不影响 builtin（mastra 运行时）或其它 Agent 已选的模型。
+  if (agent !== 'builtin') {
+    agentModelOverrides.value = {
+      ...agentModelOverrides.value,
+      [agent]: normalizedModelId,
+    };
+    return;
+  }
+
+  // builtin：沿用既有行为，把全局 selectedModel 持久化到 ai.json（mastra 运行时模型）。
   isPromptModelSaving.value = true;
   try {
     await assistant.saveConfig({
@@ -1206,7 +1237,8 @@ onMounted(() => {
           :is-session-mode-switching="assistant.acpSessionModes.isSwitching.value"
           :disabled="composerDisabled" :stop-visible="assistant.isSending.value"
           :submit-label="submitLabel" :config="assistant.config.value"
-          :is-model-saving="isPromptModelSaving" :network-permission="networkPermission"
+          :is-model-saving="isPromptModelSaving" :selected-model-override="activeAgentModelId"
+          :network-permission="networkPermission"
           :execution-mode="executionMode"
           :is-network-permission-saving="agentNetwork.pending.value" :attachments="assistant.attachedFiles.value"
           :has-attachments="assistant.attachedFiles.value.length > 0" :token-context="tokenContextProps"

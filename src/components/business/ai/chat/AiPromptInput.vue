@@ -133,6 +133,12 @@ const props = defineProps<{
   hasAttachments: boolean;
   tokenContext?: IAiTokenContextProps;
   config: IAiConfigPayload;
+  /**
+   * 当前 Agent 的会话级模型覆盖值。父级按 Agent 维护各自的模型记忆并下传；
+   * 为空（undefined / 空串）时回退到 props.config.selectedModel（全局 / 当前选中模型）。
+   * 让模型选择器在不同 Agent 间互不串用，同时完全复用既有 UI。
+   */
+  selectedModelOverride?: string;
   isModelSaving?: boolean;
   networkPermission: TAiAgentNetworkPermission;
   isNetworkPermissionSaving?: boolean;
@@ -221,7 +227,13 @@ const formatModelLabel = (label: string): string =>
     .replace(/\s+/gu, ' ')
     .trim();
 
-const selectedModel = computed(() => props.config.selectedModel?.trim() ?? '');
+const selectedModel = computed(() => {
+  const overridden = props.selectedModelOverride?.trim();
+  if (overridden) {
+    return overridden;
+  }
+  return props.config.selectedModel?.trim() ?? '';
+});
 
 const tokenUsageCost = computed(() => {
   const pricing = computeDeepSeekCostBreakdown(
