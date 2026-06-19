@@ -132,8 +132,12 @@ const POOL_TOPICS = [
 const DISPLAY_COUNT = 9;
 /** 建议标题最大展示长度，超出截断加省略号。 */
 const TITLE_MAX_LENGTH = 15;
-/** AI 面板先完成首帧展示，再在后台慢慢加载动态建议池。 */
-const BACKGROUND_POOL_START_DELAY_MS = 1_200;
+/**
+ * 预取短超时兜底：挂载后最多等这么久就一次性铺出建议。
+ * 缓存读取是本地 IPC，通常远快于此；超时即用静态兜底一次性提交，
+ * 避免“先空等再弹出”，也不会出现“先静态后刷新”的二次跳变。
+ */
+const SUGGESTION_REVEAL_TIMEOUT_MS = 400;
 
 const toSuggestion = (message: string): Suggestion => {
   const title =
@@ -172,16 +176,16 @@ export interface IUseCopilotSuggestionsResult {
 }
 
 export const useCopilotSuggestions = (): IUseCopilotSuggestionsResult => {
-  // 静态兜底：创建一次、永不重赋，保证任何时候都有 DISPLAY_COUNT 条可展示。
-  const fallbackRef = ref<Suggestion[]>(pickFromPool(STATIC_POOL));
+  // 静态兜底：抽取一次，作为缓存未就绪时的一次性兜底来源（永不重抽）。
+  const fallbackPool = pickFromPool(STATIC_POOL);
 
   // CopilotKit 运行时提供的建议 ref。我们走自建 pipeline 时它通常为空，
-  // 绝不能让这个空 ref 覆盖静态兜底。
+  // 仅在提交决策时作为静态兜底之前的候选来源参与一次。
   let ckSuggestions: Ref<Suggestion[]> = ref<Suggestion[]>([]);
 
   try {
     useConfigureSuggestions({
-      suggestions: fallbackRef.value,
+      suggestions: fallbackPool,
       available: 'before-first-message',
     });
     const result = useSuggestions({ agentId: 'default' });
@@ -190,12 +194,22 @@ export const useCopilotSuggestions = (): IUseCopilotSuggestionsResult => {
     // Provider absent — 保持空 ref，后面会回退到静态兜底。
   }
 
-  // 走免费小模型(narrator endpoint, 例如 zhipuai/glm-4.7-flash)生成的建议词池。
-  const poolSuggestions = ref<Suggestion[]>([]);
+  // 唯一对外暴露的展示集合：挂载时预取，决定后只提交一次，之后绝不替换，
+  // 从根上杜绝“先显示一批、再被动态池刷新成另一批”的视觉跳变。
+  const displayed = ref<Suggestion[]>([]);
+  let committed = false;
 
   // 组件卸载后停止后台重试，并清理待触发的定时器，避免泄漏与无谓调用。
   let disposed = false;
+  let revealTimer: ReturnType<typeof setTimeout> | null = null;
   let retryTimer: ReturnType<typeof setTimeout> | null = null;
+
+  const clearRevealTimer = (): void => {
+    if (revealTimer !== null) {
+      clearTimeout(revealTimer);
+      revealTimer = null;
+    }
+  };
 
   const clearRetryTimer = (): void => {
     if (retryTimer !== null) {
@@ -204,37 +218,42 @@ export const useCopilotSuggestions = (): IUseCopilotSuggestionsResult => {
     }
   };
 
-  const applyPool = (pool: readonly string[] | undefined | null): boolean => {
-    if (pool && pool.length > 0) {
-      poolSuggestions.value = pickFromPool(pool);
-      return true;
+  // 一次性提交展示集合：首个有内容的决定生效，后续来源（含后台补偿）都不再覆盖。
+  const commit = (items: readonly Suggestion[]): void => {
+    if (committed || disposed) {
+      return;
     }
-    return false;
+    const next = withContent(items);
+    if (next.length === 0) {
+      return;
+    }
+    committed = true;
+    clearRevealTimer();
+    displayed.value = [...next];
   };
 
-  // 后台自愈：命中缓存即用；否则调小模型生成；失败按指数退避有界重试。
+  // 兜底提交：缓存未就绪 / 短超时到点时，用 CopilotKit 池或静态池一次性铺出。
+  const commitFallback = (): void => {
+    const fromCopilotKit = withContent(ckSuggestions.value);
+    commit(fromCopilotKit.length > 0 ? fromCopilotKit : fallbackPool);
+  };
+
+  // 后台补偿：仅用于把动态词池写入缓存以温暖“下次启动”，
+  // 绝不回灌当前已提交的展示集合（否则又会触发二次刷新）。
   // narrator 依赖 agent-sidecar 子进程，冷启动 / 瞬时抖动会让首次生成失败，
-  // 过去一次失败即永久回退静态池，这里给它若干次后台补偿机会。
-  const ensurePool = async (attempt = 0): Promise<void> => {
-    if (disposed || poolSuggestions.value.length > 0) {
+  // 这里按指数退避做若干次有界重试。
+  const warmPoolCache = async (attempt = 0): Promise<void> => {
+    if (disposed) {
       return;
     }
 
     try {
-      // 仅首次尝试读缓存：命中可省一次小模型调用。
-      if (attempt === 0) {
-        const cached = await aiService.getSuggestionPoolCache();
-        if (applyPool(cached?.suggestions)) {
-          return;
-        }
-      }
-
       const generated = await aiService.generateSuggestionPool({
         count: POOL_COUNT,
         locale: POOL_LOCALE,
         topics: [...POOL_TOPICS],
       });
-      if (applyPool(generated?.suggestions)) {
+      if (generated?.suggestions && generated.suggestions.length > 0) {
         return;
       }
 
@@ -247,7 +266,7 @@ export const useCopilotSuggestions = (): IUseCopilotSuggestionsResult => {
 
       const nextAttempt = attempt + 1;
       if (nextAttempt >= SUGGESTION_POOL_MAX_ATTEMPTS) {
-        // 耗尽重试：不再静默吞错，记 error 暴露真实失败原因；UI 继续用静态兜底。
+        // 耗尽重试：不再静默吞错，记 error 暴露真实失败原因；UI 继续用已提交内容。
         logger.error({
           event: 'copilotkit.suggestion_pool_generate_exhausted',
           attempts: nextAttempt,
@@ -263,39 +282,55 @@ export const useCopilotSuggestions = (): IUseCopilotSuggestionsResult => {
       });
       retryTimer = setTimeout(() => {
         retryTimer = null;
-        void ensurePool(nextAttempt);
+        void warmPoolCache(nextAttempt);
       }, computeBackoffDelayMs(attempt));
     }
   };
 
+  // 预取：挂载即读缓存。命中且早于短超时 -> 用动态词池一次性铺出；
+  // 未命中 / 失败 -> 立即兜底提交（避免空等），并后台补偿生成以温暖下次启动缓存。
+  const prefetchPool = async (): Promise<void> => {
+    let cachedSuggestions: readonly string[] | undefined;
+
+    try {
+      const cached = await aiService.getSuggestionPoolCache();
+      cachedSuggestions = cached?.suggestions ?? undefined;
+    } catch (err) {
+      logger.warn({ event: 'copilotkit.suggestion_pool_cache_failed', err });
+    }
+
+    if (disposed || committed) {
+      return;
+    }
+
+    if (cachedSuggestions && cachedSuggestions.length > 0) {
+      commit(pickFromPool(cachedSuggestions));
+      return;
+    }
+
+    // 缓存未就绪：立即兜底提交，避免空等；并后台补偿生成温暖下次启动缓存。
+    commitFallback();
+    void warmPoolCache();
+  };
+
   onMounted(() => {
-    // 动态建议池不是 AI 面板首屏必要内容：先显示静态兜底，等界面首帧稳定后
-    // 再后台读取缓存 / 生成词池，避免挂载阶段唤醒 sidecar 或 narrator 小模型。
-    retryTimer = setTimeout(() => {
-      retryTimer = null;
-      void ensurePool();
-    }, BACKGROUND_POOL_START_DELAY_MS);
+    // 短超时兜底：即使缓存读取偏慢，最多等 SUGGESTION_REVEAL_TIMEOUT_MS 也会一次性铺出，
+    // 不会出现“先静态、后刷新”的二次跳变。
+    revealTimer = setTimeout(() => {
+      revealTimer = null;
+      commitFallback();
+    }, SUGGESTION_REVEAL_TIMEOUT_MS);
+    void prefetchPool();
   });
 
   onBeforeUnmount(() => {
     disposed = true;
+    clearRevealTimer();
     clearRetryTimer();
   });
 
-  // 优先级：narrator 池 -> CopilotKit 池 -> 静态兜底，始终能兑出内容。
-  const suggestions = computed<readonly Suggestion[]>(() => {
-    const fromPool = withContent(poolSuggestions.value);
-    if (fromPool.length > 0) {
-      return fromPool;
-    }
-
-    const fromCopilotKit = withContent(ckSuggestions.value);
-    if (fromCopilotKit.length > 0) {
-      return fromCopilotKit;
-    }
-
-    return withContent(fallbackRef.value);
-  });
+  // 已提交即定格：suggestions 始终是那一批一次性铺出的内容，绝不再变。
+  const suggestions = computed<readonly Suggestion[]>(() => displayed.value);
 
   const suggestionTexts = computed<readonly string[]>(() =>
     suggestions.value.map((item) => item.message),
