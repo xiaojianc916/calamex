@@ -42,7 +42,7 @@ const isRecord = (value: unknown): value is Record<string, unknown> =>
   value !== null && typeof value === 'object' && !Array.isArray(value);
 
 /** activeThreadId 必须指向现存线程；否则落到首个线程（空库为 null）。 */
-function normalizeActiveThreadId(
+export function normalizeActiveThreadId(
   activeThreadId: string | null,
   threads: IAiThread[],
 ): string | null {
