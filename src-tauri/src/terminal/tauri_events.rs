@@ -52,14 +52,6 @@ pub(crate) struct TerminalRunStartedEvent {
 
 #[derive(Debug, Serialize, Clone)]
 #[serde(rename_all = "camelCase")]
-pub(crate) struct TerminalStateChangedEvent {
-    pub(crate) from: TerminalState,
-    pub(crate) to: TerminalState,
-    pub(crate) at_ms: i64,
-}
-
-#[derive(Debug, Serialize, Clone)]
-#[serde(rename_all = "camelCase")]
 pub(crate) struct TerminalSessionStateChangedEvent {
     pub(crate) session_id: String,
     pub(crate) from: TerminalState,
@@ -81,10 +73,6 @@ pub(crate) fn emit_terminal_run_completed(app: &AppHandle, payload: TerminalRunC
 
 pub(crate) fn emit_terminal_run_started(app: &AppHandle, payload: TerminalRunStartedEvent) {
     emit_to_main(app, "terminal:run-started", payload);
-}
-
-pub(crate) fn emit_terminal_state_changed(app: &AppHandle, payload: TerminalStateChangedEvent) {
-    emit_to_main(app, "terminal:state-changed", payload);
 }
 
 pub(crate) fn emit_terminal_session_state_changed(
