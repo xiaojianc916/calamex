@@ -275,14 +275,6 @@ export const useTerminalFacade = (options: ITerminalFacadeOptions = {}): ITermin
       }),
     );
     listeners.add(
-      eventBus.onStateChanged((payload) => {
-        runtimeStore.applyStateChanged(payload);
-        if (switchingInputBuffer.length > 0 && routeInput(currentSessionState(), activeRun.value)) {
-          void flushSwitchingInputBuffer();
-        }
-      }),
-    );
-    listeners.add(
       eventBus.onSessionStateChanged((payload) => {
         // P0 多会话:按会话镜像运行态。输入路由的事实来源已迁到 per-session 态
         // (见 routeInput),故本会话切到可写态时也要补冲切换期缓冲的输入——多开时

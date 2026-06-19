@@ -247,11 +247,6 @@ export const useTerminalRuntimeStore = defineStore('terminal-runtime', () => {
 
   // -- run lifecycle ---------------------------------------------------------
 
-  const markSwitchingToRun = (): void => {
-    state.value = 'switching_to_run';
-    markEvent('terminal:switching-to-run');
-  };
-
   const markRunStarted = (run: ITerminalRunHandle): void => {
     // Same run id arriving again — patch the handle and bump diagnostics.
     if (activeRun.value?.runId === run.runId) {
@@ -285,12 +280,6 @@ export const useTerminalRuntimeStore = defineStore('terminal-runtime', () => {
     if (activeRun.value?.runId !== run.runId) return;
     activeRun.value = mergeRunHandle(activeRun.value, run);
     setSessionActiveRun(activeRun.value);
-  };
-
-  const markSwitchingToIdle = (): void => {
-    if (!activeRun.value) return;
-    state.value = 'switching_to_idle';
-    markEvent('terminal:switching-to-idle');
   };
 
   const markRunCompleted = (runId: string, exitCode: number | null, finishedAt: string): void => {
@@ -453,10 +442,8 @@ export const useTerminalRuntimeStore = defineStore('terminal-runtime', () => {
     isRunning,
     markInteractiveReady,
     markInteractiveExited,
-    markSwitchingToRun,
     markRunStarted,
     updateActiveRun,
-    markSwitchingToIdle,
     markRunCompleted,
     markRunDispatchFailed,
     applyStateChanged,

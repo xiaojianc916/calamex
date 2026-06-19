@@ -8,7 +8,6 @@ import type {
   ITerminalRunCompletedPayload,
   ITerminalRunStartedPayload,
   ITerminalSessionStateChangedPayload,
-  ITerminalStateChangedPayload,
 } from '@/types/terminal';
 
 // ---------------------------------------------------------------------------
@@ -20,7 +19,6 @@ const TERMINAL_RUN_STARTED_EVENT = 'terminal:run-started';
 const TERMINAL_RUN_COMPLETED_EVENT = 'terminal:run-completed';
 const TERMINAL_INTERACTIVE_READY_EVENT = 'terminal:interactive-ready';
 const TERMINAL_INTERACTIVE_EXITED_EVENT = 'terminal:interactive-exited';
-const TERMINAL_STATE_CHANGED_EVENT = 'terminal:state-changed';
 const TERMINAL_SESSION_STATE_CHANGED_EVENT = 'terminal:session-state-changed';
 
 // ---------------------------------------------------------------------------
@@ -69,12 +67,6 @@ const terminalRuntimeStateSchema = z.enum([
   'switching_to_idle',
 ]);
 
-const terminalStateChangedEventSchema = z.object({
-  from: terminalRuntimeStateSchema,
-  to: terminalRuntimeStateSchema,
-  atMs: z.number().int().nonnegative(),
-});
-
 const terminalSessionStateChangedEventSchema = z.object({
   sessionId: z.string(),
   from: terminalRuntimeStateSchema,
@@ -109,7 +101,6 @@ export interface ITerminalEventBus {
   onRunCompleted(handler: TEventHandler<ITerminalRunCompletedPayload>): UnlistenFn;
   onInteractiveReady(handler: TEventHandler<void>): UnlistenFn;
   onInteractiveExited(handler: TEventHandler<ITerminalExitEvent>): UnlistenFn;
-  onStateChanged(handler: TEventHandler<ITerminalStateChangedPayload>): UnlistenFn;
   onSessionStateChanged(handler: TEventHandler<ITerminalSessionStateChangedPayload>): UnlistenFn;
 }
 
@@ -160,7 +151,6 @@ export const createTerminalEventBus = (
   const runCompletedHandlers = new Set<TEventHandler<ITerminalRunCompletedPayload>>();
   const interactiveReadyHandlers = new Set<TEventHandler<void>>();
   const interactiveExitedHandlers = new Set<TEventHandler<ITerminalExitEvent>>();
-  const stateChangedHandlers = new Set<TEventHandler<ITerminalStateChangedPayload>>();
   const sessionStateChangedHandlers = new Set<TEventHandler<ITerminalSessionStateChangedPayload>>();
 
   /**
@@ -277,11 +267,6 @@ export const createTerminalEventBus = (
           interactiveExitedHandlers,
         ),
         wireListener(
-          TERMINAL_STATE_CHANGED_EVENT,
-          terminalStateChangedEventSchema,
-          stateChangedHandlers,
-        ),
-        wireListener(
           TERMINAL_SESSION_STATE_CHANGED_EVENT,
           terminalSessionStateChangedEventSchema,
           sessionStateChangedHandlers,
@@ -370,10 +355,6 @@ export const createTerminalEventBus = (
     onInteractiveExited(handler) {
       interactiveExitedHandlers.add(handler);
       return () => removeHandler(interactiveExitedHandlers, handler);
-    },
-    onStateChanged(handler) {
-      stateChangedHandlers.add(handler);
-      return () => removeHandler(stateChangedHandlers, handler);
     },
     onSessionStateChanged(handler) {
       sessionStateChangedHandlers.add(handler);

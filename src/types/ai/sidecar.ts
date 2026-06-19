@@ -701,6 +701,52 @@ export type TAgentUiEventUsageUpdate = {
   usage: TJsonValue;
 };
 
+/* ----------------------------------------------------------------------------
+ * ACP 会话配置项选择器 VM（ADR-20260617 · D7-③-c 扩展：config_options 协议）
+ *
+ * 投影 ACP session/new|load 的 configOptions（SessionConfigOption[]）与 session/update
+ * 的 config_option_update（携带完整 configOptions 快照，非单值增量）。前端 ACL
+ * （components/business/ai/thread/projection/from-acp-session-config-options）从
+ * ai_get_session_config_options 的原始 configOptions 解析；config_option_update UI 事件
+ * 以完整数组整体替换 state。VM 与 ACP wire 解耦：UI 只消费此结构，不直接触碰原始负载。
+ *
+ * 形状对齐 agent-client-protocol-schema 0.13.6 序列化 wire（camelCase）：
+ *   SessionConfigOption = { id, name, description?, category?, type:'select', currentValue, options }
+ *     （type/currentValue/options 来自 flatten 的 SessionConfigKind::Select）
+ *   SessionConfigSelectOption = { value, name, description?, _meta? }
+ *   SessionConfigSelectGroup  = { group, name, options[] }
+ *   options 为 Ungrouped(SessionConfigSelectOption[]) | Grouped(SessionConfigSelectGroup[]) 联合；
+ *     VM 将分组拍平为单一 options 列表，分组名记到 option.group。
+ *   category 为 'mode' | 'model' | 'thought_level' | 自定义字符串；未知/缺省时省略。
+ * -------------------------------------------------------------------------- */
+export interface IAcpSessionConfigSelectOption {
+  value: string;
+  name: string;
+  description?: string;
+  /** 分组标签（来自 SessionConfigSelectGroup.name）；未分组时省略。 */
+  group?: string;
+}
+
+export interface IAcpSessionConfigOption {
+  id: string;
+  name: string;
+  description?: string;
+  /** UX-only 语义类别：'mode' | 'model' | 'thought_level' | 自定义；未知/缺省时省略。 */
+  category?: string;
+  currentValue: string;
+  options: IAcpSessionConfigSelectOption[];
+}
+
+export interface IAcpSessionConfigOptionsState {
+  configOptions: IAcpSessionConfigOption[];
+}
+
+export type TAgentUiEventConfigOptionUpdate = {
+  type: 'config_option_update';
+  /** ACP config_option_update 的原始 configOptions 数组（完整快照），逐字透传，前端 ACL 归一。 */
+  configOptions: TJsonValue[];
+};
+
 export type TAgentUiEvent =
   | { type: 'message_delta'; text: string; phase?: 'stage' | 'final' }
   | { type: 'agent_event'; event: TAgentRuntimeEvent }
@@ -713,6 +759,7 @@ export type TAgentUiEvent =
   | TAgentUiEventModeUpdate
   | TAgentUiEventAvailableCommandsUpdate
   | TAgentUiEventUsageUpdate
+  | TAgentUiEventConfigOptionUpdate
   | { type: 'approval_required'; request: IApprovalRequest }
   | { type: 'ask_user_required'; requestId: string; request: IAskUserRequest }
   | { type: 'diff_ready'; files: IDiffFile[] }
