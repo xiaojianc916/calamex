@@ -4,7 +4,7 @@ import type {
   IFileIconResolveOptions,
   IPierreFileIconTheme,
 } from '@/types/file-icon';
-import { fnv1a32Base36 } from '@/utils/core/hash';
+import { fnv1a32Bytes } from '@/utils/core/hash';
 import { getPathBaseName } from '@/utils/file/path';
 
 const PIERRE_ICON_THEME = pierreIconTheme as IPierreFileIconTheme;
@@ -145,6 +145,14 @@ const encodeSvgDataUri = (svg: string): string =>
 const applyPierreFallbackColor = (svg: string, fillColor: string, pattern: RegExp): string =>
   svg.replace(pattern, fillColor);
 
+// ── FNV-1a 哈希取模辅助 ───────────────────────────────────────
+// fnv1a32Bytes 返回 8 位 hex，这里需要 base36 索引。
+const fnv1a32Base36Index = (value: string, modulus: number): number => {
+  const hex = fnv1a32Bytes(value);
+  // 取后 7 位 hex(28 bit) 转 number，避免 32 位溢出
+  return Number.parseInt(hex.slice(-7), 16) % modulus;
+};
+
 const resolveColorizedFallbackIconAsset = (key: string): IFileIconAsset | null => {
   const palettePool = MONOCHROME_ICON_COLOR_POOLS[key];
   const darkDefinition = PIERRE_ICON_THEME.iconDefinitions[key];
@@ -165,8 +173,7 @@ const resolveColorizedFallbackIconAsset = (key: string): IFileIconAsset | null =
   if (!darkRaw || !lightRaw) return null;
 
   const paletteSeed = MONOCHROME_ICON_COLOR_SEED_OVERRIDES[key] ?? key;
-  const paletteHue =
-    palettePool[Number.parseInt(fnv1a32Base36(paletteSeed), 36) % palettePool.length];
+  const paletteHue = palettePool[fnv1a32Base36Index(paletteSeed, palettePool.length)];
   const colors = PIERRE_PALETTE[paletteHue];
 
   const asset: IFileIconAsset = {
