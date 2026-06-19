@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed } from 'vue';
 import type { IAiChatMessage, IAiPatchSet } from '@/types/ai';
+import type { IAiThreadEntry } from '@/types/ai/thread';
 import AiThreadAssistantText from './AiThreadAssistantText.vue';
 import AiThreadChangedFilesSummary from './AiThreadChangedFilesSummary.vue';
 import AiThreadContextCompaction from './AiThreadContextCompaction.vue';
@@ -8,7 +9,7 @@ import AiThreadPlanControl from './AiThreadPlanControl.vue';
 import AiThreadReasoning from './AiThreadReasoning.vue';
 import AiThreadToolCall from './AiThreadToolCall.vue';
 import AiThreadUserMessage from './AiThreadUserMessage.vue';
-import { buildThreadEntries, type TAiThreadEntry } from './projection';
+import { buildThreadEntries, type TAiThreadEntry, threadEntriesToTimeline } from './projection';
 import type { IAiThreadPlanDetails } from './types';
 import { useThreadEntryExpansion } from './useThreadEntryExpansion';
 
@@ -18,6 +19,8 @@ const props = defineProps<{
   planDetails?: IAiThreadPlanDetails;
   revertingChangedFilesSummaryId?: string | null;
   pinningChangedFilesSummaryId?: string | null;
+  renderFromEntries?: boolean;
+  threadEntries?: readonly IAiThreadEntry[];
 }>();
 
 const emit = defineEmits<{
@@ -30,7 +33,11 @@ const emit = defineEmits<{
   planRemoveStep: [stepId: string];
 }>();
 
-const entries = computed<TAiThreadEntry[]>(() => buildThreadEntries(props.messages));
+const entries = computed<TAiThreadEntry[]>(() =>
+  props.renderFromEntries
+    ? threadEntriesToTimeline(props.threadEntries ?? [])
+    : buildThreadEntries(props.messages),
+);
 
 const expansion = useThreadEntryExpansion(entries);
 

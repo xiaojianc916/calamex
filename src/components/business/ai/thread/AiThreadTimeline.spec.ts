@@ -13,12 +13,19 @@ import type {
   TAiThreadEntry,
 } from './projection';
 
-const { buildThreadEntriesMock } = vi.hoisted(() => ({ buildThreadEntriesMock: vi.fn() }));
+const { buildThreadEntriesMock, threadEntriesToTimelineMock } = vi.hoisted(() => ({
+  buildThreadEntriesMock: vi.fn(),
+  threadEntriesToTimelineMock: vi.fn(),
+}));
 
 vi.mock('./projection', async (importOriginal) => {
   const actual = await importOriginal<typeof import('./projection')>();
 
-  return { ...actual, buildThreadEntries: buildThreadEntriesMock };
+  return {
+    ...actual,
+    buildThreadEntries: buildThreadEntriesMock,
+    threadEntriesToTimeline: threadEntriesToTimelineMock,
+  };
 });
 
 import AiThreadChangedFilesSummary from './AiThreadChangedFilesSummary.vue';
@@ -124,6 +131,19 @@ describe('AiThreadTimeline', () => {
   beforeEach(() => {
     buildThreadEntriesMock.mockReset();
     buildThreadEntriesMock.mockReturnValue(allEntries);
+    threadEntriesToTimelineMock.mockReset();
+    threadEntriesToTimelineMock.mockReturnValue(allEntries);
+  });
+
+  it('renderFromEntries 为 true 时改用 threadEntriesToTimeline 投影 reduce 条目', () => {
+    const wrapper = mount(AiThreadTimeline, {
+      props: { messages: [], renderFromEntries: true, threadEntries: [] },
+      global: { stubs },
+    });
+
+    expect(threadEntriesToTimelineMock).toHaveBeenCalledTimes(1);
+    expect(buildThreadEntriesMock).not.toHaveBeenCalled();
+    expect(wrapper.findComponent(AiThreadUserMessage).exists()).toBe(true);
   });
 
   it('按条目类型分派渲染每一种条目组件', () => {
