@@ -262,17 +262,6 @@ const createAssistantMock = (messagesList: IAiChatMessage[] = []) => {
   };
 
   return {
-    acpSessionModes: {
-      state: computed(() => null),
-      availableModes: computed(() => []),
-      currentMode: computed(() => null),
-      hasModes: computed(() => false),
-      isSwitching: computed(() => false),
-      loadModes: vi.fn().mockResolvedValue(undefined),
-      selectMode: vi.fn().mockResolvedValue(undefined),
-      applyModeUpdate: vi.fn(),
-      reset: vi.fn(),
-    },
     acpSessionConfigOptions: {
       state: computed(() => null),
       configOptions: computed(() => []),
