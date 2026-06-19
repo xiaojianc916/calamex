@@ -46,6 +46,7 @@ import { buildCurrentFileReference } from '@/services/ipc/ai-context.service';
 import { aiEditService } from '@/services/ipc/ai-edit.service';
 import { type IAiPersistedSidecarAgentSession, useAiAgentStore } from '@/store/aiAgent';
 import { type IAiConversationScrollState, useAiConversationStore } from '@/store/aiConversation';
+import { legacyThreadToThread, useAiThreadStore } from '@/store/aiThread';
 import type {
   IAiAgentPatchSummary,
   IAiApplyPatchMetadata,
@@ -83,6 +84,7 @@ import { logger } from '@/utils/platform/logger';
 // ---------------------------------------------------------------------------
 
 // [auto-split imports]
+import { buildLiveThreadFromSidecarEvents } from './live-thread-from-sidecar';
 import {
   clipText,
   createImageAttachmentSignature,
@@ -220,6 +222,7 @@ const MSG_CALL_FAILED = 'AI 调用失败';
 export const useAiAssistant = (options: IUseAiAssistantOptions) => {
   const agentStore = useAiAgentStore();
   const conversationStore = useAiConversationStore();
+  const aiThreadStore = useAiThreadStore();
 
   const draft = ref('');
   const isSending = ref(false);
@@ -386,9 +389,36 @@ export const useAiAssistant = (options: IUseAiAssistantOptions) => {
     clearSidecarUserQuestion();
   };
 
+  const updateLiveThreadFromSidecarEvents = (
+    assistantMessageId: string,
+    threadId: string | null,
+    events: readonly TAgentUiEvent[],
+  ): void => {
+    const activeThread = conversationStore.activeThread;
+    const activeThreadId = unref(conversationStore.activeThreadId);
+    // 仅当该回合线程正是当前可见线程时才覆盖投影，避免串台到其他会话。
+    if (!activeThread || (threadId !== null && threadId !== activeThreadId)) {
+      return;
+    }
+    const seedThread = legacyThreadToThread({
+      ...activeThread,
+      messages: activeThread.messages.filter((message) => message.id !== assistantMessageId),
+    });
+    aiThreadStore.setLiveThread(
+      buildLiveThreadFromSidecarEvents(events, {
+        baseThread: seedThread,
+        assistantMessageId,
+        now: new Date().toISOString(),
+      }),
+    );
+    aiThreadStore.setRenderFromEntries(true);
+  };
+
   const syncDisplayMessagesFromActiveThread = (): void => {
     if (!isConversationWriteBuffered()) {
       displayMessages.value = unref(conversationStore.activeMessages);
+      aiThreadStore.setLiveThread(null);
+      aiThreadStore.setRenderFromEntries(false);
     }
   };
 
@@ -1483,6 +1513,7 @@ export const useAiAssistant = (options: IUseAiAssistantOptions) => {
     const liveEventBuffer = createSidecarLiveEventBuffer((events, freshEvents) => {
       appendVisibleRuntimeTimelineEvents(extractVisibleAgentRuntimeEvents(freshEvents));
       applySidecarLiveEventsToAgentMessage(assistantMessageId, targetThreadId, '', events);
+      updateLiveThreadFromSidecarEvents(assistantMessageId, targetThreadId, events);
     });
     let unlistenSidecarStream: (() => void) | null = null;
 
@@ -2090,6 +2121,7 @@ export const useAiAssistant = (options: IUseAiAssistantOptions) => {
       }
       appendVisibleRuntimeTimelineEvents(extractVisibleAgentRuntimeEvents(freshEvents));
       applySidecarLiveEventsToAgentMessage(assistantMessageId, targetThreadId, '', events);
+      updateLiveThreadFromSidecarEvents(assistantMessageId, targetThreadId, events);
 
       const { doneEvent, errorEvent } = getLatestSidecarLiveEvents(events);
 
