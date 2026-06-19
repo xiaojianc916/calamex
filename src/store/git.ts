@@ -520,8 +520,9 @@ export const useGitStore = defineStore('git', () => {
         timeout: GIT_COMMIT_STATS_BACKGROUND_DELAY_MS * 4,
       });
       // 保存 idleId 以便 clearCommitStatsBackgroundQueue 取消。
+      // 使用 union type 正确保存 idle callback handle；
       // 不支持 cancelIdleCallback 的环境（旧 WebView2）退化为 no-op。
-      commitStatsTimer = idleId as unknown as ReturnType<typeof setTimeout>;
+      commitStatsTimer = { kind: 'idle', id: idleId } as unknown as TCommitStatsTimer;
       return;
     }
 

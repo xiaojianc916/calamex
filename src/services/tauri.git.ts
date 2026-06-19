@@ -22,6 +22,7 @@ const shallowStringBytes = (value: unknown): number => {
   return total;
 };
 
+// NOTE: 浅层字段遍历度量替代 JSON.stringify，避免对大 payload 的序列化开销。
 const measureGitCommitDetailOutput = (output: unknown) => {
   if (!output || typeof output !== 'object') return buildPayloadMetrics(output);
 
