@@ -20,8 +20,8 @@ export type TUsageUpdate = Extract<
 /** 解耦的 token 用量输入(由接线层从内部快照适配而来)。 */
 export interface IUsageSnapshotInput {
 	totalTokens?: number | null | undefined
-	promptTokens?: number | null | undefined
-	completionTokens?: number | null | undefined
+	inputTokens?: number | null | undefined
+	outputTokens?: number | null | undefined
 }
 
 const isPositiveFinite = (value: number | null | undefined): value is number =>

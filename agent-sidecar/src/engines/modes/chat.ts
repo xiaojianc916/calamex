@@ -154,7 +154,7 @@ export class MastraRuntimeChat extends MastraRuntimeBase {
             // 用于定位“空气泡”根因——确认 sidecar 究竟产出了哪些 chunk、是否累积出正文。
             let diagChunkCount = 0;
             const diagFullStream = (async function* () {
-                for await (const rawChunk of stream.stream) {
+                for await (const rawChunk of stream.fullStream) {
                     diagChunkCount += 1;
                     const chunkType = (rawChunk as { type?: unknown }).type;
                     process.stderr.write(

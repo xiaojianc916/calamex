@@ -339,7 +339,7 @@ export class MastraRuntimeBase {
         let doneTokenSnapshot: TDoneTokenSnapshot | undefined;
         const pendingToolCallIdsByName = new Map<string, string[]>();
 
-        for await (const rawChunk of stream.stream) {
+        for await (const rawChunk of stream.fullStream) {
             const chunk = rawChunk as TMastraStreamChunk;
             const finishTokenSnapshot = extractFinishTokenSnapshot(chunk);
             if (finishTokenSnapshot) {

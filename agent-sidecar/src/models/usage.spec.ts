@@ -27,7 +27,7 @@ test('languageModelUsageSchema 接受完整的缓存 / 推理明细', () => {
     raw: { provider: 'deepseek' },
   });
   assert.equal(parsed.inputTokenDetails?.cacheReadTokens, 40);
-  assert.equal(parsed.outputTokenDetails.outputTokenDetails.reasoningTokens, 10);
+  assert.equal(parsed.outputTokenDetails?.reasoningTokens, 10);
   assert.deepEqual(parsed.raw, { provider: 'deepseek' });
 });
 

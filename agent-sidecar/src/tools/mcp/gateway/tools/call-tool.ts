@@ -51,11 +51,7 @@ export const createMcpCallTool = (
         ...(options.metricSink ? { metricSink: options.metricSink } : {}),
       });
     },
-    toModelOutput: (
-      {
-        output
-      }
-    ) => createJsonToolModelOutput(compactModelOutput(output, {
+    toModelOutput: (output) => createJsonToolModelOutput(compactModelOutput(output, {
       maxTotalChars: MCP_GATEWAY_MODEL_OUTPUT_MAX_CHARS,
       maxStringChars: MCP_GATEWAY_MODEL_OUTPUT_MAX_STRING_CHARS,
       maxArrayItems: MCP_GATEWAY_MODEL_OUTPUT_MAX_ARRAY_ITEMS,

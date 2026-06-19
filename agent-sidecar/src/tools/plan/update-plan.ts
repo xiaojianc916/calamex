@@ -225,11 +225,7 @@ export const createUpdatePlanTool = (planFilePath: string): ReturnType<typeof cr
                 display,
             };
         },
-        toModelOutput: (
-            {
-                output
-            }
-        ) => createJsonToolModelOutput(output),
+        toModelOutput: (output) => createJsonToolModelOutput(output),
     });
 
 // 工具装配入口（与 createAskUserTools / createUiContextTools 同构，返回工具记录）。

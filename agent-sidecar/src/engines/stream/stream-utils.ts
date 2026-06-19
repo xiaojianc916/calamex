@@ -115,7 +115,6 @@ export const parseInputTokenDetails = (
     const rawCacheHitTokens = readRawTokenValue(raw, 'prompt_cache_hit_tokens');
     const rawCacheMissTokens = readRawTokenValue(raw, 'prompt_cache_miss_tokens');
     const cacheReadTokens = toNonNegativeFiniteNumber(inputTokenDetailsRecord?.cacheReadTokens)
-        ?? toNonNegativeFiniteNumber(record.inputTokenDetails.cacheReadTokens)
         ?? rawCacheHitTokens;
     const noCacheTokens = toNonNegativeFiniteNumber(inputTokenDetailsRecord?.noCacheTokens)
         ?? rawCacheMissTokens;
@@ -147,8 +146,7 @@ export const parseOutputTokenDetails = (
     const raw = toRecord(record.raw);
     const rawCompletionTokenDetails = toRecord(raw?.completion_tokens_details);
     const textTokens = toNonNegativeFiniteNumber(outputTokenDetailsRecord?.textTokens);
-    const reasoningTokens = toNonNegativeFiniteNumber(outputTokenDetailsRecord.outputTokenDetails.reasoningTokens)
-        ?? toNonNegativeFiniteNumber(record.outputTokenDetails.reasoningTokens)
+    const reasoningTokens = toNonNegativeFiniteNumber(outputTokenDetailsRecord?.reasoningTokens)
         ?? toNonNegativeFiniteNumber(rawCompletionTokenDetails?.reasoning_tokens);
 
     if (textTokens === undefined && reasoningTokens === undefined) {
@@ -171,8 +169,8 @@ export const aggregateDoneTokenSnapshot = (
         return next;
     }
 
-    const promptTokens = sumTokenCounts(current.inputTokens, next.inputTokens);
-    const completionTokens = sumTokenCounts(current.outputTokens, next.outputTokens);
+    const promptTokens = sumTokenCounts(current.promptTokens, next.promptTokens);
+    const completionTokens = sumTokenCounts(current.completionTokens, next.completionTokens);
     const totalTokens = sumTokenCounts(current.totalTokens, next.totalTokens);
     const currentUsage = current.usage ?? undefined;
     const nextUsage = next.usage ?? undefined;
@@ -199,23 +197,23 @@ export const aggregateDoneTokenSnapshot = (
                 nextUsage?.outputTokenDetails?.textTokens,
             ) ?? 0,
             reasoningTokens: sumTokenCounts(
-                currentUsage?.outputTokenDetails.outputTokenDetails.reasoningTokens,
-                nextUsage?.outputTokenDetails.outputTokenDetails.reasoningTokens,
+                currentUsage?.outputTokenDetails?.reasoningTokens,
+                nextUsage?.outputTokenDetails?.reasoningTokens,
             ) ?? 0,
         }
         : undefined;
     const cachedInputTokens = sumTokenCounts(
-        currentUsage.inputTokenDetails.cacheReadTokens,
-        nextUsage.inputTokenDetails.cacheReadTokens,
+        currentUsage?.inputTokenDetails?.cacheReadTokens,
+        nextUsage?.inputTokenDetails?.cacheReadTokens,
     );
     const reasoningTokens = sumTokenCounts(
-        currentUsage.outputTokenDetails.reasoningTokens,
-        nextUsage.outputTokenDetails.reasoningTokens,
+        currentUsage?.outputTokenDetails?.reasoningTokens,
+        nextUsage?.outputTokenDetails?.reasoningTokens,
     );
 
     return {
-        ...(promptTokens !== undefined ? { inputTokens } : {}),
-        ...(completionTokens !== undefined ? { outputTokens } : {}),
+        ...(promptTokens !== undefined ? { promptTokens } : {}),
+        ...(completionTokens !== undefined ? { completionTokens } : {}),
         ...(totalTokens !== undefined ? { totalTokens } : {}),
         usage: {
             inputTokens: sumRequiredTokenCounts(currentUsage?.inputTokens, nextUsage?.inputTokens),
@@ -250,12 +248,12 @@ export const parseDoneTokenSnapshot = (value: unknown): TDoneTokenSnapshot | und
 
     const inputTokenDetails = parseInputTokenDetails(record, inputTokens);
     const outputTokenDetails = parseOutputTokenDetails(record, outputTokens);
-    const cachedInputTokens = toNonNegativeFiniteNumber(record.inputTokenDetails.cacheReadTokens);
-    const reasoningTokens = toNonNegativeFiniteNumber(record.outputTokenDetails.reasoningTokens);
+    const cachedInputTokens = inputTokenDetails?.cacheReadTokens;
+    const reasoningTokens = outputTokenDetails?.reasoningTokens;
 
     return {
-        inputTokens: inputTokens,
-        outputTokens: outputTokens,
+        promptTokens: inputTokens,
+        completionTokens: outputTokens,
         totalTokens,
         usage: {
             inputTokens,

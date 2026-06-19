@@ -38,9 +38,5 @@ export const createMcpListTool = (
       };
       return await pool.listAllTools(baseInput);
     },
-    toModelOutput: (
-      {
-        output
-      }
-    ) => createJsonToolModelOutput(output),
+    toModelOutput: (output) => createJsonToolModelOutput(output),
   });

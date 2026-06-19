@@ -138,10 +138,9 @@ const parseImagePartCarrier = (line: string): TImagePartCarrier | null => {
     }
 
     return {
-      type: 'file',
-      data,
-      ...(mediaType ? { mediaType } : {}),
-      mediaType: 'image'
+      type: 'image',
+      image,
+      ...(mediaType ? { mediaType } : {})
     };
   } catch {
     return null;
@@ -168,10 +167,9 @@ export const buildImagePartsFromContext = (
 
       seenSources.add(carrier.image);
       imageParts.push({
-        type: 'file',
-        data: carrier.image,
-        ...(carrier.mediaType ? { mediaType: carrier.mediaType } : {}),
-        mediaType: 'image'
+        type: 'image',
+        image: carrier.image,
+        ...(carrier.mediaType ? { mediaType: carrier.mediaType } : {})
       });
     }
   }

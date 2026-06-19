@@ -78,7 +78,7 @@ export const toAgentStreamLike = (streamResult: {
     runId?: string;
     cleanup?: () => void;
 }): IMastraAgentStreamLike => ({
-    fullStream: streamResult.stream,
+    fullStream: streamResult.fullStream,
     ...(streamResult.runId ? { runId: streamResult.runId } : {}),
     ...(streamResult.cleanup ? { cleanup: streamResult.cleanup } : {}),
 });
@@ -207,7 +207,7 @@ export const defaultCreateExecutionHandle = async (
                 });
 
                 return {
-                    fullStream: streamResult.stream as unknown as AsyncIterable<TMastraStreamChunk>,
+                    fullStream: streamResult.fullStream as unknown as AsyncIterable<TMastraStreamChunk>,
                     runId: streamResult.runId,
                     cleanup: streamResult.cleanup,
                 };
@@ -219,7 +219,7 @@ export const defaultCreateExecutionHandle = async (
                 const streamResult = await registeredAgent.resume(runId, { approved: true });
 
                 return {
-                    fullStream: streamResult.stream as unknown as AsyncIterable<TMastraStreamChunk>,
+                    fullStream: streamResult.fullStream as unknown as AsyncIterable<TMastraStreamChunk>,
                     runId: streamResult.runId,
                     cleanup: streamResult.cleanup,
                 };
@@ -228,7 +228,7 @@ export const defaultCreateExecutionHandle = async (
                 const streamResult = await registeredAgent.resume(runId, { approved: false });
 
                 return {
-                    fullStream: streamResult.stream as unknown as AsyncIterable<TMastraStreamChunk>,
+                    fullStream: streamResult.fullStream as unknown as AsyncIterable<TMastraStreamChunk>,
                     runId: streamResult.runId,
                     cleanup: streamResult.cleanup,
                 };
@@ -237,7 +237,7 @@ export const defaultCreateExecutionHandle = async (
                 const streamResult = await registeredAgent.resume(runId, resumeData);
 
                 return {
-                    fullStream: streamResult.stream as unknown as AsyncIterable<TMastraStreamChunk>,
+                    fullStream: streamResult.fullStream as unknown as AsyncIterable<TMastraStreamChunk>,
                     runId: streamResult.runId,
                     cleanup: streamResult.cleanup,
                 };
