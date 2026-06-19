@@ -1,4 +1,4 @@
-import { z } from 'zod';
+import { z } from 'zod/v3';
 import { aiContextReferenceSchema } from '@/types/ai/context.schema';
 import {
   aiLanguageModelUsageSchema,
@@ -343,9 +343,9 @@ export const agentUiEventSchema = z.discriminatedUnion('type', [
     type: z.literal('done'),
     result: z.string(),
     /** @deprecated 使用 `usage.inputTokens`。 */
-    promptTokens: z.number().nonnegative().optional(),
+    inputTokens: z.number().nonnegative().optional(),
     /** @deprecated 使用 `usage.outputTokens`。 */
-    completionTokens: z.number().nonnegative().optional(),
+    outputTokens: z.number().nonnegative().optional(),
     /** @deprecated 使用 `usage.totalTokens`。 */
     totalTokens: z.number().nonnegative().optional(),
     // 复用 ai.schema 的共享 schema，避免双 SoT 与 passthrough 索引签名。

@@ -1,4 +1,4 @@
-import { z } from 'zod';
+import { z } from 'zod/v3';
 
 /**
  * 语言模型 token 用量契约（canonical / 单一真相源）。

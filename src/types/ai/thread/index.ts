@@ -7,7 +7,7 @@
  * 注：本 sub-barrel 为纯新增，暂不在 `src/types/ai/index.ts` 主 barrel 里
  * 转出（接线在后续迁移步骤完成），以保证 step 1 零风险。
  * ========================================================================== */
-import type { z } from 'zod';
+import type { z } from 'zod/v3';
 
 import type {
   aiThreadContentBlockSchema,

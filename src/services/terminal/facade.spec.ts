@@ -16,7 +16,6 @@ import type {
   ITerminalRunCompletedPayload,
   ITerminalRunStartedPayload,
   ITerminalSessionStateChangedPayload,
-  ITerminalStateChangedPayload,
 } from '@/types/terminal';
 
 type TTerminalFacadeTauri = Pick<
@@ -39,9 +38,6 @@ class FakeTerminalEventBus implements ITerminalEventBus {
   >();
   private readonly interactiveReadyHandlers = new Set<() => void>();
   private readonly interactiveExitedHandlers = new Set<(payload: ITerminalExitEvent) => void>();
-  private readonly stateChangedHandlers = new Set<
-    (payload: ITerminalStateChangedPayload) => void
-  >();
   private readonly sessionStateChangedHandlers = new Set<
     (payload: ITerminalSessionStateChangedPayload) => void
   >();
@@ -81,13 +77,6 @@ class FakeTerminalEventBus implements ITerminalEventBus {
     };
   }
 
-  onStateChanged(handler: (payload: ITerminalStateChangedPayload) => void): UnlistenFn {
-    this.stateChangedHandlers.add(handler);
-    return () => {
-      this.stateChangedHandlers.delete(handler);
-    };
-  }
-
   onSessionStateChanged(
     handler: (payload: ITerminalSessionStateChangedPayload) => void,
   ): UnlistenFn {
@@ -117,12 +106,6 @@ class FakeTerminalEventBus implements ITerminalEventBus {
 
   emitInteractiveExited(payload: ITerminalExitEvent): void {
     for (const handler of this.interactiveExitedHandlers) {
-      handler(payload);
-    }
-  }
-
-  emitStateChanged(payload: ITerminalStateChangedPayload): void {
-    for (const handler of this.stateChangedHandlers) {
       handler(payload);
     }
   }
@@ -173,6 +156,7 @@ describe('terminal facade suite 1', () => {
     const facade = useTerminalFacade({ tauri, eventBus });
 
     await facade.ensureView();
+    const runtimeStore = useTerminalRuntimeStore();
     const handle = await facade.dispatchScript({
       sessionId: 'main-terminal',
       path: null,
@@ -181,12 +165,14 @@ describe('terminal facade suite 1', () => {
       isDirty: true,
       runId: 'run-1',
     });
-    eventBus.emitStateChanged({
+    eventBus.emitSessionStateChanged({
+      sessionId: 'main-terminal',
       from: 'booting',
       to: 'idle_interactive',
       atMs: 1777104000000,
     });
-    eventBus.emitStateChanged({
+    eventBus.emitSessionStateChanged({
+      sessionId: 'main-terminal',
       from: 'idle_interactive',
       to: 'switching_to_run',
       atMs: 1777104000100,
@@ -197,7 +183,8 @@ describe('terminal facade suite 1', () => {
       startedAtMs: 1777104000200,
       pid: 4242,
     });
-    eventBus.emitStateChanged({
+    eventBus.emitSessionStateChanged({
+      sessionId: 'main-terminal',
       from: 'switching_to_run',
       to: 'running',
       atMs: 1777104000200,
@@ -208,7 +195,7 @@ describe('terminal facade suite 1', () => {
       sessionId: 'main-terminal',
       commandLine: '/bin/bash /tmp/demo.sh',
     });
-    expect(facade.state.value).toBe('running');
+    expect(runtimeStore.getSessionState('main-terminal')).toBe('running');
     expect(facade.activeRun.value?.runId).toBe('run-1');
   });
 
@@ -237,6 +224,7 @@ describe('terminal facade suite 1', () => {
     const facade = useTerminalFacade({ tauri: createTauriMock(), eventBus });
 
     await facade.ensureView();
+    const runtimeStore = useTerminalRuntimeStore();
     await facade.dispatchScript({
       sessionId: 'main-terminal',
       path: null,
@@ -245,12 +233,14 @@ describe('terminal facade suite 1', () => {
       isDirty: true,
       runId: 'run-1',
     });
-    eventBus.emitStateChanged({
+    eventBus.emitSessionStateChanged({
+      sessionId: 'main-terminal',
       from: 'booting',
       to: 'idle_interactive',
       atMs: 1777104000000,
     });
-    eventBus.emitStateChanged({
+    eventBus.emitSessionStateChanged({
+      sessionId: 'main-terminal',
       from: 'idle_interactive',
       to: 'switching_to_run',
       atMs: 1777104000100,
@@ -261,13 +251,15 @@ describe('terminal facade suite 1', () => {
       startedAtMs: 1777104000200,
       pid: 4242,
     });
-    eventBus.emitStateChanged({
+    eventBus.emitSessionStateChanged({
+      sessionId: 'main-terminal',
       from: 'switching_to_run',
       to: 'running',
       atMs: 1777104000200,
     });
 
-    eventBus.emitStateChanged({
+    eventBus.emitSessionStateChanged({
+      sessionId: 'main-terminal',
       from: 'running',
       to: 'switching_to_idle',
       atMs: 1777104001000,
@@ -278,13 +270,14 @@ describe('terminal facade suite 1', () => {
       exitCode: 0,
       finishedAt: '2026-04-25T00:00:01.000Z',
     });
-    eventBus.emitStateChanged({
+    eventBus.emitSessionStateChanged({
+      sessionId: 'main-terminal',
       from: 'switching_to_idle',
       to: 'idle_interactive',
       atMs: 1777104001001,
     });
 
-    expect(facade.state.value).toBe('idle_interactive');
+    expect(runtimeStore.getSessionState('main-terminal')).toBe('idle_interactive');
     expect(facade.activeRun.value).toBeNull();
   });
 
@@ -306,6 +299,7 @@ describe('terminal facade suite 1', () => {
     const facade = useTerminalFacade({ tauri, eventBus });
 
     await facade.ensureView();
+    const runtimeStore = useTerminalRuntimeStore();
     const dispatchPromise = facade.dispatchScript({
       sessionId: 'main-terminal',
       path: null,
@@ -316,7 +310,8 @@ describe('terminal facade suite 1', () => {
     });
     await Promise.resolve();
 
-    eventBus.emitStateChanged({
+    eventBus.emitSessionStateChanged({
+      sessionId: 'main-terminal',
       from: 'idle_interactive',
       to: 'switching_to_run',
       atMs: 1777104000100,
@@ -327,7 +322,8 @@ describe('terminal facade suite 1', () => {
       exitCode: 0,
       finishedAt: '2026-04-25T00:00:01.000Z',
     });
-    eventBus.emitStateChanged({
+    eventBus.emitSessionStateChanged({
+      sessionId: 'main-terminal',
       from: 'switching_to_run',
       to: 'idle_interactive',
       atMs: 1777104001000,
@@ -345,7 +341,7 @@ describe('terminal facade suite 1', () => {
 
     await dispatchPromise;
 
-    expect(facade.state.value).toBe('idle_interactive');
+    expect(runtimeStore.getSessionState('main-terminal')).toBe('idle_interactive');
     expect(facade.activeRun.value).toBeNull();
   });
 
@@ -436,7 +432,8 @@ describe('terminal facade suite 1', () => {
     const facade = useTerminalFacade({ tauri, eventBus });
 
     await facade.ensureView();
-    eventBus.emitStateChanged({
+    eventBus.emitSessionStateChanged({
+      sessionId: 'main-terminal',
       from: 'idle_interactive',
       to: 'switching_to_run',
       atMs: 1777104000100,
@@ -464,12 +461,10 @@ describe('terminal facade suite 2', () => {
     });
     const eventBus = createTerminalEventBus(listenMock);
     const runStartedHandler = vi.fn();
-    const stateChangedHandler = vi.fn();
     const interactiveReadyHandler = vi.fn();
     const interactiveExitedHandler = vi.fn();
 
     eventBus.onRunStarted(runStartedHandler);
-    eventBus.onStateChanged(stateChangedHandler);
     eventBus.onInteractiveReady(interactiveReadyHandler);
     eventBus.onInteractiveExited(interactiveExitedHandler);
     await eventBus.start();
@@ -482,15 +477,6 @@ describe('terminal facade suite 2', () => {
         runId: 'run-2',
         startedAtMs: 1777104000000,
         pid: 4242,
-      },
-    });
-    handlers.get('terminal:state-changed')?.({
-      event: 'terminal:state-changed',
-      id: 3,
-      payload: {
-        from: 'switching_to_run',
-        to: 'running',
-        atMs: 1777104000001,
       },
     });
     handlers.get('terminal:interactive-ready')?.({
@@ -512,11 +498,6 @@ describe('terminal facade suite 2', () => {
       runId: 'run-2',
       startedAtMs: 1777104000000,
       pid: 4242,
-    });
-    expect(stateChangedHandler).toHaveBeenCalledWith({
-      from: 'switching_to_run',
-      to: 'running',
-      atMs: 1777104000001,
     });
     expect(interactiveReadyHandler).toHaveBeenCalledOnce();
     expect(interactiveExitedHandler).toHaveBeenCalledWith({

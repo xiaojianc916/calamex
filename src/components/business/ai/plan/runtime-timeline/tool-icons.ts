@@ -174,7 +174,7 @@ export const TASK_ICON_MAP: Record<TTaskIcon, string> = {
   java: 'coffee',
   memory: 'hard-drive',
   thinking: 'brain',
-  system: 'activity',
+  instructions: 'activity',
   file: 'file-text',
   files: 'files',
   folder: 'folder-tree',

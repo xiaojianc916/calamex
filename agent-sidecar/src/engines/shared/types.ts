@@ -108,7 +108,7 @@ export type TSandboxDataChunk = DataChunkType & {
 };
 export type TCompatibleReasoningDeltaChunk = TMastraReasoningDeltaChunk & {
     payload: ReasoningDeltaPayload & {
-        reasoning?: string;
+        reasoningText?: string;
         delta?: string;
         reasoning_content?: string;
         reasoningContent?: string;

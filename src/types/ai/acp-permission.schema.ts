@@ -1,4 +1,4 @@
-import { z } from 'zod';
+import { z } from 'zod/v3';
 
 /**
  * ACP 反向 `session/request_permission` 权限请求的运行时校验 schema。

@@ -3,7 +3,7 @@ import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import type { ToolsInput } from '@mastra/core/agent';
 import { createTool } from '@mastra/core/tools';
-import { z } from 'zod';
+import { z } from 'zod/v3';
 import { createJsonToolModelOutput } from '../../engines/budget/budget.js';
 import { resolveWorkspaceDirectory } from '../../engines/context/context.js';
 import { toNonEmptyString } from '../../engines/shared/utils.js';
@@ -225,7 +225,11 @@ export const createUpdatePlanTool = (planFilePath: string): ReturnType<typeof cr
                 display,
             };
         },
-        toModelOutput: (output) => createJsonToolModelOutput(output),
+        toModelOutput: (
+            {
+                output
+            }
+        ) => createJsonToolModelOutput(output),
     });
 
 // 工具装配入口（与 createAskUserTools / createUiContextTools 同构，返回工具记录）。

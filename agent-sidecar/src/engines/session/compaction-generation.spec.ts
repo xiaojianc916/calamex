@@ -19,7 +19,11 @@ const createMessages = (): TMastraChatMessage[] => [
     role: 'user',
     content: [
       { type: 'text', text: 'third user request' },
-      { type: 'image', image: 'file:///tmp/screenshot.png' },
+      {
+        type: 'file',
+        data: 'file:///tmp/screenshot.png',
+        mediaType: 'image'
+      },
     ],
   },
 ];
@@ -94,7 +98,11 @@ test('buildContextCompactionContinuationMessages preserves image parts on the ac
     role: 'user',
     content: [
       { type: 'text', text: 'current visual request' },
-      { type: 'image', image: 'file:///tmp/screenshot.png' },
+      {
+        type: 'file',
+        data: 'file:///tmp/screenshot.png',
+        mediaType: 'image'
+      },
     ],
   };
   const compacted = buildContextCompactionContinuationMessages({

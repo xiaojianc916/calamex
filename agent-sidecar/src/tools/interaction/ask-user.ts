@@ -1,6 +1,6 @@
 import type { ToolsInput } from '@mastra/core/agent';
 import { createTool } from '@mastra/core/tools';
-import { z } from 'zod';
+import { z } from 'zod/v3';
 import { createJsonToolModelOutput } from '../../engines/budget/budget.js';
 
 /**
@@ -311,7 +311,11 @@ export const createAskUserTool = (): ReturnType<typeof createTool> =>
                 emptySubmission: !hasAnswers,
             };
         },
-        toModelOutput: (output) => createJsonToolModelOutput(output),
+        toModelOutput: (
+            {
+                output
+            }
+        ) => createJsonToolModelOutput(output),
     });
 
 // 工具装配入口（与 createUiContextTools / createMastraTimeTools 同构，返回工具记录）。

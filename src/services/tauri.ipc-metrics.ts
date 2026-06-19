@@ -1,4 +1,4 @@
-import type { z } from 'zod';
+import type { z } from 'zod/v3';
 import type { IPayloadMetrics } from './tauri.ipc-types';
 
 const textEncoder = typeof TextEncoder !== 'undefined' ? new TextEncoder() : null;

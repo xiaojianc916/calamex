@@ -1,4 +1,4 @@
-import { z } from 'zod';
+import { z } from 'zod/v3';
 import {
   AGENT_RUNTIME_EVENT_SCHEMA_VERSION,
   AGENT_RUNTIME_EVENT_TYPES,
@@ -223,9 +223,9 @@ export const agentUiEventSchema = z.discriminatedUnion('type', [
     result: z.string(),
     usage: languageModelUsageSchema.nullable().optional(),
     /** @deprecated 用 `usage.inputTokens` 代替 */
-    promptTokens: z.number().nonnegative().optional(),
+    inputTokens: z.number().nonnegative().optional(),
     /** @deprecated 用 `usage.outputTokens` 代替 */
-    completionTokens: z.number().nonnegative().optional(),
+    outputTokens: z.number().nonnegative().optional(),
     /** @deprecated 用 `usage.totalTokens` 代替 */
     totalTokens: z.number().nonnegative().optional(),
   }),

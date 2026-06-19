@@ -34,7 +34,7 @@
  * 无需单独扩展。检查点长期可像 Zed 那样归到宙主侧 git_store，届时该扩展整体退役。
  * 本模块为纯函数 + 常量（及类型投影），无 I/O、无状态；I/O 由 agent.ts 的 ext 处理器承担。
  */
-import { z } from "zod"
+import { z } from 'zod/v3';
 
 import type { IWarmupResult } from "../models/llm-warmup.js"
 import type { IMcpRuntimeStatus } from "../tools/mcp/client.js"

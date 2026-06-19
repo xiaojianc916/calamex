@@ -311,7 +311,7 @@ export class SidecarAgent extends AbstractAgent {
       streaming: true,
       state: { snapshots: true },
       tools: { supported: true },
-      reasoning: { streaming: true },
+      reasoningText: { streaming: true },
       humanInTheLoop: { supported: true },
     } as AgentCapabilities);
   }

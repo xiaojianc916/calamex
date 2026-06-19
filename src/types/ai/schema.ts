@@ -1,4 +1,4 @@
-import { z } from 'zod';
+import { z } from 'zod/v3';
 import {
   aiAgentClassifyTaskPayloadSchema,
   aiAgentClassifyTaskRequestSchema,
@@ -185,9 +185,9 @@ export const aiChatMessageStreamSnapshotSchema = z.object({
   runtimeEvents: z.array(z.lazy(() => agentRuntimeEventSchema)).optional(),
   finalAnswerStarted: z.boolean().optional(),
   /** @deprecated 优先使用 `usage.inputTokens`;此字段仅为兼容旧 client 保留。 */
-  promptTokens: z.number().nonnegative().optional(),
+  inputTokens: z.number().nonnegative().optional(),
   /** @deprecated 优先使用 `usage.outputTokens`;此字段仅为兼容旧 client 保留。 */
-  completionTokens: z.number().nonnegative().optional(),
+  outputTokens: z.number().nonnegative().optional(),
   /** @deprecated 优先使用 `usage.totalTokens`;此字段仅为兼容旧 client 保留。 */
   totalTokens: z.number().nonnegative().optional(),
   usage: aiLanguageModelUsageSchema.optional(),
@@ -302,9 +302,9 @@ export const aiChatStreamEventPayloadSchema = z.object({
   message: z.string().nullable(),
   model: z.string().nullable(),
   /** @deprecated 优先使用 `usage.inputTokens`。 */
-  promptTokens: z.number().nonnegative().optional(),
+  inputTokens: z.number().nonnegative().optional(),
   /** @deprecated 优先使用 `usage.outputTokens`。 */
-  completionTokens: z.number().nonnegative().optional(),
+  outputTokens: z.number().nonnegative().optional(),
   /** @deprecated 优先使用 `usage.totalTokens`。 */
   totalTokens: z.number().nonnegative().optional(),
   usage: aiLanguageModelUsageSchema.optional(),

@@ -9,7 +9,7 @@ import type { TAgentRuntimeEvent } from '@/types/ai/sidecar';
 
 export interface IAiTokenContextProps {
   usedTokens: number;
-  maxTokens: number;
+  maxOutputTokens: number;
   modelId?: string;
   usage: LanguageModelUsage;
   usageSource: TAiTokenUsageSource;
@@ -57,10 +57,11 @@ const hasUsableUsage = (
   resolveUsageInputTokens(usage ?? undefined) !== undefined ||
   toNonNegativeFiniteNumber(usage?.outputTokens) !== undefined ||
   toNonNegativeFiniteNumber(usage?.totalTokens) !== undefined ||
-  toNonNegativeFiniteNumber(usage?.reasoningTokens) !== undefined ||
-  toNonNegativeFiniteNumber(usage?.cachedInputTokens) !== undefined ||
+  toNonNegativeFiniteNumber(usage.outputTokenDetails.reasoningTokens) !== undefined ||
+  toNonNegativeFiniteNumber(usage.inputTokenDetails.cacheReadTokens) !== undefined ||
   toNonNegativeFiniteNumber(usage?.inputTokenDetails?.cacheReadTokens) !== undefined ||
-  toNonNegativeFiniteNumber(usage?.outputTokenDetails?.reasoningTokens) !== undefined;
+  toNonNegativeFiniteNumber(usage?.outputTokenDetails.outputTokenDetails.reasoningTokens) !==
+    undefined;
 
 const createUsage = (
   inputTokens: number,
@@ -71,7 +72,8 @@ const createUsage = (
   },
 ): LanguageModelUsage => {
   const outputTokens = toNonNegativeFiniteNumber(options?.outputTokens) ?? 0;
-  const reasoningTokens = toNonNegativeFiniteNumber(options?.reasoningTokens) ?? 0;
+  const reasoningTokens =
+    toNonNegativeFiniteNumber(options.outputTokenDetails.reasoningTokens) ?? 0;
   const totalTokens = toNonNegativeFiniteNumber(options?.totalTokens) ?? inputTokens + outputTokens;
 
   return {
@@ -117,7 +119,7 @@ const resolveAggregationInputTokenDetails = (
   const inputTokens = resolveUsageInputTokens(usage) ?? 0;
   const cacheReadTokens =
     toNonNegativeFiniteNumber(usage.inputTokenDetails?.cacheReadTokens) ??
-    toNonNegativeFiniteNumber(usage.cachedInputTokens) ??
+    toNonNegativeFiniteNumber(usage.inputTokenDetails.cacheReadTokens) ??
     0;
 
   return {
@@ -134,8 +136,8 @@ const resolveAggregationOutputTokenDetails = (
 ): NonNullable<LanguageModelUsage['outputTokenDetails']> => {
   const outputTokens = toNonNegativeFiniteNumber(usage.outputTokens) ?? 0;
   const reasoningTokens =
-    toNonNegativeFiniteNumber(usage.outputTokenDetails?.reasoningTokens) ??
-    toNonNegativeFiniteNumber(usage.reasoningTokens) ??
+    toNonNegativeFiniteNumber(usage.outputTokenDetails.outputTokenDetails.reasoningTokens) ??
+    toNonNegativeFiniteNumber(usage.outputTokenDetails.reasoningTokens) ??
     0;
 
   return {
@@ -155,12 +157,13 @@ const aggregateUsage = (
   const currentOutputDetails = current ? resolveAggregationOutputTokenDetails(current) : undefined;
   const nextOutputDetails = resolveAggregationOutputTokenDetails(next);
   const cachedInputTokens = sumTokenCounts(
-    current?.cachedInputTokens ?? currentInputDetails?.cacheReadTokens,
-    next.cachedInputTokens ?? nextInputDetails.cacheReadTokens,
+    current.inputTokenDetails.cacheReadTokens ?? currentInputDetails?.cacheReadTokens,
+    next.inputTokenDetails.cacheReadTokens ?? nextInputDetails.cacheReadTokens,
   );
   const reasoningTokens = sumTokenCounts(
-    current?.reasoningTokens ?? currentOutputDetails?.reasoningTokens,
-    next.reasoningTokens ?? nextOutputDetails.reasoningTokens,
+    current.outputTokenDetails.reasoningTokens ??
+      currentOutputDetails.outputTokenDetails.reasoningTokens,
+    next.outputTokenDetails.reasoningTokens ?? nextOutputDetails.outputTokenDetails.reasoningTokens,
   );
 
   return {
@@ -186,8 +189,8 @@ const aggregateUsage = (
         nextOutputDetails.textTokens,
       ),
       reasoningTokens: sumRequiredTokenCounts(
-        currentOutputDetails?.reasoningTokens,
-        nextOutputDetails.reasoningTokens,
+        currentOutputDetails.outputTokenDetails.reasoningTokens,
+        nextOutputDetails.outputTokenDetails.reasoningTokens,
       ),
     },
     totalTokens: sumRequiredTokenCounts(current?.totalTokens, next.totalTokens),
@@ -211,8 +214,8 @@ const resolveStreamOfficialUsage = (
     return undefined;
   }
 
-  const promptTokens = toNonNegativeFiniteNumber(stream.promptTokens);
-  const completionTokens = toNonNegativeFiniteNumber(stream.completionTokens);
+  const promptTokens = toNonNegativeFiniteNumber(stream.inputTokens);
+  const completionTokens = toNonNegativeFiniteNumber(stream.outputTokens);
   const totalTokens = toNonNegativeFiniteNumber(stream.totalTokens);
 
   if (promptTokens === undefined && completionTokens === undefined && totalTokens === undefined) {
@@ -350,7 +353,7 @@ export const useAiTokenContext = (options: IUseAiTokenContextOptions) => {
 
   const contextProps = computed<IAiTokenContextProps>(() => ({
     usedTokens: usedTokens.value,
-    maxTokens: maxTokens.value,
+    maxOutputTokens: maxTokens.value,
     ...(normalizedModelId.value ? { modelId: normalizedModelId.value } : {}),
     usage: usage.value,
     usageSource: usageSource.value,

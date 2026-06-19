@@ -165,11 +165,11 @@ export const resolveSidecarDoneStreamTokenSnapshot = (
   }
 
   const usage = event.usage ?? undefined;
-  const promptTokens = isNonNegativeFiniteNumber(event.promptTokens)
-    ? event.promptTokens
+  const promptTokens = isNonNegativeFiniteNumber(event.inputTokens)
+    ? event.inputTokens
     : usage?.inputTokens;
-  const completionTokens = isNonNegativeFiniteNumber(event.completionTokens)
-    ? event.completionTokens
+  const completionTokens = isNonNegativeFiniteNumber(event.outputTokens)
+    ? event.outputTokens
     : usage?.outputTokens;
   const totalTokens = isNonNegativeFiniteNumber(event.totalTokens)
     ? event.totalTokens
@@ -185,8 +185,8 @@ export const resolveSidecarDoneStreamTokenSnapshot = (
   }
 
   return {
-    ...(isNonNegativeFiniteNumber(promptTokens) ? { promptTokens } : {}),
-    ...(isNonNegativeFiniteNumber(completionTokens) ? { completionTokens } : {}),
+    ...(isNonNegativeFiniteNumber(promptTokens) ? { inputTokens } : {}),
+    ...(isNonNegativeFiniteNumber(completionTokens) ? { outputTokens } : {}),
     ...(isNonNegativeFiniteNumber(totalTokens) ? { totalTokens } : {}),
     ...(usage ? { usage } : {}),
   };

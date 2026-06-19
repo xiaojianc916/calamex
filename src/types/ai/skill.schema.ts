@@ -1,4 +1,4 @@
-import { z } from 'zod';
+import { z } from 'zod/v3';
 
 /** 技能 slug:小写字母 / 数字 / 连字符,与 Rust 侧 validate_slug 保持一致。 */
 export const SKILL_SLUG_PATTERN = /^[a-z0-9]+(?:-[a-z0-9]+)*$/u;

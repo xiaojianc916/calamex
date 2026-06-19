@@ -98,7 +98,7 @@ const getUsageBreakdown = (usage: LanguageModelUsage | undefined): IDeepSeekUsag
   const outputTokens = sanitizeTokenValue(usage?.outputTokens);
 
   const rawCacheHitInputTokens = sanitizeTokenValue(
-    usage?.inputTokenDetails?.cacheReadTokens ?? usage?.cachedInputTokens,
+    usage?.inputTokenDetails?.cacheReadTokens ?? usage.inputTokenDetails.cacheReadTokens,
   );
   // 防御性约束：cache hit 不能超过 input 总量。
   // 出现 hit > input 通常意味着 usage 上游不一致（mock / SDK 版本差异），

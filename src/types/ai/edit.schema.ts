@@ -1,4 +1,4 @@
-import { z } from 'zod';
+import { z } from 'zod/v3';
 
 import {
   AI_EDIT_AUTH_LEVELS,

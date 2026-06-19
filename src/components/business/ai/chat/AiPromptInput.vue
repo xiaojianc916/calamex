@@ -60,7 +60,11 @@ import { skillsTauriService } from '@/services/tauri.skills';
 import type { IAiAttachedFile, IAiConfigPayload, TAiAgentNetworkPermission } from '@/types/ai';
 import { isAiAssistantMode, type TAiAssistantMode } from '@/types/ai/assistant-mode';
 import type { TAiExecutionMode } from '@/types/ai/execution-mode';
-import type { IAcpSessionModeState } from '@/types/ai/sidecar';
+import type {
+  IAcpSessionConfigOption,
+  IAcpSessionConfigOptionsState,
+  IAcpSessionModeState,
+} from '@/types/ai/sidecar';
 import type { ISelectedSkill, ISkillSummary } from '@/types/ai/skill';
 import AiErrorNotice from './AiErrorNotice.vue';
 
@@ -145,6 +149,8 @@ const props = defineProps<{
   executionMode: TAiExecutionMode;
   sessionModes?: IAcpSessionModeState | null;
   isSessionModeSwitching?: boolean;
+  sessionConfigOptions?: IAcpSessionConfigOptionsState | null;
+  isSessionConfigOptionSwitching?: boolean;
   resolveAttachment: (file: File) => Promise<boolean>;
 }>();
 
@@ -156,6 +162,7 @@ const emit = defineEmits<{
   networkPermissionChange: [permission: TAiAgentNetworkPermission];
   executionModeChange: [mode: TAiExecutionMode];
   sessionModeChange: [modeId: string];
+  sessionConfigOptionChange: [configId: string, valueId: string];
   informationSourcesOpen: [];
   personalizationOpen: [];
   agentChange: [agent: TAiPromptAgentKind];
@@ -346,6 +353,31 @@ const handleSessionModeChange = (value: unknown): void => {
     return;
   }
   emit('sessionModeChange', value);
+};
+
+// ACP 会话配置项选择器（config_options 全量迁移）：仅 Kimi ACP agent 且后端下发配置项时
+// 显示；每个 config option 渲染为独立下拉，VM 由父级经 useAcpSessionConfigOptions 下传，
+// 选择时回投 (configId, valueId) 原文。
+const sessionConfigOptionList = computed(() => props.sessionConfigOptions?.configOptions ?? []);
+
+const sessionConfigOptionsVisible = computed(
+  () => selectedAgent.value === 'kimi' && sessionConfigOptions.value.length > 0,
+);
+
+const resolveSessionConfigOptionLabel = (option: IAcpSessionConfigOption): string => {
+  const current = option.options.find((item) => item.value === option.currentValue);
+  return current?.name ?? option.name;
+};
+
+const handleSessionConfigOptionChange = (configId: string, value: unknown): void => {
+  if (typeof value !== 'string' || !value.trim()) {
+    return;
+  }
+  const option = sessionConfigOptions.value.find((item) => item.id === configId);
+  if (!option || value === option.currentValue) {
+    return;
+  }
+  emit('sessionConfigOptionChange', configId, value);
 };
 
 const networkPermissionLabel = computed(() => (networkPermissionEnabled.value ? '已允许' : '询问'));
@@ -1240,6 +1272,36 @@ onBeforeUnmount(() => {
                 </SelectGroup>
               </SelectContent>
             </Select>
+            <template v-if="sessionConfigOptionsVisible">
+              <Select
+                v-for="configOption in sessionConfigOptions"
+                :key="configOption.id"
+                :model-value="configOption.currentValue"
+                :disabled="disabled || isSessionConfigOptionSwitching"
+                @update:model-value="(value) => handleSessionConfigOptionChange(configOption.id, value)"
+              >
+                <SelectTrigger :aria-label="configOption.name" class="ai-agent-trigger">
+                  <SlidersHorizontal class="ai-agent-trigger__icon" :stroke-width="1.6" />
+                  <span
+                    class="ai-agent-trigger__label"
+                    v-text="resolveSessionConfigOptionLabel(configOption)"
+                  ></span>
+                </SelectTrigger>
+                <SelectContent side="top" align="start" :side-offset="8" class="ai-agent-content">
+                  <SelectLabel class="ai-agent-section-label" v-text="configOption.name"></SelectLabel>
+                  <SelectGroup>
+                    <SelectItem
+                      v-for="opt in configOption.options"
+                      :key="opt.value"
+                      class="ai-agent-item"
+                      :value="opt.value"
+                    >
+                      <span class="ai-agent-item__label" v-text="opt.name"></span>
+                    </SelectItem>
+                  </SelectGroup>
+                </SelectContent>
+              </Select>
+            </template>
           </div>
           <div class="ai-toolbar-spacer" aria-hidden="true"></div>
           <Select

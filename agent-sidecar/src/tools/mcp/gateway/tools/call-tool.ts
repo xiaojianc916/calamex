@@ -1,5 +1,5 @@
 import { createTool } from '@mastra/core/tools';
-import type { z } from 'zod';
+import { z } from 'zod/v3';
 import { compactModelOutput } from '../../../../models/output-budget.js';
 import { createJsonToolModelOutput } from '../../../../engines/budget/budget.js';
 import { mcpGatewayCallInputSchema, unwrapGatewayToolInput } from '../helpers.js';
@@ -51,7 +51,11 @@ export const createMcpCallTool = (
         ...(options.metricSink ? { metricSink: options.metricSink } : {}),
       });
     },
-    toModelOutput: (output) => createJsonToolModelOutput(compactModelOutput(output, {
+    toModelOutput: (
+      {
+        output
+      }
+    ) => createJsonToolModelOutput(compactModelOutput(output, {
       maxTotalChars: MCP_GATEWAY_MODEL_OUTPUT_MAX_CHARS,
       maxStringChars: MCP_GATEWAY_MODEL_OUTPUT_MAX_STRING_CHARS,
       maxArrayItems: MCP_GATEWAY_MODEL_OUTPUT_MAX_ARRAY_ITEMS,

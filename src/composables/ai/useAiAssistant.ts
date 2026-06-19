@@ -616,12 +616,12 @@ export const useAiAssistant = (options: IUseAiAssistantOptions) => {
         finalAnswerStarted ??
         message.stream?.finalAnswerStarted ??
         (streamStatus === 'completed' && hasMeaningfulAssistantText(content));
-      const nextPromptTokens = isNonNegativeFiniteNumber(streamTokenSnapshot?.promptTokens)
-        ? streamTokenSnapshot.promptTokens
-        : message.stream?.promptTokens;
-      const nextCompletionTokens = isNonNegativeFiniteNumber(streamTokenSnapshot?.completionTokens)
-        ? streamTokenSnapshot.completionTokens
-        : message.stream?.completionTokens;
+      const nextPromptTokens = isNonNegativeFiniteNumber(streamTokenSnapshot?.inputTokens)
+        ? streamTokenSnapshot.inputTokens
+        : message.stream?.inputTokens;
+      const nextCompletionTokens = isNonNegativeFiniteNumber(streamTokenSnapshot?.outputTokens)
+        ? streamTokenSnapshot.outputTokens
+        : message.stream?.outputTokens;
       const nextTotalTokens = isNonNegativeFiniteNumber(streamTokenSnapshot?.totalTokens)
         ? streamTokenSnapshot.totalTokens
         : message.stream?.totalTokens;
@@ -634,10 +634,10 @@ export const useAiAssistant = (options: IUseAiAssistantOptions) => {
             ...(nextRuntimeEvents?.length ? { runtimeEvents: nextRuntimeEvents } : {}),
             ...(nextFinalAnswerStarted ? { finalAnswerStarted: true } : {}),
             ...(isNonNegativeFiniteNumber(nextPromptTokens)
-              ? { promptTokens: nextPromptTokens }
+              ? { inputTokens: nextPromptTokens }
               : {}),
             ...(isNonNegativeFiniteNumber(nextCompletionTokens)
-              ? { completionTokens: nextCompletionTokens }
+              ? { outputTokens: nextCompletionTokens }
               : {}),
             ...(isNonNegativeFiniteNumber(nextTotalTokens) ? { totalTokens: nextTotalTokens } : {}),
             ...(nextUsage ? { usage: nextUsage } : {}),

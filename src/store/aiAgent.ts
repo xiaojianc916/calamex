@@ -1,6 +1,6 @@
 import { defineStore } from 'pinia';
 import { computed, ref, shallowRef } from 'vue';
-import { z } from 'zod';
+import { z } from 'zod/v3';
 import type { IAgentSidecarPendingAskUser } from '@/composables/ai/sidecar-ask-user';
 import type {
   IAiAgentClassifyTaskPayload,
@@ -239,12 +239,18 @@ const addOfficialUsage = (
       ) ?? 0,
     reasoningTokens:
       addTokenCounts(
-        current?.outputTokenDetails?.reasoningTokens,
-        next.outputTokenDetails?.reasoningTokens,
+        current?.outputTokenDetails.outputTokenDetails.reasoningTokens,
+        next.outputTokenDetails.outputTokenDetails.reasoningTokens,
       ) ?? 0,
   };
-  const cachedInputTokens = addTokenCounts(current?.cachedInputTokens, next.cachedInputTokens);
-  const reasoningTokens = addTokenCounts(current?.reasoningTokens, next.reasoningTokens);
+  const cachedInputTokens = addTokenCounts(
+    current.inputTokenDetails.cacheReadTokens,
+    next.inputTokenDetails.cacheReadTokens,
+  );
+  const reasoningTokens = addTokenCounts(
+    current.outputTokenDetails.reasoningTokens,
+    next.outputTokenDetails.reasoningTokens,
+  );
   return {
     inputTokens: addRequiredTokenCounts(current?.inputTokens, next.inputTokens),
     inputTokenDetails,

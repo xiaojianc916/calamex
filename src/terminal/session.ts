@@ -22,7 +22,6 @@ import type {
   ITerminalInputRoutePayload,
   ITerminalRunCompletedPayload,
   ITerminalSessionPayload,
-  ITerminalStateChangedPayload,
   ITerminalStatusChangePayload,
   ITerminalVisualWritePayload,
   TTerminalConnectionState,
@@ -395,7 +394,6 @@ export class TerminalSession {
   private _dataUnlisten: UnlistenFn | null = null;
   private _runCompletedUnlisten: UnlistenFn | null = null;
   private _exitUnlisten: UnlistenFn | null = null;
-  private _stateChangedUnlisten: UnlistenFn | null = null;
   private _eventListenerRegistration: Promise<void> | null = null;
   /**
    * 每次 detach 时递增；registerEventListeners 异步完成时比对版本，
@@ -537,12 +535,7 @@ export class TerminalSession {
   // -- Public: subscribe Tauri events --------------------------------------
 
   registerEventListeners(): Promise<void> {
-    if (
-      this._dataUnlisten &&
-      this._runCompletedUnlisten &&
-      this._exitUnlisten &&
-      this._stateChangedUnlisten
-    ) {
+    if (this._dataUnlisten && this._runCompletedUnlisten && this._exitUnlisten) {
       return Promise.resolve();
     }
     if (this._eventListenerRegistration) {
@@ -556,28 +549,23 @@ export class TerminalSession {
         return;
       }
 
-      const [dl, cl, el, sl] = await Promise.all([
+      const [dl, cl, el] = await Promise.all([
         listen<ITerminalDataEvent>('terminal:data', (e) => this._handleDataEvent(e)),
         listen<ITerminalRunCompletedPayload>('terminal:run-completed', (e) =>
           this._handleRunCompletedEvent(e),
         ),
         listen<ITerminalExitEvent>('terminal:interactive-exited', (e) => this._handleExitEvent(e)),
-        listen<ITerminalStateChangedPayload>('terminal:state-changed', (e) =>
-          this._handleStateChangedEvent(e),
-        ),
       ]);
       if (this._listenerVersion !== version) {
         // detach 在注册期间被调用，立即释放这批监听器避免泄漏
         dl();
         cl();
         el();
-        sl();
         return;
       }
       this._dataUnlisten = dl;
       this._runCompletedUnlisten = cl;
       this._exitUnlisten = el;
-      this._stateChangedUnlisten = sl;
     })().finally(() => {
       this._eventListenerRegistration = null;
     });
@@ -888,11 +876,9 @@ export class TerminalSession {
     this._dataUnlisten?.();
     this._runCompletedUnlisten?.();
     this._exitUnlisten?.();
-    this._stateChangedUnlisten?.();
     this._dataUnlisten = null;
     this._runCompletedUnlisten = null;
     this._exitUnlisten = null;
-    this._stateChangedUnlisten = null;
 
     this._bellUnsubscribe?.();
     this._bellUnsubscribe = null;
@@ -1684,12 +1670,6 @@ export class TerminalSession {
   private _handleRunCompletedEvent(event: { payload: ITerminalRunCompletedPayload }): void {
     if (event.payload.sessionId !== this.id) return;
     this._emitTerminalRunCompleted(event.payload);
-  }
-
-  private _handleStateChangedEvent(event: { payload: ITerminalStateChangedPayload }): void {
-    if (event.payload.to !== 'idle_interactive') return;
-    this._clearTrackedRunState();
-    this._interactiveResizeRepaintSuppressUntilMs = 0;
   }
 
   private _handleExitEvent(event: { payload: ITerminalExitEvent }): void {

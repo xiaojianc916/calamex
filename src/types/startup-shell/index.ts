@@ -1,4 +1,4 @@
-import { z } from 'zod';
+import { z } from 'zod/v3';
 import { WORKBENCH_SIDEBAR_VIEWS } from '@/types/app';
 
 export const StartupShellTabKindSchema = z.enum(['text', 'image']);

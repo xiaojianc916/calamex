@@ -721,6 +721,7 @@ const handleAgentBackendChange = (agent: TSessionAgentBackend): void => {
 
     if (threadId) {
       void assistant.acpSessionModes.loadModes(threadId).catch(() => undefined);
+      void assistant.acpSessionConfigOptions.loadConfigOptions(threadId).catch(() => undefined);
     }
   }
 };
@@ -732,6 +733,24 @@ const handleSessionModeChange = async (modeId: string): Promise<void> => {
     await assistant.acpSessionModes.selectMode(modeId);
   } catch (error) {
     assistant.error.value = toErrorMessage(error, '切换会话模式失败。');
+  }
+};
+
+// ACP 会话配置项切换（config_options 全量迁移发送侧）：选择器回投透传给
+// useAcpSessionConfigOptions.selectConfigOption（乐观更新 + setSessionConfigOption 回投，
+// 失败回滚并提示）。
+const handleSessionConfigOptionChange = async (
+  configId: string,
+  valueId: string,
+): Promise<void> => {
+  const threadId = assistant.activeConversationId.value;
+  if (!threadId) {
+    return;
+  }
+  try {
+    await assistant.acpSessionConfigOptions.selectConfigOption(threadId, configId, valueId);
+  } catch (error) {
+    assistant.error.value = toErrorMessage(error, '切换会话配置失败。');
   }
 };
 
@@ -1235,6 +1254,8 @@ onMounted(() => {
           v-model:agent-backend="sessionAgentBackend"
           :session-modes="assistant.acpSessionModes.state.value"
           :is-session-mode-switching="assistant.acpSessionModes.isSwitching.value"
+          :session-config-options="assistant.acpSessionConfigOptions.state.value"
+          :is-session-config-option-switching="assistant.acpSessionConfigOptions.isSwitching.value"
           :disabled="composerDisabled" :stop-visible="assistant.isSending.value"
           :submit-label="submitLabel" :config="assistant.config.value"
           :is-model-saving="isPromptModelSaving" :selected-model-override="activeAgentModelId"
@@ -1248,6 +1269,7 @@ onMounted(() => {
           @execution-mode-change="handlePromptExecutionModeChange"
           @agent-change="handleAgentBackendChange"
           @session-mode-change="handleSessionModeChange"
+          @session-config-option-change="handleSessionConfigOptionChange"
           @information-sources-open="openPromptInformationSources" @personalization-open="openPromptPersonalization"
           @prewarm="handlePromptPrewarm" />
       </div>

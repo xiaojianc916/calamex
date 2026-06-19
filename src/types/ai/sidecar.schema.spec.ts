@@ -402,8 +402,8 @@ describe('agent sidecar event contract', () => {
         {
           type: 'done',
           result: '完成',
-          promptTokens: 13,
-          completionTokens: 5,
+          inputTokens: 13,
+          outputTokens: 5,
           totalTokens: 18,
           usage: {
             inputTokens: 13,
@@ -417,8 +417,8 @@ describe('agent sidecar event contract', () => {
 
     expect(parsed.events[0]).toMatchObject({
       type: 'done',
-      promptTokens: 13,
-      completionTokens: 5,
+      inputTokens: 13,
+      outputTokens: 5,
       totalTokens: 18,
     });
   });

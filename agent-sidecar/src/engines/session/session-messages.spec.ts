@@ -12,8 +12,8 @@ import type { IAgentRuntimeInput } from '../contracts/runtime-input.js';
 
 const imageDataUrl = 'data:image/png;base64,iVBORw0KGgo=';
 const carrierLine = `AI_SDK_IMAGE_PART_JSON:${JSON.stringify({
-  type: 'image',
-  image: imageDataUrl,
+  type: 'file',
+  data: imageDataUrl,
   mediaType: 'image/png',
 })}`;
 
@@ -81,8 +81,8 @@ test('createAgentSessionMessagesFromRuntimeInput keeps image parts on the final 
       text: '目标：完善 AI 架构\n继续。',
     },
     {
-      type: 'image',
-      image: imageDataUrl,
+      type: 'file',
+      data: imageDataUrl,
       mediaType: 'image/png',
     },
   ]);

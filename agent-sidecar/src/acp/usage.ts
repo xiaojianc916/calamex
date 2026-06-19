@@ -32,9 +32,9 @@ const resolveUsedTokens = (usage: IUsageSnapshotInput): number | null => {
 	if (isPositiveFinite(usage.totalTokens)) {
 		return usage.totalTokens
 	}
-	const prompt = isPositiveFinite(usage.promptTokens) ? usage.promptTokens : null
-	const completion = isPositiveFinite(usage.completionTokens)
-		? usage.completionTokens
+	const prompt = isPositiveFinite(usage.inputTokens) ? usage.inputTokens : null
+	const completion = isPositiveFinite(usage.outputTokens)
+		? usage.outputTokens
 		: null
 	if (prompt === null && completion === null) {
 		return null

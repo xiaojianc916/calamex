@@ -26,5 +26,5 @@ export const RUNTIME_KIND_TO_TOOL_KIND: Record<TAiRuntimeToolKind, TAiThreadTool
   java: 'execute',
   memory: 'other',
   thinking: 'think',
-  system: 'other',
+  instructions: 'other',
 };

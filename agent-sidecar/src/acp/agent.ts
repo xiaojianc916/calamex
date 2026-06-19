@@ -162,9 +162,9 @@ const toUsageSnapshotInput = (
 ): IUsageSnapshotInput | null => {
 	if (!snapshot) return null
 	const totalTokens = snapshot.totalTokens ?? snapshot.usage?.totalTokens
-	const promptTokens = snapshot.promptTokens ?? snapshot.usage?.inputTokens
+	const promptTokens = snapshot.inputTokens ?? snapshot.usage?.inputTokens
 	const completionTokens =
-		snapshot.completionTokens ?? snapshot.usage?.outputTokens
+		snapshot.outputTokens ?? snapshot.usage?.outputTokens
 	if (
 		totalTokens === undefined &&
 		promptTokens === undefined &&
@@ -172,7 +172,7 @@ const toUsageSnapshotInput = (
 	) {
 		return null
 	}
-	return { totalTokens, promptTokens, completionTokens }
+	return { totalTokens, inputTokens, outputTokens };
 }
 
 /**

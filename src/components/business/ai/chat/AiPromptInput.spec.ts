@@ -229,7 +229,7 @@ describe('AiPromptInput', () => {
     const wrapper = mountPromptInput({
       tokenContext: {
         usedTokens: 32000,
-        maxTokens: 128000,
+        maxOutputTokens: 128000,
         modelId: 'openai:gpt-5',
         usageSource: 'estimated',
         usage: {
@@ -265,7 +265,7 @@ describe('AiPromptInput', () => {
     const wrapper = mountPromptInput({
       tokenContext: {
         usedTokens: 0,
-        maxTokens: 0,
+        maxOutputTokens: 0,
         usageSource: 'estimated',
         usage: {
           inputTokens: 0,

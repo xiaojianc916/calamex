@@ -1,4 +1,4 @@
-import { z } from 'zod';
+import { z } from 'zod/v3';
 
 export const aiContextKindSchema = z.enum([
   'current-file',
@@ -64,8 +64,8 @@ const withImageAttachmentModelPart = <
     contentPreview: [
       reference.contentPreview,
       `${IMAGE_ATTACHMENT_MODEL_PART_MARKER}${JSON.stringify({
-        type: 'image',
-        image: preview.src,
+        type: 'file',
+        data: preview.src,
         mediaType: preview.mimeType,
       })}`,
     ].join('\n'),

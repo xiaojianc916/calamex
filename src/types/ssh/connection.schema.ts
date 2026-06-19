@@ -1,4 +1,4 @@
-import { z } from 'zod';
+import { z } from 'zod/v3';
 
 const SSH_AUTH_MODES = ['password', 'key'] as const;
 export type SshAuthMode = (typeof SSH_AUTH_MODES)[number];

@@ -79,7 +79,11 @@ test('retainRecentUserMessageTexts keeps newest user text within byte budget', (
       role: 'user',
       content: [
         { type: 'text', text: 'third' },
-        { type: 'image', image: 'file:///tmp/a.png' },
+        {
+          type: 'file',
+          data: 'file:///tmp/a.png',
+          mediaType: 'image'
+        },
       ],
     },
   ];

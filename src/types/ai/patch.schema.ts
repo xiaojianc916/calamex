@@ -1,4 +1,4 @@
-import { z } from 'zod';
+import { z } from 'zod/v3';
 
 import { AI_AGENT_CHANGED_FILE_STATUSES, AI_DIFF_PREVIEW_LINE_KINDS } from '@/types/ai/patch';
 

@@ -865,8 +865,8 @@ describe('useAiAssistant streaming integration', () => {
 
     expect(assistant.messages.value.at(-1)?.stream).toMatchObject({
       status: 'completed',
-      promptTokens: 13,
-      completionTokens: 5,
+      inputTokens: 13,
+      outputTokens: 5,
       totalTokens: 18,
       usage: expect.objectContaining({
         inputTokens: 13,
@@ -1851,8 +1851,8 @@ describe('useAiAssistant streaming integration', () => {
         {
           type: 'done',
           result: '已统计 token。',
-          promptTokens: 13,
-          completionTokens: 5,
+          inputTokens: 13,
+          outputTokens: 5,
           totalTokens: 18,
           usage: {
             inputTokens: 13,
@@ -1882,8 +1882,8 @@ describe('useAiAssistant streaming integration', () => {
 
     expect(assistant.messages.value[1]?.stream).toMatchObject({
       status: 'completed',
-      promptTokens: 13,
-      completionTokens: 5,
+      inputTokens: 13,
+      outputTokens: 5,
       totalTokens: 18,
       usage: expect.objectContaining({
         inputTokens: 13,

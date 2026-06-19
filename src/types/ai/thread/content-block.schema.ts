@@ -1,4 +1,4 @@
-import { z } from 'zod';
+import { z } from 'zod/v3';
 
 /* ============================================================================
  * ContentBlock（对标 Zed `ContentBlock`）

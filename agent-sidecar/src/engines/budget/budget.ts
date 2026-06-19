@@ -1,5 +1,5 @@
 import type { ToolsInput } from '@mastra/core/agent';
-import { z } from 'zod';
+import { z } from 'zod/v3';
 import type { IAgentModelCapabilities } from '../../models/capabilities.js';
 import type { IAgentContextReferenceInput } from '../contracts/runtime-input.js';
 import { toRecord } from '../shared/utils.js';

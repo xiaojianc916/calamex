@@ -1,4 +1,4 @@
-import { z } from 'zod';
+import { z } from 'zod/v3';
 
 import { aiDiffEditorPreviewSchema } from '@/types/ai/patch.schema';
 import { AI_TOOL_CALL_STATUSES, AI_TOOL_KINDS } from '@/types/ai/thread/constants';

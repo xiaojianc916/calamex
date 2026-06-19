@@ -115,15 +115,8 @@ export interface ITerminalRunStartedPayload {
   pid: number;
 }
 
-export interface ITerminalStateChangedPayload {
-  from: TTerminalRuntimeState;
-  to: TTerminalRuntimeState;
-  atMs: number;
-}
-
 /**
- * 每会话状态转移事件 (`terminal:session-state-changed`)。
- * 与全局 {@link ITerminalStateChangedPayload} 的区别是带 `sessionId`,
+ * 每会话状态转移事件 (`terminal:session-state-changed`)：带 `sessionId`,
  * 后端按会话定向发射,前端按会话存储——P0 多会话地基。
  */
 export interface ITerminalSessionStateChangedPayload {

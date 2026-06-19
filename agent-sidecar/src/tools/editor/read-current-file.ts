@@ -1,5 +1,5 @@
 import { createTool } from '@mastra/core/tools';
-import { z } from 'zod';
+import { z } from 'zod/v3';
 import { compactModelOutput, truncateModelOutputText } from '../../models/output-budget.js';
 import { createJsonToolModelOutput } from '../../engines/budget/budget.js';
 import type { IAgentContextReferenceInput } from '../../engines/contracts/runtime-input.js';
@@ -76,7 +76,11 @@ export const createUiContextTools = (
                     originalCharCount: preview.originalCharCount,
                 };
             },
-            toModelOutput: (output) => createJsonToolModelOutput(compactModelOutput(output, {
+            toModelOutput: (
+                {
+                    output
+                }
+            ) => createJsonToolModelOutput(compactModelOutput(output, {
                 maxTotalChars: CURRENT_FILE_TOOL_MODEL_OUTPUT_MAX_CHARS,
                 maxStringChars: CURRENT_FILE_TOOL_CONTENT_MAX_CHARS,
                 maxArrayItems: 10,

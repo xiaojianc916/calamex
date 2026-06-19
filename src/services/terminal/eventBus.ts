@@ -1,5 +1,5 @@
 import { listen, type UnlistenFn } from '@tauri-apps/api/event';
-import { z } from 'zod';
+import { z } from 'zod/v3';
 
 import { commands } from '@/bindings/tauri';
 import type {

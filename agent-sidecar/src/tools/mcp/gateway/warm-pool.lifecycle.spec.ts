@@ -3,7 +3,7 @@ import { resolve } from 'node:path';
 import { describe, it } from 'node:test';
 
 import { createTool } from '@mastra/core/tools';
-import { z } from 'zod';
+import { z } from 'zod/v3';
 
 import { makeToolExecutionContext } from '../../../test-support/tool-context.js';
 import { type IMcpServerConfig } from '../client.js';
