@@ -12,6 +12,7 @@ import type { IAiContextReference } from '@/types/ai/context';
 import type {
   IAiThreadChangedFilesEntry,
   IAiThreadContentBlock,
+  IAiThreadPlanControlEntry,
   IAiThreadPlanEntry,
   IAiThreadToolCallContent,
   TAiThreadToolKind,
@@ -28,6 +29,7 @@ export type TAiAssistantChannel = 'message' | 'thought';
  * - `assistant_delta` → push_assistant_content_block(content, channel==='thought')
  * - `tool_*` → upsert_tool_call(按 id)
  * - `plan_updated` → 按 id upsert plan entry（整体替换 steps，位置稳定）
+ * - `plan_control_updated` → 按 id upsert plan_control entry（替换 goal/phase/references，位置稳定）
  * - `context_compaction` → 追加 context_compaction entry
  */
 export type TAiThreadReduceEvent =
@@ -77,6 +79,14 @@ export type TAiThreadReduceEvent =
       id: string;
       createdAt: string;
       steps: IAiThreadPlanEntry['steps'];
+    }
+  | {
+      kind: 'plan_control_updated';
+      id: string;
+      createdAt: string;
+      goal: string;
+      references?: IAiContextReference[];
+      phase: IAiThreadPlanControlEntry['phase'];
     }
   | {
       kind: 'context_compaction';

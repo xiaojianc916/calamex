@@ -220,6 +220,44 @@ function upsertPlanEntry(
   return { ...thread, entries: replaceAt(thread.entries, index, merged) };
 }
 
+/* ----- Plan-control upsert (plan-control 审批/运行控制) -------------------- */
+/**
+ * plan_control 条目按 id upsert：首次出现追加到末尾；再次出现替换
+ * goal / phase / references，但保留首次出现的 createdAt 以稳定其在时间线
+ * 中的位置（对标 plan_updated 的位置稳定语义）。
+ */
+function upsertPlanControlEntry(
+  thread: IAiThread,
+  event: TAiThreadReduceEventByKind<'plan_control_updated'>,
+): IAiThread {
+  const index = thread.entries.findIndex(
+    (entry) => entry.type === 'plan_control' && entry.id === event.id,
+  );
+
+  if (index === -1) {
+    const entry: IAiThreadEntry = {
+      type: 'plan_control',
+      id: event.id,
+      createdAt: event.createdAt,
+      goal: event.goal,
+      references: event.references ?? [],
+      phase: event.phase,
+    };
+    return { ...thread, entries: [...thread.entries, entry] };
+  }
+
+  const current = thread.entries[index];
+  const merged: IAiThreadEntry = {
+    type: 'plan_control',
+    id: event.id,
+    createdAt: current.createdAt,
+    goal: event.goal,
+    references: event.references ?? [],
+    phase: event.phase,
+  };
+  return { ...thread, entries: replaceAt(thread.entries, index, merged) };
+}
+
 /* ----- Context compaction (ContextCompaction) ----------------------------- */
 /** 上下文整理：作为一条普通时间线条目追加（不 upsert，每次整理都是新事件）。 */
 function appendContextCompaction(
@@ -304,6 +342,8 @@ export function reduceThread(thread: IAiThread, event: TAiThreadReduceEvent): IA
       return upsertToolCall(thread, event);
     case 'plan_updated':
       return upsertPlanEntry(thread, event);
+    case 'plan_control_updated':
+      return upsertPlanControlEntry(thread, event);
     case 'context_compaction':
       return appendContextCompaction(thread, event);
     case 'changed_files':

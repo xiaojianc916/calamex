@@ -8,6 +8,7 @@ import type {
   IAiThreadAssistantMessageEntry,
   IAiThreadChangedFilesEntry,
   IAiThreadContextCompactionEntry,
+  IAiThreadPlanControlEntry,
   IAiThreadPlanEntry,
   IAiThreadToolCall,
   IAiThreadUserMessageEntry,
@@ -271,6 +272,49 @@ describe('reduceThread', () => {
     expect(changed[0].summary.revertedAt).toBe('2026-06-14T09:06:00.000Z');
     // 保留首次出现的 createdAt，位置稳定
     expect(changed[0].createdAt).toBe(ISO);
+  });
+
+  it('plan_control_updated 创建 plan_control entry；再次同 id 替换 goal/phase/references，保留 createdAt', () => {
+    let thread = createThread();
+    thread = reduceThread(thread, {
+      kind: 'plan_control_updated',
+      id: 'pc1',
+      createdAt: ISO,
+      goal: '迁移流式渲染',
+      phase: 'awaiting-approval',
+    });
+    expect(thread.entries.filter((e) => e.type === 'plan_control')).toHaveLength(1);
+    const first = thread.entries[0] as IAiThreadPlanControlEntry;
+    expect(first.references).toEqual([]);
+    expect(first.phase).toBe('awaiting-approval');
+
+    const ref: IAiContextReference = {
+      id: 'r1',
+      kind: 'current-file',
+      label: 'foo.ts',
+      path: 'src/foo.ts',
+      range: null,
+      contentPreview: '',
+      redacted: false,
+    };
+    thread = reduceThread(thread, {
+      kind: 'plan_control_updated',
+      id: 'pc1',
+      createdAt: '2026-06-14T09:07:00.000Z',
+      goal: '迁移流式渲染（运行中）',
+      references: [ref],
+      phase: 'running',
+    });
+
+    const controls = thread.entries.filter(
+      (e) => e.type === 'plan_control',
+    ) as IAiThreadPlanControlEntry[];
+    expect(controls).toHaveLength(1);
+    expect(controls[0].goal).toBe('迁移流式渲染（运行中）');
+    expect(controls[0].phase).toBe('running');
+    expect(controls[0].references).toEqual([ref]);
+    // 保留首次出现的 createdAt，位置稳定
+    expect(controls[0].createdAt).toBe(ISO);
   });
 
   it('nextToolStatus 状态机', () => {
