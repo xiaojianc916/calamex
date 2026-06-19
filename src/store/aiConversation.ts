@@ -1,5 +1,6 @@
 import { defineStore } from 'pinia';
 import { computed, ref } from 'vue';
+import type { z } from 'zod';
 import type { IAiChatMessage } from '@/types/ai';
 import {
   aiChatMessageSchema,
@@ -36,23 +37,28 @@ export interface IAiConversationScrollState {
   updatedAt: string;
 }
 
-export interface IAiConversationThread {
-  id: string;
-  title: string;
-  titleStatus: TAiConversationTitleStatus;
-  updatedAt: string;
-  createdAt: string;
+/**
+ * Thread 的 wire 形状由 schema 推断（单一来源），UI 层通过 extension 覆写
+ * messages 数组元素类型为含 UI 衍生字段的消息。
+ *
+ * 根因：aiChatMessageSchema 推断 messages 为 IAiChatMessageWire[]，
+ * 而 IAiChatMessage extends IAiChatMessageWire 添加了 patches / changedFilesSummary
+ * / acpToolCalls 等 UI 衍生字段。TS 数组协变不安全（IAiChatMessageWire[]
+ * → IAiChatMessage[]），因此 salvageHydratedThreads 中仍需一次 boundary cast。
+ * 但至少消除了手写字段重复定义——以后加字段只需改 schema。
+ */
+type IAiConversationThreadWire = z.infer<typeof aiConversationThreadSchema>;
+
+export interface IAiConversationThread extends Omit<IAiConversationThreadWire, 'messages'> {
   messages: IAiChatMessage[];
-  scrollState?: IAiConversationScrollState;
 }
 
 /**
- * 持久化形状; 与 store 内部状态结构一致, 使用手写接口而非
- * z.infer<typeof aiConversationPersistSchema>, 避免 IAiChatMessage 与
- * aiChatMessageSchema 推断类型漂移引发 TS2322。
+ * 持久化形状; 与 store 内部状态结构一致。
  *
- * afterHydrate 中对 parse 结果做一次 boundary cast (as unknown as) 即可。
- * 长期方案: 把 IAiChatMessage 改为 z.infer<typeof aiChatMessageSchema>。
+ * afterHydrate 中对 parse 结果做一次 boundary cast (as unknown as) 即可——
+ * 根因是 messages 数组协变方向（IAiChatMessageWire[] → IAiChatMessage[]）
+ * 在 TS 中不安全，非字段定义漂移。
  */
 interface IAiConversationPersistShape {
   activeThreadId: string | null;
@@ -278,6 +284,10 @@ export const salvageHydratedThreads = (
       ...candidate,
       messages,
     });
+    // boundary cast：parsedThread.data.messages 是 IAiChatMessageWire[]，
+    // 赋给 IAiConversationThread.messages (IAiChatMessage[]) 需要一次 cast。
+    // 根因是 TS 数组协变：IAiChatMessage extends IAiChatMessageWire，
+    // 但 TS 不允许把 Wire[] 赋给 Message[]（因为 Message 有额外字段）。
     return parsedThread.success ? [parsedThread.data as unknown as IAiConversationThread] : [];
   });
   if (threads.length === 0) {
@@ -662,8 +672,8 @@ export const useAiConversationStore = defineStore(
         });
         if (parsedCurrent.success) {
           // 边界 cast: parse 成功 → 运行时形状与 IAiConversationPersistShape 等价;
-          // TS 看到的差异仅来自 IAiChatMessage 手写接口与 aiChatMessageSchema
-          // 推断类型的字面量 union 命名漂移。
+          // TS 看到的差异仅来自 messages 数组协变方向
+          // (IAiChatMessageWire[] → IAiChatMessage[])，非字段定义漂移。
           const parsed = parsedCurrent.data as unknown as IAiConversationPersistShape;
           const normalized = ensureActiveThread(
             parsed.activeThreadId,

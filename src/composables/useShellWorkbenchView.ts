@@ -1,4 +1,5 @@
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue';
+import { useDocumentNavigationHistory } from '@/composables/useDocumentNavigationHistory';
 import { useGitRepositoryStatusBootstrap } from '@/composables/useGitRepositoryStatusBootstrap';
 import { useShellWorkbenchAiBridge } from '@/composables/useShellWorkbenchAiBridge';
 import { useShellWorkbenchViewportState } from '@/composables/useShellWorkbenchViewportState';
@@ -31,7 +32,6 @@ export type TEditorExpose = {
 };
 
 const READY_PAINT_FALLBACK_TIMEOUT_MS = 96;
-const MAX_DOCUMENT_NAV_HISTORY = 120;
 const AI_PANEL_DEFAULT_WIDTH = 450;
 const AI_PANEL_MIN_WIDTH = 350;
 const AI_PANEL_MAX_WIDTH = 550;
@@ -90,6 +90,9 @@ const waitForInitialWorkbenchPaint = async (): Promise<void> =>
       resolve();
     };
 
+    // 双 rAF：第一帧后浏览器已完成布局但可能尚未完成绘制；
+    // 第二帧回调执行时首帧绘制已落屏，确保终端 attach 时机在首次可见帧之后，
+    // 避免 xterm 在未绘制的容器上初始化导致尺寸计算为 0。
     firstFrameId = window.requestAnimationFrame(() => {
       firstFrameId = null;
       secondFrameId = window.requestAnimationFrame(() => {
@@ -121,9 +124,9 @@ export const useShellWorkbenchView = (onReady: () => void) => {
   const startupWorkspaceRoot = ref<IWorkspaceDirectoryPayload | null>(null);
   const hasEmittedReady = ref(false);
   const isRestoringWorkbenchSession = ref(false);
-  const documentBackStack = ref<string[]>([]);
-  const documentForwardStack = ref<string[]>([]);
-  let isApplyingDocumentNavigation = false;
+  const docHistory = useDocumentNavigationHistory();
+  const documentBackStack = docHistory.backStack;
+  const documentForwardStack = docHistory.forwardStack;
 
   let nativeCloseRequestedUnlisten: (() => void) | null = null;
   let isUnmounted = false;
@@ -220,8 +223,7 @@ export const useShellWorkbenchView = (onReady: () => void) => {
   };
 
   const canNavigateDocument = (direction: 'back' | 'forward'): boolean => {
-    const stack = direction === 'back' ? documentBackStack : documentForwardStack;
-    if (stack.value.length > 0) {
+    if (direction === 'back' ? docHistory.canGoBack() : docHistory.canGoForward()) {
       return true;
     }
 
@@ -264,18 +266,13 @@ export const useShellWorkbenchView = (onReady: () => void) => {
       return;
     }
 
-    const sourceStack = direction === 'back' ? documentBackStack : documentForwardStack;
-    const targetStack = direction === 'back' ? documentForwardStack : documentBackStack;
-
     const targetDocumentId =
-      pickNextNavigableDocumentId(sourceStack, currentDocumentId) ??
+      docHistory.navigate(direction, currentDocumentId, hasDocumentInEditorStore) ??
       resolveAdjacentDocumentId(currentDocumentId, direction);
     if (!targetDocumentId) {
       return;
     }
 
-    targetStack.value = trimDocumentNavHistory([...targetStack.value, currentDocumentId]);
-    isApplyingDocumentNavigation = true;
     void workbench.activateDocument(targetDocumentId);
   };
 
@@ -718,19 +715,12 @@ export const useShellWorkbenchView = (onReady: () => void) => {
       // 注意：这里不再强制 openEditorMode。仅切换 activeDocumentId（切换已打开的标签、
       // 文档前进后退）不应强制切到编辑模式；“新打开并激活文档”才进编辑模式的逻辑
       // 已下沉到 documents watch（依据旧值快照判定是否新增了文档）。
-      if (isApplyingDocumentNavigation) {
-        isApplyingDocumentNavigation = false;
+      if (docHistory.isNavigating.value) {
+        docHistory.finishNavigation();
         return;
       }
 
-      if (previousDocumentId && hasDocumentInEditorStore(previousDocumentId)) {
-        documentBackStack.value = trimDocumentNavHistory([
-          ...documentBackStack.value,
-          previousDocumentId,
-        ]);
-      }
-
-      documentForwardStack.value = [];
+      docHistory.recordNavigation(previousDocumentId, nextDocumentId, hasDocumentInEditorStore);
     },
   );
 
@@ -738,6 +728,12 @@ export const useShellWorkbenchView = (onReady: () => void) => {
     () => (workbench.editorStore.documents ?? []).map((item) => item.id),
     (documentIds, previousDocumentIds) => {
       const documentIdSet = new Set(documentIds);
+      for (const id of documentIds) {
+        if (!documentIdSet.has(id)) {
+          docHistory.removeClosedDocument(id);
+        }
+      }
+      // 也清理栈中已不存在的文档
       documentBackStack.value = documentBackStack.value.filter((documentId) =>
         documentIdSet.has(documentId),
       );

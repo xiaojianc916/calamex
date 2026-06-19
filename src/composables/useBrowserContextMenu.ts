@@ -271,6 +271,20 @@ const restoreDocumentSelection = (range: Range | null): boolean => {
   return true;
 };
 
+/**
+ * execCommand 兜底调用。execCommand 在 W3C 规范中标记为 deprecated，但以下场景
+ * 目前无标准 Web API 替代，仍需保留：
+ *
+ * - undo / redo：W3C 未提供主动触发 undo/redo 的标准 API（beforeinput 的
+ *   historyUndo inputType 可监听但不可主动触发），execCommand 是唯一方案。
+ *
+ * 以下场景已优先使用标准 API，execCommand 仅作 fallback：
+ * - cut / copy：优先 navigator.clipboard + setRangeText / Selection API
+ * - paste：优先 navigator.clipboard.readText + insertTextIntoEditable
+ * - select-all：input/textarea 用 .select()；contentEditable 有 Range API fallback
+ * - insertText（contentEditable paste 路径）：优先 execCommand('insertText')，
+ *   fallback 到 Range.deleteContents + TextNode 插入
+ */
 const execDocumentCommand = (command: string, value?: string): boolean => {
   if (typeof document.execCommand !== 'function') {
     return false;

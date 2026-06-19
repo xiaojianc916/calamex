@@ -240,6 +240,11 @@ async fn run_shfmt(
     // 已缓冲的 stderr 诊断信息会丢失。提前 take stderr 管道由独立任务持续读取，
     // 超时后仍能获得部分诊断输出（如语法错误位置）。
     let mut stderr_pipe = child.stderr.take().expect("stderr is piped");
+    // 使用 std::sync::Mutex 而非 tokio::sync::Mutex：锁仅用于 stderr 缓冲的瞬时读写，
+    // 不跨 await 点，持锁时间 < 1µs（extend_from_slice 是同步操作）。
+    // tokio::sync::Mutex 会引入不必要的 async 开销和潜在的 await 中断。
+    // SAFETY: stderr_reader 线程中的 lock() → extend_from_slice → unlock 是
+    // 同步完成的，主线程的 lock() 也是同步的（take + lock 不跨 await）。
     let partial_stderr: Arc<std::sync::Mutex<Vec<u8>>> =
         Arc::new(std::sync::Mutex::new(Vec::new()));
     let partial_stderr_clone = partial_stderr.clone();

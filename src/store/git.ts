@@ -128,7 +128,8 @@ export const useGitStore = defineStore('git', () => {
   const isLoading = ref(false);
   const isCommitting = ref(false);
 
-  const baselineCache = ref<Record<string, IGitFileBaselinePayload>>({});
+  // baseline 缓存已迁入 vue-query：fetchQuery 去重 + staleTime=Infinity，
+  // 失效用 removeQueries。baselineEpoch 保留供调用方判断 baseline 是否已刷新。
   const baselineEpoch = ref(0);
 
   const commitHistory = shallowRef<IGitCommitSummaryPayload[]>([]);
@@ -210,6 +211,11 @@ export const useGitStore = defineStore('git', () => {
     relativePath,
   ];
 
+  const fileBaselineQueryKey = (path: string): string[] => [
+    ...GIT_FILE_BASELINE_QUERY_PREFIX,
+    normalizeFileSystemPath(path),
+  ];
+
   let statusRequestId = 0;
   let commitHistoryRequestId = 0;
   let branchesRequestId = 0;
@@ -269,7 +275,7 @@ export const useGitStore = defineStore('git', () => {
   };
 
   const clearBaselineCache = (): void => {
-    baselineCache.value = {};
+    queryClient.removeQueries({ queryKey: [...GIT_FILE_BASELINE_QUERY_PREFIX] });
     baselineEpoch.value += 1;
     // 以 vue-query 为唯一缓存:切换工作树/提交时清空提交详情与文件 diff 查询(含进行中的请求)。
     queryClient.removeQueries({ queryKey: [...GIT_COMMIT_DETAIL_QUERY_PREFIX] });
@@ -333,17 +339,13 @@ export const useGitStore = defineStore('git', () => {
     resetPullRequests();
   };
 
+  // invalidateFileBaseline：从 vue-query 移除指定路径的 baseline 查询，
+  // 下次 getFileBaseline 会重新发请求。同时推进 epoch 让调用方感知变化。
   const invalidateFileBaseline = (path?: string | null): void => {
+    if (!path) return;
     const cacheKey = normalizeFileSystemPath(path);
     if (!cacheKey) return;
-    const hasCached = cacheKey in baselineCache.value;
-    const hasPending = pendingBaselineRequests.has(cacheKey);
-    if (!hasCached && !hasPending) return;
-    if (hasCached) {
-      const nextCache = { ...baselineCache.value };
-      delete nextCache[cacheKey];
-      baselineCache.value = nextCache;
-    }
+    queryClient.removeQueries({ queryKey: fileBaselineQueryKey(path) });
     baselineEpoch.value += 1;
   };
 
@@ -398,32 +400,13 @@ export const useGitStore = defineStore('git', () => {
     return null;
   };
 
+  // file baseline 已迁入 vue-query：fetchQuery 自动去重同 key 请求，
+  // staleTime=Infinity 命中即复用。文件被修改后由 invalidateFileBaseline 调 removeQueries 失效。
   const getFileBaseline = async (path: string): Promise<IGitFileBaselinePayload> => {
-    const cacheKey = normalizeFileSystemPath(path);
-    const cached = baselineCache.value[cacheKey];
-    if (cached) return cached;
-
-    const pending = pendingBaselineRequests.get(cacheKey);
-    if (pending) return pending;
-
-    const epochAtRequest = baselineEpoch.value;
-    const request = tauriService
-      .getGitFileBaseline(path)
-      .then((payload) => {
-        if (epochAtRequest === baselineEpoch.value) {
-          baselineCache.value = {
-            ...baselineCache.value,
-            [cacheKey]: payload,
-          };
-        }
-        return payload;
-      })
-      .finally(() => {
-        pendingBaselineRequests.delete(cacheKey);
-      });
-
-    pendingBaselineRequests.set(cacheKey, request);
-    return request;
+    return queryClient.fetchQuery<IGitFileBaselinePayload>({
+      queryKey: fileBaselineQueryKey(path),
+      queryFn: () => tauriService.getGitFileBaseline(path),
+    });
   };
 
   const loadCommitDetail = async (commitId: string): Promise<IGitCommitDetailPayload> => {
