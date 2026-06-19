@@ -207,17 +207,17 @@ export class McpGatewayWarmPool {
             return { ok: true as const, serverName, catalog };
           } catch (error) {
             const message = error instanceof Error ? error.message : String(error);
-            return { ok: false as true, serverName, message };
+            return { ok: false as const, serverName, message };
           }
         }
-        return null;
+        return undefined;
       }),
     );
 
     // 保持原始顺序：按 MCP_SERVER_NAMES 顺序整理结果
-    const byName = new Map<string, { ok: boolean; catalog?: IMcpGatewayCatalog; message?: string }>();
+    const byName = new Map<string, { ok: boolean; catalog?: IMcpGatewayCatalog; message?: string | undefined }>();
     for (const result of results) {
-      if (result.status === "fulfilled" && result.value) {
+      if (result.status === "fulfilled" && result.value !== undefined) {
         byName.set(result.value.serverName, result.value);
       }
     }
@@ -228,7 +228,7 @@ export class McpGatewayWarmPool {
         catalogs.push(entry.catalog);
         errors.push(...entry.catalog.errors.map((message) => `${serverName}: ${message}`));
       } else if (entry && !entry.ok) {
-        const message = entry.message ?? "Unknown error";
+        const message = entry.message ?? 'Unknown error';
         errors.push(`${serverName}: ${message}`);
         catalogs.push({
           serverName,
