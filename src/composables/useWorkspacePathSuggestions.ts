@@ -1,3 +1,6 @@
+import { ref } from 'vue';
+import { tauriService } from '@/services/tauri';
+import type { IWorkspaceEntry } from '@/types/editor';
 import { getBoundedCacheValue, setBoundedCacheValue } from '@/utils/core/lru-cache';
 import { joinFileSystemPath } from '@/utils/file/path';
 
@@ -44,13 +47,12 @@ export const PATH_SUGGESTION_DIRECTORY_CACHE_LIMIT = 64;
 export const PATH_SUGGESTION_FILE_SEARCH_CACHE_LIMIT = 64;
 
 /**
- * 以下三个辅助函数工作在「相对路径段」上，不经过 path.ts 的 normalizeFileSystemPath，
+ * 以下两个辅助函数工作在「相对路径段」上，不经过 path.ts 的 normalizeFileSystemPath，
  * 因为后者会额外做 verbatim 前缀剥离 + 大小写折叠，会改变相对段的语义。
- * 仅做分隔符归一化和首尾修剪，保留原始段的内容。
+ * 仅做分隔符归一化和尾部修剪，保留原始段的内容。
  */
 const normalizeSlashes = (value: string): string => value.replace(/\\/gu, '/');
 const stripTrailingSlashes = (value: string): string => value.replace(/[\\/]+$/u, '');
-const stripLeadingSlashes = (value: string): string => value.replace(/^[\\/]+/u, '');
 
 const getFileName = (relativePath: string): string => {
   const segments = normalizeSlashes(relativePath).split('/').filter(Boolean);
