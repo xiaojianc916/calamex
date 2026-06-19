@@ -96,7 +96,8 @@
         "src/styles/sidebar-explorer.css",
         "src/styles/sidebar-source-control.css",
         "src/styles/app-shell.css",
-        "src/styles/sidebar-source-control-pr.css"
+        "src/styles/sidebar-source-control-pr.css",
+        "src/styles/sidebar-source-control-github-auth.css"
       ],
       "linter": {
         "rules": {

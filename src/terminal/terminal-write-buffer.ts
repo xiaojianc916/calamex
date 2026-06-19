@@ -279,7 +279,9 @@ export class TerminalWriteBuffer {
       0,
       this._pendingTerminalWriteCallbacks.length,
     );
-    cbs.forEach((cb) => cb());
+    for (const cb of cbs) {
+      cb();
+    }
   }
 
   private _scheduleFlush(): void {
