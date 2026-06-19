@@ -40,7 +40,7 @@ describe('useTerminalRunControl', () => {
     const { stopRun, isRunning } = useTerminalRunControl();
     await stopRun();
 
-    expect(cancelTerminalRun).toHaveBeenCalledWith({ runId: 'run-1', mode: 'graceful' });
+    expect(cancelTerminalRun).toHaveBeenCalledWith({ runId: 'run-1' });
     expect(resetActiveRunLifecycle).toHaveBeenCalledOnce();
     expect(isRunning.value).toBe(false);
     expect(store.pendingTerminalRunId).toBeNull();

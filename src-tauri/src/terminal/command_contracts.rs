@@ -90,5 +90,4 @@ pub struct HeartbeatTerminalSessionRequest {
 #[serde(rename_all = "camelCase")]
 pub struct CancelTerminalRunRequest {
     pub(crate) run_id: String,
-    pub(crate) mode: Option<String>,
 }

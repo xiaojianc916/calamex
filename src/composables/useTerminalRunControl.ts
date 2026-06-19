@@ -42,7 +42,7 @@ export const useTerminalRunControl = () => {
     const runId = editorStore.currentRunId;
     if (runId) {
       try {
-        await tauriService.cancelTerminalRun({ runId, mode: 'graceful' });
+        await tauriService.cancelTerminalRun({ runId });
       } catch {
         // 运行可能已结束或完成事件已丢失，后端会找不到该运行；这属于预期内的
         // 情况，记录一条信息日志后继续强制复位，保证运行闸门能够被重新打开。

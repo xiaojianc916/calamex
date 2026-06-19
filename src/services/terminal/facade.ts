@@ -12,7 +12,6 @@ import {
   type ITerminalRunHandle,
   type ITerminalRunStartedPayload,
   type ITerminalSessionPayload,
-  type TTerminalCancelMode,
   type TTerminalRuntimeState,
 } from '@/types/terminal';
 import { createDisposableBag, createMutableDisposable } from '@/utils/core/disposable';
@@ -37,7 +36,7 @@ export type TTerminalUnsubscribe = () => void;
 export interface ITerminalFacade {
   ensureView(): Promise<void>;
   dispatchScript(spec: IDispatchTerminalScriptRequest): Promise<ITerminalRunHandle>;
-  cancelRun(runId: string, mode: TTerminalCancelMode): Promise<void>;
+  cancelRun(runId: string): Promise<void>;
   writeInput(sessionId: string, data: Uint8Array): Promise<void>;
   writeInputForCurrentState(data: Uint8Array): Promise<void>;
   resize(cols: number, rows: number): Promise<void>;
@@ -403,9 +402,9 @@ export const useTerminalFacade = (options: ITerminalFacadeOptions = {}): ITermin
     }
   };
 
-  const cancelRun = (runId: string, mode: TTerminalCancelMode): Promise<void> => {
-    runtimeStore.recordCancelRequested(mode);
-    return tauri.cancelTerminalRun({ runId, mode });
+  const cancelRun = (runId: string): Promise<void> => {
+    runtimeStore.recordCancelRequested();
+    return tauri.cancelTerminalRun({ runId });
   };
 
   const writeInput = async (sessionId: string, data: Uint8Array): Promise<void> => {

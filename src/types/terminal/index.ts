@@ -7,7 +7,6 @@ export type TTerminalRuntimeState =
   | 'switching_to_run'
   | 'running'
   | 'switching_to_idle';
-export type TTerminalCancelMode = 'graceful' | 'kill';
 export type TTerminalInputRoute = 'interactive' | 'run' | 'buffered' | 'dropped';
 export type TTerminalDataSource = 'interactive' | 'run' | 'injected_reset' | 'injected_separator';
 
@@ -48,7 +47,6 @@ export interface IHeartbeatTerminalSessionRequest {
 
 export interface ICancelTerminalRunRequest {
   runId: string;
-  mode?: TTerminalCancelMode;
 }
 
 /**

@@ -120,7 +120,7 @@ export const terminalTauriService: TTerminalTauriService = {
       payload,
       undefined,
       async () => {
-        await commands.cancelTerminalRun({ runId: payload.runId, mode: payload.mode ?? null });
+        await commands.cancelTerminalRun({ runId: payload.runId });
       },
     );
   },

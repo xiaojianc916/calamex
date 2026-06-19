@@ -6,7 +6,6 @@ import type {
   ITerminalRunHandle,
   ITerminalSessionStateChangedPayload,
   ITerminalVisualWritePayload,
-  TTerminalCancelMode,
   TTerminalDataSource,
   TTerminalInputRoute,
   TTerminalRuntimeState,
@@ -52,7 +51,6 @@ export interface ITerminalFlowDiagnostics {
   lastExitCode: number | null;
   lastCompletedAt: string | null;
   cancelRequestedAt: string | null;
-  cancelMode: TTerminalCancelMode | null;
 }
 
 // ---------------------------------------------------------------------------
@@ -160,7 +158,6 @@ const createEmptyDiagnostics = (): ITerminalFlowDiagnostics => ({
   lastExitCode: null,
   lastCompletedAt: null,
   cancelRequestedAt: null,
-  cancelMode: null,
 });
 
 // ---------------------------------------------------------------------------
@@ -394,9 +391,8 @@ export const useTerminalRuntimeStore = defineStore('terminal-runtime', () => {
     markEvent(`xterm:buffer:${payload.label}`);
   };
 
-  const recordCancelRequested = (mode: TTerminalCancelMode): void => {
+  const recordCancelRequested = (): void => {
     if (!deepDiagnosticsEnabled.value) return;
-    diagnostics.value.cancelMode = mode;
     diagnostics.value.cancelRequestedAt = nowIso();
     markEvent('cancel_terminal_run');
   };
