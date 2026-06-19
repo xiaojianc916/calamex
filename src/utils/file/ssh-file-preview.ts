@@ -1,7 +1,9 @@
 import {
   CODEMIRROR_LANGUAGE_LABELS,
+  FILE_LANGUAGE_BY_EXTENSION,
   resolveCodeMirrorLanguageId,
 } from '@/services/editor/codemirror-language';
+import { computeDocumentMetrics } from '@/utils/editor/document-metrics';
 import { splitTextGraphemes } from '@/utils/file/text-preview';
 
 export type TSshPreviewEncoding = 'utf-8' | 'utf-8-bom';
@@ -25,50 +27,6 @@ export interface ISshPreviewMatchHit extends ISshPreviewMatchRange {
   globalEnd: number;
 }
 
-const LANGUAGE_BY_EXTENSION: Readonly<Record<string, string>> = {
-  bash: 'bash',
-  bat: 'bat',
-  c: 'c',
-  cc: 'cpp',
-  cpp: 'cpp',
-  css: 'css',
-  cts: 'typescript',
-  cxx: 'cpp',
-  dockerfile: 'dockerfile',
-  go: 'go',
-  h: 'c',
-  hpp: 'cpp',
-  htm: 'html',
-  html: 'html',
-  ini: 'ini',
-  java: 'java',
-  js: 'javascript',
-  json: 'json',
-  jsonc: 'jsonc',
-  jsx: 'jsx',
-  less: 'less',
-  log: 'text',
-  md: 'markdown',
-  mts: 'typescript',
-  ps1: 'powershell',
-  py: 'python',
-  rb: 'ruby',
-  rs: 'rust',
-  scss: 'scss',
-  sh: 'bash',
-  sql: 'sql',
-  svg: 'svg',
-  toml: 'toml',
-  ts: 'typescript',
-  tsx: 'tsx',
-  txt: 'text',
-  vue: 'vue',
-  xml: 'xml',
-  yaml: 'yaml',
-  yml: 'yaml',
-  zsh: 'bash',
-};
-
 const LINE_ENDING_LABEL_MAP: Readonly<Record<TSshPreviewLineEnding, string>> = {
   lf: 'LF',
   crlf: 'CRLF',
@@ -77,6 +35,8 @@ const LINE_ENDING_LABEL_MAP: Readonly<Record<TSshPreviewLineEnding, string>> = {
   none: '无',
 };
 
+// 注意：workspace.ts 的 normalizeWorkspaceQuery 仅做 trim + toLocaleLowerCase（无 NFC）。
+// 两处语义不同（搜索图素 vs 工作区查询），如需统一请抽到 utils/file/text/normalize.ts。
 const normalizeSearchGrapheme = (value: string): string =>
   value.normalize('NFC').toLocaleLowerCase('zh-CN');
 
@@ -95,6 +55,11 @@ const resolveFileExtension = (path: string): string => {
   return fileName.split('.').at(-1) ?? '';
 };
 
+/**
+ * 行结束符归一化：将 CRLF 和 lone CR 统一为 LF。
+ * 跨语言约定：Rust 侧 src-tauri/src/commands/shell_tools.rs 的
+ * normalize_shellcheck_content 做完全相同的操作，修改时请同步两端。
+ */
 export const normalizeSshPreviewContent = (value: string): string =>
   value.replace(/\r\n/gu, '\n').replace(/\r/gu, '\n');
 
@@ -107,7 +72,7 @@ export const formatSshPreviewEncoding = (value: TSshPreviewEncoding): string =>
 export const resolveSshPreviewLanguageInfo = (path: string): ISshPreviewLanguageInfo => {
   const extension = resolveFileExtension(path);
   const codeMirrorLanguage = resolveCodeMirrorLanguageId(
-    LANGUAGE_BY_EXTENSION[extension] ?? 'text',
+    FILE_LANGUAGE_BY_EXTENSION[extension] ?? 'text',
   );
 
   return {
@@ -139,7 +104,7 @@ export const formatSshPreviewModifiedAt = (value: string | null): string => {
 };
 
 export const countSshPreviewLines = (value: string): number =>
-  value.length === 0 ? 1 : normalizeSshPreviewContent(value).split('\n').length;
+  computeDocumentMetrics(normalizeSshPreviewContent(value)).lineCount;
 
 export const resolveSshPreviewCursorPosition = (
   textBeforeCursor: string,

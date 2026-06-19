@@ -237,3 +237,51 @@ export const loadCodeMirrorLanguageExtension = async (language: string): Promise
 
 export const isCodeMirrorLanguageSupport = (value: Extension): value is LanguageSupport =>
   value instanceof LanguageSupport;
+
+/**
+ * 文件扩展名 → CodeMirror 语言 ID 映射。
+ * 由 ssh-file-preview.ts 和其他需要文件类型推断的模块共用。
+ */
+export const FILE_LANGUAGE_BY_EXTENSION: Readonly<Record<string, string>> = {
+  bash: 'bash',
+  bat: 'bat',
+  c: 'c',
+  cc: 'cpp',
+  cpp: 'cpp',
+  css: 'css',
+  cts: 'typescript',
+  cxx: 'cpp',
+  dockerfile: 'dockerfile',
+  go: 'go',
+  h: 'c',
+  hpp: 'cpp',
+  htm: 'html',
+  html: 'html',
+  ini: 'ini',
+  java: 'java',
+  js: 'javascript',
+  json: 'json',
+  jsonc: 'jsonc',
+  jsx: 'jsx',
+  less: 'less',
+  log: 'text',
+  md: 'markdown',
+  mts: 'typescript',
+  ps1: 'powershell',
+  py: 'python',
+  rb: 'ruby',
+  rs: 'rust',
+  scss: 'scss',
+  sh: 'bash',
+  sql: 'sql',
+  svg: 'svg',
+  toml: 'toml',
+  ts: 'typescript',
+  tsx: 'tsx',
+  txt: 'text',
+  vue: 'vue',
+  xml: 'xml',
+  yaml: 'yaml',
+  yml: 'yaml',
+  zsh: 'bash',
+};

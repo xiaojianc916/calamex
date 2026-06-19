@@ -49,6 +49,8 @@ export const isWorkspaceRootAccessible = async (
   }
 };
 
+// 注意：ssh-file-preview.ts 的 normalizeSearchGrapheme 做了更完整的 NFC + locale 归一化。
+// 如果未来搜索场景需要统一，考虑将这两处合并到 utils/file/text/normalize.ts。
 const normalizeWorkspaceQuery = (value: string): string => value.trim().toLocaleLowerCase();
 
 export const collectWorkspaceExpandedPathsByQuery = (

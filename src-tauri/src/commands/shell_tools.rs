@@ -105,6 +105,9 @@ fn shell_from_shebang(content: &str) -> Option<&'static str> {
     None
 }
 
+/// 行结束符归一化：将 CRLF 和 lone CR 统一为 LF。
+/// 跨语言约定：TS 侧 src/utils/file/ssh-file-preview.ts 的 normalizeSshPreviewContent
+/// 做完全相同的操作，修改时请同步两端。
 fn normalize_shellcheck_content(content: &str) -> String {
     content.replace("\r\n", "\n").replace('\r', "\n")
 }

@@ -1,3 +1,5 @@
+import { isHighSurrogateAt } from '@/utils/core/surrogate';
+
 export interface IDocumentMetrics {
   /** 文档行数（按 \n 切分；空文档视为 1 行）。 */
   lineCount: number;
@@ -28,11 +30,8 @@ export const computeDocumentMetrics = (content: string): IDocumentMetrics => {
       lineCount += 1;
     }
     // 高位代理项 + 紧随其后的低位代理项 → 合并为一个码点，跳过下一个 code unit
-    if (code >= 0xd800 && code <= 0xdbff && index + 1 < length) {
-      const nextCode = content.charCodeAt(index + 1);
-      if (nextCode >= 0xdc00 && nextCode <= 0xdfff) {
-        index += 1;
-      }
+    if (isHighSurrogateAt(content, index)) {
+      index += 1;
     }
     charCount += 1;
   }

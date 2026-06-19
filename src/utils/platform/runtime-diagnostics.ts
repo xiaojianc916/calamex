@@ -1,5 +1,6 @@
 import { ref } from 'vue';
 import { isAppError } from '@/types/app-error';
+import { performanceMs } from '@/utils/core/perf';
 import { toErrorMessage } from '@/utils/error/error';
 
 export interface IRuntimeErrorState {
@@ -54,10 +55,7 @@ interface IDiagnosticEvent {
 const diagnosticTimeline: IDiagnosticEvent[] = [];
 const recursiveUpdateCulprits = new Set<string>();
 
-const nowMs = (): number =>
-  typeof performance !== 'undefined' && typeof performance.now === 'function'
-    ? Math.round(performance.now())
-    : Date.now();
+const nowMs = (): number => Math.round(performanceMs());
 
 // 记录一次诊断事件。连续相同(category+detail)的事件会被合并计数,而非堆满缓冲,
 // 这样即便某个自触发循环高频打点,也只占用一条记录并以 repeat 表征其强度。

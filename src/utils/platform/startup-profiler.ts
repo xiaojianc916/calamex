@@ -199,6 +199,8 @@ const toMarkName = (name: TStartupMarkName): string => `${STARTUP_MARK_PREFIX}${
 
 const roundDuration = (value: number): number => Math.round(value * 10) / 10;
 
+// performance.now 的 fallback 检测已统一到 utils/core/perf.ts 的 performanceMs()。
+// 此处仍需检测 performance.mark（而非 performance.now），故保留本地检查。
 const hasPerformanceMark = (): boolean =>
   typeof performance !== 'undefined' && typeof performance.mark === 'function';
 

@@ -1,3 +1,5 @@
+import { isLowSurrogateAt } from '@/utils/core/surrogate';
+
 export type TTerminalOutputBufferOptions = {
   maxLength: number;
   maxChunkLength: number;
@@ -13,8 +15,7 @@ const trimLeadingCodeUnitBoundary = (value: string, startIndex: number): string 
   if (!sliced) {
     return '';
   }
-  const firstCode = sliced.charCodeAt(0);
-  if (firstCode >= 0xdc00 && firstCode <= 0xdfff) {
+  if (isLowSurrogateAt(sliced, 0)) {
     sliced = sliced.slice(1);
   }
   return sliced;
