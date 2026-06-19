@@ -1599,6 +1599,7 @@ export const useAiAssistant = (options: IUseAiAssistantOptions) => {
         '',
         events,
       );
+      updateLiveThreadFromSidecarEvents(session.assistantMessageId, session.threadId, events);
     });
     let unlistenSidecarStream: (() => void) | null = null;
 
@@ -1678,6 +1679,7 @@ export const useAiAssistant = (options: IUseAiAssistantOptions) => {
         '',
         events,
       );
+      updateLiveThreadFromSidecarEvents(session.assistantMessageId, session.threadId, events);
     });
     let unlistenSidecarStream: (() => void) | null = null;
 
@@ -2018,6 +2020,7 @@ export const useAiAssistant = (options: IUseAiAssistantOptions) => {
         initialActivityText,
         events,
       );
+      updateLiveThreadFromSidecarEvents(assistantMessageId, targetThreadId, events);
     });
     let sidecarStream: Awaited<ReturnType<typeof subscribeSidecarStreamWithPrebuffer>> | null =
       null;

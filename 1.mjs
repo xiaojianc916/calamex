@@ -1,152 +1,138 @@
-// 1.mjs  —  P2 微优化（性能向，零行为变更，EOL 自适应）
-//
-//   ① src/services/editor/codemirror-static-highlight.ts
-//      escapeHtml：3 次 replace 全量扫描 → 单遍 replace(/[&<>]/gu, fn)
-//   ② src/utils/core/hash.ts
-//      computeFnv1a32CodePoints：for...of → 索引遍历 codePointAt（hash 输出逐位一致）
-//
-// 用法（默认 dry-run）：
-//   node 1.mjs            # 预览
-//   node 1.mjs --write    # 写入
-//   node 1.mjs --revert   # 回滚
+// scripts/codemod/step6-wire-live-thread.mjs
+// 用途：给 executeExternalAgentRequest / resolveSidecarToolConfirmation /
+//      resolveSidecarUserQuestion 三条 buffer 回调补 reduce 驱动的 liveThread 接线，
+//      与 executeAiRequest(chat) / executeSidecarAgentRequest(agent) 同构（流式保真）。
+// 校验对象：当前 main，src/composables/ai/useAiAssistant.ts。
+// 运行：node scripts/codemod/step6-wire-live-thread.mjs --check   （干跑，不写）
+//      node scripts/codemod/step6-wire-live-thread.mjs            （写入）
+// 之后：pnpm typecheck && pnpm lint && pnpm test，确认无回归后手动提交。
 
-import { readFile, writeFile } from 'node:fs/promises';
-import { existsSync } from 'node:fs';
-import { fileURLToPath } from 'node:url';
-import { dirname, join } from 'node:path';
+import { readFileSync, writeFileSync } from 'node:fs';
+import { resolve, join } from 'node:path';
 
-const __dirname = dirname(fileURLToPath(import.meta.url));
+const REPO_ROOT = process.env.REPO_ROOT ? resolve(process.env.REPO_ROOT) : process.cwd();
+const CHECK_ONLY = process.argv.includes('--check');
 
-const MODE = process.argv.includes('--write')
-  ? 'write'
-  : process.argv.includes('--revert')
-    ? 'revert'
-    : 'dry';
+const TARGET = join('src', 'composables', 'ai', 'useAiAssistant.ts');
 
-const findRepoRoot = (startDirs) => {
-  for (const start of startDirs) {
-    let dir = start;
-    for (let depth = 0; depth < 8; depth += 1) {
-      if (existsSync(join(dir, 'src', 'utils', 'core', 'hash.ts'))) return dir;
-      const parent = dirname(dir);
-      if (parent === dir) break;
-      dir = parent;
-    }
-  }
-  return null;
-};
+// --- EOL 保真 ---------------------------------------------------------------
+const detectEol = (s) => (s.includes('\r\n') ? '\r\n' : '\n');
+const toLf = (s) => s.replace(/\r\n/g, '\n');
+const fromLf = (s, eol) => (eol === '\r\n' ? s.replace(/\n/g, '\r\n') : s);
 
-const REPO_ROOT = findRepoRoot([process.cwd(), __dirname]);
-if (!REPO_ROOT) {
-  console.error('✗ 未能定位仓库根目录（未找到 src/utils/core/hash.ts）。请在仓库内运行。');
-  process.exit(1);
-}
-console.log(`仓库根：${REPO_ROOT}`);
-
-// 锚点一律以 LF 书写，匹配/写回时按目标文件实际 EOL 自适应。
-const detectEol = (text) => (text.includes('\r\n') ? '\r\n' : '\n');
-const toEol = (s, eol) => s.replace(/\r\n/g, '\n').replace(/\n/g, eol);
-
-/** @type {{file: string, before: string, after: string}[]} */
-const EDITS = [
-  {
-    file: 'src/services/editor/codemirror-static-highlight.ts',
-    before: `const escapeHtml = (value: string): string =>
-  value.replace(/&/gu, '&amp;').replace(/</gu, '&lt;').replace(/>/gu, '&gt;');`,
-    after: `const escapeHtmlChar = (char: string): string =>
-  char === '&' ? '&amp;' : char === '<' ? '&lt;' : '&gt;';
-
-const escapeHtml = (value: string): string => value.replace(/[&<>]/gu, escapeHtmlChar);`,
-  },
-  {
-    file: 'src/utils/core/hash.ts',
-    before: `const computeFnv1a32CodePoints = (value: string): number => {
-  let hash = 0x811c9dc5;
-  // for...of 比 indexed loop 慢；但要正确处理 surrogate pair 又不破坏既有 hash 值，
-  // 这里保留 code-point 语义。如需更快路径，使用 fnv1a32Bytes 走 UTF-8。
-  for (const char of value) {
-    // codePointAt 在 for...of 产生的非空字符串上必返回 number，无需 ?? 兜底。
-    hash ^= char.codePointAt(0)!;
-    hash = Math.imul(hash, 0x01000193);
-  }
-  return hash >>> 0;
-};`,
-    after: `const computeFnv1a32CodePoints = (value: string): number => {
-  let hash = 0x811c9dc5;
-  // 索引遍历替代 for...of：避免字符串迭代器协议开销与逐 code point 子串分配。
-  // 通过 codePointAt + 跳过低位代理项保持 code-point 语义，hash 输出与旧实现逐位一致。
-  for (let i = 0; i < value.length; i += 1) {
-    const codePoint = value.codePointAt(i)!;
-    hash ^= codePoint;
-    hash = Math.imul(hash, 0x01000193);
-    if (codePoint > 0xffff) {
-      // 完整 surrogate pair：跳过其低位代理项，避免重复计入。
-      i += 1;
-    }
-  }
-  return hash >>> 0;
-};`,
-  },
-];
-
-const countOccurrences = (haystack, needle) => {
-  let count = 0;
-  let from = 0;
+// --- 事务式替换：命中数必须等于 count，否则抛错（零写入） ---------------------
+const occurrences = (text, needle) => {
+  let n = 0;
+  let i = 0;
   for (;;) {
-    const idx = haystack.indexOf(needle, from);
-    if (idx === -1) break;
-    count += 1;
-    from = idx + needle.length;
+    const at = text.indexOf(needle, i);
+    if (at < 0) break;
+    n += 1;
+    i = at + needle.length;
   }
-  return count;
+  return n;
 };
 
-let changed = 0;
-let skipped = 0;
-let failed = 0;
-
-for (const edit of EDITS) {
-  const abs = join(REPO_ROOT, edit.file);
-
-  let src;
-  try {
-    src = await readFile(abs, 'utf8');
-  } catch (err) {
-    console.error(`✗ 读取失败 ${edit.file}: ${err.message}`);
-    failed += 1;
-    continue;
+const planEdit = (text, { find, replace, count, label }) => {
+  const hits = occurrences(text, find);
+  if (hits !== count) {
+    throw new Error(`[${label}] 期望命中 ${count} 处，实际 ${hits} 处；中止（零写入）。`);
   }
+  return text.split(find).join(replace);
+};
 
-  const eol = detectEol(src);
-  const from = toEol(MODE === 'revert' ? edit.after : edit.before, eol);
-  const to = toEol(MODE === 'revert' ? edit.before : edit.after, eol);
-
-  if (!src.includes(from) && src.includes(to)) {
-    console.log(`• 已是目标状态，跳过：${edit.file}`);
-    skipped += 1;
-    continue;
+const assertContains = (text, needle, label) => {
+  if (!text.includes(needle)) {
+    throw new Error(`[self-test] 缺少锚点：${label}`);
   }
+};
 
-  const hits = countOccurrences(src, from);
-  if (hits !== 1) {
-    console.error(`✗ 锚点未唯一命中（出现 ${hits} 次），跳过：${edit.file}（EOL=${eol === '\r\n' ? 'CRLF' : 'LF'}）`);
-    failed += 1;
-    continue;
-  }
+// --- 锚点（均为 LF）----------------------------------------------------------
+const EXTERNAL_FIND = [
+  '      applySidecarLiveEventsToAgentMessage(',
+  '        assistantMessageId,',
+  '        targetThreadId,',
+  '        initialActivityText,',
+  '        events,',
+  '      );',
+  '    });',
+].join('\n');
 
-  const next = src.replace(from, to);
-  if (MODE === 'dry') {
-    console.log(`\n===== ${edit.file} (${MODE}, EOL=${eol === '\r\n' ? 'CRLF' : 'LF'}) =====`);
-    console.log('--- before ---\n' + from);
-    console.log('--- after ----\n' + to);
-    changed += 1;
-    continue;
-  }
+const EXTERNAL_REPLACE = [
+  '      applySidecarLiveEventsToAgentMessage(',
+  '        assistantMessageId,',
+  '        targetThreadId,',
+  '        initialActivityText,',
+  '        events,',
+  '      );',
+  '      updateLiveThreadFromSidecarEvents(assistantMessageId, targetThreadId, events);',
+  '    });',
+].join('\n');
 
-  await writeFile(abs, next, 'utf8');
-  console.log(`✓ ${MODE === 'revert' ? '已回滚' : '已写入'}：${edit.file}`);
-  changed += 1;
+const RESOLVE_FIND = [
+  '      applySidecarLiveEventsToAgentMessage(',
+  '        session.assistantMessageId,',
+  '        session.threadId,',
+  "        '',",
+  '        events,',
+  '      );',
+  '    });',
+].join('\n');
+
+const RESOLVE_REPLACE = [
+  '      applySidecarLiveEventsToAgentMessage(',
+  '        session.assistantMessageId,',
+  '        session.threadId,',
+  "        '',",
+  '        events,',
+  '      );',
+  '      updateLiveThreadFromSidecarEvents(session.assistantMessageId, session.threadId, events);',
+  '    });',
+].join('\n');
+
+// --- 执行 --------------------------------------------------------------------
+const path = join(REPO_ROOT, TARGET);
+const raw = readFileSync(path, 'utf8');
+const eol = detectEol(raw);
+let text = toLf(raw);
+
+// 前置自检：锚点存在 + 当前占位为 3（1 定义 + chat + agent）。
+assertContains(text, 'const updateLiveThreadFromSidecarEvents = (', 'definition');
+assertContains(text, EXTERNAL_FIND, 'external buffer block');
+assertContains(text, RESOLVE_FIND, 'resolve buffer block (x2)');
+
+const before = occurrences(text, 'updateLiveThreadFromSidecarEvents');
+if (before !== 3) {
+  throw new Error(
+    `[guard] 预期 updateLiveThreadFromSidecarEvents 出现 3 次（1 定义 + chat + agent），实际 ${before} 次。` +
+      ' main 可能已变动，请重新核对后再跑。',
+  );
 }
 
-console.log(`\n[${MODE}] 变更 ${changed} · 跳过 ${skipped} · 失败 ${failed}`);
-if (failed > 0) process.exitCode = 1;
+// 编辑（事务式）：external(count 1) + resolve(count 2)。
+text = planEdit(text, {
+  find: EXTERNAL_FIND,
+  replace: EXTERNAL_REPLACE,
+  count: 1,
+  label: 'wire executeExternalAgentRequest',
+});
+text = planEdit(text, {
+  find: RESOLVE_FIND,
+  replace: RESOLVE_REPLACE,
+  count: 2,
+  label: 'wire resolveSidecarToolConfirmation + resolveSidecarUserQuestion',
+});
+
+// 后置校验：占位数 3 -> 6（+3）。
+const after = occurrences(text, 'updateLiveThreadFromSidecarEvents');
+if (after !== 6) {
+  throw new Error(`[post-check] 期望接线后出现 6 次，实际 ${after} 次；中止。`);
+}
+
+if (CHECK_ONLY) {
+  console.log(`[check] OK：${TARGET} 将新增 3 处接线（${before} -> ${after}），未写入。`);
+  process.exit(0);
+}
+
+writeFileSync(path, fromLf(text, eol), 'utf8');
+console.log(`[done] 已写入 ${TARGET}：新增 3 处接线（${before} -> ${after}）。`);
