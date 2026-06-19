@@ -305,6 +305,29 @@ export interface IAiSessionModesPayload {
   modes: unknown;
 }
 
+/**
+ * ACP 会话配置项查询 / 切换请求与负载（ADR-20260617 · D7-③，对齐 D7-③-c 的会话模式管线）。
+ *
+ * thread 维度；与生成绑定 AiGetSessionConfigOptionsRequest / AiSetSessionConfigOptionRequest /
+ * AiSessionConfigOptionsPayload 结构一致（全 camelCase、全必填）。configId / valueId 为 ACP
+ * SessionConfigOption.id / SessionConfigValueId 原值逐字透传，跨层不做语义映射。configOptions
+ * 为 ACP NewSessionResponse.config_options（Vec<SessionConfigOption>）原始负载逐字透传（形状
+ * unknown），由前端 ACL（from-acp-session-config-options）解析为选择器 VM。
+ */
+export interface IAiGetSessionConfigOptionsRequest {
+  threadId: string;
+}
+
+export interface IAiSetSessionConfigOptionRequest {
+  threadId: string;
+  configId: string;
+  valueId: string;
+}
+
+export interface IAiSessionConfigOptionsPayload {
+  configOptions: unknown;
+}
+
 export interface IAiInlineCompletionRequest {
   filePath: string;
   language: string;

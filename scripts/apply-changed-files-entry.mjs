@@ -1,77 +1,14 @@
-// scripts/apply-changed-files-entry.mjs
-// 方案B / Step 5.0 第二切片：为 AI thread entries 增加 changed_files entry，
-// 并让 reduceThread 按 patch id upsert（应用创建 / 撤销重应用替换 summary）。
-// 幂等：可重复运行；锚点已应用则自动跳过。需在仓库根目录执行。
+// scripts/apply-changed-files-store.mjs
+// 仅处理 store/aiThread 三文件（events / reduce / reduce.spec）的 changed_files 接入。
+// 依赖 PR #1（plan / context_compaction）已在本地——请先 git pull。
+// 幂等：先查 marker，已应用则跳过；可重复运行。需在仓库根目录执行。
 import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 
 const ROOT = process.cwd();
 
-if (!existsSync(resolve(ROOT, 'src/types/ai/thread/entry.schema.ts'))) {
-  console.error('✗ 未找到 src/types/ai/thread/entry.schema.ts —— 请在仓库根目录运行此脚本。');
-  process.exit(1);
-}
-
-/** @type {Array<{file:string, find:string, replace:string, marker:string, all?:boolean}>} */
+/** @type {Array<{file:string, find:string, replace:string, marker:string}>} */
 const edits = [
-  // ---- src/types/ai/thread/constants.ts ---------------------------------
-  {
-    file: 'src/types/ai/thread/constants.ts',
-    marker: `  'changed_files',\n] as const;`,
-    find: `  'context_compaction',\n] as const;`,
-    replace: `  'context_compaction',\n  'changed_files',\n] as const;`,
-  },
-
-  // ---- src/types/ai/thread/entry.schema.ts ------------------------------
-  {
-    file: 'src/types/ai/thread/entry.schema.ts',
-    marker: `from '@/types/ai/patch.schema'`,
-    find: `} from '@/types/ai/conversation.schema';`,
-    replace: `} from '@/types/ai/conversation.schema';\nimport { aiAgentPatchSummarySchema } from '@/types/ai/patch.schema';`,
-  },
-  {
-    file: 'src/types/ai/thread/entry.schema.ts',
-    marker: `aiThreadChangedFilesEntrySchema = z.object(`,
-    find: `export const aiThreadEntrySchema = z.discriminatedUnion('type', [`,
-    replace:
-      `/**\n` +
-      ` * Changed-files entry：内嵌完整 patch 摘要快照，使 thread entries 自洽可持久化。\n` +
-      ` * 投影层据此渲染 changed-files-summary；应用/撤销同一 patch 按 id upsert，\n` +
-      ` * 避免与 aiAgent store 的 patch 摘要错位（位置由首次 createdAt 固定）。\n` +
-      ` */\n` +
-      `export const aiThreadChangedFilesEntrySchema = z.object({\n` +
-      `  type: z.literal('changed_files'),\n` +
-      `  id: z.string().min(1),\n` +
-      `  createdAt: z.string().min(1),\n` +
-      `  summary: aiAgentPatchSummarySchema,\n` +
-      `});\n\n` +
-      `export const aiThreadEntrySchema = z.discriminatedUnion('type', [`,
-  },
-  {
-    file: 'src/types/ai/thread/entry.schema.ts',
-    marker: `  aiThreadChangedFilesEntrySchema,\n]);`,
-    find: `  aiThreadContextCompactionEntrySchema,\n]);`,
-    replace: `  aiThreadContextCompactionEntrySchema,\n  aiThreadChangedFilesEntrySchema,\n]);`,
-  },
-
-  // ---- src/types/ai/thread/index.ts -------------------------------------
-  // 同时出现在「type import 块」和「value re-export 块」，两处都要加 → all。
-  {
-    file: 'src/types/ai/thread/index.ts',
-    all: true,
-    marker: `  aiThreadChangedFilesEntrySchema,\n  aiThreadContextCompactionEntrySchema,`,
-    find: `  aiThreadAssistantMessageEntrySchema,\n  aiThreadContextCompactionEntrySchema,`,
-    replace: `  aiThreadAssistantMessageEntrySchema,\n  aiThreadChangedFilesEntrySchema,\n  aiThreadContextCompactionEntrySchema,`,
-  },
-  {
-    file: 'src/types/ai/thread/index.ts',
-    marker: `export type IAiThreadChangedFilesEntry = z.infer`,
-    find: `export type IAiThreadContextCompactionEntry = z.infer<typeof aiThreadContextCompactionEntrySchema>;`,
-    replace:
-      `export type IAiThreadContextCompactionEntry = z.infer<typeof aiThreadContextCompactionEntrySchema>;\n` +
-      `export type IAiThreadChangedFilesEntry = z.infer<typeof aiThreadChangedFilesEntrySchema>;`,
-  },
-
   // ---- src/store/aiThread/events.ts -------------------------------------
   {
     file: 'src/store/aiThread/events.ts',
@@ -215,27 +152,28 @@ for (const e of edits) {
   }
   let src = readFileSync(path, 'utf8');
 
-  const occurrences = src.split(e.find).length - 1;
-
-  if (occurrences === 0) {
-    if (src.includes(e.marker)) {
-      console.log(`• 跳过（已应用）：${e.file} :: ${e.marker.split('\n')[0]}`);
-      skipped += 1;
-      continue;
-    }
-    console.error(`✗ 锚点未找到：${e.file}\n  锚点：${JSON.stringify(e.find.slice(0, 60))}`);
-    process.exit(1);
+  // 先查 marker：已应用则跳过（保证幂等，避免重复插入）。
+  if (src.includes(e.marker)) {
+    console.log(`• 跳过（已应用）：${e.file} :: ${e.marker.split('\n')[0]}`);
+    skipped += 1;
+    continue;
   }
 
-  if (!e.all && occurrences > 1) {
+  const occurrences = src.split(e.find).length - 1;
+  if (occurrences === 0) {
+    console.error(
+      `✗ 锚点未找到：${e.file}\n  请确认已 git pull 到含 PR #1 的最新 main。\n  锚点：${JSON.stringify(e.find.slice(0, 60))}`,
+    );
+    process.exit(1);
+  }
+  if (occurrences > 1) {
     console.error(`✗ 锚点不唯一（${occurrences} 处）：${e.file} —— 请人工核对。`);
     process.exit(1);
   }
 
-  src = e.all ? src.split(e.find).join(e.replace) : src.replace(e.find, () => e.replace);
-
+  src = src.replace(e.find, () => e.replace);
   writeFileSync(path, src, 'utf8');
-  console.log(`✓ 应用 ${e.all ? `(${occurrences} 处)` : ''} ${e.file}`);
+  console.log(`✓ 应用 ${e.file}`);
   applied += 1;
 }
 
