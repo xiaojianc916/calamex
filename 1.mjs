@@ -1,322 +1,269 @@
 #!/usr/bin/env node
-/**
- * Step 7.3（质量优先 / 纯逻辑先行）：entries 持久化「读路径」解析器。
- *
- * 编码 hydrate 时的数据优先级决策（纯函数、无 I/O、无 store 依赖）：
- *   1) 新 key（entries 信封）严格 aiThreadPersistSchema 解析成功 → 权威采用；
- *   2) 新 key 存在但严格失败 → salvageHydratedThreadEntries 逐条救援；
- *   3) 新 key 缺失 / 不可救援 → 回退旧 key legacy messages，按线程 legacyThreadToThread
- *      懒投影为 entries（旧 key 迁移期仍作非破坏式备份）；
- *   4) 都没有 → 空态。
- * activeThreadId 一律 normalize（指向不存在线程时落首个，空库为 null）。
- *
- * 仅依赖已合入 main 的 7.1（persist.schema / persist）+ 既有 legacy-adapter；
- * 不依赖 7.2（不碰 conversation.schema）。本步不接线，零运行时变化。
- *
- * 创建：
- *   - src/store/aiThread/hydrate.ts
- *   - src/store/aiThread/hydrate.spec.ts
- *
- * 用法：
- *   node scripts/codemod/step7-3-hydrate-resolver.mjs --check
- *   node scripts/codemod/step7-3-hydrate-resolver.mjs
- *   REPO_ROOT=/path/to/repo node scripts/codemod/step7-3-hydrate-resolver.mjs
- *   --force  # 允许覆盖已存在的新文件
- */
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+// scripts/codemod/step7-4a-project-conversation.mjs
+//
+// Step 7.4a —— 写侧投影砖 (CREATE-only, 零运行时变化)
+//
+// 新建:
+//   src/store/aiThread/project.ts        legacy 会话 → aiThreadPersist 投影 (纯函数)
+//   src/store/aiThread/project.spec.ts   单测 (含 project→parse→resolve 往返对称)
+//
+// 该步是 7.3 读 resolver 的对称写砖, 为后续 7.4b 的"双写新 key"提供序列化入口。
+// 不修改任何既有文件; 不接线 main.ts / store; 不引入 idb。
+//
+// 依赖前置 (缺失即提前失败, 零写入):
+//   - 7.3 已应用: src/store/aiThread/hydrate.ts 含 normalizeActiveThreadId / resolvePersistedThreads
+//   - 7.1 已在 main: src/types/ai/thread/persist.schema.ts 含 AI_THREAD_PERSIST_VERSION / aiThreadPersistSchema
+//   - main 既有:    src/store/aiThread/legacy-adapter.ts 含 legacyThreadToThread
+//
+// 用法:
+//   node scripts/codemod/step7-4a-project-conversation.mjs --check   # 干跑, 只校验/预览
+//   node scripts/codemod/step7-4a-project-conversation.mjs           # 写入 (目标已存在则拒绝)
+//   node scripts/codemod/step7-4a-project-conversation.mjs --force   # 覆盖已存在目标
+//   REPO_ROOT=/path/to/repo node scripts/codemod/step7-4a-project-conversation.mjs
+
+import { mkdirSync, readFileSync, writeFileSync, existsSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 
 const REPO_ROOT = resolve(process.env.REPO_ROOT ?? process.cwd());
-const args = new Set(process.argv.slice(2));
-const CHECK = args.has('--check');
-const FORCE = args.has('--force');
+const argv = new Set(process.argv.slice(2));
+const CHECK = argv.has('--check');
+const FORCE = argv.has('--force');
 
-const abs = (relPath) => join(REPO_ROOT, ...relPath.split('/'));
+const log = (...a) => console.log('[step7-4a]', ...a);
 const fail = (msg) => {
-  console.error(`\n✗ ${msg}\n  未写入任何文件。`);
+  console.error('[step7-4a] ✗', msg);
   process.exit(1);
 };
 
 // ---------------------------------------------------------------------------
-// 前置依赖校验（7.1 必须已合入；缺失则拒绝，给出明确指引）
+// 依赖前置校验 token (路径相对 REPO_ROOT → 必须包含的导出名)
 // ---------------------------------------------------------------------------
-const DEPS = [
-  { path: 'src/types/ai/thread/persist.schema.ts', token: 'aiThreadPersistSchema' },
-  { path: 'src/store/aiThread/persist.ts', token: 'salvageHydratedThreadEntries' },
-  { path: 'src/store/aiThread/legacy-adapter.ts', token: 'legacyThreadToThread' },
+const PRECONDITIONS = [
+  {
+    path: 'src/store/aiThread/hydrate.ts',
+    tokens: ['normalizeActiveThreadId', 'resolvePersistedThreads'],
+    hint: '请先应用 step7-3-hydrate-resolver.mjs (7.3 尚未落地)。',
+  },
+  {
+    path: 'src/store/aiThread/legacy-adapter.ts',
+    tokens: ['legacyThreadToThread'],
+    hint: 'legacy-adapter 缺少 legacyThreadToThread, 与预期 main 不符。',
+  },
+  {
+    path: 'src/types/ai/thread/persist.schema.ts',
+    tokens: ['AI_THREAD_PERSIST_VERSION', 'aiThreadPersistSchema'],
+    hint: '请先合入 7.1 (entries persist schema)。',
+  },
 ];
-for (const { path, token } of DEPS) {
-  if (!existsSync(abs(path))) {
-    fail(`缺少依赖文件 ${path}（请先合入 Step 7.1 后再运行 7.3）。`);
-  }
-  if (!readFileSync(abs(path), 'utf8').includes(token)) {
-    fail(`依赖 ${path} 未导出 ${token}（7.1 产物与预期不符，请核对后再运行）。`);
-  }
-}
 
-// ---------------------------------------------------------------------------
-// 新文件内容
-// ---------------------------------------------------------------------------
-const HYDRATE_TS = `import type { IAiConversationThread } from '@/store/aiConversation';
-import { legacyThreadToThread } from '@/store/aiThread/legacy-adapter';
-import { salvageHydratedThreadEntries } from '@/store/aiThread/persist';
-import type { IAiThread } from '@/types/ai/thread';
-import { aiThreadPersistSchema } from '@/types/ai/thread/persist.schema';
-
-/* ============================================================================
- * Entries 持久化「读路径」解析器（ADR-0014 Step 7.3）
- *
- * 统一编码 hydrate 时「该用哪份数据」的优先级决策，纯函数、无 I/O、无 store 依赖：
- *   1) 新 key（entries 信封）严格 aiThreadPersistSchema 解析成功 → 直接采用（权威）；
- *   2) 新 key 存在但严格解析失败 → salvageHydratedThreadEntries 逐条救援；
- *   3) 新 key 缺失 / 不可救援 → 回退旧 key（legacy messages），按线程 legacyThreadToThread
- *      懒投影为 entries（迁移期旧 key 仍作非破坏式备份保留）；
- *   4) 都没有 → 空态。
- *
- * activeThreadId 一律经 normalize 校正：指向不存在的线程时落到首个线程，空库则为 null。
- *
- * 注意：本模块尚未被任何地方 import（接线在 Step 7.4 的异步预热 hydrate + 双写完成），
- * 故对运行时行为零影响。旧 aiConversation store 仍是唯一权威，渲染仍走既有投影。
- * ========================================================================== */
-
-/** 命中的数据来源，便于接线层打点 / 灰度观测。 */
-export type TPersistedThreadsSource = 'entries' | 'entries-salvaged' | 'legacy' | 'empty';
-
-export interface IResolvedPersistedThreads {
-  source: TPersistedThreadsSource;
-  activeThreadId: string | null;
-  threads: IAiThread[];
-}
-
-export interface IResolvePersistedThreadsInput {
-  /** 新 key（entries 信封）原始快照；缺失传 null / undefined。 */
-  rawEntriesSnapshot: unknown;
-  /** 旧 key 已 hydrate 的 activeThreadId（回退用）。 */
-  legacyActiveThreadId: string | null;
-  /** 旧 key 已 hydrate / 已救援的 legacy 线程（回退用）。 */
-  legacyThreads: IAiConversationThread[];
-}
-
-const isRecord = (value: unknown): value is Record<string, unknown> =>
-  value !== null && typeof value === 'object' && !Array.isArray(value);
-
-/** activeThreadId 必须指向现存线程；否则落到首个线程（空库为 null）。 */
-function normalizeActiveThreadId(
-  activeThreadId: string | null,
-  threads: IAiThread[],
-): string | null {
-  if (threads.length === 0) {
-    return null;
-  }
-  if (activeThreadId && threads.some((thread) => thread.id === activeThreadId)) {
-    return activeThreadId;
-  }
-  return threads[0].id;
-}
-
-export function resolvePersistedThreads(
-  input: IResolvePersistedThreadsInput,
-): IResolvedPersistedThreads {
-  const { rawEntriesSnapshot, legacyActiveThreadId, legacyThreads } = input;
-
-  // 1) + 2) 新 key 存在才尝试 entries 路径（区分「不存在」与「存在但空/坏」）。
-  if (rawEntriesSnapshot != null) {
-    const strict = aiThreadPersistSchema.safeParse(rawEntriesSnapshot);
-    if (strict.success) {
-      // 严格成功即权威，即使 threads 为空也尊重（用户已清空，不复活 legacy）。
-      return {
-        source: 'entries',
-        activeThreadId: normalizeActiveThreadId(strict.data.activeThreadId, strict.data.threads),
-        threads: strict.data.threads,
-      };
+const checkPreconditions = () => {
+  const errors = [];
+  for (const pc of PRECONDITIONS) {
+    const abs = join(REPO_ROOT, pc.path);
+    if (!existsSync(abs)) {
+      errors.push(`缺少依赖文件 ${pc.path} —— ${pc.hint}`);
+      continue;
     }
-    if (isRecord(rawEntriesSnapshot)) {
-      const salvaged = salvageHydratedThreadEntries(
-        rawEntriesSnapshot.threads,
-        rawEntriesSnapshot.activeThreadId,
-      );
-      if (salvaged) {
-        return {
-          source: 'entries-salvaged',
-          activeThreadId: normalizeActiveThreadId(salvaged.activeThreadId, salvaged.threads),
-          threads: salvaged.threads,
-        };
+    const content = readFileSync(abs, 'utf8');
+    for (const token of pc.tokens) {
+      if (!content.includes(token)) {
+        errors.push(`${pc.path} 未包含 "${token}" —— ${pc.hint}`);
       }
     }
-    // 新 key 存在但无法解析 / 救援：落到 legacy 兜底（非破坏式，旧 key 仍在）。
   }
-
-  // 3) 回退 legacy messages → entries 投影（懒迁移）。
-  if (legacyThreads.length > 0) {
-    const threads = legacyThreads.map(legacyThreadToThread);
-    return {
-      source: 'legacy',
-      activeThreadId: normalizeActiveThreadId(legacyActiveThreadId, threads),
-      threads,
-    };
-  }
-
-  // 4) 空态。
-  return { source: 'empty', activeThreadId: null, threads: [] };
-}
-`;
-
-const HYDRATE_SPEC_TS = `import { describe, expect, it } from 'vitest';
-
-import type { IAiConversationThread } from '@/store/aiConversation';
-import { resolvePersistedThreads } from '@/store/aiThread/hydrate';
-
-const ISO_A = '2026-06-19T10:00:00.000Z';
-const ISO_B = '2026-06-19T10:01:00.000Z';
-
-const userMessageEntry = (id: string, text: string) => ({
-  type: 'user_message',
-  id,
-  createdAt: ISO_A,
-  content: text.length > 0 ? [{ type: 'text', text }] : [],
-  references: [],
-});
-
-const entriesThread = (id: string, entries: unknown[]) => ({
-  id,
-  title: 'Thread ' + id,
-  titleStatus: 'generated',
-  createdAt: ISO_A,
-  updatedAt: ISO_B,
-  entries,
-});
-
-const legacyUserThread = (id: string): IAiConversationThread =>
-  ({
-    id,
-    title: 'Legacy ' + id,
-    titleStatus: 'generated',
-    createdAt: ISO_A,
-    updatedAt: ISO_B,
-    messages: [{ role: 'user', id: 'm-' + id, createdAt: ISO_A, content: 'hello', references: [] }],
-  }) as unknown as IAiConversationThread;
-
-describe('resolvePersistedThreads（Step 7.3 读路径优先级）', () => {
-  it('新 key 严格解析成功 → 直接采用 entries', () => {
-    const snapshot = {
-      version: 1,
-      activeThreadId: 't1',
-      threads: [entriesThread('t1', [userMessageEntry('u1', 'hi')])],
-    };
-    const result = resolvePersistedThreads({
-      rawEntriesSnapshot: snapshot,
-      legacyActiveThreadId: null,
-      legacyThreads: [],
-    });
-    expect(result.source).toBe('entries');
-    expect(result.activeThreadId).toBe('t1');
-    expect(result.threads).toHaveLength(1);
-    expect(result.threads[0].entries).toHaveLength(1);
-  });
-
-  it('新 key 含单条坏 entry → 逐条救援，丢坏留好', () => {
-    const snapshot = {
-      version: 1,
-      activeThreadId: 't1',
-      threads: [
-        entriesThread('t1', [userMessageEntry('u1', 'ok'), userMessageEntry('', 'bad-empty-id')]),
-      ],
-    };
-    const result = resolvePersistedThreads({
-      rawEntriesSnapshot: snapshot,
-      legacyActiveThreadId: null,
-      legacyThreads: [],
-    });
-    expect(result.source).toBe('entries-salvaged');
-    expect(result.threads[0].entries).toHaveLength(1);
-    expect(result.threads[0].entries[0].type).toBe('user_message');
-  });
-
-  it('新 key 缺失 → 回退 legacy，按线程投影为 entries', () => {
-    const result = resolvePersistedThreads({
-      rawEntriesSnapshot: null,
-      legacyActiveThreadId: 'L1',
-      legacyThreads: [legacyUserThread('L1')],
-    });
-    expect(result.source).toBe('legacy');
-    expect(result.activeThreadId).toBe('L1');
-    expect(result.threads[0].entries[0].type).toBe('user_message');
-  });
-
-  it('新 key 存在但不可救援（threads 非数组）→ 回退 legacy', () => {
-    const result = resolvePersistedThreads({
-      rawEntriesSnapshot: { version: 1, activeThreadId: 'x', threads: 'not-an-array' },
-      legacyActiveThreadId: 'L1',
-      legacyThreads: [legacyUserThread('L1')],
-    });
-    expect(result.source).toBe('legacy');
-  });
-
-  it('新旧 key 都空 → 空态', () => {
-    const result = resolvePersistedThreads({
-      rawEntriesSnapshot: null,
-      legacyActiveThreadId: null,
-      legacyThreads: [],
-    });
-    expect(result.source).toBe('empty');
-    expect(result.activeThreadId).toBeNull();
-    expect(result.threads).toEqual([]);
-  });
-
-  it('activeThreadId 指向不存在线程 → 校正为首个线程', () => {
-    const snapshot = {
-      version: 1,
-      activeThreadId: 'nope',
-      threads: [entriesThread('t1', [userMessageEntry('u1', 'hi')])],
-    };
-    const result = resolvePersistedThreads({
-      rawEntriesSnapshot: snapshot,
-      legacyActiveThreadId: null,
-      legacyThreads: [],
-    });
-    expect(result.source).toBe('entries');
-    expect(result.activeThreadId).toBe('t1');
-  });
-
-  it('新 key 严格成功但 threads 为空 → 尊重空态，不复活 legacy', () => {
-    const result = resolvePersistedThreads({
-      rawEntriesSnapshot: { version: 1, activeThreadId: null, threads: [] },
-      legacyActiveThreadId: 'L1',
-      legacyThreads: [legacyUserThread('L1')],
-    });
-    expect(result.source).toBe('entries');
-    expect(result.threads).toEqual([]);
-    expect(result.activeThreadId).toBeNull();
-  });
-});
-`;
+  return errors;
+};
 
 // ---------------------------------------------------------------------------
-// 写入（CREATE-only；已存在则拒绝，除非 --force）
+// 待创建文件
 // ---------------------------------------------------------------------------
-const CREATES = [
-  { path: 'src/store/aiThread/hydrate.ts', content: HYDRATE_TS },
-  { path: 'src/store/aiThread/hydrate.spec.ts', content: HYDRATE_SPEC_TS },
+const PROJECT_TS = [
+  "import type { IAiConversationThread } from '@/store/aiConversation';",
+  "import { normalizeActiveThreadId } from '@/store/aiThread/hydrate';",
+  "import { legacyThreadToThread } from '@/store/aiThread/legacy-adapter';",
+  "import type { IAiThread } from '@/types/ai/thread';",
+  "import { AI_THREAD_PERSIST_VERSION, type IAiThreadPersist } from '@/types/ai/thread/persist.schema';",
+  '',
+  '// ---------------------------------------------------------------------------',
+  '// 写侧投影 (7.3 读 resolver 的对称砖)',
+  '//',
+  '// 把 legacy 会话状态 (activeThreadId + IAiConversationThread[]) 投影成新 entries',
+  '// 持久化形状 IAiThreadPersist。供后续 7.4b 双写新 key 时序列化使用。',
+  '//',
+  '// 设计取舍 (质量优先):',
+  '// - 忠实 1:1 镜像: 不在此处做 history-limit / 空线程过滤, 避免与读路径 (resolver)',
+  '//   产生不对称, 保证 project → parse → resolvePersistedThreads 往返一致。',
+  '// - 复用既有单一来源: 线程映射走 legacyThreadToThread, active 归一走 7.3 的',
+  '//   normalizeActiveThreadId, 不重复实现。',
+  '// - 纯函数: 无 idb / 无 async / 无 store 依赖, 完全可单测。',
+  '// ---------------------------------------------------------------------------',
+  '',
+  'export interface IProjectConversationInput {',
+  '  activeThreadId: string | null;',
+  '  threads: IAiConversationThread[];',
+  '}',
+  '',
+  '/** 逐线程把 legacy 会话线程投影为 entries 线程, 保持顺序。 */',
+  'export const projectConversationThreadsToEntries = (',
+  '  threads: IAiConversationThread[],',
+  '): IAiThread[] => threads.map(legacyThreadToThread);',
+  '',
+  '/**',
+  ' * 把 legacy 会话状态投影成 IAiThreadPersist。',
+  ' * 产出对 aiThreadPersistSchema 恒为合法 (version 取当前版本, activeThreadId 归一)。',
+  ' */',
+  'export const projectConversationToThreadPersist = (',
+  '  input: IProjectConversationInput,',
+  '): IAiThreadPersist => {',
+  '  const threads = projectConversationThreadsToEntries(input.threads);',
+  '  return {',
+  '    version: AI_THREAD_PERSIST_VERSION,',
+  '    activeThreadId: normalizeActiveThreadId(input.activeThreadId, threads),',
+  '    threads,',
+  '  };',
+  '};',
+  '',
+].join('\n');
+
+const PROJECT_SPEC_TS = [
+  "import { describe, expect, it } from 'vitest';",
+  "import type { IAiConversationThread } from '@/store/aiConversation';",
+  "import { resolvePersistedThreads } from '@/store/aiThread/hydrate';",
+  "import {",
+  '  projectConversationThreadsToEntries,',
+  '  projectConversationToThreadPersist,',
+  "} from '@/store/aiThread/project';",
+  "import { AI_THREAD_PERSIST_VERSION, aiThreadPersistSchema } from '@/types/ai/thread/persist.schema';",
+  '',
+  'const makeLegacyThread = (',
+  '  id: string,',
+  '  overrides: Record<string, unknown> = {},',
+  '): IAiConversationThread =>',
+  '  ({',
+  "    id,",
+  "    title: 'T-' + id,",
+  "    titleStatus: 'temporary',",
+  "    createdAt: '2026-01-01T00:00:00.000Z',",
+  "    updatedAt: '2026-01-01T00:00:00.000Z',",
+  '    messages: [],',
+  '    ...overrides,',
+  '  }) as unknown as IAiConversationThread;',
+  '',
+  "describe('projectConversationToThreadPersist', () => {",
+  "  it('空线程 → version + null active + 空数组', () => {",
+  '    const result = projectConversationToThreadPersist({ activeThreadId: null, threads: [] });',
+  '    expect(result.version).toBe(AI_THREAD_PERSIST_VERSION);',
+  '    expect(result.activeThreadId).toBeNull();',
+  '    expect(result.threads).toEqual([]);',
+  '    expect(aiThreadPersistSchema.safeParse(result).success).toBe(true);',
+  '  });',
+  '',
+  "  it('单线程 → active 落在该线程, 且 schema 合法', () => {",
+  "    const result = projectConversationToThreadPersist({",
+  "      activeThreadId: 'a',",
+  "      threads: [makeLegacyThread('a')],",
+  '    });',
+  '    expect(result.threads).toHaveLength(1);',
+  "    expect(result.activeThreadId).toBe('a');",
+  '    expect(aiThreadPersistSchema.safeParse(result).success).toBe(true);',
+  '  });',
+  '',
+  "  it('active 指向不存在的线程 → 归一到首个线程', () => {",
+  "    const result = projectConversationToThreadPersist({",
+  "      activeThreadId: 'missing',",
+  "      threads: [makeLegacyThread('a'), makeLegacyThread('b')],",
+  '    });',
+  "    expect(result.activeThreadId).toBe('a');",
+  '  });',
+  '',
+  "  it('active 为 null 但有线程 → 归一到首个线程', () => {",
+  "    const result = projectConversationToThreadPersist({",
+  "      activeThreadId: null,",
+  "      threads: [makeLegacyThread('x'), makeLegacyThread('y')],",
+  '    });',
+  "    expect(result.activeThreadId).toBe('x');",
+  '  });',
+  '',
+  "  it('保持线程顺序', () => {",
+  "    const result = projectConversationToThreadPersist({",
+  "      activeThreadId: 'b',",
+  "      threads: [makeLegacyThread('a'), makeLegacyThread('b'), makeLegacyThread('c')],",
+  '    });',
+  "    expect(result.threads.map((t) => t.id)).toEqual(['a', 'b', 'c']);",
+  '  });',
+  '',
+  "  it('往返对称: project → parse → resolvePersistedThreads 得 entries', () => {",
+  "    const projected = projectConversationToThreadPersist({",
+  "      activeThreadId: 'a',",
+  "      threads: [makeLegacyThread('a'), makeLegacyThread('b')],",
+  '    });',
+  '    const parsed = aiThreadPersistSchema.safeParse(projected);',
+  '    expect(parsed.success).toBe(true);',
+  '    if (!parsed.success) return;',
+  '    const resolved = resolvePersistedThreads({',
+  '      rawEntriesSnapshot: parsed.data,',
+  '      legacyActiveThreadId: null,',
+  '      legacyThreads: [],',
+  '    });',
+  "    expect(resolved.source).toBe('entries');",
+  "    expect(resolved.threads.map((t) => t.id)).toEqual(['a', 'b']);",
+  "    expect(resolved.activeThreadId).toBe('a');",
+  '  });',
+  '});',
+  '',
+  "describe('projectConversationThreadsToEntries', () => {",
+  "  it('逐线程映射且保持顺序', () => {",
+  "    const out = projectConversationThreadsToEntries([",
+  "      makeLegacyThread('a'),",
+  "      makeLegacyThread('b'),",
+  '    ]);',
+  "    expect(out.map((t) => t.id)).toEqual(['a', 'b']);",
+  '  });',
+  '});',
+  '',
+].join('\n');
+
+const FILES = [
+  { path: 'src/store/aiThread/project.ts', content: PROJECT_TS },
+  { path: 'src/store/aiThread/project.spec.ts', content: PROJECT_SPEC_TS },
 ];
 
-for (const { path } of CREATES) {
-  if (existsSync(abs(path)) && !FORCE) {
-    fail(`目标文件已存在：${path}（如确需覆盖请加 --force）。`);
+// ---------------------------------------------------------------------------
+// 执行 (事务式: 任一前置/冲突失败即零写入)
+// ---------------------------------------------------------------------------
+const run = () => {
+  log('REPO_ROOT =', REPO_ROOT);
+  log(CHECK ? '模式: --check (干跑)' : FORCE ? '模式: 写入 (--force 覆盖)' : '模式: 写入');
+
+  const preErrors = checkPreconditions();
+  if (preErrors.length > 0) {
+    preErrors.forEach((e) => console.error('[step7-4a] ✗ 前置:', e));
+    fail('依赖前置校验失败, 未写入任何文件。');
   }
-}
+  log('✓ 依赖前置校验通过 (7.3 / 7.1 / legacy-adapter)');
 
-if (CHECK) {
-  console.log('— step7-3 预演（--check，未写入）—');
-  console.log(`REPO_ROOT = ${REPO_ROOT}`);
-  console.log('依赖校验通过：persist.schema / persist / legacy-adapter 均存在且导出齐全。');
-  for (const c of CREATES) console.log(`  [create] ${c.path}  (${c.content.split('\n').length} 行)`);
-  console.log('可去掉 --check 应用。');
-  process.exit(0);
-}
+  const conflicts = FILES.filter((f) => existsSync(join(REPO_ROOT, f.path)));
+  if (conflicts.length > 0 && !FORCE) {
+    conflicts.forEach((f) => console.error('[step7-4a] ✗ 目标已存在:', f.path));
+    fail('目标文件已存在; 用 --force 覆盖, 或先清理。未写入任何文件。');
+  }
 
-for (const c of CREATES) {
-  mkdirSync(dirname(abs(c.path)), { recursive: true });
-  writeFileSync(abs(c.path), c.content, 'utf8');
-  console.log(`✓ created ${c.path}`);
-}
-console.log('\n完成。请运行 pnpm typecheck && pnpm lint && pnpm test 后手动提交。');
+  if (CHECK) {
+    FILES.forEach((f) => {
+      const state = existsSync(join(REPO_ROOT, f.path)) ? '将覆盖' : '将创建';
+      log(`  [${state}] ${f.path} (${f.content.length} bytes)`);
+    });
+    log('✓ --check 通过, 未写入。');
+    return;
+  }
+
+  for (const f of FILES) {
+    const abs = join(REPO_ROOT, f.path);
+    mkdirSync(dirname(abs), { recursive: true });
+    writeFileSync(abs, f.content, { encoding: 'utf8' });
+    log('  ✓ 写入', f.path);
+  }
+  log('✓ 完成。下一步: pnpm typecheck && pnpm lint && pnpm test');
+};
+
+run();
