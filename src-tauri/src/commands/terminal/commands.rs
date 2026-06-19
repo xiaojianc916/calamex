@@ -214,6 +214,7 @@ pub async fn ensure_terminal_session(
         let session = Arc::new(TerminalSession {
             handle,
             working_directory: terminal_cwd.clone(),
+            shell_pid: std::sync::atomic::AtomicU32::new(0),
         });
         let mut sessions = match lock_terminal_sessions(&terminal_state) {
             Ok(sessions) => sessions,
