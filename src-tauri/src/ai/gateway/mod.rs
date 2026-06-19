@@ -32,7 +32,9 @@ mod suggestions;
 mod tests;
 
 pub use config::{clear_credentials, get_config, save_config, save_credentials};
-pub use connection::{connect_provider, test_provider, test_provider_config};
+pub use connection::{
+    ProviderConnectionOutcome, connect_provider, test_provider, test_provider_config,
+};
 pub use conversation::{chat_stream, classify_task, generate_conversation_title, inline_complete};
 pub(crate) use model_config::{current_sidecar_model_config, narrator_sidecar_model_config};
 pub use suggestions::{generate_suggestion_pool, get_suggestion_pool_cache};
@@ -47,7 +49,7 @@ const MIN_GENERATED_TITLE_CHARS: usize = 5;
 const MAX_GENERATED_TITLE_CHARS: usize = 10;
 
 // 默认主模型：与 sidecar 的 models/config.ts `DEFAULT_MODEL_ID` 保持单一来源对齐
-// （DeepSeek 是本项目默认网关）。二者必须同步修改，否则"Rust 默认"与"sidecar 默认"
+// （DeepSeek 是本项目默认网关）。二者必须同步修改，否则\"Rust 默认\"与\"sidecar 默认\"
 // 会漂移成两个不同模型。
 const DEFAULT_MASTRA_MODEL: &str = "deepseek/deepseek-v4-pro";
 const DEFAULT_NARRATOR_MODEL: &str = "zhipuai/glm-4.7-flash";

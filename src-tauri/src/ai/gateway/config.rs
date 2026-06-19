@@ -165,9 +165,14 @@ pub(super) fn build_provider_connection_candidate(
     })
 }
 
+/// 持久化「已确认的」模型端点与凭证。
+///
+/// 入参借用 `candidate`（而非取得所有权），以便上层 `connect_provider` 能够
+/// 先保存、再用同一 `candidate` 做非致命连通性验证——把「能否保存」与「在线是否连通」
+/// 彻底解耦。
 pub(super) fn save_connected_model(
     role: AiResolvedModelRole,
-    candidate: AiProviderConnectionCandidate,
+    candidate: &AiProviderConnectionCandidate,
 ) -> Result<AiConfigPayload, String> {
     validate_provider(&candidate.provider_type)?;
 
@@ -181,17 +186,17 @@ pub(super) fn save_connected_model(
 
     match role {
         AiResolvedModelRole::Main => {
-            guard.provider_type = candidate.provider_type;
-            guard.selected_model = candidate.selected_model;
-            guard.base_url = candidate.base_url;
+            guard.provider_type = candidate.provider_type.clone();
+            guard.selected_model = candidate.selected_model.clone();
+            guard.base_url = candidate.base_url.clone();
             guard.inline_completion_enabled = candidate.inline_completion_enabled;
             guard.chat_enabled = candidate.chat_enabled;
             guard.agent_enabled = candidate.agent_enabled;
         }
         AiResolvedModelRole::Narrator => {
-            guard.narrator.provider_type = candidate.provider_type;
-            guard.narrator.selected_model = candidate.selected_model;
-            guard.narrator.base_url = candidate.base_url;
+            guard.narrator.provider_type = candidate.provider_type.clone();
+            guard.narrator.selected_model = candidate.selected_model.clone();
+            guard.narrator.base_url = candidate.base_url.clone();
         }
     }
 
