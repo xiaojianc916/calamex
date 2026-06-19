@@ -185,6 +185,69 @@ export class McpGatewayWarmPool {
     const catalogs: IMcpGatewayCatalog[] = [];
     const errors: string[] = [];
 
+    // 并行列举所有 MCP 服务工具：各服务互不依赖，串行等待会线性叠加
+    // spawn + listTools 延迟（每个未在暖池中的服务需 spawn 子进程，超时 30s）。
+    // 并发度受 maxWarm 限制，避免同时 spawn 超过暖池上限导致 spawn→evict 抖动。
+    // ensureEntry 内部的 evictOverflow + catalog 缓存保证：即使被 evict 的服务，
+    // 其 catalog 已在 bundle 创建成功时缓存，后续调用走缓存零开销。
+    const concurrency = Math.min(MCP_SERVER_NAMES.length, this.maxWarm);
+    let cursor = 0;
+    const results = await Promise.allSettled(
+      Array.from({ length: concurrency }, async () => {
+        while (cursor < MCP_SERVER_NAMES.length) {
+          const serverName = MCP_SERVER_NAMES[cursor] as TMcpServerName;
+          cursor += 1;
+          try {
+            const catalog = await this.listTools({
+              serverName,
+              profile: input.profile,
+              ...(input.workspaceRootPath ? { workspaceRootPath: input.workspaceRootPath } : {}),
+              ...(input.metricSink ? { metricSink: input.metricSink } : {}),
+            });
+            return { ok: true as const, serverName, catalog };
+          } catch (error) {
+            const message = error instanceof Error ? error.message : String(error);
+            return { ok: false as true, serverName, message };
+          }
+        }
+        return null;
+      }),
+    );
+
+    // 保持原始顺序：按 MCP_SERVER_NAMES 顺序整理结果
+    const byName = new Map<string, { ok: boolean; catalog?: IMcpGatewayCatalog; message?: string }>();
+    for (const result of results) {
+      if (result.status === "fulfilled" && result.value) {
+        byName.set(result.value.serverName, result.value);
+      }
+    }
+
+    for (const serverName of MCP_SERVER_NAMES) {
+      const entry = byName.get(serverName);
+      if (entry?.ok && entry.catalog) {
+        catalogs.push(entry.catalog);
+        errors.push(...entry.catalog.errors.map((message) => `${serverName}: ${message}`));
+      } else if (entry && !entry.ok) {
+        const message = entry.message ?? "Unknown error";
+        errors.push(`${serverName}: ${message}`);
+        catalogs.push({
+          serverName,
+          profile: input.profile,
+          tools: [],
+          errors: [message],
+        });
+      }
+    }
+
+    return {
+      profile: input.profile,
+      catalogs,
+      errors,
+    };
+  }): Promise<IMcpGatewayCatalogCollection> {
+    const catalogs: IMcpGatewayCatalog[] = [];
+    const errors: string[] = [];
+
     for (const serverName of MCP_SERVER_NAMES) {
       try {
         const catalog = await this.listTools({
