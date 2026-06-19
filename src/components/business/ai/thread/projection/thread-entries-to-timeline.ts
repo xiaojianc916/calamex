@@ -72,7 +72,7 @@ function assistantMessageToEntries(
   if (thoughtSegments.length > 0) {
     const reasoning: IAiThreadReasoningEntry = {
       kind: 'reasoning',
-      id: entry.id + ':reasoning',
+      id: `${entry.id}:reasoning`,
       messageId: entry.id,
       segments: thoughtSegments,
       // 与 runtime 时间线对齐:多段(>1)才视为长推理,渲染层默认折叠。
@@ -84,7 +84,7 @@ function assistantMessageToEntries(
   if (messageTexts.length > 0) {
     const assistantText: IAiThreadAssistantTextEntry = {
       kind: 'assistant-text',
-      id: entry.id + ':text',
+      id: `${entry.id}:text`,
       messageId: entry.id,
       markdown: messageTexts.join(PARAGRAPH_BREAK),
       streaming,
