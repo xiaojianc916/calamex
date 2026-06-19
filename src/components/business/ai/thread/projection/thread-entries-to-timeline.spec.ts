@@ -5,7 +5,6 @@ import type { IAiThreadEntry } from '@/types/ai/thread';
 
 import {
   DEFAULT_CONTEXT_COMPACTION_TEXT,
-  REASONING_LONG_CHAR_THRESHOLD,
   threadEntriesToTimeline,
 } from './thread-entries-to-timeline';
 
@@ -78,20 +77,23 @@ describe('threadEntriesToTimeline', () => {
     }
   });
 
-  it('reasoning 超阈值标记 isLong; streamingMessageId 命中标记 streaming', () => {
-    const longText = 'x'.repeat(REASONING_LONG_CHAR_THRESHOLD + 1);
+  it('reasoning 多段标记 isLong; streamingMessageId 命中标记 streaming', () => {
     const entries: IAiThreadEntry[] = [
       {
         type: 'assistant_message',
         id: 'a2',
         createdAt: ISO,
-        chunks: [{ type: 'thought', block: { type: 'text', text: longText } }],
+        chunks: [
+          { type: 'thought', block: { type: 'text', text: 'step one' } },
+          { type: 'thought', block: { type: 'text', text: 'step two' } },
+        ],
       },
     ];
     const timeline = threadEntriesToTimeline(entries, { streamingMessageId: 'a2' });
     expect(timeline).toHaveLength(1);
     const reasoning = timeline[0];
     if (reasoning.kind === 'reasoning') {
+      expect(reasoning.segments).toEqual(['step one', 'step two']);
       expect(reasoning.isLong).toBe(true);
       expect(reasoning.streaming).toBe(true);
     }

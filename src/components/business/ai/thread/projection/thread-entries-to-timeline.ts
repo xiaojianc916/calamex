@@ -28,9 +28,6 @@ import type {
 /** 段落分隔符:多个文本块之间以空行连接。 */
 const PARAGRAPH_BREAK = '\n\n';
 
-/** reasoning 折叠阈值(字符数):超过则视为长推理,渲染层默认折叠。可后续按需细化。 */
-export const REASONING_LONG_CHAR_THRESHOLD = 200;
-
 /** context_compaction 无显式文案时的兜底展示文本。 */
 export const DEFAULT_CONTEXT_COMPACTION_TEXT = '已整理上下文以释放空间';
 
@@ -73,13 +70,13 @@ function assistantMessageToEntries(
 
   const projected: TAiThreadEntry[] = [];
   if (thoughtSegments.length > 0) {
-    const totalLength = thoughtSegments.reduce((sum, text) => sum + text.length, 0);
     const reasoning: IAiThreadReasoningEntry = {
       kind: 'reasoning',
       id: entry.id + ':reasoning',
       messageId: entry.id,
       segments: thoughtSegments,
-      isLong: totalLength > REASONING_LONG_CHAR_THRESHOLD,
+      // 与 runtime 时间线对齐:多段(>1)才视为长推理,渲染层默认折叠。
+      isLong: thoughtSegments.length > 1,
       streaming,
     };
     projected.push(reasoning);
