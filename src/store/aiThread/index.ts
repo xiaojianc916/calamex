@@ -87,7 +87,7 @@ export const useAiThreadStore = defineStore('ai-thread', () => {
   );
 
   const activeThread = computed<IAiThread | null>(
-    () => liveThread.value ?? persistedActiveThread.value ?? projectedActiveThread.value,
+    () => liveThread.value ?? projectedActiveThread.value ?? persistedActiveThread.value,
   );
 
   const activeEntries = computed<IAiThreadEntry[]>(() => activeThread.value?.entries ?? []);
