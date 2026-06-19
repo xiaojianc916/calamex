@@ -152,8 +152,8 @@ export const useGitStore = defineStore('git', () => {
   const pullRequestDetail = ref<IGitPullRequestDetailPayload | null>(null);
   const isPullRequestDetailLoading = ref(false);
 
-  // commit-stats 的权威缓存在 vue-query;此 ref 仅作响应式镜像,供同步的 getCommitStats 读取并驱动 UI。
-  const commitStatsCache = ref<Record<string, TGitCommitStatsPayload>>({});
+  // commit-stats 的权威缓存在 vue-query;同步读取直接调 queryClient.getQueryData。
+  // 已移除冗余的 commitStatsCache ref 镜像——vue-query 的 cacheObservable 已驱动 UI 更新。
 
   // commit-stats 是不可变的 per-commit 统计:大 staleTime 避免重取,gcTime≈30d 作为保留窗口,
   // meta.persist 让官方 persister 仅持久化这一类查询(见 src/lib/query-client.ts)。
@@ -382,33 +382,16 @@ export const useGitStore = defineStore('git', () => {
       computedAt: Date.now(),
     };
 
-    // vue-query 承担缓存/gc/持久化;同时写穿响应式镜像,驱动 UI 在后台队列填充时即时更新。
+    // vue-query 承担缓存/gc/持久化;setQueryData 会自动通知所有监听该 queryKey 的响应式消费者。
     queryClient.setQueryData(commitStatsQueryKey(cacheKey), payload);
-    commitStatsCache.value = {
-      ...commitStatsCache.value,
-      [cacheKey]: payload,
-    };
   };
 
   const getCommitStats = (commitId: string): TGitCommitStatsPayload | null => {
     const cacheKey = resolveCommitStatsCacheKey(commitId);
     if (!cacheKey) return null;
 
-    const mirrored = commitStatsCache.value[cacheKey];
-    if (mirrored) return mirrored;
-
-    // 启动时官方 persister 已把快照恢复进 queryClient;首次读取时回填响应式镜像。
-    const restored = queryClient.getQueryData<TGitCommitStatsPayload>(
-      commitStatsQueryKey(cacheKey),
-    );
-    if (restored) {
-      commitStatsCache.value = {
-        ...commitStatsCache.value,
-        [cacheKey]: restored,
-      };
-      return restored;
-    }
-    return null;
+    // 直接从 vue-query 读取;启动时官方 persister 已把快照恢复进 queryClient。
+    return queryClient.getQueryData<TGitCommitStatsPayload>(commitStatsQueryKey(cacheKey)) ?? null;
   };
 
   // file baseline 已迁入 vue-query：fetchQuery 自动去重同 key 请求，
@@ -1261,7 +1244,6 @@ export const useGitStore = defineStore('git', () => {
     pullRequestStateFilter,
     pullRequestDetail,
     isPullRequestDetailLoading,
-    commitStatsCache,
     hasRepository,
     totalChangeCount,
     canLoadMoreCommitHistory,

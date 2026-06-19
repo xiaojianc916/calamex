@@ -683,7 +683,7 @@ export const useShellWorkbenchView = (onReady: () => void) => {
   );
 
   watch(
-    () => (workbench.editorStore.documents ?? []).map((item) => item.id),
+    () => workbench.editorStore.documents?.map((item) => item.id) ?? [],
     (documentIds, previousDocumentIds) => {
       const documentIdSet = new Set(documentIds);
       // 遍历旧快照：找出已不在新文档列表中的文档 ID（即被关闭的文档）。

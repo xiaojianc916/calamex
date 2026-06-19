@@ -1,4 +1,4 @@
-import { onBeforeUnmount, reactive, ref } from 'vue';
+import { onBeforeUnmount, onMounted, reactive, ref } from 'vue';
 import type {
   ILinearContextMenuGroup,
   ILinearContextMenuItem,
@@ -786,11 +786,13 @@ export const useBrowserContextMenu = () => {
     }
   };
 
-  window.addEventListener('pointerdown', handleWindowPointerDown, true);
-  window.addEventListener('contextmenu', handleWindowContextMenu);
-  window.addEventListener('keydown', handleWindowKeydown);
-  window.addEventListener('resize', handleWindowResize);
-  window.addEventListener('blur', handleWindowResize);
+  onMounted(() => {
+    window.addEventListener('pointerdown', handleWindowPointerDown, true);
+    window.addEventListener('contextmenu', handleWindowContextMenu);
+    window.addEventListener('keydown', handleWindowKeydown);
+    window.addEventListener('resize', handleWindowResize);
+    window.addEventListener('blur', handleWindowResize);
+  });
 
   onBeforeUnmount(() => {
     window.removeEventListener('pointerdown', handleWindowPointerDown, true);

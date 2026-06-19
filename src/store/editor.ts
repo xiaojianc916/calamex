@@ -149,19 +149,23 @@ const syncDocumentState = (
   metrics?: IDocumentMetrics,
 ): IEditorDocument => {
   if (document.kind === 'text' && document.bufferLoaded === false) {
-    document.content = '';
-    document.savedContent = '';
-    document.isDirty = false;
-    document.lineCount = 1;
-    document.charCount = 0;
+    Object.assign(document, {
+      content: '',
+      savedContent: '',
+      isDirty: false,
+      lineCount: 1,
+      charCount: 0,
+    });
     return document;
   }
 
   const { lineCount, charCount } = metrics ?? computeDocumentMetrics(document.content);
-  document.lineCount = lineCount;
-  document.charCount = charCount;
-  document.isDirty =
-    document.content !== document.savedContent || document.encoding !== document.savedEncoding;
+  Object.assign(document, {
+    lineCount,
+    charCount,
+    isDirty:
+      document.content !== document.savedContent || document.encoding !== document.savedEncoding,
+  });
   return document;
 };
 
@@ -278,12 +282,14 @@ export const useEditorStore = defineStore(
       }
 
       candidates.slice(0, overflow).forEach((targetDocument) => {
-        targetDocument.content = '';
-        targetDocument.savedContent = '';
-        targetDocument.bufferLoaded = false;
-        targetDocument.lineCount = 1;
-        targetDocument.charCount = 0;
-        targetDocument.isDirty = false;
+        Object.assign(targetDocument, {
+          content: '',
+          savedContent: '',
+          bufferLoaded: false,
+          lineCount: 1,
+          charCount: 0,
+          isDirty: false,
+        });
         clearDocumentAnalysis(targetDocument.id);
       });
     };

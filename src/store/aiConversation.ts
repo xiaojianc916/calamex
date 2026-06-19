@@ -335,7 +335,15 @@ export const useAiConversationStore = defineStore(
      * 未改动线程保持原对象引用(结构共享)。
      */
     const replaceThreadsState = (nextState: IAiConversationPersistShape): void => {
-      const trimmedThreads = trimThreads(nextState.threads, nextState.activeThreadId);
+      // 性能优化: 仅当线程数量超过历史限制时才执行 trim（filter + slice），
+      // 避免每次 patchActiveThread（发消息的高频路径）都遍历全部线程。
+      // trimThreads 内的 filter 会遍历所有线程检查 messages.length，
+      // 对于 200 条线程的场景这是 O(N×M) 开销；大多数 mutation 不增加线程数，
+      // trim 结果与输入相同，跳过即可。
+      const trimmedThreads =
+        nextState.threads.length > AI_CONVERSATION_HISTORY_LIMIT
+          ? trimThreads(nextState.threads, nextState.activeThreadId)
+          : nextState.threads;
       const resolvedState = ensureActiveThread(nextState.activeThreadId, trimmedThreads);
       threads.value = resolvedState.threads;
       activeThreadId.value = resolvedState.activeThreadId;
