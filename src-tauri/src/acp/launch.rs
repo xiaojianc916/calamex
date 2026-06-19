@@ -543,19 +543,145 @@ fn toml_str(value: &str) -> String {
     format!("{value:?}")
 }
 
-/// 用项目已保存的网关模型配置渲染一份 Kimi `config.toml`（单 provider + 单 model）。
-/// 固定内部名 `calamex-gateway` 作 provider/model 键，避免 model_id 里的 `/` 触发 TOML 路径解析。
-fn render_kimi_config_toml(model_id: &str, api_key: &str, base_url: &str) -> String {
-    let entry = "calamex-gateway";
-    format!(
-        "{marker}\ndefault_model = {entry_q}\n\n[providers.{entry}]\ntype = \"openai_legacy\"\nbase_url = {base_url_q}\napi_key = {api_key_q}\n\n[models.{entry}]\nprovider = {entry_q}\nmodel = {model_q}\nmax_context_size = 262144\n",
-        marker = KIMI_MANAGED_MARKER,
-        entry = entry,
-        entry_q = toml_str(entry),
-        base_url_q = toml_str(base_url),
-        api_key_q = toml_str(api_key),
-        model_q = toml_str(model_id),
-    )
+/// 单个 Kimi provider 条目（openai_legacy：复用项目内某平台的网关地址 + Key）。
+struct KimiProviderEntry {
+    /// TOML 安全的 provider 裸键（由平台名清洗而来）。
+    name: String,
+    base_url: String,
+    api_key: String,
+}
+
+/// 单个 Kimi model 条目（provider 指向同名 KimiProviderEntry）。
+struct KimiModelEntry {
+    /// TOML 安全的 model 裸键（由 model_id 清洗而来）。
+    name: String,
+    /// 所属 provider 的 TOML 裸键。
+    provider: String,
+    /// 原始 model_id（写入 model = ...，保留厂商前缀）。
+    model_id: String,
+}
+
+/// 一个待写入的网关模型解析结果：provider 与 model 成对出现。
+struct KimiSeedEntry {
+    provider: KimiProviderEntry,
+    model: KimiModelEntry,
+}
+
+/// 把任意标识（平台名 / model_id）清洗成 TOML 裸键安全形式：仅保留 ASCII 字母数字与 _ -，
+/// 其余字符（含 model_id 里的 /）替换为 -；清洗后为空时回退占位，避免空键。
+fn toml_key_sanitize(value: &str) -> String {
+    let sanitized: String = value
+        .trim()
+        .chars()
+        .map(|ch| {
+            if ch.is_ascii_alphanumeric() || ch == '_' || ch == '-' {
+                ch
+            } else {
+                '-'
+            }
+        })
+        .collect();
+    if sanitized.is_empty() {
+        "calamex-gateway".to_string()
+    } else {
+        sanitized
+    }
+}
+
+/// 把一个 sidecar 模型配置解析成「provider + model」成对条目。缺 model_id 或缺网关地址
+/// （openai_legacy 必需 base_url）时返回 None，交由调用方决定跳过或回退。
+fn collect_kimi_model_entry(
+    config: &crate::commands::contracts::AgentSidecarModelConfigPayload,
+) -> Option<KimiSeedEntry> {
+    let model_id = config.model_id.trim();
+    if model_id.is_empty() {
+        return None;
+    }
+    let base_url = config
+        .base_url
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())?;
+    let platform = model_id
+        .split_once('/')
+        .map(|(platform, _)| platform.trim())
+        .filter(|value| !value.is_empty())
+        .unwrap_or(model_id);
+    let provider_name = toml_key_sanitize(platform);
+    Some(KimiSeedEntry {
+        provider: KimiProviderEntry {
+            name: provider_name.clone(),
+            base_url: base_url.to_string(),
+            api_key: config.api_key.expose().to_string(),
+        },
+        model: KimiModelEntry {
+            name: toml_key_sanitize(model_id),
+            provider: provider_name,
+            model_id: model_id.to_string(),
+        },
+    })
+}
+
+/// 把一对 provider/model 并入累积列表：provider 按 TOML 键去重（同平台只写一次，沿用首次
+/// 出现的 base_url/Key），model 按 TOML 键去重（同模型只写一次）。
+fn push_kimi_entry(
+    providers: &mut Vec<KimiProviderEntry>,
+    models: &mut Vec<KimiModelEntry>,
+    entry: KimiSeedEntry,
+) {
+    if !providers.iter().any(|item| item.name == entry.provider.name) {
+        providers.push(entry.provider);
+    }
+    if !models.iter().any(|item| item.name == entry.model.name) {
+        models.push(entry.model);
+    }
+}
+
+/// 用项目已保存的网关模型配置渲染一份 Kimi config.toml（多 provider + 多 model）。
+/// default_model 指向当前所选主模型；TOML 键均经 toml_key_sanitize 清洗。
+fn render_kimi_config_toml(
+    default_model: &str,
+    providers: &[KimiProviderEntry],
+    models: &[KimiModelEntry],
+) -> String {
+    let mut out = String::new();
+    out.push_str(KIMI_MANAGED_MARKER);
+    out.push_str(&format!(
+        r#"
+default_model = {}
+"#,
+        toml_str(default_model)
+    ));
+
+    for provider in providers {
+        out.push_str(&format!(
+            r#"
+[providers.{name}]
+type = "openai_legacy"
+base_url = {base_url_q}
+api_key = {api_key_q}
+"#,
+            name = provider.name,
+            base_url_q = toml_str(&provider.base_url),
+            api_key_q = toml_str(&provider.api_key),
+        ));
+    }
+
+    for model in models {
+        out.push_str(&format!(
+            r#"
+[models.{name}]
+provider = {provider_q}
+model = {model_q}
+max_context_size = 262144
+"#,
+            name = model.name,
+            provider_q = toml_str(&model.provider),
+            model_q = toml_str(&model.model_id),
+        ));
+    }
+
+    out
 }
 
 /// 在拉起 `kimi acp` 前确保 `~/.kimi/config.toml` 含可用凭证（复用项目已存网关配置）。
@@ -577,20 +703,27 @@ fn ensure_kimi_managed_config() -> Result<bool, String> {
         }
     }
 
-    // 取项目已保存的主模型网关配置（selected_model + base_url + 逐厂商 Key）。
-    let model_config = crate::ai::gateway::current_sidecar_model_config()?;
-    let Some(base_url) = model_config
-        .base_url
-        .as_deref()
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-    else {
-        // 无显式网关地址时无法构造 openai_legacy provider；交回 Kimi 自身登录。
+    // 收集可桥接的网关模型：主模型必备（缺网关地址则整体跳过，交回 Kimi 登录），Narrator
+    // 为尽力而为的附加模型（解析失败仅跳过该条，不影响主模型 seed）。
+    let main_config = crate::ai::gateway::current_sidecar_model_config()?;
+    let Some(default_entry) = collect_kimi_model_entry(&main_config) else {
+        // 主模型无显式网关地址时无法构造 openai_legacy provider；交回 Kimi 自身登录。
         return Ok(false);
     };
 
-    let rendered =
-        render_kimi_config_toml(&model_config.model_id, model_config.api_key.expose(), base_url);
+    let default_model_name = default_entry.model.name.clone();
+    let mut providers: Vec<KimiProviderEntry> = Vec::new();
+    let mut models: Vec<KimiModelEntry> = Vec::new();
+    push_kimi_entry(&mut providers, &mut models, default_entry);
+
+    // Narrator 模型：已配置且凭证可解析时附加为可切换模型；否则静默跳过。
+    if let Ok(narrator_config) = crate::ai::gateway::narrator_sidecar_model_config()
+        && let Some(entry) = collect_kimi_model_entry(&narrator_config)
+    {
+        push_kimi_entry(&mut providers, &mut models, entry);
+    }
+
+    let rendered = render_kimi_config_toml(&default_model_name, &providers, &models);
 
     fs::create_dir_all(&kimi_dir).map_err(|error| format!("创建 ~/.kimi 目录失败：{error}"))?;
     fs::write(&config_path, rendered)
@@ -682,6 +815,63 @@ mod tests {
     fn path_to_string_roundtrips_simple_path() {
         let path = PathBuf::from("dist").join("acp").join("stdio-entry.js");
         assert_eq!(path_to_string(&path), path.to_string_lossy().into_owned());
+    }
+
+    #[test]
+    fn toml_key_sanitize_replaces_slash_and_unsafe_chars() {
+        assert_eq!(
+            toml_key_sanitize("deepseek/deepseek-v4-pro"),
+            "deepseek-deepseek-v4-pro"
+        );
+        assert_eq!(toml_key_sanitize("zhipuai"), "zhipuai");
+        assert_eq!(toml_key_sanitize("  a.b:c  "), "a-b-c");
+        assert_eq!(toml_key_sanitize("///"), "calamex-gateway");
+    }
+
+    #[test]
+    fn push_kimi_entry_dedupes_providers_keeps_distinct_models() {
+        let mut providers: Vec<KimiProviderEntry> = Vec::new();
+        let mut models: Vec<KimiModelEntry> = Vec::new();
+        let make = |platform: &str, model: &str| KimiSeedEntry {
+            provider: KimiProviderEntry {
+                name: toml_key_sanitize(platform),
+                base_url: "https://gw.example/v1".to_string(),
+                api_key: "sk-xxx".to_string(),
+            },
+            model: KimiModelEntry {
+                name: toml_key_sanitize(model),
+                provider: toml_key_sanitize(platform),
+                model_id: model.to_string(),
+            },
+        };
+        push_kimi_entry(&mut providers, &mut models, make("deepseek", "deepseek/a"));
+        push_kimi_entry(&mut providers, &mut models, make("deepseek", "deepseek/b"));
+        // 同平台 provider 只保留一次；两个不同模型都保留。
+        assert_eq!(providers.len(), 1);
+        assert_eq!(models.len(), 2);
+    }
+
+    #[test]
+    fn render_kimi_config_toml_emits_marker_default_and_blocks() {
+        let providers = vec![KimiProviderEntry {
+            name: "deepseek".to_string(),
+            base_url: "https://gw.example/v1".to_string(),
+            api_key: "sk-secret".to_string(),
+        }];
+        let models = vec![KimiModelEntry {
+            name: "deepseek-deepseek-v4-pro".to_string(),
+            provider: "deepseek".to_string(),
+            model_id: "deepseek/deepseek-v4-pro".to_string(),
+        }];
+        let rendered = render_kimi_config_toml("deepseek-deepseek-v4-pro", &providers, &models);
+        assert!(rendered.starts_with(KIMI_MANAGED_MARKER));
+        assert!(rendered.contains("default_model = "));
+        assert!(rendered.contains("[providers.deepseek]"));
+        assert!(rendered.contains("openai_legacy"));
+        assert!(rendered.contains("base_url = "));
+        assert!(rendered.contains("[models.deepseek-deepseek-v4-pro]"));
+        assert!(rendered.contains("deepseek/deepseek-v4-pro"));
+        assert!(rendered.contains("max_context_size = 262144"));
     }
 
     #[cfg(windows)]
