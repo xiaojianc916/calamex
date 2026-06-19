@@ -121,7 +121,7 @@ const selectedSkills = defineModel<ISelectedSkill[]>('selectedSkills', {
  * 默认 builtin；父级未绑定时仍可独立工作（用于先把 UI 做上）。
  */
 const selectedAgent = defineModel<TAiPromptAgentKind>('agentBackend', {
-  default: 'builtin',
+  default: 'kimi',
 });
 
 const props = defineProps<{
@@ -193,7 +193,7 @@ const modeOptions: IAiPromptModeOption[] = [
 
 const agentOptions: IAiPromptAgentOption[] = [
   { key: 'builtin', label: 'Calamex Agent' },
-  { key: 'kimi', label: 'Kimi' },
+  { key: 'kimi', label: 'Kimi Code' },
 ];
 
 const emptyTokenContext: IAiTokenContextProps = {
@@ -1666,6 +1666,10 @@ onBeforeUnmount(() => {
 }
 
 .ai-model-trigger> :deep(svg:last-child) {
+  display: none;
+}
+
+.ai-agent-trigger > :deep(svg:last-child) {
   display: none;
 }
 

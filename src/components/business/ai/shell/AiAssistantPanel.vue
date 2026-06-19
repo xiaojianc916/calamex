@@ -133,7 +133,7 @@ const isPromptModelSaving = ref(false);
 // Kimi 等外部 Agent 经 agent_sidecar_external_chat（标准 session/prompt）发送，由
 // useAiAssistant.sendMessage 据此 backend 分流到外部 ACP 发送链路。
 type TSessionAgentBackend = 'builtin' | 'kimi';
-const sessionAgentBackend = ref<TSessionAgentBackend>('builtin');
+const sessionAgentBackend = ref<TSessionAgentBackend>('kimi');
 
 // 各 Agent 的会话级模型记忆：
 // - builtin 直接复用 ai.json 的全局 selectedModel（保留既有持久化与 mastra 运行时语义）。

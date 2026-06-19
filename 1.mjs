@@ -1,24 +1,23 @@
 #!/usr/bin/env node
-// scripts/codemod/step7-5b-thread-store-persisted-read.mjs
+// scripts/codemod/step7-5c-wire-persisted-read.mjs
 //
-// 7.5b — aiThread store 改造（Step 7 持久化读路径 / dual-read）
+// 7.5c — 启动接线：把 entries 新 key 读路径接入引导流程（Step 7 双读回退）。
 //
-// 1) 编辑 src/store/aiThread/index.ts：
-//    - import vue 增补 watch
-//    - 增补 import restoreAttachmentPreviewPointers（@/store/plugins/debouncedPersistStorage）
-//    - 新增 persistedThreads / persistedActiveThreadId 状态、persistedActiveThread 派生、
-//      restorePersistedThreadPointers + watch 惰性恢复钩子
-//    - activeThread 优先级改为 live ?? persisted ?? projected
-//    - 新增 setPersistedThreads / setPersistedActiveThreadId 动作并导出
-// 2) 创建 src/store/aiThread/persisted-read.spec.ts
+// 依赖（硬前置，缺则拒绝）：
+//   - 7.5a: src/store/aiThread/entriesRenderHydrate.ts 含 hydrateAiThreadEntriesForRender
+//   - 7.5b: src/store/aiThread/index.ts 含 setPersistedThreads / setPersistedActiveThreadId
 //
-// 幂等：index.ts 若已含 'setPersistedActiveThreadId' 则跳过编辑；spec 已存在则跳过创建（除非 --force）。
+// 1) CREATE src/store/aiThread/startupPersistedReadWiring.ts（+ spec）
+// 2) EDIT  src/app/main.ts：hydrateAiConversationAfterBootstrap 内，legacy hydrate 完成后
+//          动态 import 并调用 installAiThreadPersistedReadWiring。
+//
+// 幂等：main.ts 若已含 'startupPersistedReadWiring' 则跳过编辑；spec/wiring 已存在则跳过创建（除非 --force）。
 //
 // 用法：
-//   node scripts/codemod/step7-5b-thread-store-persisted-read.mjs --check
-//   node scripts/codemod/step7-5b-thread-store-persisted-read.mjs
-//   node scripts/codemod/step7-5b-thread-store-persisted-read.mjs --force
-//   REPO_ROOT=/path node scripts/codemod/step7-5b-thread-store-persisted-read.mjs
+//   node scripts/codemod/step7-5c-wire-persisted-read.mjs --check
+//   node scripts/codemod/step7-5c-wire-persisted-read.mjs
+//   node scripts/codemod/step7-5c-wire-persisted-read.mjs --force
+//   REPO_ROOT=/path node scripts/codemod/step7-5c-wire-persisted-read.mjs
 
 import { readFileSync, writeFileSync, existsSync, mkdirSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
@@ -28,329 +27,210 @@ const ARGS = new Set(process.argv.slice(2));
 const CHECK = ARGS.has('--check');
 const FORCE = ARGS.has('--force');
 
-const log = (...a) => console.log('[step7-5b]', ...a);
+const log = (...a) => console.log('[step7-5c]', ...a);
 const fail = (msg) => {
-  console.error('[step7-5b] ✗', msg);
+  console.error('[step7-5c] ✗', msg);
   process.exit(1);
 };
 
-const STORE = 'src/store/aiThread/index.ts';
-const SPEC = 'src/store/aiThread/persisted-read.spec.ts';
-const STORE_SENTINEL = 'setPersistedActiveThreadId';
+const MAIN = 'src/app/main.ts';
+const WIRING = 'src/store/aiThread/startupPersistedReadWiring.ts';
+const SPEC = 'src/store/aiThread/startupPersistedReadWiring.spec.ts';
+const MAIN_SENTINEL = 'startupPersistedReadWiring';
 
-// ---- index.ts 锚点编辑（顺序应用，每个锚点必须唯一） --------------------------
-const EDITS = [
-  {
-    name: 'import vue: +watch',
-    find: "import { computed, ref } from 'vue';",
-    replace: "import { computed, ref, watch } from 'vue';",
-  },
-  {
-    name: 'import restoreAttachmentPreviewPointers',
-    find:
-      "import { legacyThreadToThread } from '@/store/aiThread/legacy-adapter';\n" +
-      "import type { IAiThread, IAiThreadEntry } from '@/types/ai/thread';",
-    replace:
-      "import { legacyThreadToThread } from '@/store/aiThread/legacy-adapter';\n" +
-      "import { restoreAttachmentPreviewPointers } from '@/store/plugins/debouncedPersistStorage';\n" +
-      "import type { IAiThread, IAiThreadEntry } from '@/types/ai/thread';",
-  },
-  {
-    name: 'persisted state + lazy-restore hook',
-    find:
-      "  const liveThread = ref<IAiThread | null>(null);\n\n" +
-      "  /** 把 legacy active thread 适配为 entries 模型（只读派生）。 */\n",
-    replace:
-      "  const liveThread = ref<IAiThread | null>(null);\n\n" +
-      "  /* ----- 7.5b 持久化/迁移读侧（Step 7 dual-read） --------------------------\n" +
-      "   * 启动迁移把旧 key 投影/救援出的 entries 线程灌入这里（见 7.5c 接线），\n" +
-      "   * 作为 legacy 投影之上、liveThread 之下的优先回退来源。\n" +
-      "   * 附件预览指针按「活动线程切换」惰性恢复，复用 restoreAttachmentPreviewPointers。\n" +
-      "   * ----------------------------------------------------------------------- */\n" +
-      "  const persistedThreads = ref<IAiThread[]>([]);\n" +
-      "  const persistedActiveThreadId = ref<string | null>(null);\n\n" +
-      "  /** 已完成指针惰性恢复的线程 id（去重；换库时清空）。 */\n" +
-      "  const restoredThreadIds = new Set<string>();\n\n" +
-      "  const persistedActiveThread = computed<IAiThread | null>(() => {\n" +
-      "    const id = persistedActiveThreadId.value;\n" +
-      "    if (!id) return null;\n" +
-      "    return persistedThreads.value.find((thread) => thread.id === id) ?? null;\n" +
-      "  });\n\n" +
-      "  /**\n" +
-      "   * 惰性恢复指定持久化线程的附件预览指针（idb:// → base64）。\n" +
-      "   * - 每线程每会话最多一次（restoredThreadIds 去重，同步登记防并发重入）。\n" +
-      "   * - await 期间数组可能被替换：回写前按 id 重定位并校验对象身份未变，\n" +
-      "   *   避免覆盖更新的快照（不可变 splice 回写，与 7.5a 一致）。\n" +
-      "   */\n" +
-      "  async function restorePersistedThreadPointers(threadId: string): Promise<void> {\n" +
-      "    if (restoredThreadIds.has(threadId)) return;\n" +
-      "    const target = persistedThreads.value.find((thread) => thread.id === threadId);\n" +
-      "    if (!target) return;\n" +
-      "    restoredThreadIds.add(threadId);\n" +
-      "    try {\n" +
-      "      const { changed, value } = await restoreAttachmentPreviewPointers(target);\n" +
-      "      if (!changed) return;\n" +
-      "      const current = persistedThreads.value;\n" +
-      "      const at = current.findIndex((thread) => thread.id === threadId);\n" +
-      "      if (at < 0 || current[at] !== target) return;\n" +
-      "      const next = current.slice();\n" +
-      "      next[at] = value;\n" +
-      "      persistedThreads.value = next;\n" +
-      "    } catch {\n" +
-      "      // 恢复失败非致命：指针保持 idb://，下游按缺图处理；允许后续重试。\n" +
-      "      restoredThreadIds.delete(threadId);\n" +
-      "    }\n" +
-      "  }\n\n" +
-      "  /** 活动持久化线程切换时触发惰性指针恢复。 */\n" +
-      "  watch(\n" +
-      "    persistedActiveThreadId,\n" +
-      "    (id) => {\n" +
-      "      if (id) void restorePersistedThreadPointers(id);\n" +
-      "    },\n" +
-      "    { immediate: false },\n" +
-      "  );\n\n" +
-      "  /** 把 legacy active thread 适配为 entries 模型（只读派生）。 */\n",
-  },
-  {
-    name: 'activeThread priority: + persisted',
-    find:
-      "  const activeThread = computed<IAiThread | null>(\n" +
-      "    () => liveThread.value ?? projectedActiveThread.value,\n" +
-      "  );",
-    replace:
-      "  const activeThread = computed<IAiThread | null>(\n" +
-      "    () => liveThread.value ?? persistedActiveThread.value ?? projectedActiveThread.value,\n" +
-      "  );",
-  },
-  {
-    name: 'actions: setPersistedThreads / setPersistedActiveThreadId',
-    find:
-      "  function setRenderFromEntries(value: boolean): void {\n" +
-      "    renderFromEntries.value = value;\n" +
-      "  }\n\n" +
-      "  return {",
-    replace:
-      "  function setRenderFromEntries(value: boolean): void {\n" +
-      "    renderFromEntries.value = value;\n" +
-      "  }\n\n" +
-      "  /**\n" +
-      "   * 灌入启动迁移得到的持久化线程快照（见 7.5c 接线）。\n" +
-      "   * 换库语义：替换整组线程并重置去重集；activeThreadId 由调用方传入\n" +
-      "   * （通常为 7.5a resolver 归一后的活动线程 id）。同步 kick 活动线程指针恢复，\n" +
-      "   * 覆盖「同 id 换库」watch 不触发的情形（去重保证不与 watch 重复恢复）。\n" +
-      "   */\n" +
-      "  function setPersistedThreads(threads: IAiThread[], activeThreadId: string | null): void {\n" +
-      "    restoredThreadIds.clear();\n" +
-      "    persistedThreads.value = threads;\n" +
-      "    persistedActiveThreadId.value = activeThreadId;\n" +
-      "    if (activeThreadId) void restorePersistedThreadPointers(activeThreadId);\n" +
-      "  }\n\n" +
-      "  /** 切换活动持久化线程（触发指针惰性恢复 watch）。 */\n" +
-      "  function setPersistedActiveThreadId(activeThreadId: string | null): void {\n" +
-      "    persistedActiveThreadId.value = activeThreadId;\n" +
-      "  }\n\n" +
-      "  return {",
-  },
-  {
-    name: 'export persisted state/getter/actions',
-    find:
-      "  return {\n" +
-      "    // state\n" +
-      "    renderFromEntries,\n" +
-      "    liveThread,\n" +
-      "    // getters\n" +
-      "    projectedActiveThread,\n" +
-      "    activeThread,\n" +
-      "    activeEntries,\n" +
-      "    // actions\n" +
-      "    setLiveThread,\n" +
-      "    setRenderFromEntries,\n" +
-      "  };",
-    replace:
-      "  return {\n" +
-      "    // state\n" +
-      "    renderFromEntries,\n" +
-      "    liveThread,\n" +
-      "    persistedThreads,\n" +
-      "    persistedActiveThreadId,\n" +
-      "    // getters\n" +
-      "    projectedActiveThread,\n" +
-      "    persistedActiveThread,\n" +
-      "    activeThread,\n" +
-      "    activeEntries,\n" +
-      "    // actions\n" +
-      "    setLiveThread,\n" +
-      "    setRenderFromEntries,\n" +
-      "    setPersistedThreads,\n" +
-      "    setPersistedActiveThreadId,\n" +
-      "  };",
-  },
-];
-
-const SPEC_CONTENT = `import { createPinia, setActivePinia } from 'pinia';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { nextTick } from 'vue';
-
-import type { IAiThread } from '@/types/ai/thread';
-
-// 隔离持久化读路径：legacy 投影置空 (activeThread=null)；指针恢复注入假实现。
-const { restoreMock } = vi.hoisted(() => ({ restoreMock: vi.fn() }));
-
-vi.mock('@/store/aiConversation', () => ({
-  useAiConversationStore: () => ({ activeThread: null }),
-}));
-vi.mock('@/store/plugins/debouncedPersistStorage', () => ({
-  restoreAttachmentPreviewPointers: (value: unknown) => restoreMock(value),
-}));
-
-type UseAiThreadStore = typeof import('@/store/aiThread')['useAiThreadStore'];
-let useAiThreadStore: UseAiThreadStore;
-
-const makeThread = (id: string, title = id): IAiThread =>
-  ({ id, title, entries: [] } as unknown as IAiThread);
-
-// 冲刷 watcher(nextTick) 与异步恢复(微任务链)。
-const flush = async (): Promise<void> => {
-  for (let i = 0; i < 4; i += 1) {
-    await nextTick();
-    await Promise.resolve();
+// ---- 前置校验 ---------------------------------------------------------------
+const assertPreconditions = () => {
+  const checks = [
+    { file: 'src/store/aiThread/entriesRenderHydrate.ts', token: 'hydrateAiThreadEntriesForRender', step: '7.5a' },
+    { file: 'src/store/aiThread/index.ts', token: 'setPersistedThreads', step: '7.5b' },
+    { file: 'src/store/aiThread/index.ts', token: 'setPersistedActiveThreadId', step: '7.5b' },
+  ];
+  for (const { file, token, step } of checks) {
+    const abs = join(REPO_ROOT, file);
+    if (!existsSync(abs)) fail(`前置缺失：${file} 不存在（请先应用 ${step}）。`);
+    if (!readFileSync(abs, 'utf8').includes(token)) {
+      fail(`前置缺失：${file} 未含 '${token}'（请先应用 ${step}）。`);
+    }
   }
+  log('✓ 前置校验通过（7.5a + 7.5b 已就位）。');
 };
 
+// ---- main.ts 锚点编辑 -------------------------------------------------------
+const MAIN_FIND =
+  "        void hydrateAiConversationStorage().catch((error: unknown) => {\n" +
+  "          console.warn('AI 会话历史后台 hydrate 失败', error);\n" +
+  "        });";
+const MAIN_REPLACE =
+  "        void hydrateAiConversationStorage()\n" +
+  "          .then(async () => {\n" +
+  "            // legacy hydrate 完成后再读新 entries key（Step 7 双读回退接线）。\n" +
+  "            const { installAiThreadPersistedReadWiring } = await import(\n" +
+  "              '@/store/aiThread/startupPersistedReadWiring'\n" +
+  "            );\n" +
+  "            await installAiThreadPersistedReadWiring();\n" +
+  "          })\n" +
+  "          .catch((error: unknown) => {\n" +
+  "            console.warn('AI 会话历史后台 hydrate 失败', error);\n" +
+  "          });";
+
+const WIRING_CONTENT = `/* ============================================================================
+ * 启动迁移读侧接线（Step 7：双读回退）
+ *
+ * legacy hydrate 完成后：
+ *   1) 以旧 conversation 当前线程作为 legacy 回退输入；
+ *   2) 调 7.5a hydrateAiThreadEntriesForRender 读新 entries key（含活动线程指针惰性恢复）+ resolver；
+ *   3) 灌入 aiThread.setPersistedThreads，作为 projectedActiveThread 之下的回退源；
+ *   4) 监听活动线程切换，同步 persistedActiveThreadId（驱动 7.5b 指针惰性恢复，保持回退源活动对齐）。
+ *
+ * 优先级约定（见 aiThread store）：liveThread ?? projectedActiveThread ?? persistedActiveThread。
+ * 即 persisted 仅作回退：双轨期渲染仍以 legacy 投影为准（计划 Step 6），persisted 用于
+ * 迁移失败/空 legacy 时不致空白，并为 Step 8 切换 SoT 预备。
+ * ========================================================================== */
+import { watch } from 'vue';
+
+import { useAiConversationStore } from '@/store/aiConversation';
+import { useAiThreadStore } from '@/store/aiThread';
+import { hydrateAiThreadEntriesForRender } from '@/store/aiThread/entriesRenderHydrate';
+
+export interface IInstallPersistedReadWiringDeps {
+  hydrateForRender: typeof hydrateAiThreadEntriesForRender;
+}
+
+const defaultDeps: IInstallPersistedReadWiringDeps = {
+  hydrateForRender: hydrateAiThreadEntriesForRender,
+};
+
+/**
+ * 安装 entries 新 key 的启动读接线。须在 pinia 就位、legacy hydrate 完成后调用。
+ * deps 可注入以便单测（不 mock 模块）。
+ */
+export async function installAiThreadPersistedReadWiring(
+  deps: IInstallPersistedReadWiringDeps = defaultDeps,
+): Promise<void> {
+  const conversation = useAiConversationStore();
+  const aiThread = useAiThreadStore();
+
+  // 活动线程切换 → 同步回退源活动 id（含指针惰性恢复）；immediate 立即对齐当前值。
+  watch(
+    () => conversation.activeThreadId,
+    (id) => {
+      aiThread.setPersistedActiveThreadId(id ?? null);
+    },
+    { immediate: true },
+  );
+
+  const resolved = await deps.hydrateForRender({
+    legacyActiveThreadId: conversation.activeThreadId ?? null,
+    legacyThreads: conversation.threads,
+  });
+
+  aiThread.setPersistedThreads(resolved.threads, resolved.activeThreadId);
+}
+`;
+
+const SPEC_CONTENT = `import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { nextTick, reactive } from 'vue';
+
+const mocks = vi.hoisted(() => ({
+  conversation: { activeThreadId: 'a' as string | null, threads: [] as unknown[] },
+  setPersistedThreads: vi.fn(),
+  setPersistedActiveThreadId: vi.fn(),
+}));
+
+vi.mock('@/store/aiConversation', () => ({
+  useAiConversationStore: () => mocks.conversation,
+}));
+vi.mock('@/store/aiThread', () => ({
+  useAiThreadStore: () => ({
+    setPersistedThreads: mocks.setPersistedThreads,
+    setPersistedActiveThreadId: mocks.setPersistedActiveThreadId,
+  }),
+}));
+
+type Install = typeof import('@/store/aiThread/startupPersistedReadWiring')['installAiThreadPersistedReadWiring'];
+let installAiThreadPersistedReadWiring: Install;
+
 beforeEach(async () => {
-  setActivePinia(createPinia());
-  restoreMock.mockReset();
-  restoreMock.mockImplementation(async (value: unknown) => ({ changed: false, value }));
-  ({ useAiThreadStore } = await import('@/store/aiThread'));
+  mocks.conversation = reactive({ activeThreadId: 'a', threads: [{ id: 'a' }] });
+  mocks.setPersistedThreads.mockReset();
+  mocks.setPersistedActiveThreadId.mockReset();
+  ({ installAiThreadPersistedReadWiring } = await import(
+    '@/store/aiThread/startupPersistedReadWiring'
+  ));
 });
 
-describe('aiThread store — 7.5b 持久化读路径', () => {
-  it('activeThread 优先级 live > persisted > projected', async () => {
-    const store = useAiThreadStore();
-    expect(store.activeThread).toBeNull(); // projected 为 null（mock）
+describe('startupPersistedReadWiring — 7.5c', () => {
+  it('读 legacy 输入 → hydrateForRender → 灌入 setPersistedThreads', async () => {
+    const hydrateForRender = vi
+      .fn()
+      .mockResolvedValue({ source: 'entries', activeThreadId: 'a', threads: [{ id: 'a' }] });
 
-    store.setPersistedThreads([makeThread('a'), makeThread('b')], 'b');
-    await flush();
-    expect(store.persistedActiveThread?.id).toBe('b');
-    expect(store.activeThread?.id).toBe('b');
+    await installAiThreadPersistedReadWiring({ hydrateForRender });
 
-    store.setLiveThread(makeThread('live'));
-    expect(store.activeThread?.id).toBe('live');
-
-    store.setLiveThread(null);
-    expect(store.activeThread?.id).toBe('b');
+    expect(hydrateForRender).toHaveBeenCalledWith({
+      legacyActiveThreadId: 'a',
+      legacyThreads: [{ id: 'a' }],
+    });
+    expect(mocks.setPersistedThreads).toHaveBeenCalledWith([{ id: 'a' }], 'a');
   });
 
-  it('persistedActiveThread 按 id 解析；空/不存在 → null', async () => {
-    const store = useAiThreadStore();
-    store.setPersistedThreads([makeThread('a'), makeThread('b')], null);
-    await flush();
-    expect(store.persistedActiveThread).toBeNull();
+  it('活动线程切换同步 persistedActiveThreadId（immediate + 后续切换）', async () => {
+    const hydrateForRender = vi
+      .fn()
+      .mockResolvedValue({ source: 'legacy', activeThreadId: 'a', threads: [] });
 
-    store.setPersistedActiveThreadId('zzz');
-    await flush();
-    expect(store.persistedActiveThread).toBeNull();
+    await installAiThreadPersistedReadWiring({ hydrateForRender });
+    expect(mocks.setPersistedActiveThreadId).toHaveBeenCalledWith('a'); // immediate
 
-    store.setPersistedActiveThreadId('a');
-    await flush();
-    expect(store.persistedActiveThread?.id).toBe('a');
-  });
-
-  it('换库 + 切换线程惰性恢复指针，且每线程仅恢复一次', async () => {
-    restoreMock.mockImplementation(async (value: { title?: string }) => ({
-      changed: true,
-      value: { ...value, title: 'RESTORED' },
-    }));
-
-    const store = useAiThreadStore();
-    store.setPersistedThreads([makeThread('a'), makeThread('b')], 'a');
-    await flush();
-
-    expect(restoreMock).toHaveBeenCalledTimes(1); // 仅活动线程 'a'
-    expect(store.persistedThreads.find((t) => t.id === 'a')?.title).toBe('RESTORED');
-    expect(store.persistedThreads.find((t) => t.id === 'b')?.title).toBe('b');
-
-    store.setPersistedActiveThreadId('b');
-    await flush();
-    expect(restoreMock).toHaveBeenCalledTimes(2);
-    expect(store.persistedThreads.find((t) => t.id === 'b')?.title).toBe('RESTORED');
-
-    store.setPersistedActiveThreadId('a'); // 已恢复 → 不再调用
-    await flush();
-    expect(restoreMock).toHaveBeenCalledTimes(2);
-  });
-
-  it('changed:false 时不替换数组（保持对象身份）', async () => {
-    const store = useAiThreadStore();
-    const a = makeThread('a');
-    store.setPersistedThreads([a], 'a');
-    await flush();
-    expect(restoreMock).toHaveBeenCalledTimes(1);
-    expect(store.persistedThreads[0]).toBe(a);
-  });
-
-  it('setPersistedThreads 重置去重集：同 id 换库后再次恢复', async () => {
-    restoreMock.mockImplementation(async (value: { title?: string }) => ({
-      changed: true,
-      value: { ...value, title: 'RESTORED' },
-    }));
-    const store = useAiThreadStore();
-
-    store.setPersistedThreads([makeThread('a')], 'a');
-    await flush();
-    expect(restoreMock).toHaveBeenCalledTimes(1);
-
-    store.setPersistedThreads([makeThread('a')], 'a'); // 新对象、同 id
-    await flush();
-    expect(restoreMock).toHaveBeenCalledTimes(2);
+    mocks.setPersistedActiveThreadId.mockClear();
+    mocks.conversation.activeThreadId = 'b';
+    await nextTick();
+    expect(mocks.setPersistedActiveThreadId).toHaveBeenCalledWith('b');
   });
 });
 `;
 
-const applyEdits = () => {
-  const abs = join(REPO_ROOT, STORE);
-  if (!existsSync(abs)) fail(`缺少 ${STORE}。`);
-  let content = readFileSync(abs, 'utf8');
-
-  if (content.includes(STORE_SENTINEL)) {
-    log(`✓ ${STORE} 已含 '${STORE_SENTINEL}'，跳过编辑（幂等）。`);
+const editMain = () => {
+  const abs = join(REPO_ROOT, MAIN);
+  if (!existsSync(abs)) fail(`缺少 ${MAIN}。`);
+  const before = readFileSync(abs, 'utf8');
+  if (before.includes(MAIN_SENTINEL)) {
+    log(`✓ ${MAIN} 已含 '${MAIN_SENTINEL}'，跳过编辑（幂等）。`);
     return;
   }
-
-  for (const { name, find, replace } of EDITS) {
-    const n = content.split(find).length - 1;
-    if (n !== 1) fail(`[${name}] 锚点预期 1 次，实际 ${n} 次；中止（未写入）。`);
-    content = content.replace(find, () => replace);
-  }
-
+  const n = before.split(MAIN_FIND).length - 1;
+  if (n !== 1) fail(`${MAIN} 锚点预期 1 次，实际 ${n} 次；中止。`);
+  const next = before.replace(MAIN_FIND, () => MAIN_REPLACE);
   if (CHECK) {
-    log(`  [将修改] ${STORE}（应用 ${EDITS.length} 处编辑）`);
+    log(`  [将修改] ${MAIN}`);
     return;
   }
-  writeFileSync(abs, content, { encoding: 'utf8' });
-  log('  ✓ 写入', STORE);
+  writeFileSync(abs, next, { encoding: 'utf8' });
+  log('  ✓ 写入', MAIN);
 };
 
-const createSpec = () => {
-  const abs = join(REPO_ROOT, SPEC);
+const createFile = (relPath, content) => {
+  const abs = join(REPO_ROOT, relPath);
   if (existsSync(abs) && !FORCE) {
-    log(`✓ ${SPEC} 已存在，跳过创建（用 --force 覆盖）。`);
+    log(`✓ ${relPath} 已存在，跳过创建（用 --force 覆盖）。`);
     return;
   }
   if (CHECK) {
-    log(`  [将创建] ${SPEC}（${SPEC_CONTENT.length} bytes）`);
+    log(`  [将创建] ${relPath}（${content.length} bytes）`);
     return;
   }
   mkdirSync(dirname(abs), { recursive: true });
-  writeFileSync(abs, SPEC_CONTENT, { encoding: 'utf8' });
-  log('  ✓ 写入', SPEC);
+  writeFileSync(abs, content, { encoding: 'utf8' });
+  log('  ✓ 写入', relPath);
 };
 
 const run = () => {
   log('REPO_ROOT =', REPO_ROOT);
   log(CHECK ? '模式: --check (干跑)' : FORCE ? '模式: 写入(--force)' : '模式: 写入');
-  applyEdits();
-  createSpec();
+  assertPreconditions();
+  createFile(WIRING, WIRING_CONTENT);
+  createFile(SPEC, SPEC_CONTENT);
+  editMain();
   log('✓ 完成。下一步: pnpm typecheck && pnpm lint && pnpm test');
 };
 

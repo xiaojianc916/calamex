@@ -314,10 +314,10 @@ describe('AiPromptInput', () => {
       ],
     };
 
-    const builtinWrapper = mountPromptInput({ sessionConfigOptions });
+    const builtinWrapper = mountPromptInput({ agentBackend: 'builtin', sessionConfigOptions });
     expect(builtinWrapper.findAll('.ai-agent-trigger')).toHaveLength(1);
 
-    const kimiWrapper = mountPromptInput({ agentBackend: 'kimi', sessionConfigOptions });
+    const kimiWrapper = mountPromptInput({ sessionConfigOptions });
     expect(kimiWrapper.findAll('.ai-agent-trigger')).toHaveLength(3);
   });
 });
