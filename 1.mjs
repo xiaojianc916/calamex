@@ -1,314 +1,137 @@
 #!/usr/bin/env node
-// scripts/codemod/step7-4c-entries-mirror-bridge.mjs
+// scripts/codemod/step7-4d-wire-entries-mirror.mjs
 //
-// Step 7.4c —— entries 双写桥接逻辑 (依赖注入, 未接线, 零运行时变化)
+// Step 7.4d —— 真实接线: 在 pinia 注册插件, ai-conversation store 惰性实例化时
+// 装载 entries 双写镜像 (7.4c 的 installEntriesMirror)。
 //
-// 新建:
-//   src/store/aiThread/entriesMirrorBridge.ts        投影双写 + 订阅装载 + hydrate 读自检
-//   src/store/aiThread/entriesMirrorBridge.spec.ts   单测 (假 store + 注入假 deps)
+// 编辑 (仅一个文件):
+//   src/store/index.ts
+//     1) 顶部新增 import { installEntriesMirror, type IConversationStoreLike }
+//     2) 尾部 pinia.use(piniaPluginPersistedstate) 之后新增镜像插件
 //
-// 逻辑全部经依赖注入, 默认指向真实单例; 真实接线留待 7.4d (改 main.ts)。
-// 未被 main.ts / barrel 引用 → 零运行时变化, 可回退。
+// 不动 main.ts; 不 eager 实例化; 不翻转渲染 SoT; Step 8 整体删除即回退。
 //
 // 依赖前置 (缺失即提前失败, 零写入):
-//   - 7.3:  src/store/aiThread/hydrate.ts          含 resolvePersistedThreads / IResolvedPersistedThreads
-//   - 7.4a: src/store/aiThread/project.ts          含 projectConversationToThreadPersist
-//   - 7.4b: src/store/plugins/aiThreadEntriesStorage.ts  含 scheduleAiThreadEntriesPersist / hydrateAiThreadEntriesSnapshot
-//   - main: src/store/aiConversation.ts            含 IAiConversationThread
+//   - 7.4c: src/store/aiThread/entriesMirrorBridge.ts 含 installEntriesMirror / IConversationStoreLike
+//   - src/store/index.ts 含两处锚点
+//
+// 幂等: 若 index.ts 已含 'entriesMirrorBridge' → 视为已接线, 跳过并退出 0。
 //
 // 用法:
-//   node scripts/codemod/step7-4c-entries-mirror-bridge.mjs --check
-//   node scripts/codemod/step7-4c-entries-mirror-bridge.mjs
-//   node scripts/codemod/step7-4c-entries-mirror-bridge.mjs --force
-//   REPO_ROOT=/path node scripts/codemod/step7-4c-entries-mirror-bridge.mjs
+//   node scripts/codemod/step7-4d-wire-entries-mirror.mjs --check
+//   node scripts/codemod/step7-4d-wire-entries-mirror.mjs
+//   REPO_ROOT=/path node scripts/codemod/step7-4d-wire-entries-mirror.mjs
 
-import { mkdirSync, readFileSync, writeFileSync, existsSync } from 'node:fs';
-import { dirname, join, resolve } from 'node:path';
+import { readFileSync, writeFileSync, existsSync } from 'node:fs';
+import { join, resolve } from 'node:path';
 
 const REPO_ROOT = resolve(process.env.REPO_ROOT ?? process.cwd());
 const argv = new Set(process.argv.slice(2));
 const CHECK = argv.has('--check');
-const FORCE = argv.has('--force');
 
-const log = (...a) => console.log('[step7-4c]', ...a);
+const log = (...a) => console.log('[step7-4d]', ...a);
 const fail = (msg) => {
-  console.error('[step7-4c] ✗', msg);
+  console.error('[step7-4d] ✗', msg);
   process.exit(1);
 };
 
-const PRECONDITIONS = [
-  {
-    path: 'src/store/aiThread/hydrate.ts',
-    tokens: ['resolvePersistedThreads', 'IResolvedPersistedThreads'],
-    hint: '请先应用 step7-3-hydrate-resolver.mjs (7.3)。',
-  },
-  {
-    path: 'src/store/aiThread/project.ts',
-    tokens: ['projectConversationToThreadPersist'],
-    hint: '请先应用 step7-4a-project-conversation.mjs (7.4a)。',
-  },
-  {
-    path: 'src/store/plugins/aiThreadEntriesStorage.ts',
-    tokens: ['scheduleAiThreadEntriesPersist', 'hydrateAiThreadEntriesSnapshot'],
-    hint: '请先应用 step7-4b-entries-mirror-storage.mjs (7.4b)。',
-  },
-  {
-    path: 'src/store/aiConversation.ts',
-    tokens: ['IAiConversationThread'],
-    hint: 'aiConversation.ts 与预期 main 不符。',
-  },
-];
+const TARGET = 'src/store/index.ts';
+const BRIDGE = 'src/store/aiThread/entriesMirrorBridge.ts';
+const WIRED_MARKER = 'entriesMirrorBridge';
+
+const IMPORT_FIND =
+  "import { createPinia } from 'pinia';\n" +
+  "import piniaPluginPersistedstate from 'pinia-plugin-persistedstate';";
+
+const IMPORT_REPLACE =
+  "import { createPinia } from 'pinia';\n" +
+  "import piniaPluginPersistedstate from 'pinia-plugin-persistedstate';\n" +
+  '\n' +
+  "import { installEntriesMirror, type IConversationStoreLike } from '@/store/aiThread/entriesMirrorBridge';";
+
+const PLUGIN_FIND =
+  'export const pinia = createPinia();\n' +
+  'pinia.use(piniaPluginPersistedstate);';
+
+const PLUGIN_REPLACE =
+  'export const pinia = createPinia();\n' +
+  'pinia.use(piniaPluginPersistedstate);\n' +
+  '\n' +
+  '// Step 7.4d —— entries 双写镜像接线 (Step 8 整体删除)。\n' +
+  '// ai-conversation store 惰性实例化、persistedstate hydrate 之后装载双写镜像;\n' +
+  '// 仅向新 key 投影, 不改变渲染 SoT; 保留惰性 hydrate, 不 eager 实例化。\n' +
+  'pinia.use(({ store }) => {\n' +
+  "  if (store.$id === 'ai-conversation') {\n" +
+  '    installEntriesMirror(store as unknown as IConversationStoreLike);\n' +
+  '  }\n' +
+  '});';
 
 const checkPreconditions = () => {
   const errors = [];
-  for (const pc of PRECONDITIONS) {
-    const abs = join(REPO_ROOT, pc.path);
-    if (!existsSync(abs)) {
-      errors.push(`缺少依赖文件 ${pc.path} —— ${pc.hint}`);
-      continue;
-    }
-    const content = readFileSync(abs, 'utf8');
-    for (const token of pc.tokens) {
-      if (!content.includes(token)) {
-        errors.push(`${pc.path} 未包含 "${token}" —— ${pc.hint}`);
+
+  const bridgeAbs = join(REPO_ROOT, BRIDGE);
+  if (!existsSync(bridgeAbs)) {
+    errors.push(`缺少 ${BRIDGE} —— 请先应用 step7-4c-entries-mirror-bridge.mjs (7.4c)。`);
+  } else {
+    const bc = readFileSync(bridgeAbs, 'utf8');
+    for (const token of ['installEntriesMirror', 'IConversationStoreLike']) {
+      if (!bc.includes(token)) {
+        errors.push(`${BRIDGE} 未包含 "${token}" —— 7.4c 不完整。`);
       }
     }
   }
+
+  const targetAbs = join(REPO_ROOT, TARGET);
+  if (!existsSync(targetAbs)) {
+    errors.push(`缺少 ${TARGET}。`);
+  }
+
   return errors;
 };
 
-const BRIDGE_TS = `import type { IAiConversationThread } from '@/store/aiConversation';
-import { resolvePersistedThreads, type IResolvedPersistedThreads } from '@/store/aiThread/hydrate';
-import { projectConversationToThreadPersist } from '@/store/aiThread/project';
-import {
-  hydrateAiThreadEntriesSnapshot,
-  scheduleAiThreadEntriesPersist,
-} from '@/store/plugins/aiThreadEntriesStorage';
-
-/**
- * entries 双写桥接 (Step 7.4c)。
- *
- * 把 legacy 会话 store 与新 entries 镜像引擎/读 resolver 接起来, 但不在此处改变
- * 渲染 SoT (legacy 仍是显示来源)。所有外部副作用经 deps 注入, 默认指向真实单例,
- * 便于单测且与具体实现解耦。真实接线 (main.ts) 留待 7.4d; 本模块当前未被引用。
- */
-
-/** 桥所需的会话 store 最小形状 (便于注入假 store 测试)。 */
-export interface IConversationStoreLike {
-  activeThreadId: string | null;
-  threads: IAiConversationThread[];
-  $subscribe: (callback: () => void) => unknown;
-}
-
-/** 可注入副作用 (默认绑定真实镜像引擎)。 */
-export interface IEntriesMirrorDeps {
-  schedulePersist: (value: string) => void;
-  hydrateSnapshot: () => Promise<{ raw: string | null }>;
-}
-
-const defaultDeps: IEntriesMirrorDeps = {
-  schedulePersist: scheduleAiThreadEntriesPersist,
-  hydrateSnapshot: hydrateAiThreadEntriesSnapshot,
-};
-
-const parseRawEntriesSnapshot = (raw: string | null): unknown => {
-  if (raw === null) return null;
-  try {
-    return JSON.parse(raw) as unknown;
-  } catch {
-    return null;
+const applyEdit = (content, find, replace, label) => {
+  const occurrences = content.split(find).length - 1;
+  if (occurrences !== 1) {
+    fail(`锚点 [${label}] 预期出现 1 次, 实际 ${occurrences} 次; 未写入。`);
   }
+  return content.replace(find, () => replace);
 };
-
-/** 投影当前 store 状态为 entries 快照并入双写队列。 */
-export const mirrorConversationToEntries = (
-  store: IConversationStoreLike,
-  deps: IEntriesMirrorDeps = defaultDeps,
-): void => {
-  const snapshot = projectConversationToThreadPersist({
-    activeThreadId: store.activeThreadId,
-    threads: store.threads,
-  });
-  deps.schedulePersist(JSON.stringify(snapshot));
-};
-
-/**
- * 读取新 key 快照并经 7.3 resolver 解析 (读路径自检)。
- * 新 key 有效 → source 'entries'; 否则回退到 legacy 投影。结果供 7.4d/7.5 接入,
- * 当前不改变渲染 SoT。
- */
-export const resolveMirrorOnHydrate = async (
-  store: IConversationStoreLike,
-  deps: IEntriesMirrorDeps = defaultDeps,
-): Promise<IResolvedPersistedThreads> => {
-  const { raw } = await deps.hydrateSnapshot();
-  return resolvePersistedThreads({
-    rawEntriesSnapshot: parseRawEntriesSnapshot(raw),
-    legacyActiveThreadId: store.activeThreadId,
-    legacyThreads: store.threads,
-  });
-};
-
-/**
- * 安装双写镜像: 立即镜像一次当前状态, 并订阅后续 store 变更继续镜像。
- * 返回取消订阅句柄 (供卸载/回退)。
- */
-export const installEntriesMirror = (
-  store: IConversationStoreLike,
-  deps: IEntriesMirrorDeps = defaultDeps,
-): (() => void) => {
-  mirrorConversationToEntries(store, deps);
-  const stop = store.$subscribe(() => {
-    mirrorConversationToEntries(store, deps);
-  });
-  return typeof stop === 'function' ? (stop as () => void) : () => {};
-};
-`;
-
-const BRIDGE_SPEC_TS = `import { describe, expect, it } from 'vitest';
-import type { IAiConversationThread } from '@/store/aiConversation';
-import {
-  installEntriesMirror,
-  mirrorConversationToEntries,
-  resolveMirrorOnHydrate,
-  type IConversationStoreLike,
-  type IEntriesMirrorDeps,
-} from '@/store/aiThread/entriesMirrorBridge';
-import { projectConversationToThreadPersist } from '@/store/aiThread/project';
-
-const makeLegacyThread = (id: string): IAiConversationThread =>
-  ({
-    id,
-    title: 'T-' + id,
-    titleStatus: 'temporary',
-    createdAt: '2026-01-01T00:00:00.000Z',
-    updatedAt: '2026-01-01T00:00:00.000Z',
-    messages: [],
-  }) as unknown as IAiConversationThread;
-
-const makeStore = (
-  threads: IAiConversationThread[],
-  activeThreadId: string | null,
-): IConversationStoreLike & { fire: () => void } => {
-  let cb: (() => void) | null = null;
-  return {
-    activeThreadId,
-    threads,
-    $subscribe: (callback: () => void) => {
-      cb = callback;
-      return () => {
-        cb = null;
-      };
-    },
-    fire: () => cb?.(),
-  };
-};
-
-const makeDeps = () => {
-  const scheduled: string[] = [];
-  let raw: string | null = null;
-  const deps: IEntriesMirrorDeps = {
-    schedulePersist: (value: string) => {
-      scheduled.push(value);
-    },
-    hydrateSnapshot: async () => ({ raw }),
-  };
-  return {
-    deps,
-    scheduled,
-    setRaw: (value: string | null) => {
-      raw = value;
-    },
-  };
-};
-
-describe('entriesMirrorBridge', () => {
-  it('mirrorConversationToEntries 投影当前状态并入双写队列', () => {
-    const { deps, scheduled } = makeDeps();
-    const store = makeStore([makeLegacyThread('a'), makeLegacyThread('b')], 'b');
-    mirrorConversationToEntries(store, deps);
-    expect(scheduled).toHaveLength(1);
-    const snapshot = JSON.parse(scheduled[0]) as {
-      activeThreadId: string;
-      threads: { id: string }[];
-    };
-    expect(snapshot.activeThreadId).toBe('b');
-    expect(snapshot.threads.map((t) => t.id)).toEqual(['a', 'b']);
-  });
-
-  it('installEntriesMirror 立即镜像一次, 订阅触发后再次镜像, stop 后停止', () => {
-    const { deps, scheduled } = makeDeps();
-    const store = makeStore([makeLegacyThread('a')], 'a');
-    const stop = installEntriesMirror(store, deps);
-    expect(scheduled).toHaveLength(1);
-    store.fire();
-    expect(scheduled).toHaveLength(2);
-    stop();
-    store.fire();
-    expect(scheduled).toHaveLength(2);
-  });
-
-  it('resolveMirrorOnHydrate: 新 key 有效 → source entries', async () => {
-    const { deps, setRaw } = makeDeps();
-    const store = makeStore([makeLegacyThread('a'), makeLegacyThread('b')], 'a');
-    const projected = projectConversationToThreadPersist({
-      activeThreadId: 'a',
-      threads: [makeLegacyThread('a'), makeLegacyThread('b')],
-    });
-    setRaw(JSON.stringify(projected));
-    const resolved = await resolveMirrorOnHydrate(store, deps);
-    expect(resolved.source).toBe('entries');
-    expect(resolved.threads.map((t) => t.id)).toEqual(['a', 'b']);
-  });
-
-  it('resolveMirrorOnHydrate: 新 key 为空 → 回退 legacy', async () => {
-    const { deps, setRaw } = makeDeps();
-    setRaw(null);
-    const store = makeStore([makeLegacyThread('x')], 'x');
-    const resolved = await resolveMirrorOnHydrate(store, deps);
-    expect(resolved.source).toBe('legacy');
-    expect(resolved.threads.map((t) => t.id)).toEqual(['x']);
-  });
-});
-`;
-
-const FILES = [
-  { path: 'src/store/aiThread/entriesMirrorBridge.ts', content: BRIDGE_TS },
-  { path: 'src/store/aiThread/entriesMirrorBridge.spec.ts', content: BRIDGE_SPEC_TS },
-];
 
 const run = () => {
   log('REPO_ROOT =', REPO_ROOT);
-  log(CHECK ? '模式: --check (干跑)' : FORCE ? '模式: 写入 (--force 覆盖)' : '模式: 写入');
+  log(CHECK ? '模式: --check (干跑)' : '模式: 写入');
 
   const preErrors = checkPreconditions();
   if (preErrors.length > 0) {
-    preErrors.forEach((e) => console.error('[step7-4c] ✗ 前置:', e));
-    fail('依赖前置校验失败, 未写入任何文件。');
+    preErrors.forEach((e) => console.error('[step7-4d] ✗ 前置:', e));
+    fail('依赖前置校验失败, 未写入。');
   }
-  log('✓ 依赖前置校验通过 (7.3 / 7.4a / 7.4b / aiConversation)');
+  log('✓ 依赖前置校验通过 (7.4c bridge + index 锚点文件存在)');
 
-  const conflicts = FILES.filter((f) => existsSync(join(REPO_ROOT, f.path)));
-  if (conflicts.length > 0 && !FORCE) {
-    conflicts.forEach((f) => console.error('[step7-4c] ✗ 目标已存在:', f.path));
-    fail('目标文件已存在; 用 --force 覆盖, 或先清理。未写入任何文件。');
+  const targetAbs = join(REPO_ROOT, TARGET);
+  const before = readFileSync(targetAbs, 'utf8');
+
+  if (before.includes(WIRED_MARKER)) {
+    log(`✓ ${TARGET} 已包含 "${WIRED_MARKER}", 视为已接线, 跳过 (无操作)。`);
+    return;
+  }
+
+  let next = before;
+  next = applyEdit(next, IMPORT_FIND, IMPORT_REPLACE, 'import');
+  next = applyEdit(next, PLUGIN_FIND, PLUGIN_REPLACE, 'plugin');
+
+  if (next === before) {
+    fail('编辑后内容无变化, 异常; 未写入。');
   }
 
   if (CHECK) {
-    FILES.forEach((f) => {
-      const state = existsSync(join(REPO_ROOT, f.path)) ? '将覆盖' : '将创建';
-      log(`  [${state}] ${f.path} (${f.content.length} bytes)`);
-    });
+    log(`  [将修改] ${TARGET} (${before.length} → ${next.length} bytes)`);
     log('✓ --check 通过, 未写入。');
     return;
   }
 
-  for (const f of FILES) {
-    const abs = join(REPO_ROOT, f.path);
-    mkdirSync(dirname(abs), { recursive: true });
-    writeFileSync(abs, f.content, { encoding: 'utf8' });
-    log('  ✓ 写入', f.path);
-  }
+  writeFileSync(targetAbs, next, { encoding: 'utf8' });
+  log('  ✓ 写入', TARGET);
   log('✓ 完成。下一步: pnpm typecheck && pnpm lint && pnpm test');
 };
 
