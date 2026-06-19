@@ -100,11 +100,6 @@ interface IPoint {
  */
 type TAiPromptAgentKind = 'builtin' | 'kimi';
 
-interface IAiPromptAgentOption {
-  key: TAiPromptAgentKind;
-  label: string;
-}
-
 /** 输入框纯文本（不含技能胶囊） */
 const modelValue = defineModel<string>({ required: true });
 
@@ -158,7 +153,6 @@ const emit = defineEmits<{
   sessionConfigOptionChange: [configId: string, valueId: string];
   informationSourcesOpen: [];
   personalizationOpen: [];
-  agentChange: [agent: TAiPromptAgentKind];
   prewarm: [];
 }>();
 
@@ -189,11 +183,6 @@ const modeOptions: IAiPromptModeOption[] = [
   { key: 'chat', label: 'chat' },
   { key: 'agent', label: 'agent' },
   { key: 'plan', label: 'plan' },
-];
-
-const agentOptions: IAiPromptAgentOption[] = [
-  { key: 'builtin', label: 'Calamex Agent' },
-  { key: 'kimi', label: 'Kimi Code' },
 ];
 
 const emptyTokenContext: IAiTokenContextProps = {
@@ -319,10 +308,6 @@ const executionAutonomous = computed(() => props.executionMode === 'autonomous')
 
 const activeModeOption = computed(
   () => modeOptions.find((option) => option.key === activeMode.value) ?? modeOptions[0],
-);
-
-const selectedAgentOption = computed(
-  () => agentOptions.find((option) => option.key === selectedAgent.value) ?? agentOptions[0],
 );
 
 // ACP 会话配置项选择器（config_options 全量迁移）：仅 Kimi ACP agent 且后端下发配置项时
@@ -843,19 +828,6 @@ const handleModelChange = (value: unknown): void => {
   emit('modelChange', value);
 };
 
-const isAgentKind = (value: unknown): value is TAiPromptAgentKind =>
-  value === 'builtin' || value === 'kimi';
-
-// 切换会话使用的 Agent 后端。一个会话只用一种 Agent；
-// 这里仅维护选择态并向外发事件，发送链路接入留待后续。
-const handleAgentChange = (value: unknown): void => {
-  if (!isAgentKind(value) || value === selectedAgent.value) {
-    return;
-  }
-  selectedAgent.value = value;
-  emit('agentChange', value);
-};
-
 const toggleNetworkPermission = (): void => {
   if (props.disabled || props.isNetworkPermissionSaving) {
     return;
@@ -1177,47 +1149,6 @@ onBeforeUnmount(() => {
                 </DropdownMenuItem>
               </DropdownMenuContent>
             </DropdownMenu>
-            <Select
-              :model-value="selectedAgent"
-              :disabled="disabled"
-              @update:model-value="handleAgentChange"
-            >
-              <SelectTrigger aria-label="选择 Agent" class="ai-agent-trigger">
-                <AiProviderIcon
-                  v-if="selectedAgent === 'kimi'"
-                  class="ai-agent-trigger__icon"
-                  platform-id="moonshotai"
-                  decorative
-                />
-                <Bot v-else class="ai-agent-trigger__icon" :stroke-width="1.6" />
-                <span class="ai-agent-trigger__label" v-text="selectedAgentOption.label"></span>
-              </SelectTrigger>
-              <SelectContent
-                side="top"
-                align="start"
-                :side-offset="8"
-                class="ai-agent-content"
-              >
-                <SelectLabel class="ai-agent-section-label">选择 Agent</SelectLabel>
-                <SelectGroup>
-                  <SelectItem
-                    v-for="agent in agentOptions"
-                    :key="agent.key"
-                    class="ai-agent-item"
-                    :value="agent.key"
-                  >
-                    <AiProviderIcon
-                      v-if="agent.key === 'kimi'"
-                      class="ai-agent-item__icon"
-                      platform-id="moonshotai"
-                      decorative
-                    />
-                    <Bot v-else class="ai-agent-item__icon" :stroke-width="1.6" />
-                    <span class="ai-agent-item__label" v-text="agent.label"></span>
-                  </SelectItem>
-                </SelectGroup>
-              </SelectContent>
-            </Select>
             <template v-if="sessionConfigOptionsVisible">
               <Select
                 v-for="configOption in sessionConfigOptionList"
