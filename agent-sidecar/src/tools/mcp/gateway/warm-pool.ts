@@ -192,7 +192,9 @@ export class McpGatewayWarmPool {
     // 其 catalog 已在 bundle 创建成功时缓存，后续调用走缓存零开销。
     const concurrency = Math.min(MCP_SERVER_NAMES.length, this.maxWarm);
     let cursor = 0;
-    const results = await Promise.allSettled(
+    // 保持原始顺序：按 MCP_SERVER_NAMES 顺序整理结果
+    const byName = new Map<string, { ok: boolean; catalog?: IMcpGatewayCatalog; message?: string | undefined }>();
+    await Promise.allSettled(
       Array.from({ length: concurrency }, async () => {
         while (cursor < MCP_SERVER_NAMES.length) {
           const serverName = MCP_SERVER_NAMES[cursor] as TMcpServerName;
@@ -204,23 +206,14 @@ export class McpGatewayWarmPool {
               ...(input.workspaceRootPath ? { workspaceRootPath: input.workspaceRootPath } : {}),
               ...(input.metricSink ? { metricSink: input.metricSink } : {}),
             });
-            return { ok: true as const, serverName, catalog };
+            byName.set(serverName, { ok: true, catalog });
           } catch (error) {
             const message = error instanceof Error ? error.message : String(error);
-            return { ok: false as const, serverName, message };
+            byName.set(serverName, { ok: false, message });
           }
         }
-        return undefined;
       }),
     );
-
-    // 保持原始顺序：按 MCP_SERVER_NAMES 顺序整理结果
-    const byName = new Map<string, { ok: boolean; catalog?: IMcpGatewayCatalog; message?: string | undefined }>();
-    for (const result of results) {
-      if (result.status === "fulfilled" && result.value !== undefined) {
-        byName.set(result.value.serverName, result.value);
-      }
-    }
 
     for (const serverName of MCP_SERVER_NAMES) {
       const entry = byName.get(serverName);
@@ -375,9 +368,6 @@ export class McpGatewayWarmPool {
       throw new Error('MCP gateway warm pool 已关闭。');
     }
     await this.evictExpired();
-    if (this.isDisposed) {
-      throw new Error('MCP gateway warm pool 已关闭。');
-    }
     const key = createPoolKey(input.workspaceRootPath, input.serverName, this.pinnedServersIgnoreWorkspace);
     const existing = this.entries.get(key);
     if (existing?.bundle) {

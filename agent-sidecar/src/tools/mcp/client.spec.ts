@@ -423,7 +423,7 @@ describe('MCP gateway warm pool', () => {
               }
 
               rawAttemptCount += 1;
-              throw new Error("Cannot read properties of undefined (reading 'context')");
+              throw new TypeError("Cannot read properties of undefined (reading 'context')");
             },
           },
         },
@@ -465,14 +465,11 @@ describe('MCP gateway warm pool', () => {
         configs: [createMockStdioConfig('git')],
         errors: [],
         tools: {
-          git_commit: createTool({
-            id: 'git_commit',
+          git_commit: {
             description: '创建 Git commit',
-            inputSchema: z.object({
-              message: z.string(),
-            }),
+            annotations: { readOnlyHint: false },
             execute: async () => ({ ok: true }),
-          }),
+          },
         },
         disconnectAll: async () => undefined,
       }),

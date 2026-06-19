@@ -2,12 +2,12 @@ import { z } from 'zod';
 
 import { aiTaskPlanStepSchema } from '@/types/ai/agent.schema';
 import { aiContextReferenceSchema } from '@/types/ai/context.schema';
-import {
-  aiConversationScrollStateSchema,
-  aiConversationTitleStatusSchema,
-} from '@/types/ai/conversation.schema';
 import { aiAgentPatchSummarySchema } from '@/types/ai/patch.schema';
 import { aiThreadContentBlockSchema } from '@/types/ai/thread/content-block.schema';
+import {
+  aiThreadScrollStateSchema,
+  aiThreadTitleStatusSchema,
+} from '@/types/ai/thread/meta.schema';
 import { aiThreadToolCallSchema } from '@/types/ai/thread/tool-call.schema';
 
 /* ============================================================================
@@ -110,9 +110,9 @@ export const aiThreadEntrySchema = z.discriminatedUnion('type', [
 export const aiThreadSchema = z.object({
   id: z.string().trim().min(1),
   title: z.string().trim().min(1),
-  titleStatus: aiConversationTitleStatusSchema.catch('temporary'),
+  titleStatus: aiThreadTitleStatusSchema.catch('temporary'),
   createdAt: z.string().trim().min(1),
   updatedAt: z.string().trim().min(1),
   entries: z.array(aiThreadEntrySchema),
-  scrollState: aiConversationScrollStateSchema.optional(),
+  scrollState: aiThreadScrollStateSchema.optional(),
 });

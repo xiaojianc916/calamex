@@ -69,25 +69,25 @@ const AGENT_MODE_SECTION = [
 const identityTemplate = compilePromptTemplate<ISystemPromptContext>([
     '## 身份',
     '你是 Calamex 桌面应用内置的 AI 助手',
-    '当前运行模型：modelLabel（providerLabel）。',
+    '当前运行模型：{{modelLabel}}（{{providerLabel}}）。',
     '你的目标：用最少的工具调用与最简洁的输出，把用户当前的问题或任务解决到位',
 ].join('\n'));
 
 const workspaceTemplate = compilePromptTemplate<ISystemPromptContext>([
     '## 工作区',
-    '- 根路径：`workspaceRootPath`',
+    '- 根路径：`{{workspaceRootPath}}`',
 ].join('\n'));
 
 const goalTemplate = compilePromptTemplate<ISystemPromptContext>([
     '## 用户目标',
-    'goal',
+    '{{goal}}',
 ].join('\n'));
 
 const extraSystemTemplate = compilePromptTemplate<ISystemPromptContext>([
     '## 额外系统消息',
-    '#each extraSystemMessages',
-    'this',
-    '/each',
+    '{{#each extraSystemMessages}}',
+    '{{this}}',
+    '{{/each}}',
 ].join('\n'));
 
 // 上下文块：UI 提供的文件/选区/技能引用。不可信预览正文已在装配阶段截断 + 选好围栏，
@@ -95,27 +95,27 @@ const extraSystemTemplate = compilePromptTemplate<ISystemPromptContext>([
 const contextTemplate = compilePromptTemplate<ISystemPromptContext>([
     '## UI 提供的上下文',
     '以下内容由用户当前界面提供，可能与本次问题相关。要不要利用、利用多少由你判断；不代表必须读取完整文件。',
-    '#each contextReferences',
+    '{{#each contextReferences}}',
     '',
-    '#if this.isSkill',
-    '### 技能调用 #this.index — this.label',
-    '- 用户已显式调用此技能#if this.skillSlug（slug：this.skillSlug）/if。',
+    '{{#if this.isSkill}}',
+    '### 技能调用 #{{this.index}} — {{this.label}}',
+    '- 用户已显式调用此技能{{#if this.skillSlug}}（slug：{{this.skillSlug}}）{{/if}}。',
     '- 请先调用 skill_read 工具按上述 slug 读取该技能的完整内容，再据此执行用户的任务。',
     '- 不要凭名称臆测技能内容；以 skill_read 返回的正文为准。',
-    'else',
-    '### 引用 #this.index — this.label',
-    '- 类型：this.kind',
-    '- 路径：this.pathLabel',
-    '- 范围：this.rangeLabel',
-    '- 已脱敏：this.redactedLabel',
-    '#if this.truncated',
+    '{{else}}',
+    '### 引用 #{{this.index}} — {{this.label}}',
+    '- 类型：{{this.kind}}',
+    '- 路径：{{this.pathLabel}}',
+    '- 范围：{{this.rangeLabel}}',
+    '- 已脱敏：{{this.redactedLabel}}',
+    '{{#if this.truncated}}',
     '- 备注：内容已截断，仅展示前若干字符',
-    '/if',
-    'this.fencetext',
-    'this.previewText',
-    'this.fence',
-    '/if',
-    '/each',
+    '{{/if}}',
+    '{{this.fence}}text',
+    '{{this.previewText}}',
+    '{{this.fence}}',
+    '{{/if}}',
+    '{{/each}}',
 ].join('\n'));
 
 // -----------------------------------------------------------------------------

@@ -1,7 +1,7 @@
 import {
   EXPLICIT_CONTEXT_MESSAGE_LIMIT,
   type TMastraChatMessage,
-  type TMastraImagePart,
+  type TMastraFilePart,
   type TMastraTextPart,
   type TMastraUserContent,
 } from '../shared/types.js';
@@ -69,9 +69,9 @@ export type TAgentSessionMessage =
   | IAgentSessionCompactionMessage;
 
 type TImagePartCarrier = {
-  type: 'image';
-  image: string;
-  mediaType?: string;
+  type: 'file';
+  data: string;
+  mediaType: string;
 };
 
 const isTextPart = (part: unknown): part is TMastraTextPart => {
@@ -130,17 +130,17 @@ const parseImagePartCarrier = (line: string): TImagePartCarrier | null => {
   try {
     const parsed: unknown = JSON.parse(rawJson);
     const record = toRecord(parsed);
-    const image = typeof record?.image === 'string' ? record.image.trim() : '';
+    const data = typeof record?.data === 'string' ? record.data.trim() : '';
     const mediaType = typeof record?.mediaType === 'string' ? record.mediaType.trim() : '';
 
-    if (record?.type !== 'image' || !SUPPORTED_IMAGE_PART_SOURCE_PATTERN.test(image)) {
+    if (record?.type !== 'file' || !mediaType || !SUPPORTED_IMAGE_PART_SOURCE_PATTERN.test(data)) {
       return null;
     }
 
     return {
-      type: 'image',
-      image,
-      ...(mediaType ? { mediaType } : {})
+      type: 'file',
+      data,
+      mediaType,
     };
   } catch {
     return null;
@@ -149,8 +149,8 @@ const parseImagePartCarrier = (line: string): TImagePartCarrier | null => {
 
 export const buildImagePartsFromContext = (
   contextReferences: readonly IAgentContextReferenceInput[] | undefined,
-): TMastraImagePart[] => {
-  const imageParts: TMastraImagePart[] = [];
+): TMastraFilePart[] => {
+  const imageParts: TMastraFilePart[] = [];
   const seenSources = new Set<string>();
 
   for (const reference of contextReferences ?? []) {
@@ -161,15 +161,15 @@ export const buildImagePartsFromContext = (
     for (const line of reference.contentPreview.split('\n')) {
       const carrier = parseImagePartCarrier(line);
 
-      if (!carrier || seenSources.has(carrier.image)) {
+      if (!carrier || seenSources.has(carrier.data)) {
         continue;
       }
 
-      seenSources.add(carrier.image);
+      seenSources.add(carrier.data);
       imageParts.push({
-        type: 'image',
-        image: carrier.image,
-        ...(carrier.mediaType ? { mediaType: carrier.mediaType } : {})
+        type: 'file',
+        data: carrier.data,
+        mediaType: carrier.mediaType,
       });
     }
   }
@@ -179,7 +179,7 @@ export const buildImagePartsFromContext = (
 
 const buildUserContentWithImages = (
   text: string,
-  imageParts: readonly TMastraImagePart[],
+  imageParts: readonly TMastraFilePart[],
 ): TMastraUserContent => {
   if (imageParts.length === 0) {
     return text;
@@ -195,7 +195,7 @@ const buildUserContentWithImages = (
 
 const withImagePartsOnUserMessage = (
   message: TAgentSessionMessage,
-  imageParts: readonly TMastraImagePart[],
+  imageParts: readonly TMastraFilePart[],
 ): TAgentSessionMessage => {
   if (message.kind !== 'user' || imageParts.length === 0) {
     return message;

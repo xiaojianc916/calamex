@@ -372,6 +372,9 @@ importers:
       '@mastra/observability':
         specifier: ^1.15.0
         version: 1.15.0(@mastra/core@1.45.0(@bufbuild/protobuf@2.12.0)(ai@6.0.208(zod@4.4.3))(express@5.2.1)(rxjs@7.8.2)(zod@4.4.3))(zod@4.4.3)
+      '@modelcontextprotocol/server-memory':
+        specifier: ^2026.1.26
+        version: 2026.1.26(zod@4.4.3)
       '@modelcontextprotocol/server-sequential-thinking':
         specifier: ^2025.12.18
         version: 2025.12.18(zod@4.4.3)
@@ -1566,6 +1569,10 @@ packages:
     peerDependenciesMeta:
       '@cfworker/json-schema':
         optional: true
+
+  '@modelcontextprotocol/server-memory@2026.1.26':
+    resolution: {integrity: sha512-7F0hbaEB4lVqkYhNWmrC5jJjEWPCofgXd7OIk3h97HyvJL6aTAhlUNYaH8lCDxAzlK9sr2pLCkZEYI+m4HSOiA==}
+    hasBin: true
 
   '@modelcontextprotocol/server-sequential-thinking@2025.12.18':
     resolution: {integrity: sha512-eFR5I9Z9czXQhDn05wahetZU83YNPO+p1HLSEZZEM5q9U1CLF7zv9+TrmSBfRoPaksEAoM8pTWQ33lRCScSFeQ==}
@@ -8175,6 +8182,14 @@ snapshots:
       zod-to-json-schema: 3.25.2(zod@4.4.3)
     transitivePeerDependencies:
       - supports-color
+
+  '@modelcontextprotocol/server-memory@2026.1.26(zod@4.4.3)':
+    dependencies:
+      '@modelcontextprotocol/sdk': 1.29.0(zod@4.4.3)
+    transitivePeerDependencies:
+      - '@cfworker/json-schema'
+      - supports-color
+      - zod
 
   '@modelcontextprotocol/server-sequential-thinking@2025.12.18(zod@4.4.3)':
     dependencies:
