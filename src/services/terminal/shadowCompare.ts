@@ -36,6 +36,29 @@ export const createTerminalShadowCompareStore = () => {
     return created;
   };
 
+  const compareRun = (runId: string) => {
+    const run = ensureRun(runId);
+    const encoder = new TextEncoder();
+    const legacyDuration =
+      run.legacy.startedAt === null || run.legacy.finishedAt === null
+        ? null
+        : run.legacy.finishedAt - run.legacy.startedAt;
+    const shadowDuration =
+      run.shadow.startedAt === null || run.shadow.finishedAt === null
+        ? null
+        : run.shadow.finishedAt - run.shadow.startedAt;
+    return {
+      runId,
+      outputEqual: run.legacy.output === run.shadow.output,
+      byteDiff: encoder.encode(run.shadow.output).length - encoder.encode(run.legacy.output).length,
+      durationDeltaMs:
+        legacyDuration === null || shadowDuration === null ? 0 : shadowDuration - legacyDuration,
+      stateSequenceEqual:
+        run.legacy.states.length === run.shadow.states.length &&
+        run.legacy.states.every((state, index) => state === run.shadow.states[index]),
+    };
+  };
+
   return {
     runs,
 
@@ -73,6 +96,18 @@ export const createTerminalShadowCompareStore = () => {
               run.shadow.startedAt -
               (run.legacy.finishedAt - run.legacy.startedAt),
       };
+    },
+
+    complete(runId: string, channel: TTerminalShadowCompareChannel, finishedAt: number): void {
+      ensureRun(runId)[channel].finishedAt = finishedAt;
+    },
+
+    compare(runId: string) {
+      return compareRun(runId);
+    },
+
+    listComparisons() {
+      return Array.from(runs.keys()).map((runId) => compareRun(runId));
     },
 
     reset(): void {

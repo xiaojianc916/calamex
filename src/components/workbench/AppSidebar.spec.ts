@@ -1,6 +1,8 @@
 import { flushPromises, mount } from '@vue/test-utils';
 import { createPinia } from 'pinia';
-import { describe, expect, it, vi } from 'vitest';
+import { TooltipProvider } from 'reka-ui';
+import { describe, expect, it } from 'vitest';
+import { defineComponent, h } from 'vue';
 import type { IEditorDocument, IWorkspaceDirectoryPayload } from '@/types/editor';
 import AppSidebar from './AppSidebar.vue';
 
@@ -37,46 +39,39 @@ const populatedWorkspaceRoot: IWorkspaceDirectoryPayload = {
   ],
 };
 
-const mountExplorerSidebar = (document: IEditorDocument) => {
-  return mount(AppSidebar, {
-    props: {
-      document,
-      view: 'explorer',
-      isDesktopRuntime: true,
-      workspaceRootPath: 'D:/repo',
-      preloadedWorkspaceRoot: populatedWorkspaceRoot,
-      startupExplorerExpandedPaths: [],
-      startupExplorerSelectedPath: null,
-      canRun: true,
-      isRunning: false,
-      hasRunArtifacts: false,
-      activeRun: null,
-      runHistory: [],
-      commandTemplates: [],
-      executor: 'wsl',
-    },
-    global: {
-      plugins: [createPinia()],
-      stubs: {
-        SourceControlPanel: true,
-        DeferredSearchSidebarPanel: true,
-        DeferredRunSidebarPanel: true,
-        DeferredSshSidebarPanel: true,
-        DeferredLinearContextMenu: true,
-      },
-    },
-  });
+const baseStubs = {
+  SourceControlPanel: true,
+  DeferredSearchSidebarPanel: true,
+  DeferredRunSidebarPanel: true,
+  DeferredSshSidebarPanel: true,
+  DeferredLinearContextMenu: true,
 };
 
-describe('AppSidebar', () => {
-  it('空工作区时显示 Empty 装饰并允许打开文件夹', async () => {
-    const wrapper = mount(AppSidebar, {
-      props: {
-        document: documentFixture,
+// reka-ui 的 Tooltip 基元需要祖先 TooltipProvider;单测用一个 provider 包裹被测组件。
+const mountInProvider = (renderChild: () => ReturnType<typeof h>, stubs: Record<string, unknown>) =>
+  mount(
+    defineComponent({
+      setup() {
+        return () => h(TooltipProvider, null, { default: renderChild });
+      },
+    }),
+    {
+      global: {
+        plugins: [createPinia()],
+        stubs,
+      },
+    },
+  );
+
+const mountExplorerSidebar = (document: IEditorDocument) =>
+  mountInProvider(
+    () =>
+      h(AppSidebar, {
+        document,
         view: 'explorer',
         isDesktopRuntime: true,
         workspaceRootPath: 'D:/repo',
-        preloadedWorkspaceRoot: emptyWorkspaceRoot,
+        preloadedWorkspaceRoot: populatedWorkspaceRoot,
         startupExplorerExpandedPaths: [],
         startupExplorerSelectedPath: null,
         canRun: true,
@@ -86,20 +81,36 @@ describe('AppSidebar', () => {
         runHistory: [],
         commandTemplates: [],
         executor: 'wsl',
+      }),
+    baseStubs,
+  );
+
+describe('AppSidebar', () => {
+  it('空工作区时显示 Empty 装饰并允许打开文件夹', async () => {
+    const wrapper = mountInProvider(
+      () =>
+        h(AppSidebar, {
+          document: documentFixture,
+          view: 'explorer',
+          isDesktopRuntime: true,
+          workspaceRootPath: 'D:/repo',
+          preloadedWorkspaceRoot: emptyWorkspaceRoot,
+          startupExplorerExpandedPaths: [],
+          startupExplorerSelectedPath: null,
+          canRun: true,
+          isRunning: false,
+          hasRunArtifacts: false,
+          activeRun: null,
+          runHistory: [],
+          commandTemplates: [],
+          executor: 'wsl',
+        }),
+      {
+        ...baseStubs,
+        FileTree: true,
+        WorkspaceTreeNode: true,
       },
-      global: {
-        plugins: [createPinia()],
-        stubs: {
-          SourceControlPanel: true,
-          DeferredSearchSidebarPanel: true,
-          DeferredRunSidebarPanel: true,
-          DeferredSshSidebarPanel: true,
-          DeferredLinearContextMenu: true,
-          FileTree: true,
-          WorkspaceTreeNode: true,
-        },
-      },
-    });
+    );
 
     await flushPromises();
 
@@ -107,7 +118,7 @@ describe('AppSidebar', () => {
 
     await wrapper.get('.explorer-empty-action').trigger('click');
 
-    expect(wrapper.emitted('open-folder')).toHaveLength(1);
+    expect(wrapper.findComponent(AppSidebar).emitted('open-folder')).toHaveLength(1);
   });
 
   it('右键未选中文件时会保留临时高亮，菜单关闭后清除', async () => {
