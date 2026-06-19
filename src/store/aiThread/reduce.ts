@@ -188,6 +188,55 @@ function upsertToolCall(
   return { ...thread, entries: replaceAt(thread.entries, index, applyToolEvent(current, event)) };
 }
 
+/* ----- Plan upsert (CompletedPlan) ---------------------------------------- */
+/**
+ * 计划条目按 id upsert：首次出现追加到末尾；再次出现整体替换 steps，但
+ * 保留首次出现的 createdAt 以稳定其在时间线中的位置（对标 tool_call 的
+ * 位置稳定语义，避免计划更新导致条目跳动）。
+ */
+function upsertPlanEntry(
+  thread: IAiThread,
+  event: TAiThreadReduceEventByKind<'plan_updated'>,
+): IAiThread {
+  const index = thread.entries.findIndex(
+    (entry) => entry.type === 'plan' && entry.id === event.id,
+  );
+
+  if (index === -1) {
+    const entry: IAiThreadEntry = {
+      type: 'plan',
+      id: event.id,
+      createdAt: event.createdAt,
+      steps: event.steps,
+    };
+    return { ...thread, entries: [...thread.entries, entry] };
+  }
+
+  const current = thread.entries[index];
+  const merged: IAiThreadEntry = {
+    type: 'plan',
+    id: event.id,
+    createdAt: current.createdAt,
+    steps: event.steps,
+  };
+  return { ...thread, entries: replaceAt(thread.entries, index, merged) };
+}
+
+/* ----- Context compaction (ContextCompaction) ----------------------------- */
+/** 上下文整理：作为一条普通时间线条目追加（不 upsert，每次整理都是新事件）。 */
+function appendContextCompaction(
+  thread: IAiThread,
+  event: TAiThreadReduceEventByKind<'context_compaction'>,
+): IAiThread {
+  const entry: IAiThreadEntry = {
+    type: 'context_compaction',
+    id: event.id,
+    createdAt: event.createdAt,
+    ...(event.message !== undefined ? { message: event.message } : {}),
+  };
+  return { ...thread, entries: [...thread.entries, entry] };
+}
+
 /* ----- Stream finalization ------------------------------------------------ */
 function finalizeNonTerminalTools(
   thread: IAiThread,
@@ -224,6 +273,10 @@ export function reduceThread(thread: IAiThread, event: TAiThreadReduceEvent): IA
     case 'tool_completed':
     case 'tool_canceled':
       return upsertToolCall(thread, event);
+    case 'plan_updated':
+      return upsertPlanEntry(thread, event);
+    case 'context_compaction':
+      return appendContextCompaction(thread, event);
     case 'stream_cancelled':
       return finalizeNonTerminalTools(thread, 'canceled');
     case 'stream_error':

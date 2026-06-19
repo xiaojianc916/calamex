@@ -10,6 +10,7 @@
  * ========================================================================== */
 import type {
   IAiThreadContentBlock,
+  IAiThreadPlanEntry,
   IAiThreadToolCallContent,
   TAiThreadToolKind,
 } from '@/types/ai/thread';
@@ -24,6 +25,8 @@ export type TAiAssistantChannel = 'message' | 'thought';
  * 规范化 reduce 事件联合。语义对齐 Zed session-update 分发：
  * - `assistant_delta` → push_assistant_content_block(content, channel==='thought')
  * - `tool_*` → upsert_tool_call(按 id)
+ * - `plan_updated` → 按 id upsert plan entry（整体替换 steps，位置稳定）
+ * - `context_compaction` → 追加 context_compaction entry
  */
 export type TAiThreadReduceEvent =
   | {
@@ -66,6 +69,18 @@ export type TAiThreadReduceEvent =
       appendContent?: IAiThreadToolCallContent[];
     }
   | { kind: 'tool_canceled'; id: string }
+  | {
+      kind: 'plan_updated';
+      id: string;
+      createdAt: string;
+      steps: IAiThreadPlanEntry['steps'];
+    }
+  | {
+      kind: 'context_compaction';
+      id: string;
+      createdAt: string;
+      message?: string;
+    }
   | { kind: 'stream_completed' }
   | { kind: 'stream_cancelled' }
   | { kind: 'stream_error'; message: string };
