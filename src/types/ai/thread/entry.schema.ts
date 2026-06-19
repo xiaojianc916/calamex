@@ -58,6 +58,20 @@ export const aiThreadPlanEntrySchema = z.object({
   steps: z.array(aiTaskPlanStepSchema),
 });
 
+/**
+ * Plan 控制 entry（审批 / 运行控制，对标渲染层 plan-control）。承载目标与引用，
+ * phase 区分待批准 / 运行中。由 legacy-adapter 从 agentConfirmation 映射，
+ * 投影层据此把审批卡并入平铺时间线（非独立仪表盘）。
+ */
+export const aiThreadPlanControlEntrySchema = z.object({
+  type: z.literal('plan_control'),
+  id: z.string().min(1),
+  createdAt: z.string().min(1),
+  goal: z.string().min(1),
+  references: z.array(aiContextReferenceSchema).default([]),
+  phase: z.enum(['awaiting-approval', 'running']),
+});
+
 /** Context compaction entry（对标 `ContextCompaction`）。 */
 export const aiThreadContextCompactionEntrySchema = z.object({
   type: z.literal('context_compaction'),
@@ -83,6 +97,7 @@ export const aiThreadEntrySchema = z.discriminatedUnion('type', [
   aiThreadAssistantMessageEntrySchema,
   aiThreadToolCallSchema,
   aiThreadPlanEntrySchema,
+  aiThreadPlanControlEntrySchema,
   aiThreadContextCompactionEntrySchema,
   aiThreadChangedFilesEntrySchema,
 ]);

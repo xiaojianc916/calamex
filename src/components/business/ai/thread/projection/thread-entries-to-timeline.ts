@@ -5,8 +5,8 @@
  * 本函数输入是新数据模型 entries(reduce 驱动),供 renderFromEntries=true 时渲染层消费。
  *
  * 本片范围(Step 6 骨架,刻意最小化、可逆):
- * - plan 条目暂不进平铺时间线(计划步骤仍由 deriveThreadPlanDetails 的独立面板渲染;
- *   plan-control 审批卡留待批准接线那一片),故此处跳过。
+ * - plan 条目暂不进平铺时间线(计划步骤仍由 deriveThreadPlanDetails 的独立面板渲染),故跳过。
+ * - plan_control 审批卡投影为 plan-control 条目并入平铺时间线。
  * - user-message 的 references 由数据模型透传(reduce / legacy-adapter 已携带)。
  * - tool-call 的 terminals 暂为空、awaiting 暂为 false(终端快照重建与 HITL 等待留后续)。
  * - changed-files 仅产出末尾汇总条目,不把 diff 内联到工具条目(数据模型未存 patches)。
@@ -136,6 +136,17 @@ export function threadEntriesToTimeline(
       }
       case 'plan': {
         // 本片刻意跳过:plan 步骤由独立面板渲染,不进平铺时间线。
+        break;
+      }
+      case 'plan_control': {
+        timeline.push({
+          kind: 'plan-control',
+          id: entry.id,
+          messageId: entry.id,
+          goal: entry.goal,
+          references: entry.references,
+          phase: entry.phase,
+        });
         break;
       }
       case 'context_compaction': {

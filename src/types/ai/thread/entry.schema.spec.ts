@@ -100,6 +100,34 @@ describe('AI thread entry schema', () => {
     expect(parsed.references[0]).toMatchObject({ id: 'r1', kind: 'current-file' });
   });
 
+  it('plan_control 解析 goal/phase, references 缺省兜底空数组', () => {
+    const parsed = aiThreadEntrySchema.parse({
+      type: 'plan_control',
+      id: 'pc1',
+      createdAt: ISO,
+      goal: '迁移流式渲染',
+      phase: 'awaiting-approval',
+    });
+    expect(parsed.type).toBe('plan_control');
+    if (parsed.type === 'plan_control') {
+      expect(parsed.goal).toBe('迁移流式渲染');
+      expect(parsed.phase).toBe('awaiting-approval');
+      expect(parsed.references).toEqual([]);
+    }
+  });
+
+  it('plan_control 拒绝非法 phase', () => {
+    expect(() =>
+      aiThreadEntrySchema.parse({
+        type: 'plan_control',
+        id: 'pc2',
+        createdAt: ISO,
+        goal: 'x',
+        phase: 'done',
+      }),
+    ).toThrow();
+  });
+
   it('拒绝非法的工具调用状态', () => {
     expect(() =>
       aiThreadToolCallSchema.parse({

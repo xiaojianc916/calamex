@@ -191,6 +191,50 @@ describe('legacyMessageToEntries', () => {
     expect(tool.content.some((c) => c.type === 'diff')).toBe(true);
   });
 
+  it('assistant + agentConfirmation -> plan_control(在 assistant_message 之后)', () => {
+    const ref: IAiContextReference = {
+      id: 'r1',
+      kind: 'selection',
+      label: 'sel',
+      path: 'src/a.ts',
+      range: { startLine: 1, endLine: 2 },
+      contentPreview: 'x',
+      redacted: false,
+    };
+    const entries = legacyMessageToEntries({
+      id: 'a1',
+      role: 'assistant',
+      content: '方案如下',
+      createdAt: ISO,
+      references: [],
+      agentConfirmation: { goal: '迁移流式渲染', references: [ref], status: 'pending' },
+    });
+    expect(entries.map((e) => e.type)).toEqual(['assistant_message', 'plan_control']);
+    const control = entries[1];
+    if (control.type === 'plan_control') {
+      expect(control.id).toBe('a1:plan-control');
+      expect(control.goal).toBe('迁移流式渲染');
+      expect(control.phase).toBe('awaiting-approval');
+      expect(control.references).toEqual([ref]);
+    }
+  });
+
+  it('agentConfirmation.status=running -> phase=running', () => {
+    const entries = legacyMessageToEntries({
+      id: 'a2',
+      role: 'assistant',
+      content: '',
+      createdAt: ISO,
+      references: [],
+      agentConfirmation: { goal: 'g', references: [], status: 'running' },
+    });
+    expect(entries.map((e) => e.type)).toEqual(['plan_control']);
+    const control = entries[0];
+    if (control.type === 'plan_control') {
+      expect(control.phase).toBe('running');
+    }
+  });
+
   it('inferToolKind 启发式', () => {
     expect(inferToolKind('read_file')).toBe('read');
     expect(inferToolKind('apply_patch')).toBe('edit');

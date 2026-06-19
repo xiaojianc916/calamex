@@ -166,6 +166,38 @@ describe('threadEntriesToTimeline', () => {
     }
   });
 
+  it('plan_control 投影为 plan-control 条目', () => {
+    const reference: IAiContextReference = {
+      id: 'r1',
+      kind: 'current-file',
+      label: 'foo.ts',
+      path: 'src/foo.ts',
+      range: null,
+      contentPreview: '',
+      redacted: false,
+    };
+    const entries: IAiThreadEntry[] = [
+      {
+        type: 'plan_control',
+        id: 'pc1',
+        createdAt: ISO,
+        goal: '迁移流式渲染',
+        references: [reference],
+        phase: 'awaiting-approval',
+      },
+    ];
+    const timeline = threadEntriesToTimeline(entries);
+    expect(timeline).toHaveLength(1);
+    const entry = timeline[0];
+    expect(entry.kind).toBe('plan-control');
+    if (entry.kind === 'plan-control') {
+      expect(entry.id).toBe('pc1');
+      expect(entry.goal).toBe('迁移流式渲染');
+      expect(entry.references).toEqual([reference]);
+      expect(entry.phase).toBe('awaiting-approval');
+    }
+  });
+
   it('混合 entries 保持输入顺序', () => {
     const entries: IAiThreadEntry[] = [
       {

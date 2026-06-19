@@ -18,6 +18,7 @@ export const AI_THREAD_ENTRY_TYPES = [
   'assistant_message',
   'tool_call',
   'plan',
+  'plan_control',
   'context_compaction',
   'changed_files',
 ] as const;

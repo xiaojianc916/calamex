@@ -118,6 +118,16 @@ export function legacyMessageToEntries(message: IAiChatMessage): IAiThreadEntry[
       chunks: [{ type: 'message', block: { type: 'text', text: message.content } }],
     });
   }
+  if (message.agentConfirmation) {
+    entries.push({
+      type: 'plan_control',
+      id: `${message.id}:plan-control`,
+      createdAt: message.createdAt,
+      goal: message.agentConfirmation.goal,
+      references: message.agentConfirmation.references,
+      phase: message.agentConfirmation.status === 'running' ? 'running' : 'awaiting-approval',
+    });
+  }
   if (message.changedFilesSummary) {
     const summary = message.changedFilesSummary;
     attachChangedFileDiffsToToolCalls(toolCallEntries, summary, message.patches ?? []);
