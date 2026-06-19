@@ -245,7 +245,7 @@ export const createAskUserTool = (): ReturnType<typeof createTool> =>
             // 的 execute 形参类型未严格暴露 context.agent，沿用本仓库既有的防御性读取风格。
             const { resumeData, suspend } = (context?.agent ?? {}) as {
                 resumeData?: TAskUserResult;
-                suspend?: (payload: TAskUserRequest) => Promise<unknown>;
+                suspend?: (payload: TAskUserRequest) => Promise<z.infer<typeof askUserOutputSchema>>;
             };
 
             const request = buildAskUserRequest(inputData);
