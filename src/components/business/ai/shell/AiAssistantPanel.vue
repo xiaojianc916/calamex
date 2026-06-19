@@ -30,6 +30,7 @@ import { useCopilotSuggestions } from '@/composables/ai/useCopilotSuggestions';
 import { findAiServicePlatformByModel } from '@/constants/ai/providers';
 import { aiService } from '@/services/ipc/ai.service';
 import { cloneAiConfigPayload, resolveDefaultAiBaseUrl } from '@/services/ipc/ai-config.service';
+import { useAiThreadStore } from '@/store/aiThread';
 import type {
   IAiAgentRun,
   IAiAgentStepFinalAnswer,
@@ -97,6 +98,11 @@ const assistant = useAiAssistant({
 const agentRun = useAiAgentRun();
 const agentNetwork = useAiAgentNetwork();
 const webSources = useAiWebSources();
+const aiThreadStore = useAiThreadStore();
+const renderThreadFromEntries = computed(() => aiThreadStore.renderFromEntries);
+const renderThreadEntries = computed(() =>
+  aiThreadStore.renderFromEntries ? aiThreadStore.activeEntries : [],
+);
 const suggestionPool = useCopilotSuggestions();
 const suggestionRows = computed(() =>
   splitSuggestionsIntoRows(suggestionPool.suggestions.value, 3),
@@ -1188,6 +1194,7 @@ onMounted(() => {
 
     <template #body>
       <AiChatThread :messages="visibleThreadMessages" :is-typing="assistant.isSending.value"
+        :render-from-entries="renderThreadFromEntries" :thread-entries="renderThreadEntries"
         :platform-id="aiIconPlatformId" :provider-label="aiIconTitle"
         :conversation-id="assistant.activeConversationId.value" :workspace-root-path="workspaceRootPath"
         :scroll-state="assistant.activeConversationScrollState.value" :typing-label="assistantTypingLabel"

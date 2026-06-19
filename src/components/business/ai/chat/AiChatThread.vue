@@ -7,9 +7,16 @@ import { DynamicScroller, DynamicScrollerItem } from 'vue-virtual-scroller';
 import 'vue-virtual-scroller/dist/vue-virtual-scroller.css';
 import { ConversationEmptyState } from '@/components/ai-elements/conversation';
 import { Message } from '@/components/ai-elements/message';
+import AiThreadEntryView from '@/components/business/ai/thread/AiThreadEntryView.vue';
+import {
+  type TAiThreadEntry,
+  threadEntriesToTimeline,
+} from '@/components/business/ai/thread/projection';
 import type { IAiThreadPlanDetails } from '@/components/business/ai/thread/types';
+import { useThreadEntryExpansion } from '@/components/business/ai/thread/useThreadEntryExpansion';
 import type { TAiServicePlatformId } from '@/constants/ai/providers';
 import type { IAiChatMessage } from '@/types/ai';
+import type { IAiThreadEntry } from '@/types/ai/thread';
 import AiThinkingStatus from './AiThinkingStatus.vue';
 import AiThreadVirtualMessageItem from './AiThreadVirtualMessageItem.vue';
 import { AI_MARKDOWN_VIRTUAL_SCROLL_KEY } from './markstream-virtual-scroll';
@@ -26,6 +33,11 @@ type TAiThreadVirtualItem =
       type: 'message';
       id: string;
       message: IAiChatMessage;
+    }
+  | {
+      type: 'entry';
+      id: string;
+      entry: TAiThreadEntry;
     }
   | {
       type: 'typing';
@@ -46,6 +58,9 @@ const props = withDefaults(
     planDetails?: IAiThreadPlanDetails;
     revertingChangedFilesSummaryId?: string | null;
     pinningChangedFilesSummaryId?: string | null;
+    renderFromEntries?: boolean;
+    threadEntries?: readonly IAiThreadEntry[];
+    streamingMessageId?: string | null;
   }>(),
   {
     typingLabel: '正在思考',
@@ -56,6 +71,9 @@ const props = withDefaults(
     planDetails: undefined,
     revertingChangedFilesSummaryId: null,
     pinningChangedFilesSummaryId: null,
+    renderFromEntries: false,
+    threadEntries: () => [],
+    streamingMessageId: null,
   },
 );
 
@@ -153,23 +171,55 @@ const hasInlineProgressMessage = computed(() => {
   );
 });
 
-const shouldRenderStandaloneTyping = computed(
-  () => props.isTyping && !hasInlineProgressMessage.value,
+const entryTimeline = computed<TAiThreadEntry[]>(() =>
+  threadEntriesToTimeline(props.threadEntries ?? [], {
+    streamingMessageId: props.streamingMessageId,
+  }),
+);
+
+const entryExpansion = useThreadEntryExpansion(entryTimeline);
+
+const hasInlineProgressEntry = computed(() => {
+  const lastEntry = entryTimeline.value.at(-1);
+
+  if (!lastEntry) {
+    return false;
+  }
+
+  return (
+    (lastEntry.kind === 'assistant-text' && lastEntry.streaming) ||
+    (lastEntry.kind === 'reasoning' && lastEntry.streaming)
+  );
+});
+
+const shouldRenderStandaloneTyping = computed(() => {
+  if (!props.isTyping) {
+    return false;
+  }
+
+  return props.renderFromEntries ? !hasInlineProgressEntry.value : !hasInlineProgressMessage.value;
+});
+
+const isThreadEmpty = computed(() =>
+  props.renderFromEntries ? entryTimeline.value.length === 0 : visibleMessages.value.length === 0,
 );
 
 const shouldRenderEmptyState = computed(
-  () =>
-    visibleMessages.value.length === 0 &&
-    !props.hasExtraContent &&
-    !shouldRenderStandaloneTyping.value,
+  () => isThreadEmpty.value && !props.hasExtraContent && !shouldRenderStandaloneTyping.value,
 );
 
 const virtualItems = computed<TAiThreadVirtualItem[]>(() => {
-  const items: TAiThreadVirtualItem[] = visibleMessages.value.map((message) => ({
-    type: 'message',
-    id: message.id,
-    message,
-  }));
+  const items: TAiThreadVirtualItem[] = props.renderFromEntries
+    ? entryTimeline.value.map((entry) => ({
+        type: 'entry' as const,
+        id: entry.id,
+        entry,
+      }))
+    : visibleMessages.value.map((message) => ({
+        type: 'message' as const,
+        id: message.id,
+        message,
+      }));
 
   if (shouldRenderStandaloneTyping.value) {
     items.push({
@@ -466,6 +516,80 @@ const getMessageSizeDependencies = (message: IAiChatMessage): unknown[] => {
   return dependencies;
 };
 
+const entrySizeDependencyCache = new Map<string, TMessageSizeDependencyCacheEntry>();
+
+const trimEntrySizeDependencyCache = (currentEntryId: string): void => {
+  if (
+    entrySizeDependencyCache.size < MESSAGE_SIZE_DEPENDENCY_CACHE_LIMIT ||
+    entrySizeDependencyCache.has(currentEntryId)
+  ) {
+    return;
+  }
+
+  const firstKey = entrySizeDependencyCache.keys().next().value;
+  if (typeof firstKey === 'string') {
+    entrySizeDependencyCache.delete(firstKey);
+  }
+};
+
+const buildEntrySizeSignature = (entry: TAiThreadEntry): string => {
+  switch (entry.kind) {
+    case 'user-message':
+      return ['user-message', entry.markdown.length, entry.references.length].join(':');
+    case 'assistant-text':
+      return ['assistant-text', entry.markdown.length, entry.streaming ? 1 : 0].join(':');
+    case 'reasoning':
+      return [
+        'reasoning',
+        entry.segments.length,
+        entry.segments.reduce((total, segment) => total + segment.length, 0),
+        entry.isLong ? 1 : 0,
+        entry.streaming ? 1 : 0,
+        entryExpansion.isExpanded(entry) ? 1 : 0,
+      ].join(':');
+    case 'tool-call':
+      return [
+        'tool-call',
+        entry.toolCall.status,
+        entry.awaiting ? 1 : 0,
+        Object.keys(entry.terminals).length,
+        entryExpansion.isExpanded(entry) ? 1 : 0,
+      ].join(':');
+    case 'plan-control':
+      return ['plan-control', entry.phase, entry.goal.length, planSizeSignature.value].join(':');
+    case 'context-compaction':
+      return ['context-compaction', entry.text.length].join(':');
+    case 'changed-files-summary':
+      return [
+        'changed-files-summary',
+        entry.summary.id,
+        entry.summary.files.length,
+        entry.summary.totalAdditions,
+        entry.summary.totalDeletions,
+        props.revertingChangedFilesSummaryId === entry.summary.id ? 1 : 0,
+        props.pinningChangedFilesSummaryId === entry.summary.id ? 1 : 0,
+      ].join(':');
+    default: {
+      const exhaustive: never = entry;
+      return String(exhaustive);
+    }
+  }
+};
+
+const getEntrySizeDependencies = (entry: TAiThreadEntry): unknown[] => {
+  const signature = buildEntrySizeSignature(entry);
+  const cached = entrySizeDependencyCache.get(entry.id);
+
+  if (cached?.signature === signature) {
+    return cached.dependencies;
+  }
+
+  const dependencies: unknown[] = [entry.id, signature];
+  trimEntrySizeDependencyCache(entry.id);
+  entrySizeDependencyCache.set(entry.id, { signature, dependencies });
+  return dependencies;
+};
+
 const handleDynamicItemResize = (): void => {
   if (!shouldFollowBottomAfterResize) {
     return;
@@ -475,9 +599,29 @@ const handleDynamicItemResize = (): void => {
 };
 
 const bottomFollowSignature = computed(() => {
+  if (props.renderFromEntries) {
+    const lastEntry = entryTimeline.value.at(-1);
+    const lastEntryStreaming =
+      lastEntry &&
+      ((lastEntry.kind === 'assistant-text' && lastEntry.streaming) ||
+        (lastEntry.kind === 'reasoning' && lastEntry.streaming))
+        ? 'streaming'
+        : 'idle';
+
+    return [
+      'entries',
+      props.conversationId ?? '',
+      entryTimeline.value.length,
+      lastEntry?.id ?? '',
+      lastEntryStreaming,
+      props.isTyping ? 'typing' : 'idle',
+    ].join(':');
+  }
+
   const lastMessage = visibleMessages.value.at(-1);
 
   return [
+    'messages',
     props.conversationId ?? '',
     visibleMessages.value.length,
     lastMessage?.id ?? '',
@@ -554,7 +698,11 @@ onBeforeUnmount(() => {
           :index="index"
           :data-index="index"
           :size-dependencies="
-            item.type === 'message' ? getMessageSizeDependencies(item.message) : [props.isTyping]
+            item.type === 'message'
+              ? getMessageSizeDependencies(item.message)
+              : item.type === 'entry'
+                ? getEntrySizeDependencies(item.entry)
+                : [props.isTyping]
           "
           emit-resize
           @resize="handleDynamicItemResize"
@@ -579,6 +727,24 @@ onBeforeUnmount(() => {
                 <slot name="after-message" :message="message" />
               </template>
             </AiThreadVirtualMessageItem>
+
+            <AiThreadEntryView
+              v-else-if="item.type === 'entry'"
+              :entry="item.entry"
+              :open="entryExpansion.isExpanded(item.entry)"
+              :workspace-root-path="workspaceRootPath"
+              :plan-details="planDetails"
+              :reverting-changed-files-summary-id="revertingChangedFilesSummaryId"
+              :pinning-changed-files-summary-id="pinningChangedFilesSummaryId"
+              @update:open="entryExpansion.setExpanded(item.entry, $event)"
+              @changed-files-rollback="handleChangedFilesRollback"
+              @changed-files-pin="handleChangedFilesPin"
+              @plan-approve="emit('planApprove')"
+              @plan-reject="emit('planReject')"
+              @plan-regenerate="emit('planRegenerate')"
+              @plan-update-step-title="handlePlanUpdateStepTitle"
+              @plan-remove-step="handlePlanRemoveStep"
+            />
 
             <Message
               v-else
