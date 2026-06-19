@@ -13,6 +13,7 @@ export * from './from-acp-terminal';
 export * from './from-acp-tool-call';
 export * from './from-acp-usage';
 export * from './from-runtime-tool-call';
+export * from './from-sidecar-events';
 export * from './from-wire-tool-call';
 export * from './reconcile-thread-entries';
 export * from './thread-entries-to-timeline';
