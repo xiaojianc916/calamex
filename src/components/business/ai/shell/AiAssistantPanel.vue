@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { useFrontendTool } from '@copilotkit/vue';
-import { SquarePen, Trash2 } from '@lucide/vue';
+import { Bot, SquarePen, Trash2 } from '@lucide/vue';
 import { AnimatePresence, Motion } from 'motion-v';
 import { computed, defineAsyncComponent, onMounted, ref } from 'vue';
 import { z } from 'zod';
@@ -18,6 +18,14 @@ import {
   buildPlanControlMessage,
   deriveThreadPlanDetails,
 } from '@/components/business/ai/thread/projection';
+import {
+  Select,
+  SelectContent,
+  SelectGroup,
+  SelectItem,
+  SelectLabel,
+  SelectTrigger,
+} from '@/components/ui/select';
 import { useAiAgentNetwork } from '@/composables/ai/useAiAgentNetwork';
 import { useAiAgentRun } from '@/composables/ai/useAiAgentRun';
 import { useAiAssistant } from '@/composables/ai/useAiAssistant';
@@ -133,6 +141,17 @@ const isPromptModelSaving = ref(false);
 // Kimi 等外部 Agent 经 agent_sidecar_external_chat（标准 session/prompt）发送，由
 // useAiAssistant.sendMessage 据此 backend 分流到外部 ACP 发送链路。
 type TSessionAgentBackend = 'builtin' | 'kimi';
+
+interface ISessionAgentOption {
+  key: TSessionAgentBackend;
+  label: string;
+}
+
+const agentOptions: ISessionAgentOption[] = [
+  { key: 'builtin', label: 'Calamex Agent' },
+  { key: 'kimi', label: 'Kimi Code' },
+];
+
 const sessionAgentBackend = ref<TSessionAgentBackend>('kimi');
 
 // 各 Agent 的会话级模型记忆：
@@ -151,6 +170,13 @@ const activeAgentModelId = computed<string>(() => {
   const remembered = agentModelOverrides.value[agent]?.trim();
   return remembered || globalModel;
 });
+
+const selectedAgentOption = computed(
+  () => agentOptions.find((option) => option.key === sessionAgentBackend.value) ?? agentOptions[0],
+);
+
+const isSessionAgentBackend = (value: unknown): value is TSessionAgentBackend =>
+  value === 'builtin' || value === 'kimi';
 
 const {
   isHistoryOpen,
@@ -188,23 +214,6 @@ const currentServicePlatform = computed(() =>
 );
 const aiIconPlatformId = computed(() => currentServicePlatform.value.id);
 const aiIconTitle = computed(() => currentServicePlatform.value.label);
-const aiModelName = computed(() => {
-  const selectedModel = assistant.config.value.selectedModel?.trim();
-
-  if (!selectedModel) {
-    return '未选择模型';
-  }
-
-  return selectedModel.split('/').filter(Boolean).at(-1) ?? selectedModel;
-});
-const providerMarkTitle = computed(() => {
-  const selectedModel = assistant.config.value.selectedModel?.trim();
-  if (!selectedModel) {
-    return aiIconTitle.value;
-  }
-
-  return `${aiIconTitle.value} · ${selectedModel}`;
-});
 const planStore = computed(() => assistant.agentPlan.store);
 
 const planHasPlan = computed(() => planStore.value.hasPlan);
@@ -719,7 +728,12 @@ const handleSuggestionSelect = async (suggestion: string): Promise<void> => {
 };
 
 // 切换会话 Agent 后端后，清掉上一条（可能是 Kimi 未接入）的错误提示。
-const handleAgentBackendChange = (agent: TSessionAgentBackend): void => {
+const handleAgentBackendChange = (agent: unknown): void => {
+  if (!isSessionAgentBackend(agent)) {
+    return;
+  }
+
+  sessionAgentBackend.value = agent;
   assistant.error.value = '';
 
   if (agent === 'kimi') {
@@ -1121,12 +1135,40 @@ onMounted(() => {
 <template>
   <AiPanelFrame class="ai-assistant-panel" aria-label="AI 助手面板">
     <template #mark>
-      <div class="ai-provider-mark" aria-label="当前 AI 平台和模型" :title="providerMarkTitle">
-        <AiProviderIcon class="ai-provider-mark__icon" :platform-id="aiIconPlatformId" decorative />
-        <span class="ai-provider-mark__copy">
-          <span class="ai-provider-mark__label" v-text="aiModelName"></span>
-        </span>
-      </div>
+      <Select :model-value="sessionAgentBackend" @update:model-value="handleAgentBackendChange">
+        <SelectTrigger aria-label="选择 Agent" class="ai-agent-mark">
+          <AiProviderIcon
+            v-if="sessionAgentBackend === 'kimi'"
+            class="ai-agent-mark__icon"
+            platform-id="moonshotai"
+            decorative
+          />
+          <Bot v-else class="ai-agent-mark__icon" :stroke-width="1.6" />
+          <span class="ai-agent-mark__copy">
+            <span class="ai-agent-mark__label" v-text="selectedAgentOption.label"></span>
+          </span>
+        </SelectTrigger>
+        <SelectContent side="bottom" align="start" :side-offset="8" class="ai-agent-mark-content">
+          <SelectLabel class="ai-agent-mark-section-label">选择 Agent</SelectLabel>
+          <SelectGroup>
+            <SelectItem
+              v-for="agent in agentOptions"
+              :key="agent.key"
+              class="ai-agent-mark-item"
+              :value="agent.key"
+            >
+              <AiProviderIcon
+                v-if="agent.key === 'kimi'"
+                class="ai-agent-mark-item__icon"
+                platform-id="moonshotai"
+                decorative
+              />
+              <Bot v-else class="ai-agent-mark-item__icon" :stroke-width="1.6" />
+              <span class="ai-agent-mark-item__label" v-text="agent.label"></span>
+            </SelectItem>
+          </SelectGroup>
+        </SelectContent>
+      </Select>
     </template>
 
     <template #actions>
@@ -1260,8 +1302,7 @@ onMounted(() => {
           @submit="handleSubmitMessage" @stop="assistant.stopCurrentRequest" :resolve-attachment="assistant.attachFile"
           @remove-file="assistant.removeAttachedFile" @model-change="handlePromptModelChange"
           @network-permission-change="handlePromptNetworkPermissionChange"
-          @execution-mode-change="handlePromptExecutionModeChange"
-          @agent-change="handleAgentBackendChange"
+          @execution-mode-change="handlePromptExecutionModeChange"
           @session-config-option-change="handleSessionConfigOptionChange"
           @information-sources-open="openPromptInformationSources" @personalization-open="openPromptPersonalization"
           @prewarm="handlePromptPrewarm" />
@@ -1291,28 +1332,42 @@ onMounted(() => {
 </template>
 
 <style scoped>
-.ai-provider-mark {
+.ai-agent-mark {
   display: inline-flex;
   min-width: 0;
+  height: 30px;
   align-items: center;
-  gap: 10px;
-  border-radius: 7px;
+  gap: 8px;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
   color: var(--text-primary);
+  padding: 0 8px;
+  box-shadow: none;
 }
 
-.ai-provider-mark__icon {
-  width: 22px;
-  height: 22px;
+.ai-agent-mark:hover,
+.ai-agent-mark[data-state='open'] {
+  background: color-mix(in srgb, var(--text-primary) 6%, transparent);
+}
+
+.ai-agent-mark > :deep(svg:last-child) {
+  display: none;
+}
+
+.ai-agent-mark__icon {
+  width: 18px;
+  height: 18px;
   flex: 0 0 auto;
 }
 
-.ai-provider-mark__copy {
+.ai-agent-mark__copy {
   min-width: 0;
   display: inline-flex;
   align-items: center;
 }
 
-.ai-provider-mark__label {
+.ai-agent-mark__label {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -1320,6 +1375,59 @@ onMounted(() => {
   font-size: 13px;
   font-weight: 600;
   line-height: 1.2;
+}
+
+.ai-agent-mark-content {
+  width: min(240px, calc(100vw - 24px));
+  padding: 8px;
+  border: 1px solid #d1d9e0b3;
+  border-radius: 10px;
+  background: #ffffff;
+  color: #1f2328;
+  box-shadow: 0 12px 30px rgb(31 35 40 / 12%);
+}
+
+.ai-agent-mark-content [data-slot='select-scroll-up-button'],
+.ai-agent-mark-content [data-slot='select-scroll-down-button'] {
+  display: none;
+}
+
+.ai-agent-mark-section-label {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  color: #818b98;
+  font-size: 12px;
+  padding: 6px 3px 7px;
+}
+
+.ai-agent-mark-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 34px;
+  border-radius: 7px;
+  color: #1f2328;
+  font-size: 14px;
+  padding: 0 28px 0 7px;
+}
+
+.ai-agent-mark-item[data-highlighted],
+.ai-agent-mark-item[data-state='checked'] {
+  background: #818b981f;
+}
+
+.ai-agent-mark-item__icon {
+  width: 17px;
+  height: 17px;
+  flex: 0 0 auto;
+}
+
+.ai-agent-mark-item__label {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .ai-icon-button {

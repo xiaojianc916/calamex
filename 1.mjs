@@ -1,254 +1,394 @@
-#!/usr/bin/env node
-/* step7-5a-entries-render-hydrate.mjs
- * ADR-0014 Step 7.5a —— 新建 entries 渲染 hydrate 组合器（DI、纯组合、未接线）。
- *   读取新 key 原始快照(JSON 字符串) -> JSON.parse 容错 -> resolvePersistedThreads
- *   归一 -> 仅活动线程附件预览指针即时恢复(失败非致命)。
- * CREATE-only：默认拒绝覆盖（--force 覆盖）；--check 干跑；前置校验跨文件导出契约。
- */
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
-import { dirname, join } from 'node:path';
+import { readFileSync, writeFileSync } from 'node:fs';
+import { resolve } from 'node:path';
 
-const REPO_ROOT = process.env.REPO_ROOT ?? process.cwd();
-const CHECK = process.argv.includes('--check');
-const FORCE = process.argv.includes('--force');
-const tag = '[step7-5a]';
-const log = (m) => console.log(tag + ' ' + m);
-const die = (m) => { console.error(tag + ' ✗ ' + m); process.exit(1); };
+const root = process.cwd();
 
-log('REPO_ROOT = ' + REPO_ROOT);
-log('模式: ' + (CHECK ? '检查' : '写入') + (FORCE ? '（--force 覆盖）' : ''));
-
-const requireExport = (relPath, token) => {
-  const abs = join(REPO_ROOT, relPath);
-  if (!existsSync(abs)) die('前置缺失：' + relPath + ' 不存在。');
-  if (!readFileSync(abs, 'utf8').includes(token)) die('前置缺失：' + relPath + ' 未找到 ' + token + '。');
-};
-requireExport('src/store/aiThread/hydrate.ts', 'export function resolvePersistedThreads');
-requireExport('src/store/plugins/aiThreadEntriesStorage.ts', 'export const hydrateAiThreadEntriesSnapshot');
-requireExport('src/store/plugins/debouncedPersistStorage.ts', 'restoreAttachmentPreviewPointers');
-
-const SOURCE = `/* ============================================================================
- * Entries 渲染 hydrate 组合器（ADR-0014 Step 7.5a）
- *
- * 把「读取新 key 原始快照 -> resolvePersistedThreads 归一 -> 活动线程附件预览
- * 指针即时恢复」编排为纯组合、可注入依赖的异步函数。本文件不接线、除注入依赖外
- * 无副作用来源；接线在 7.5c（启动后台 hydrate 完成时调用）。
- *
- * 关键点：
- * - aiThreadEntriesStorage 的 hydrate 仅返回「原始 JSON 字符串」，不还原图片指针，
- *   故本层先 JSON.parse（坏 JSON 容错为 null，交由 resolver 回退 legacy），再交给
- *   纯函数 resolver 决策来源（entries / entries-salvaged / legacy / empty）。
- * - 仅对「活动线程」即时恢复附件预览指针（idb:// -> base64），保证首屏图片可见；
- *   其余线程留待 store 侧按活动线程切换惰性恢复（见 7.5b）。
- * - 恢复失败非致命：保留 idb:// 指针并返回未替换结果，下游按缺图处理。
- * ========================================================================== */
-import type { IAiConversationThread } from '@/store/aiConversation';
-import {
-  resolvePersistedThreads,
-  type IResolvePersistedThreadsInput,
-  type IResolvedPersistedThreads,
-} from '@/store/aiThread/hydrate';
-import {
-  hydrateAiThreadEntriesSnapshot,
-  type IAiThreadEntriesHydrateResult,
-} from '@/store/plugins/aiThreadEntriesStorage';
-import { restoreAttachmentPreviewPointers } from '@/store/plugins/debouncedPersistStorage';
-import type { IAiThread } from '@/types/ai/thread';
-
-export interface IHydrateAiThreadEntriesForRenderInput {
-  /** 旧 key 已 hydrate 的 activeThreadId（回退用）。 */
-  legacyActiveThreadId: string | null;
-  /** 旧 key 已 hydrate / 已救援的 legacy 线程（回退用）。 */
-  legacyThreads: IAiConversationThread[];
-}
-
-export interface IEntriesRenderHydrateDeps {
-  loadSnapshot: () => Promise<IAiThreadEntriesHydrateResult>;
-  resolve: (input: IResolvePersistedThreadsInput) => IResolvedPersistedThreads;
-  restorePointers: (thread: IAiThread) => Promise<{ changed: boolean; value: IAiThread }>;
-}
-
-const defaultDeps: IEntriesRenderHydrateDeps = {
-  loadSnapshot: hydrateAiThreadEntriesSnapshot,
-  resolve: resolvePersistedThreads,
-  restorePointers: restoreAttachmentPreviewPointers,
+const files = {
+  panel: 'src/components/business/ai/shell/AiAssistantPanel.vue',
+  promptSpec: 'src/components/business/ai/chat/AiPromptInput.spec.ts',
+  panelSpec: 'src/components/business/ai/shell/AiAssistantPanel.spec.ts',
 };
 
-/** 原始快照是 JSON 字符串：解析失败容错为 null（resolver 据此回退 legacy）。 */
-function parseEntriesSnapshot(raw: string | null): unknown {
-  if (raw == null) return null;
-  try {
-    return JSON.parse(raw) as unknown;
-  } catch {
-    return null;
+const read = (file) => readFileSync(resolve(root, file), 'utf8');
+const write = (file, text) => writeFileSync(resolve(root, file), text, 'utf8');
+
+const changed = new Set();
+
+const save = (file, before, after) => {
+  if (before !== after) {
+    write(file, after);
+    changed.add(file);
   }
-}
+};
 
-/** 仅对活动线程即时恢复指针；不可变替换，失败非致命。 */
-async function restoreActiveThreadPointers(
-  resolved: IResolvedPersistedThreads,
-  restorePointers: IEntriesRenderHydrateDeps['restorePointers'],
-): Promise<IResolvedPersistedThreads> {
-  const { activeThreadId, threads } = resolved;
-  if (!activeThreadId) return resolved;
-  const at = threads.findIndex((thread) => thread.id === activeThreadId);
-  if (at < 0) return resolved;
-  try {
-    const { changed, value } = await restorePointers(threads[at]);
-    if (!changed) return resolved;
-    const nextThreads = threads.slice();
-    nextThreads[at] = value;
-    return { ...resolved, threads: nextThreads };
-  } catch {
-    return resolved;
+const replaceMust = (text, pattern, replacement, label) => {
+  const next = text.replace(pattern, replacement);
+  if (next === text) {
+    throw new Error(`未找到必要结构：${label}`);
   }
+  return next;
+};
+
+const agentMarkTemplate = `    <template #mark>
+      <Select :model-value="sessionAgentBackend" @update:model-value="handleAgentBackendChange">
+        <SelectTrigger aria-label="选择 Agent" class="ai-agent-mark">
+          <AiProviderIcon
+            v-if="sessionAgentBackend === 'kimi'"
+            class="ai-agent-mark__icon"
+            platform-id="moonshotai"
+            decorative
+          />
+          <Bot v-else class="ai-agent-mark__icon" :stroke-width="1.6" />
+          <span class="ai-agent-mark__copy">
+            <span class="ai-agent-mark__label" v-text="selectedAgentOption.label"></span>
+          </span>
+        </SelectTrigger>
+        <SelectContent side="bottom" align="start" :side-offset="8" class="ai-agent-mark-content">
+          <SelectLabel class="ai-agent-mark-section-label">选择 Agent</SelectLabel>
+          <SelectGroup>
+            <SelectItem
+              v-for="agent in agentOptions"
+              :key="agent.key"
+              class="ai-agent-mark-item"
+              :value="agent.key"
+            >
+              <AiProviderIcon
+                v-if="agent.key === 'kimi'"
+                class="ai-agent-mark-item__icon"
+                platform-id="moonshotai"
+                decorative
+              />
+              <Bot v-else class="ai-agent-mark-item__icon" :stroke-width="1.6" />
+              <span class="ai-agent-mark-item__label" v-text="agent.label"></span>
+            </SelectItem>
+          </SelectGroup>
+        </SelectContent>
+      </Select>
+    </template>`;
+
+const agentMarkCss = `.ai-agent-mark {
+  display: inline-flex;
+  min-width: 0;
+  height: 30px;
+  align-items: center;
+  gap: 8px;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--text-primary);
+  padding: 0 8px;
+  box-shadow: none;
 }
 
-export async function hydrateAiThreadEntriesForRender(
-  input: IHydrateAiThreadEntriesForRenderInput,
-  deps: IEntriesRenderHydrateDeps = defaultDeps,
-): Promise<IResolvedPersistedThreads> {
-  const snapshot = await deps.loadSnapshot();
-  const resolved = deps.resolve({
-    rawEntriesSnapshot: parseEntriesSnapshot(snapshot.raw),
-    legacyActiveThreadId: input.legacyActiveThreadId,
-    legacyThreads: input.legacyThreads,
-  });
-  return restoreActiveThreadPointers(resolved, deps.restorePointers);
-}
-`;
-
-const SPEC = `import { describe, expect, it } from 'vitest';
-
-import type { IAiConversationThread } from '@/store/aiConversation';
-import { hydrateAiThreadEntriesForRender } from '@/store/aiThread/entriesRenderHydrate';
-import type {
-  IResolvePersistedThreadsInput,
-  IResolvedPersistedThreads,
-} from '@/store/aiThread/hydrate';
-import type { IAiThread } from '@/types/ai/thread';
-
-function makeThread(id: string): IAiThread {
-  return {
-    id,
-    title: 'Thread ' + id,
-    titleStatus: 'temporary',
-    createdAt: '2026-01-01T00:00:00.000Z',
-    updatedAt: '2026-01-01T00:00:00.000Z',
-    entries: [],
-  };
+.ai-agent-mark:hover,
+.ai-agent-mark[data-state='open'] {
+  background: color-mix(in srgb, var(--text-primary) 6%, transparent);
 }
 
-describe('hydrateAiThreadEntriesForRender', () => {
-  it('解析原始快照 JSON 并把 legacy 入参透传给 resolver', async () => {
-    let received: IResolvePersistedThreadsInput | null = null;
-    const legacyThreads: IAiConversationThread[] = [];
-    const resolved: IResolvedPersistedThreads = { source: 'entries', activeThreadId: null, threads: [] };
+.ai-agent-mark > :deep(svg:last-child) {
+  display: none;
+}
 
-    const result = await hydrateAiThreadEntriesForRender(
-      { legacyActiveThreadId: 'legacy-1', legacyThreads },
-      {
-        loadSnapshot: async () => ({ status: 'loaded', raw: JSON.stringify({ hello: 'world' }) }),
-        resolve: (input) => {
-          received = input;
-          return resolved;
-        },
-        restorePointers: async (value: IAiThread) => ({ changed: false, value }),
-      },
+.ai-agent-mark__icon {
+  width: 18px;
+  height: 18px;
+  flex: 0 0 auto;
+}
+
+.ai-agent-mark__copy {
+  min-width: 0;
+  display: inline-flex;
+  align-items: center;
+}
+
+.ai-agent-mark__label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text-primary);
+  font-size: 13px;
+  font-weight: 600;
+  line-height: 1.2;
+}
+
+.ai-agent-mark-content {
+  width: min(240px, calc(100vw - 24px));
+  padding: 8px;
+  border: 1px solid #d1d9e0b3;
+  border-radius: 10px;
+  background: #ffffff;
+  color: #1f2328;
+  box-shadow: 0 12px 30px rgb(31 35 40 / 12%);
+}
+
+.ai-agent-mark-content [data-slot='select-scroll-up-button'],
+.ai-agent-mark-content [data-slot='select-scroll-down-button'] {
+  display: none;
+}
+
+.ai-agent-mark-section-label {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  color: #818b98;
+  font-size: 12px;
+  padding: 6px 3px 7px;
+}
+
+.ai-agent-mark-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 34px;
+  border-radius: 7px;
+  color: #1f2328;
+  font-size: 14px;
+  padding: 0 28px 0 7px;
+}
+
+.ai-agent-mark-item[data-highlighted],
+.ai-agent-mark-item[data-state='checked'] {
+  background: #818b981f;
+}
+
+.ai-agent-mark-item__icon {
+  width: 17px;
+  height: 17px;
+  flex: 0 0 auto;
+}
+
+.ai-agent-mark-item__label {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}`;
+
+// -----------------------------------------------------------------------------
+// AiAssistantPanel.vue
+// -----------------------------------------------------------------------------
+{
+  const file = files.panel;
+  let s = read(file);
+  const before = s;
+
+  // import Bot
+  s = s.replace(
+    /import \{ SquarePen, Trash2 \} from '@lucide\/vue';/,
+    "import { Bot, SquarePen, Trash2 } from '@lucide/vue';",
+  );
+
+  // import Select
+  if (!s.includes("from '@/components/ui/select';")) {
+    s = replaceMust(
+      s,
+      /import AiPanelFrame from '@\/components\/business\/ai\/shell\/AiPanelFrame\.vue';/,
+      `import AiPanelFrame from '@/components/business/ai/shell/AiPanelFrame.vue';
+import {
+  Select,
+  SelectContent,
+  SelectGroup,
+  SelectItem,
+  SelectLabel,
+  SelectTrigger,
+} from '@/components/ui/select';`,
+      'Select import anchor',
     );
+  }
 
-    expect(received).not.toBeNull();
-    expect(received?.rawEntriesSnapshot).toEqual({ hello: 'world' });
-    expect(received?.legacyActiveThreadId).toBe('legacy-1');
-    expect(received?.legacyThreads).toBe(legacyThreads);
-    expect(result).toBe(resolved);
-  });
+  // session agent options
+  if (!s.includes('interface ISessionAgentOption')) {
+    s = replaceMust(
+      s,
+      /type TSessionAgentBackend = 'builtin' \| 'kimi';\s*const sessionAgentBackend = ref<TSessionAgentBackend>\('(?:builtin|kimi)'\);/,
+      `type TSessionAgentBackend = 'builtin' | 'kimi';
 
-  it('坏 JSON 容错为 null（交由 resolver 回退 legacy）', async () => {
-    let received: IResolvePersistedThreadsInput | null = null;
-    const resolved: IResolvedPersistedThreads = { source: 'legacy', activeThreadId: null, threads: [] };
+interface ISessionAgentOption {
+  key: TSessionAgentBackend;
+  label: string;
+}
 
-    await hydrateAiThreadEntriesForRender(
-      { legacyActiveThreadId: null, legacyThreads: [] },
-      {
-        loadSnapshot: async () => ({ status: 'loaded', raw: '{ not valid json' }),
-        resolve: (input) => {
-          received = input;
-          return resolved;
-        },
-        restorePointers: async (value: IAiThread) => ({ changed: false, value }),
-      },
-    );
-
-    expect(received?.rawEntriesSnapshot).toBeNull();
-  });
-
-  it('仅对活动线程即时恢复指针，且不可变替换', async () => {
-    const t1 = makeThread('t1');
-    const t2 = makeThread('t2');
-    const restoredT2: IAiThread = { ...makeThread('t2'), title: 'restored' };
-    const threads = [t1, t2];
-    const resolved: IResolvedPersistedThreads = { source: 'entries', activeThreadId: 't2', threads };
-    const restoreCalls: IAiThread[] = [];
-
-    const result = await hydrateAiThreadEntriesForRender(
-      { legacyActiveThreadId: null, legacyThreads: [] },
-      {
-        loadSnapshot: async () => ({ status: 'loaded', raw: '{}' }),
-        resolve: () => resolved,
-        restorePointers: async (value: IAiThread) => {
-          restoreCalls.push(value);
-          return { changed: true, value: restoredT2 };
-        },
-      },
-    );
-
-    expect(restoreCalls).toEqual([t2]);
-    expect(result.threads[0]).toBe(t1);
-    expect(result.threads[1]).toBe(restoredT2);
-    expect(threads[1]).toBe(t2);
-    expect(result.threads).not.toBe(threads);
-  });
-
-  it('指针恢复抛错非致命，原样返回 resolved', async () => {
-    const t1 = makeThread('t1');
-    const resolved: IResolvedPersistedThreads = { source: 'entries', activeThreadId: 't1', threads: [t1] };
-
-    const result = await hydrateAiThreadEntriesForRender(
-      { legacyActiveThreadId: null, legacyThreads: [] },
-      {
-        loadSnapshot: async () => ({ status: 'loaded', raw: '{}' }),
-        resolve: () => resolved,
-        restorePointers: async () => {
-          throw new Error('idb down');
-        },
-      },
-    );
-
-    expect(result).toBe(resolved);
-    expect(result.threads[0]).toBe(t1);
-  });
-});
-`;
-
-const files = [
-  { path: 'src/store/aiThread/entriesRenderHydrate.ts', content: SOURCE },
-  { path: 'src/store/aiThread/entriesRenderHydrate.spec.ts', content: SPEC },
+const agentOptions: ISessionAgentOption[] = [
+  { key: 'builtin', label: 'Calamex Agent' },
+  { key: 'kimi', label: 'Kimi Code' },
 ];
 
-for (const f of files) {
-  if (existsSync(join(REPO_ROOT, f.path)) && !FORCE) {
-    die('目标已存在：' + f.path + '（如确需覆盖请加 --force）。');
+const sessionAgentBackend = ref<TSessionAgentBackend>('kimi');`,
+      'session agent backend block',
+    );
   }
+
+  // ensure default kimi
+  s = s.replace(
+    /const sessionAgentBackend = ref<TSessionAgentBackend>\('(?:builtin|kimi)'\);/,
+    "const sessionAgentBackend = ref<TSessionAgentBackend>('kimi');",
+  );
+
+  // remove unused old mark computed
+  s = s.replace(
+    /\nconst aiModelName = computed\(\(\) => \{[\s\S]*?\n\}\);\nconst providerMarkTitle = computed\(\(\) => \{[\s\S]*?\n\}\);\n/s,
+    '\n',
+  );
+
+  // selectedAgentOption + guard
+  if (!s.includes('const selectedAgentOption = computed(')) {
+    s = replaceMust(
+      s,
+      /(const activeAgentModelId = computed<string>\(\(\) => \{[\s\S]*?\n\}\);\n)/,
+      `$1
+const selectedAgentOption = computed(
+  () => agentOptions.find((option) => option.key === sessionAgentBackend.value) ?? agentOptions[0],
+);
+
+const isSessionAgentBackend = (value: unknown): value is TSessionAgentBackend =>
+  value === 'builtin' || value === 'kimi';
+`,
+      'activeAgentModelId block',
+    );
+  }
+
+  // replace handleAgentBackendChange
+  s = replaceMust(
+    s,
+    /const handleAgentBackendChange = \([\s\S]*?\n\};\n\n\/\/ ACP 会话配置项切换/,
+    `const handleAgentBackendChange = (agent: unknown): void => {
+  if (!isSessionAgentBackend(agent)) {
+    return;
+  }
+
+  sessionAgentBackend.value = agent;
+  assistant.error.value = '';
+
+  if (agent === 'kimi') {
+    const threadId = assistant.activeConversationId.value;
+
+    if (threadId) {
+      void assistant.acpSessionConfigOptions.loadConfigOptions(threadId).catch(() => undefined);
+    }
+  }
+};
+
+// ACP 会话配置项切换`,
+    'handleAgentBackendChange',
+  );
+
+  // robust replace mark template
+  if (!s.includes('class="ai-agent-mark"')) {
+    const markToActionsPattern =
+      /\n\s*<template #mark>[\s\S]*?\n\s*<\/template>\s*\n\s*<template #actions>/;
+
+    if (markToActionsPattern.test(s)) {
+      s = s.replace(markToActionsPattern, `\n${agentMarkTemplate}\n\n    <template #actions>`);
+    } else {
+      // fallback: insert before actions
+      s = replaceMust(
+        s,
+        /\n\s*<template #actions>/,
+        `\n${agentMarkTemplate}\n\n    <template #actions>`,
+        'mark/actions template',
+      );
+    }
+  }
+
+  // remove stale input event
+  s = s.replace(/\n\s*@agent-change="handleAgentBackendChange"/, '');
+
+  // replace old css
+  if (!s.includes('.ai-agent-mark {')) {
+    const oldProviderCss =
+      /\.ai-provider-mark \{[\s\S]*?\.ai-provider-mark__label \{[\s\S]*?\n\}/;
+
+    if (oldProviderCss.test(s)) {
+      s = s.replace(oldProviderCss, agentMarkCss);
+    } else {
+      s = replaceMust(s, /\.ai-icon-button \{/, `${agentMarkCss}\n\n.ai-icon-button {`, 'css anchor');
+    }
+  }
+
+  save(file, before, s);
 }
-if (CHECK) {
-  log('✓ 检查通过：将创建 ' + files.map((f) => f.path).join(', ') + '。');
-  process.exit(0);
+
+// -----------------------------------------------------------------------------
+// AiPromptInput.spec.ts
+// -----------------------------------------------------------------------------
+{
+  const file = files.promptSpec;
+  let s = read(file);
+  const before = s;
+
+  s = s.replace(
+    `    const builtinWrapper = mountPromptInput({ agentBackend: 'builtin', sessionConfigOptions });
+    expect(builtinWrapper.findAll('.ai-agent-trigger')).toHaveLength(1);
+
+    const kimiWrapper = mountPromptInput({ sessionConfigOptions });
+    expect(kimiWrapper.findAll('.ai-agent-trigger')).toHaveLength(3);`,
+    `    const builtinWrapper = mountPromptInput({ agentBackend: 'builtin', sessionConfigOptions });
+    expect(builtinWrapper.findAll('.ai-agent-trigger')).toHaveLength(0);
+
+    const kimiWrapper = mountPromptInput({ sessionConfigOptions });
+    expect(kimiWrapper.findAll('.ai-agent-trigger')).toHaveLength(2);`,
+  );
+
+  save(file, before, s);
 }
-for (const f of files) {
-  const abs = join(REPO_ROOT, f.path);
-  mkdirSync(dirname(abs), { recursive: true });
-  writeFileSync(abs, f.content, 'utf8');
-  log('✓ 写入 ' + f.path);
+
+// -----------------------------------------------------------------------------
+// AiAssistantPanel.spec.ts
+// -----------------------------------------------------------------------------
+{
+  const file = files.panelSpec;
+  let s = read(file);
+  const before = s;
+
+  s = s.replace(
+    /AiPromptInput: defineComponent\(\{\s*emits: \['submit', 'update:activeMode', 'sessionConfigOptionChange'\],/,
+    "AiPromptInput: defineComponent({\n          emits: ['submit', 'update:activeMode', 'update:agentBackend', 'sessionConfigOptionChange'],",
+  );
+
+  if (!s.includes('data-testid="agent-mark-select"')) {
+    s = replaceMust(
+      s,
+      `        AiProviderIcon: defineComponent({
+          template: '<span class="ai-provider-icon" />',
+        }),`,
+      `        AiProviderIcon: defineComponent({
+          template: '<span class="ai-provider-icon" />',
+        }),
+        Select: defineComponent({
+          props: ['modelValue'],
+          emits: ['update:modelValue'],
+          template: '<div data-testid="agent-mark-select"><slot /></div>',
+        }),
+        SelectTrigger: defineComponent({
+          template: '<button type="button"><slot /></button>',
+        }),
+        SelectContent: defineComponent({
+          template: '<div><slot /></div>',
+        }),
+        SelectGroup: defineComponent({
+          template: '<div><slot /></div>',
+        }),
+        SelectItem: defineComponent({
+          props: ['value'],
+          template: '<div><slot /></div>',
+        }),
+        SelectLabel: defineComponent({
+          template: '<div><slot /></div>',
+        }),`,
+      'select stubs anchor',
+    );
+  }
+
+  save(file, before, s);
 }
-log('✓ 完成。');
+
+if (changed.size === 0) {
+  console.log('没有修改：目标改动可能已经应用过。');
+} else {
+  console.log('已修改：');
+  for (const file of changed) console.log(`- ${file}`);
+}
+
+console.log('\n下一步执行：');
+console.log('pnpm test -- src/components/business/ai/chat/AiPromptInput.spec.ts src/components/business/ai/shell/AiAssistantPanel.spec.ts');
+console.log('pnpm typecheck');

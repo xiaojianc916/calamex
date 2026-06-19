@@ -361,6 +361,27 @@ const mountPanel = (_assistantMock: ReturnType<typeof createAssistantMock>) =>
         AiProviderIcon: defineComponent({
           template: '<span class="ai-provider-icon" />',
         }),
+        Select: defineComponent({
+          props: ['modelValue'],
+          emits: ['update:modelValue'],
+          template: '<div data-testid="agent-mark-select"><slot /></div>',
+        }),
+        SelectTrigger: defineComponent({
+          template: '<button type="button"><slot /></button>',
+        }),
+        SelectContent: defineComponent({
+          template: '<div><slot /></div>',
+        }),
+        SelectGroup: defineComponent({
+          template: '<div><slot /></div>',
+        }),
+        SelectItem: defineComponent({
+          props: ['value'],
+          template: '<div><slot /></div>',
+        }),
+        SelectLabel: defineComponent({
+          template: '<div><slot /></div>',
+        }),
         // 平铺时间线替身:plan 审批不再是独立面板,而是 messages 里 id 为 thread-plan-control
         // 的一条条目,步骤明细由 planDetails 传入并就地渲染,审批事件向上冒泡。
         AiChatThread: defineComponent({
@@ -395,7 +416,12 @@ const mountPanel = (_assistantMock: ReturnType<typeof createAssistantMock>) =>
             '<div v-if="run || confirmation" data-testid="run-status-bar"><strong v-if="confirmation" data-testid="tool-confirmation" v-text="confirmation.question" /><button v-if="confirmation" data-testid="resolve-confirmation" @click="$emit(\'resolve\', \'allow-once\')">允许</button></div>',
         }),
         AiPromptInput: defineComponent({
-          emits: ['submit', 'update:activeMode', 'sessionConfigOptionChange'],
+          emits: [
+            'submit',
+            'update:activeMode',
+            'update:agentBackend',
+            'sessionConfigOptionChange',
+          ],
           template:
             '<div data-testid="prompt-input"><button data-testid="switch-plan" @click="$emit(\'update:activeMode\', \'plan\')">切到 Plan</button><button data-testid="switch-config-option" @click="$emit(\'sessionConfigOptionChange\', \'model\', \'kimi-k2\')">切换配置</button><button data-testid="submit" @click="$emit(\'submit\')">发送</button></div>',
         }),

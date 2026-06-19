@@ -315,9 +315,9 @@ describe('AiPromptInput', () => {
     };
 
     const builtinWrapper = mountPromptInput({ agentBackend: 'builtin', sessionConfigOptions });
-    expect(builtinWrapper.findAll('.ai-agent-trigger')).toHaveLength(1);
+    expect(builtinWrapper.findAll('.ai-agent-trigger')).toHaveLength(0);
 
     const kimiWrapper = mountPromptInput({ sessionConfigOptions });
-    expect(kimiWrapper.findAll('.ai-agent-trigger')).toHaveLength(3);
+    expect(kimiWrapper.findAll('.ai-agent-trigger')).toHaveLength(2);
   });
 });
