@@ -14,11 +14,12 @@ use std::{
         atomic::{AtomicBool, Ordering},
         mpsc::{self, Receiver, RecvTimeoutError, Sender},
     },
-    time::{Duration, Instant, SystemTime, UNIX_EPOCH},
+    time::{Duration, SystemTime, UNIX_EPOCH},
 };
 
 use portable_pty::{Child, ChildKiller, CommandBuilder, MasterPty, PtySize, native_pty_system};
 use thiserror::Error;
+use wait_timeout::ChildExt;
 
 use super::flow_control::{FlowController, utf16_len};
 use super::local_wsl_protocol::{
@@ -360,6 +361,8 @@ where
             log::debug!(
                 "WSL 交互终端读线程退出（session_id={session_id}, 原因={exit_reason}, exit_code={exit_code:?}）。"
             );
+            // 在 session_id 被移入关闭事件前算出集成脚本路径，供事件发出后清理（不阻塞关闭通知）。
+            let integration_script_path = shell_integration_script_path(&session_id);
             on_event(LocalWslTerminalServerPayload::InteractiveClosed(
                 LocalWslTerminalInteractiveClosed {
                     session_id,
@@ -367,6 +370,10 @@ where
                     finished_at_unix_ms: now_unix_ms(),
                 },
             ));
+            // 关闭事件已发出后再清理遗留的集成脚本；覆盖正常退出 / kill / 看门狗各路径。
+            if let Err(error) = cleanup_wsl_script(&integration_script_path) {
+                log::warn!("清理 WSL Shell Integration 集成脚本失败：{error}");
+            }
         })
         .map(|_| ())
         .map_err(|error| LocalWslPtyError::Open(error.to_string()))
@@ -385,25 +392,21 @@ fn should_flush_terminal_output(pending_len: usize, last_read: usize, buffer_len
     !saturated || pending_len >= TERMINAL_OUTPUT_COALESCE_BYTES
 }
 
-/// 在 `timeout` 内轮询等待子进程结束：
+/// 在 `timeout` 内等待子进程结束（基于 wait-timeout，内核事件驱动，无忙等轮询）：
 /// 正常结束返回 `Ok(Some(status))`；超时返回 `Ok(None)`（并已 kill + 回收子进程）；
-/// 轮询自身出错返回 `Err`。用于给同步 wsl.exe 调用加超时兜底，防止 WSL 挂起时永久阻塞。
+/// 等待自身出错返回 `Err`。用于给同步 wsl.exe 调用加超时兜底，防止 WSL 挂起时永久阻塞。
 fn wait_child_with_timeout(
     child: &mut std::process::Child,
     timeout: Duration,
 ) -> std::io::Result<Option<std::process::ExitStatus>> {
-    let deadline = Instant::now() + timeout;
-    loop {
-        if let Some(status) = child.try_wait()? {
-            return Ok(Some(status));
-        }
-        if Instant::now() >= deadline {
+    match child.wait_timeout(timeout)? {
+        Some(status) => Ok(Some(status)),
+        None => {
             // 超时：终止挂起的子进程并回收句柄，避免遗留僵尸 / 孤儿。
             let _ = child.kill();
             let _ = child.wait();
-            return Ok(None);
+            Ok(None)
         }
-        std::thread::sleep(Duration::from_millis(25));
     }
 }
 
@@ -460,6 +463,30 @@ pub(crate) fn materialize_wsl_script(
         )));
     }
     Ok(())
+}
+
+/// 清理某会话遗留在 WSL 侧的 Shell Integration 集成脚本（在读线程收尾、交互 shell 结束后调用）。
+/// 通过 wsl.exe 执行 bash 的 rm -f 删除；尽力而为，失败仅记录告警，不影响关闭流程。
+fn cleanup_wsl_script(execution_path: &str) -> Result<(), LocalWslPtyError> {
+    let mut command = std::process::Command::new("wsl.exe");
+    command
+        .arg("--")
+        .arg("bash")
+        .arg("-c")
+        .arg(format!("rm -f {}", bash_quote(execution_path)))
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .env("WSL_UTF8", "1");
+    crate::commands::configure_std_command_for_background(&mut command);
+
+    let mut child = command
+        .spawn()
+        .map_err(|error| LocalWslPtyError::Close(format!("清理集成脚本失败：{error}")))?;
+    match wait_child_with_timeout(&mut child, WSL_SYNC_COMMAND_TIMEOUT) {
+        Ok(_) => Ok(()),
+        Err(error) => Err(LocalWslPtyError::Close(format!("清理集成脚本失败：{error}"))),
+    }
 }
 
 /// resize 合批工作线程：拥有该会话的 MasterPty，串行化所有 resize，并在静默窗口内合并一串快速
@@ -519,7 +546,7 @@ fn apply_pty_resize(session_id: &str, master: &(dyn MasterPty + Send), size: (u1
 }
 
 /// 集成脚本在 WSL 侧的落地路径：每会话唯一，避免并发写入同一文件造成截断竞争。
-/// （会话结束后不主动清理；位于 /tmp，按系统惯例回收。）
+/// （会话结束后由读线程收尾时调用 cleanup_wsl_script 主动清理；位于 /tmp，按系统惯例回收。）
 fn shell_integration_script_path(session_id: &str) -> String {
     let sanitized: String = session_id
         .chars()
@@ -547,6 +574,7 @@ fn now_unix_ms() -> i64 {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::time::Instant;
 
     #[test]
     fn interactive_cwd_defaults_to_home_when_blank() {
