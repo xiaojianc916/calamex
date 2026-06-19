@@ -221,6 +221,27 @@ export const commands = {
 	aiGetSessionModes: (payload: AiGetSessionModesRequest) => __TAURI_INVOKE<{
 	modes: unknown,
 } | null>("ai_get_session_modes", { payload }),
+	/**
+	 *  切换 ACP 会话的某个配置项值（标准 session/set_config_option），令外部 agent（Kimi Code /
+	 *  Codex 等）在 agent 公示的模型 / 模式 / 思考强度等配置项间切换。
+	 * 
+	 *  与 ai_set_session_mode 同构地委托给 Tauri 托管的 AcpRuntime：线程归属哪个后端宿主对命令层
+	 *  透明，由 runtime 向全部已建立宿主广播下发。三字段先行空白校验；返回是否命中某已绑定会话——
+	 *  false 表示无匹配（多为会话尚未建立/已结束的良性竞态，命令层不视作错误）。
+	 */
+	aiSetSessionConfigOption: (payload: AiSetSessionConfigOptionRequest) => __TAURI_INVOKE<boolean>("ai_set_session_config_option", { payload }),
+	/**
+	 *  取某线程会话建立时 agent 公示的可用配置项清单（ACP session/new 的
+	 *  NewSessionResponse.config_options 原样 JSON：Vec SessionConfigOption），供前端配置项选择器在
+	 *  会话建立后填充候选项。
+	 * 
+	 *  与 ai_get_session_modes 同构地委托给 Tauri 托管的 AcpRuntime：由 runtime 向全部已建立宿主
+	 *  查询并返回首个命中。thread_id 先行空白校验；返回 None 表示尚无该线程会话或 agent 未公示
+	 *  配置项（前端据此隐藏选择器）。config_options 为最小透传的原样 JSON（导出 TS 为 unknown）。
+	 */
+	aiGetSessionConfigOptions: (payload: AiGetSessionConfigOptionsRequest) => __TAURI_INVOKE<{
+	configOptions: unknown,
+} | null>("ai_get_session_config_options", { payload }),
 	aiInlineComplete: (payload: AiInlineCompletionRequest) => __TAURI_INVOKE<AiInlineCompletionResult>("ai_inline_complete", { payload }),
 	aiAgentClassifyTask: (payload: AiAgentClassifyTaskRequest) => __TAURI_INVOKE<AiAgentClassifyTaskPayload>("ai_agent_classify_task", { payload }),
 	aiAgentSetNetworkPermission: (payload: AiAgentSetNetworkPermissionRequest) => __TAURI_INVOKE<AiAgentNetworkPermissionPayload>("ai_agent_set_network_permission", { payload }),
@@ -952,6 +973,17 @@ export type AiEditUndoOperationRequest = {
 };
 
 /**
+ *  ACP 会话可用配置项清单的查询请求（契约层）。
+ * 
+ *  对齐 acp::AcpRuntime::session_config_options(thread_id)：thread_id 定位目标会话（宿主持有
+ *  thread_id ↔ SessionId 映射，并在会话建立时登记 agent 公示的可用配置项）。必填且非空，
+ *  空白校验由接线层负责。
+ */
+export type AiGetSessionConfigOptionsRequest = {
+	threadId: string,
+};
+
+/**
  *  ACP 会话可用模式清单的查询请求（契约层）。
  * 
  *  对齐 acp::AcpRuntime::session_modes(thread_id)：thread_id 定位目标会话（宿主持有
@@ -1102,6 +1134,19 @@ export type AiSaveCredentialsRequest = {
 };
 
 /**
+ *  ACP 会话可用配置项清单的响应载荷（契约层）。
+ * 
+ *  config_options 为 agent 在 NewSessionResponse 公示的可用配置项清单原样 JSON
+ *  （Vec SessionConfigOption：id + name + description + category + kind 等）。最小透传，宿主侧
+ *  不重建 SDK 类型，交前端 ACL 解释（对齐 AiSessionModesPayload.modes 的整体透传）。用
+ *  specta_typescript::Unknown 将导出 TS 映射为 unknown，避开 serde_json::Number 触发 specta
+ *  BigInt-forbidden；serde 运行时仍为 serde_json::Value，行为不变。
+ */
+export type AiSessionConfigOptionsPayload = {
+	configOptions: unknown,
+};
+
+/**
  *  ACP 会话可用模式清单的响应载荷（契约层）。
  * 
  *  modes 为 agent 在 NewSessionResponse 公示的可用模式清单原样 JSON（SessionModeState：
@@ -1112,6 +1157,22 @@ export type AiSaveCredentialsRequest = {
  */
 export type AiSessionModesPayload = {
 	modes: unknown,
+};
+
+/**
+ *  ACP 标准 session/set_config_option 的会话级配置项切换请求（契约层）。
+ * 
+ *  对齐 acp::AcpRuntime::set_session_config_option(thread_id, config_id, value_id)：
+ *    * thread_id —— 定位目标会话（宿主持有 thread_id ↔ SessionId 映射，跨回合复用）；
+ *    * config_id —— 目标配置项的 ACP SessionConfigOption.id 原值，逐字透传，绝不本地映射；
+ *    * value_id —— 选中值的 ACP SessionConfigValueId 原值，逐字透传，绝不本地映射。
+ * 
+ *  三者均必填且非空（前端总能从已渲染的配置项选择器取得），空白校验由接线层负责。
+ */
+export type AiSetSessionConfigOptionRequest = {
+	threadId: string,
+	configId: string,
+	valueId: string,
 };
 
 /**
@@ -1211,7 +1272,6 @@ export type AnalyzeScriptRequest = {
 
 export type CancelTerminalRunRequest = {
 	runId: string,
-	mode: string | null,
 };
 
 export type CloseTerminalSessionRequest = {

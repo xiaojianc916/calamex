@@ -135,6 +135,72 @@ describe('sidecarEventToReduceEvents', () => {
     ).toEqual([{ kind: 'tool_canceled', id: 'tool-1' }]);
   });
 
+  it('工具完成(ok, 有 resultPreview) → tool_completed 附 Output 内容块', () => {
+    expect(
+      sidecarEventToReduceEvents(
+        wrap({
+          ...makeBase('e1'),
+          type: 'agent.tool.completed',
+          toolUseId: 'tool-1',
+          toolName: 'read_file',
+          ok: true,
+          resultPreview: '读到 42 行',
+        }),
+        OPTIONS,
+      ),
+    ).toEqual([
+      {
+        kind: 'tool_completed',
+        id: 'tool-1',
+        ok: true,
+        appendContent: [{ type: 'content', block: { type: 'text', text: '读到 42 行' } }],
+      },
+    ]);
+  });
+
+  it('工具失败 → tool_completed(ok:false) 附 errorMessage 内容块', () => {
+    expect(
+      sidecarEventToReduceEvents(
+        wrap({
+          ...makeBase('e1'),
+          type: 'agent.tool.completed',
+          toolUseId: 'tool-1',
+          toolName: 'read_file',
+          ok: false,
+          errorMessage: '文件不存在',
+        }),
+        OPTIONS,
+      ),
+    ).toEqual([
+      {
+        kind: 'tool_completed',
+        id: 'tool-1',
+        ok: false,
+        appendContent: [{ type: 'content', block: { type: 'text', text: '文件不存在' } }],
+      },
+    ]);
+  });
+
+  it('工具进度(有 dataPreview) → tool_progress 附内容块', () => {
+    expect(
+      sidecarEventToReduceEvents(
+        wrap({
+          ...makeBase('e1'),
+          type: 'agent.tool.progress',
+          toolUseId: 'tool-1',
+          dataPreview: '已扫描 10 个文件',
+        }),
+        OPTIONS,
+      ),
+    ).toEqual([
+      {
+        kind: 'tool_progress',
+        id: 'tool-1',
+        appendContent: [{ type: 'content', block: { type: 'text', text: '已扫描 10 个文件' } }],
+      },
+    ]);
+  });
+
   it('上下文压缩完成 → context_compaction', () => {
     expect(
       sidecarEventToReduceEvents(

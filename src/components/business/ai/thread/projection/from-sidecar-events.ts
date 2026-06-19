@@ -7,7 +7,7 @@
  *
  * 覆盖 Mastra 内建流式主路径：
  *  - 正文 / 思维链增量（agent.text.delta / agent.reasoning.delta、顶层 message_delta）
- *  - 工具起止 / 取消（agent.tool.started / completed）
+ *  - 工具起止 / 取消 / 进度（agent.tool.started / completed / progress）；工具 I/O 预览作为 content 块落地
  *  - 上下文压缩完成（acontext.context_compaction.completed）
  *  - 回合完成 / 错误（agent.run.completed / error、顶层 done / error）
  *
@@ -17,7 +17,7 @@
  *  - ACP tool_call / tool_call_update：走既有 applyAcpUiEvent 累加器投影为完整
  *    IAiThreadToolCall，粗粒度 reduce 工具事件无法承载其 content / diff / locations；
  *  - 旧粗粒度 tool_start / tool_result：缺稳定 id，不臆造；
- *  - agent.tool.progress：心跳 / 预览，无 content 可无损落地；
+ *  - agent.tool.progress 纯心跳（无 dataPreview）：无 content，忽略；带 dataPreview 者已作为内容落地；
  *  - mode / usage / commands / config / approval / ask_user 等非线程条目信号。
  *
  * 时间戳取运行时事件内联 timestamp；顶层事件无时间戳，用 options.now。
@@ -25,6 +25,7 @@
 import { classifyRuntimeToolKind } from '@/constants/ai/runtime-tools';
 import type { TAiAssistantChannel, TAiThreadReduceEvent } from '@/store/aiThread/events';
 import type { TAgentRuntimeEvent, TAgentUiEvent } from '@/types/ai/sidecar';
+import type { IAiThreadToolCallContent } from '@/types/ai/thread';
 
 import { RUNTIME_KIND_TO_TOOL_KIND } from './tool-kind';
 
@@ -48,6 +49,12 @@ const toAssistantDelta = (
 ): TAiThreadReduceEvent[] =>
   text.length > 0 ? [{ kind: 'assistant_delta', messageId, createdAt, channel, text }] : [];
 
+/** 工具 I/O 预览文本 → tool-call 内容（text 内容块）；空文本返回 undefined（不附内容）。 */
+const toToolOutputContent = (text: string | undefined): IAiThreadToolCallContent[] | undefined =>
+  text !== undefined && text.length > 0
+    ? [{ type: 'content', block: { type: 'text', text } }]
+    : undefined;
+
 const fromRuntimeEvent = (
   event: TAgentRuntimeEvent,
   options: ISidecarToReduceOptions,
@@ -68,10 +75,26 @@ const fromRuntimeEvent = (
           status: 'in_progress',
         },
       ];
-    case 'agent.tool.completed':
-      return isCancelStatus(event.status)
-        ? [{ kind: 'tool_canceled', id: event.toolUseId ?? event.id }]
-        : [{ kind: 'tool_completed', id: event.toolUseId ?? event.id, ok: event.ok }];
+    case 'agent.tool.completed': {
+      const toolUseId = event.toolUseId ?? event.id;
+      if (isCancelStatus(event.status)) {
+        return [{ kind: 'tool_canceled', id: toolUseId }];
+      }
+      const appendContent = toToolOutputContent(
+        event.ok ? event.resultPreview : (event.errorMessage ?? event.resultPreview),
+      );
+      if (appendContent === undefined) {
+        return [{ kind: 'tool_completed', id: toolUseId, ok: event.ok }];
+      }
+      return [{ kind: 'tool_completed', id: toolUseId, ok: event.ok, appendContent }];
+    }
+    case 'agent.tool.progress': {
+      const appendContent = toToolOutputContent(event.dataPreview);
+      if (appendContent === undefined) {
+        return [];
+      }
+      return [{ kind: 'tool_progress', id: event.toolUseId ?? event.id, appendContent }];
+    }
     case 'acontext.context_compaction.completed':
       return [{ kind: 'context_compaction', id: event.compactionId, createdAt: event.timestamp }];
     case 'agent.run.completed':
@@ -79,7 +102,7 @@ const fromRuntimeEvent = (
     case 'agent.run.error':
       return [{ kind: 'stream_error', message: event.errorMessage }];
     default:
-      // 其余运行时事件（run.started / model.* / tool.progress / acontext.* 非 completed /
+      // 其余运行时事件（run.started / model.* / acontext.* 非 completed /
       // checkpoint / rollback / side_effect / message.added / debug）当前 reduce 模型不消费。
       return [];
   }
