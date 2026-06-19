@@ -49,7 +49,7 @@ export const useDocumentNavigationHistory = () => {
   /** 记录一次文档切换（非导航触发的）。 */
   const recordNavigation = (
     previousDocumentId: string | null,
-    nextDocumentId: string,
+    _nextDocumentId: string,
     checkExists: (id: string) => boolean,
   ): void => {
     if (isNavigating.value) {

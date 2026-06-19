@@ -35,7 +35,6 @@ const mount = (options?: Parameters<typeof useAcpApproval>[0]) => {
   scope.run(() => {
     api = useAcpApproval(options);
   });
-  // biome-ignore lint/style/noNonNullAssertion: scope.run 同步赋值 api。
   return { api: api!, scope };
 };
 

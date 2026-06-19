@@ -16,9 +16,9 @@ defineEmits<{
 }>();
 
 const positionStyle = computed<Record<string, string | undefined>>(() => ({
-  left: props.x + 'px',
-  top: props.y + 'px',
-  width: props.width === undefined ? undefined : props.width + 'px',
+  left: `${props.x}px`,
+  top: `${props.y}px`,
+  width: props.width === undefined ? undefined : `${props.width}px`,
 }));
 </script>
 

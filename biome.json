@@ -81,7 +81,7 @@
       }
     },
     {
-      "includes": ["src/constants/shell/command-catalog.ts", "src/utils/shell-completion.ts"],
+      "includes": ["src/constants/shell/command-catalog.ts", "src/utils/terminal/shell-completion.ts"],
       "linter": {
         "rules": {
           "suspicious": {
@@ -94,7 +94,9 @@
       "includes": [
         "src/styles/editor-tabs.css",
         "src/styles/sidebar-explorer.css",
-        "src/styles/sidebar-source-control.css"
+        "src/styles/sidebar-source-control.css",
+        "src/styles/app-shell.css",
+        "src/styles/sidebar-source-control-pr.css"
       ],
       "linter": {
         "rules": {
