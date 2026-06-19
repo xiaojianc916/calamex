@@ -200,7 +200,7 @@ const restoreAttachmentPreviewPayloads = async (value: unknown): Promise<boolean
   return changed;
 };
 
-const preparePersistValue = async (value: string): Promise<string> => {
+export const preparePersistValue = async (value: string): Promise<string> => {
   // Fast path: most conversation writes are text/scroll/status updates. If no fresh
   // inline image payload exists, avoid parsing and recursively walking the whole
   // conversation snapshot on every debounced persist. Existing idb:// pointers do
