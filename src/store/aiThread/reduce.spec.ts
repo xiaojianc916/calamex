@@ -5,6 +5,7 @@ import { nextToolStatus, reduceThread, reduceThreadAll } from '@/store/aiThread/
 import type {
   IAiThread,
   IAiThreadAssistantMessageEntry,
+  IAiThreadChangedFilesEntry,
   IAiThreadContextCompactionEntry,
   IAiThreadPlanEntry,
   IAiThreadToolCall,
@@ -201,6 +202,45 @@ describe('reduceThread', () => {
     const entry = thread.entries[0] as IAiThreadContextCompactionEntry;
     expect(entry.type).toBe('context_compaction');
     expect(entry.message).toBe('已压缩历史上下文');
+  });
+
+  it('changed_files 按 id upsert：应用创建、撤销同 id 整体替换 summary 并保留位置', () => {
+    let thread = createThread();
+    const summary: IAiThreadChangedFilesEntry['summary'] = {
+      id: 'patch-1',
+      runId: 'run-1',
+      stepId: 's1',
+      files: [{ path: 'src/a.ts', status: 'modified', additions: 3, deletions: 1, diffRef: 'd1' }],
+      totalAdditions: 3,
+      totalDeletions: 1,
+      patchRef: 'p-ref-1',
+    };
+    thread = reduceThread(thread, {
+      kind: 'changed_files',
+      id: 'patch-1',
+      createdAt: ISO,
+      summary,
+    });
+    expect(thread.entries.filter((e) => e.type === 'changed_files')).toHaveLength(1);
+
+    const reverted: IAiThreadChangedFilesEntry['summary'] = {
+      ...summary,
+      revertedAt: '2026-06-14T09:06:00.000Z',
+    };
+    thread = reduceThread(thread, {
+      kind: 'changed_files',
+      id: 'patch-1',
+      createdAt: '2026-06-14T09:06:00.000Z',
+      summary: reverted,
+    });
+
+    const changed = thread.entries.filter(
+      (e) => e.type === 'changed_files',
+    ) as IAiThreadChangedFilesEntry[];
+    expect(changed).toHaveLength(1);
+    expect(changed[0].summary.revertedAt).toBe('2026-06-14T09:06:00.000Z');
+    // 保留首次出现的 createdAt，位置稳定
+    expect(changed[0].createdAt).toBe(ISO);
   });
 
   it('nextToolStatus 状态机', () => {

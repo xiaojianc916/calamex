@@ -198,9 +198,7 @@ function upsertPlanEntry(
   thread: IAiThread,
   event: TAiThreadReduceEventByKind<'plan_updated'>,
 ): IAiThread {
-  const index = thread.entries.findIndex(
-    (entry) => entry.type === 'plan' && entry.id === event.id,
-  );
+  const index = thread.entries.findIndex((entry) => entry.type === 'plan' && entry.id === event.id);
 
   if (index === -1) {
     const entry: IAiThreadEntry = {
@@ -235,6 +233,36 @@ function appendContextCompaction(
     ...(event.message !== undefined ? { message: event.message } : {}),
   };
   return { ...thread, entries: [...thread.entries, entry] };
+}
+
+/* ----- Changed files (ChangedFiles summary) ------------------------------- */
+function upsertChangedFiles(
+  thread: IAiThread,
+  event: TAiThreadReduceEventByKind<'changed_files'>,
+): IAiThread {
+  const index = thread.entries.findIndex(
+    (entry) => entry.type === 'changed_files' && entry.id === event.id,
+  );
+
+  if (index === -1) {
+    const entry: IAiThreadEntry = {
+      type: 'changed_files',
+      id: event.id,
+      createdAt: event.createdAt,
+      summary: event.summary,
+    };
+    return { ...thread, entries: [...thread.entries, entry] };
+  }
+
+  // 撤销/重新应用同一 patch 走更新分支：保留首次 createdAt 以稳定时间线位置。
+  const current = thread.entries[index];
+  const merged: IAiThreadEntry = {
+    type: 'changed_files',
+    id: event.id,
+    createdAt: current.createdAt,
+    summary: event.summary,
+  };
+  return { ...thread, entries: replaceAt(thread.entries, index, merged) };
 }
 
 /* ----- Stream finalization ------------------------------------------------ */
@@ -277,6 +305,8 @@ export function reduceThread(thread: IAiThread, event: TAiThreadReduceEvent): IA
       return upsertPlanEntry(thread, event);
     case 'context_compaction':
       return appendContextCompaction(thread, event);
+    case 'changed_files':
+      return upsertChangedFiles(thread, event);
     case 'stream_cancelled':
       return finalizeNonTerminalTools(thread, 'canceled');
     case 'stream_error':

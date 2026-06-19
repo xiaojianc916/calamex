@@ -1,7 +1,6 @@
 // scripts/apply-changed-files-store.mjs
-// 仅处理 store/aiThread 三文件（events / reduce / reduce.spec）的 changed_files 接入。
-// 依赖 PR #1（plan / context_compaction）已在本地——请先 git pull。
-// 幂等：先查 marker，已应用则跳过；可重复运行。需在仓库根目录执行。
+// 仅处理 store/aiThread 三文件的 changed_files 接入。依赖 PR #1 已在本地。
+// 行尾自适应（CRLF/LF）；幂等（先查 marker）；需在仓库根目录执行。
 import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 
@@ -152,18 +151,23 @@ for (const e of edits) {
   }
   let src = readFileSync(path, 'utf8');
 
-  // 先查 marker：已应用则跳过（保证幂等，避免重复插入）。
-  if (src.includes(e.marker)) {
+  // 按文件实际行尾自适应（关键修复：本地 store 文件是 CRLF）。
+  const nl = /\r\n/.test(src) ? '\r\n' : '\n';
+  const toEol = (s) => s.split('\n').join(nl);
+  const find = toEol(e.find);
+  const replace = toEol(e.replace);
+  const marker = toEol(e.marker);
+
+  // 先查 marker：已应用则跳过（幂等，避免重复插入）。
+  if (src.includes(marker)) {
     console.log(`• 跳过（已应用）：${e.file} :: ${e.marker.split('\n')[0]}`);
     skipped += 1;
     continue;
   }
 
-  const occurrences = src.split(e.find).length - 1;
+  const occurrences = src.split(find).length - 1;
   if (occurrences === 0) {
-    console.error(
-      `✗ 锚点未找到：${e.file}\n  请确认已 git pull 到含 PR #1 的最新 main。\n  锚点：${JSON.stringify(e.find.slice(0, 60))}`,
-    );
+    console.error(`✗ 锚点未找到：${e.file}\n  锚点：${JSON.stringify(e.find.slice(0, 60))}`);
     process.exit(1);
   }
   if (occurrences > 1) {
@@ -171,9 +175,9 @@ for (const e of edits) {
     process.exit(1);
   }
 
-  src = src.replace(e.find, () => e.replace);
+  src = src.replace(find, () => replace); // 保持文件原有行尾
   writeFileSync(path, src, 'utf8');
-  console.log(`✓ 应用 ${e.file}`);
+  console.log(`✓ 应用 ${e.file}（行尾 ${nl === '\r\n' ? 'CRLF' : 'LF'}）`);
   applied += 1;
 }
 

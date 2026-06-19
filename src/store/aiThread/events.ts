@@ -9,6 +9,7 @@
  * event wire），与 `TAgentUiEvent` 同性质，按项目惯例不为内部类型建 schema。
  * ========================================================================== */
 import type {
+  IAiThreadChangedFilesEntry,
   IAiThreadContentBlock,
   IAiThreadPlanEntry,
   IAiThreadToolCallContent,
@@ -80,6 +81,12 @@ export type TAiThreadReduceEvent =
       id: string;
       createdAt: string;
       message?: string;
+    }
+  | {
+      kind: 'changed_files';
+      id: string;
+      createdAt: string;
+      summary: IAiThreadChangedFilesEntry['summary'];
     }
   | { kind: 'stream_completed' }
   | { kind: 'stream_cancelled' }
