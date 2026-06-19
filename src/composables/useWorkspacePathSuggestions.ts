@@ -1,27 +1,9 @@
+import { getBoundedCacheValue, setBoundedCacheValue } from '@/utils/core/lru-cache';
 import { joinFileSystemPath } from '@/utils/file/path';
 
-export const getBoundedCacheValue = <K, V>(cache: Map<K, V>, key: K): V | undefined => {
-  if (!cache.has(key)) return undefined;
-  const value = cache.get(key);
-  cache.delete(key);
-  cache.set(key, value as V);
-  return value;
-};
-
-export const setBoundedCacheValue = <K, V>(
-  cache: Map<K, V>,
-  key: K,
-  value: V,
-  limit: number,
-): void => {
-  if (cache.has(key)) cache.delete(key);
-  cache.set(key, value);
-  while (cache.size > limit) {
-    const oldest = cache.keys().next().value as K | undefined;
-    if (oldest === undefined) break;
-    cache.delete(oldest);
-  }
-};
+// 复用 core 的有界 LRU 实现，避免在本文件重复造轮子；
+// 仍从本模块再导出，保持既有调用方与单测的导入路径不变。
+export { getBoundedCacheValue, setBoundedCacheValue };
 
 /** 建议项的种类，与文件图标组件保持一致。 */
 export type TPathSuggestionKind = 'file' | 'directory';
@@ -63,11 +45,6 @@ export const PATH_SUGGESTION_FILE_SEARCH_CACHE_LIMIT = 64;
 
 /**
  * 以下三个辅助函数工作在「相对路径段」上，不经过 path.ts 的 normalizeFileSystemPath，
- * 因为后者会额外做 verbatim 前缀剥离 + 大小写折叠，会改变相对段的语义。
- * 仅做分隔符归一化和首尾修剪，保留原始段的内容。
- */
-/**
- * 以下三个辅助函数工作在相对路径段上，不经过 path.ts 的 normalizeFileSystemPath，
  * 因为后者会额外做 verbatim 前缀剥离 + 大小写折叠，会改变相对段的语义。
  * 仅做分隔符归一化和首尾修剪，保留原始段的内容。
  */
@@ -180,14 +157,22 @@ export const useWorkspacePathSuggestions = (options: IUseWorkspacePathSuggestion
     return payload.entries;
   };
 
-  const matchesPrefix = (name: string, prefix: string, caseSensitive: boolean): boolean => {
+  // 返回一个判定函数：把大小写折叠时的 prefix.toLowerCase() 预先算好，
+  // 避免在 entries.filter / 根目录遍历的热循环里对同一 prefix 反复折叠。
+  const createPrefixMatcher = (
+    prefix: string,
+    caseSensitive: boolean,
+  ): ((name: string) => boolean) => {
     if (!prefix) {
-      return true;
+      return () => true;
     }
 
-    return caseSensitive
-      ? name.startsWith(prefix)
-      : name.toLowerCase().startsWith(prefix.toLowerCase());
+    if (caseSensitive) {
+      return (name) => name.startsWith(prefix);
+    }
+
+    const loweredPrefix = prefix.toLowerCase();
+    return (name) => name.toLowerCase().startsWith(loweredPrefix);
   };
 
   const toEntrySuggestion = (
@@ -269,9 +254,10 @@ export const useWorkspacePathSuggestions = (options: IUseWorkspacePathSuggestion
       const relativeDirectory = stripTrailingSlashes(normalizedCore.slice(0, lastSlashIndex));
       const namePrefix = normalizedCore.slice(lastSlashIndex + 1);
       const entries = await listDirectoryEntries(rootPath, relativeDirectory);
+      const matchesNamePrefix = createPrefixMatcher(namePrefix, caseSensitive);
 
       return entries
-        .filter((entry) => matchesPrefix(entry.name, namePrefix, caseSensitive))
+        .filter((entry) => matchesNamePrefix(entry.name))
         .slice(0, suggestionLimit)
         .map((entry) => toEntrySuggestion(entry, relativeDirectory));
     }
@@ -290,8 +276,9 @@ export const useWorkspacePathSuggestions = (options: IUseWorkspacePathSuggestion
     };
 
     const rootEntries = await listDirectoryEntries(rootPath, '');
+    const matchesRootPrefix = createPrefixMatcher(normalizedCore, caseSensitive);
     for (const entry of rootEntries) {
-      if (matchesPrefix(entry.name, normalizedCore, caseSensitive)) {
+      if (matchesRootPrefix(entry.name)) {
         pushSuggestion(toEntrySuggestion(entry, ''));
       }
     }
