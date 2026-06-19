@@ -1,5 +1,4 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
-#![allow(rust_2024_compatibility)]
 
 #[cfg(feature = "acp_client")]
 mod acp;
@@ -246,6 +245,7 @@ fn main() {
     {
         // SAFETY: main() 的第一条语句，进程刚由 OS 启动，只有主线程存在，
         // 尚未初始化任何 tracing subscriber / async runtime / 后台线程。
+        // Rust 2024 edition 中 set_var 成为 unsafe 操作，此处显式标注 unsafe 块。
         unsafe {
             std::env::set_var(
                 "WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS",
@@ -356,7 +356,7 @@ fn main() {
                     };
                     if window.is_visible().unwrap_or(false) {
                         return;
-                    }
+                    };
                     tracing::warn!(
                         scope = "startup",
                         event = "tauri.window.fallback-reveal",

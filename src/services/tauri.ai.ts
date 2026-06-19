@@ -198,130 +198,134 @@ type TAiTauriService = Pick<
   | 'aiApplyPatch'
 >;
 
+/**
+ * 生成一个无入参的 AI Tauri 服务方法：直接转发到绑定的零参命令。
+ * 用于 aiGetConfig / aiTestProvider / aiGetSuggestionPoolCache / aiClearCredentials。
+ */
+const voidCommand = (meta: ICommandMeta, invoke: () => Promise<unknown>) => () =>
+  runCommand(meta, undefined, undefined, async () => {
+    await invoke();
+  });
+
+/**
+ * 生成一个带入参的 AI Tauri 服务方法：转发 payload + options 到绑定命令。
+ * 覆盖绝大多数 AI 命令（接受 payload + 可选 IIpcCallOptions）。
+ */
+const payloadCommand = <P>(
+  meta: ICommandMeta,
+  invoke: (payload: P) => Promise<unknown>,
+) =>
+  (payload: P, options?: IIpcCallOptions) =>
+    runCommand(meta, payload, options, () => invoke(payload));
+
 export const aiTauriService: TAiTauriService = {
-  aiGetConfig: () =>
-    runCommand(AI_COMMAND_META.aiGetConfig, undefined, undefined, () => commands.aiGetConfig()),
+  aiGetConfig: voidCommand(
+    AI_COMMAND_META.aiGetConfig,
+    () => commands.aiGetConfig(),
+  ),
 
-  aiSaveConfig(payload, options?: IIpcCallOptions) {
-    return runCommand(AI_COMMAND_META.aiSaveConfig, payload, options, () =>
-      commands.aiSaveConfig(payload),
-    );
-  },
+  aiSaveConfig: payloadCommand(
+    AI_COMMAND_META.aiSaveConfig,
+    (payload) => commands.aiSaveConfig(payload),
+  ),
 
-  aiSaveCredentials(payload, options?: IIpcCallOptions) {
-    return runCommand(AI_COMMAND_META.aiSaveCredentials, payload, options, () =>
-      commands.aiSaveCredentials(payload),
-    );
-  },
+  aiSaveCredentials: payloadCommand(
+    AI_COMMAND_META.aiSaveCredentials,
+    (payload) => commands.aiSaveCredentials(payload),
+  ),
 
-  aiClearCredentials: () =>
-    runCommand<void>(AI_COMMAND_META.aiClearCredentials, undefined, undefined, async () => {
-      await commands.aiClearCredentials();
-    }),
+  aiClearCredentials: voidCommand(
+    AI_COMMAND_META.aiClearCredentials,
+    () => commands.aiClearCredentials(),
+  ),
 
-  aiTestProvider: () =>
-    runCommand(AI_COMMAND_META.aiTestProvider, undefined, undefined, () =>
-      commands.aiTestProvider(),
-    ),
+  aiTestProvider: voidCommand(
+    AI_COMMAND_META.aiTestProvider,
+    () => commands.aiTestProvider(),
+  ),
 
-  aiTestProviderConfig(payload, options?: IIpcCallOptions) {
-    return runCommand(AI_COMMAND_META.aiTestProviderConfig, payload, options, () =>
-      commands.aiTestProviderConfig(payload),
-    );
-  },
+  aiTestProviderConfig: payloadCommand(
+    AI_COMMAND_META.aiTestProviderConfig,
+    (payload) => commands.aiTestProviderConfig(payload),
+  ),
 
-  aiConnectProvider(payload, options?: IIpcCallOptions) {
-    return runCommand(AI_COMMAND_META.aiConnectProvider, payload, options, () =>
-      commands.aiConnectProvider(payload),
-    );
-  },
+  aiConnectProvider: payloadCommand(
+    AI_COMMAND_META.aiConnectProvider,
+    (payload) => commands.aiConnectProvider(payload),
+  ),
 
-  aiGenerateConversationTitle(payload, options?: IIpcCallOptions) {
-    return runCommand(AI_COMMAND_META.aiGenerateConversationTitle, payload, options, () =>
-      commands.aiGenerateConversationTitle(payload),
-    );
-  },
+  aiGenerateConversationTitle: payloadCommand(
+    AI_COMMAND_META.aiGenerateConversationTitle,
+    (payload) => commands.aiGenerateConversationTitle(payload),
+  ),
 
-  aiGetSuggestionPoolCache: () =>
-    runCommand(AI_COMMAND_META.aiGetSuggestionPoolCache, undefined, undefined, () =>
-      commands.aiGetSuggestionPoolCache(),
-    ),
+  aiGetSuggestionPoolCache: voidCommand(
+    AI_COMMAND_META.aiGetSuggestionPoolCache,
+    () => commands.aiGetSuggestionPoolCache(),
+  ),
 
-  aiGenerateSuggestionPool(payload, options?: IIpcCallOptions) {
-    return runCommand(AI_COMMAND_META.aiGenerateSuggestionPool, payload, options, () =>
-      commands.aiGenerateSuggestionPool(payload),
-    );
-  },
+  aiGenerateSuggestionPool: payloadCommand(
+    AI_COMMAND_META.aiGenerateSuggestionPool,
+    (payload) => commands.aiGenerateSuggestionPool(payload),
+  ),
 
-  aiChatStream(payload, options?: IIpcCallOptions) {
-    return runCommand(AI_COMMAND_META.aiChatStream, payload, options, () =>
-      commands.aiChatStream(payload),
-    );
-  },
+  aiChatStream: payloadCommand(
+    AI_COMMAND_META.aiChatStream,
+    (payload) => commands.aiChatStream(payload),
+  ),
 
-  aiCancel(payload, options?: IIpcCallOptions) {
-    return runCommand<void>(AI_COMMAND_META.aiCancel, payload, options, async () => {
-      await commands.aiCancel(payload);
-    });
-  },
+  aiCancel: payloadCommand(
+    AI_COMMAND_META.aiCancel,
+    (payload) => commands.aiCancel(payload),
+  ),
 
-  aiResolveApproval(payload, options?: IIpcCallOptions) {
-    return runCommand(AI_COMMAND_META.aiResolveApproval, payload, options, () =>
-      commands.aiResolveApproval(payload),
-    );
-  },
+  aiResolveApproval: payloadCommand(
+    AI_COMMAND_META.aiResolveApproval,
+    (payload) => commands.aiResolveApproval(payload),
+  ),
 
-  aiGetSessionConfigOptions(payload, options?: IIpcCallOptions) {
-    return runCommand(AI_COMMAND_META.aiGetSessionConfigOptions, payload, options, () =>
-      commands.aiGetSessionConfigOptions(payload),
-    );
-  },
+  aiGetSessionConfigOptions: payloadCommand(
+    AI_COMMAND_META.aiGetSessionConfigOptions,
+    (payload) => commands.aiGetSessionConfigOptions(payload),
+  ),
 
-  aiSetSessionConfigOption(payload, options?: IIpcCallOptions) {
-    return runCommand(AI_COMMAND_META.aiSetSessionConfigOption, payload, options, () =>
-      commands.aiSetSessionConfigOption(payload),
-    );
-  },
+  aiSetSessionConfigOption: payloadCommand(
+    AI_COMMAND_META.aiSetSessionConfigOption,
+    (payload) => commands.aiSetSessionConfigOption(payload),
+  ),
 
-  aiInlineComplete(payload, options?: IIpcCallOptions) {
-    return runCommand(AI_COMMAND_META.aiInlineComplete, payload, options, () =>
-      commands.aiInlineComplete(payload),
-    );
-  },
+  aiInlineComplete: payloadCommand(
+    AI_COMMAND_META.aiInlineComplete,
+    (payload) => commands.aiInlineComplete(payload),
+  ),
 
-  aiAgentClassifyTask(payload, options?: IIpcCallOptions) {
-    return runCommand(AI_COMMAND_META.aiAgentClassifyTask, payload, options, () =>
-      commands.aiAgentClassifyTask(payload),
-    );
-  },
+  aiAgentClassifyTask: payloadCommand(
+    AI_COMMAND_META.aiAgentClassifyTask,
+    (payload) => commands.aiAgentClassifyTask(payload),
+  ),
 
-  aiAgentSetNetworkPermission(payload, options?: IIpcCallOptions) {
-    return runCommand(AI_COMMAND_META.aiAgentSetNetworkPermission, payload, options, () =>
-      commands.aiAgentSetNetworkPermission(payload),
-    );
-  },
+  aiAgentSetNetworkPermission: payloadCommand(
+    AI_COMMAND_META.aiAgentSetNetworkPermission,
+    (payload) => commands.aiAgentSetNetworkPermission(payload),
+  ),
 
-  aiWebSearch(payload, options?: IIpcCallOptions) {
-    return runCommand(AI_COMMAND_META.aiWebSearch, payload, options, () =>
-      commands.aiWebSearch(payload),
-    );
-  },
+  aiWebSearch: payloadCommand(
+    AI_COMMAND_META.aiWebSearch,
+    (payload) => commands.aiWebSearch(payload),
+  ),
 
-  aiWebFetch(payload, options?: IIpcCallOptions) {
-    return runCommand(AI_COMMAND_META.aiWebFetch, payload, options, () =>
-      commands.aiWebFetch(payload),
-    );
-  },
+  aiWebFetch: payloadCommand(
+    AI_COMMAND_META.aiWebFetch,
+    (payload) => commands.aiWebFetch(payload),
+  ),
 
-  aiProposePatch(payload, options?: IIpcCallOptions) {
-    return runCommand(AI_COMMAND_META.aiProposePatch, payload, options, () =>
-      commands.aiProposePatch(payload),
-    );
-  },
+  aiProposePatch: payloadCommand(
+    AI_COMMAND_META.aiProposePatch,
+    (payload) => commands.aiProposePatch(payload),
+  ),
 
-  aiApplyPatch(payload, options?: IIpcCallOptions) {
-    return runCommand(AI_COMMAND_META.aiApplyPatch, payload, options, () =>
-      commands.aiApplyPatch(payload),
-    );
-  },
+  aiApplyPatch: payloadCommand(
+    AI_COMMAND_META.aiApplyPatch,
+    (payload) => commands.aiApplyPatch(payload),
+  ),
 };
