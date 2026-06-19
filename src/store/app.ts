@@ -61,8 +61,6 @@ const MAX_ENVIRONMENT_VARIABLES = 20;
 // Pure helpers
 // ---------------------------------------------------------------------------
 
-const hasWindow = (): boolean => typeof window !== 'undefined';
-
 const isPlainObject = (value: unknown): value is Record<string, unknown> =>
   Object.prototype.toString.call(value) === '[object Object]';
 
@@ -106,7 +104,7 @@ const clampNumber = (value: unknown, [min, max]: TNumberRange, fallback?: number
 // ---------------------------------------------------------------------------
 
 const resolveSystemTheme = (): TThemeMode => {
-  if (!hasWindow() || typeof window.matchMedia !== 'function') {
+  if (typeof window.matchMedia !== 'function') {
     return DEFAULT_THEME;
   }
   return window.matchMedia(DARK_MEDIA_QUERY).matches ? 'dark' : 'light';
@@ -315,7 +313,7 @@ export const useAppStore = defineStore(
     // 注: pinia setup store 的 effect scope 是 pinia 实例自己持有的,onScopeDispose
     // 实际在 pinia.dispose() 时才触发 (主要服务于测试)。生产环境下这个 listener 与
     // app 生命周期同生共死,无 leak 风险但也不会被组件卸载触发清理。
-    if (hasWindow() && typeof window.matchMedia === 'function') {
+    if (typeof window.matchMedia === 'function') {
       const mediaQuery = window.matchMedia(DARK_MEDIA_QUERY);
       const handleChange = (event: MediaQueryListEvent): void => {
         const next: TThemeMode = event.matches ? 'dark' : 'light';

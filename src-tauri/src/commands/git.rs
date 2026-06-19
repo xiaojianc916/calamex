@@ -442,6 +442,10 @@ fn build_git_commit_summary(commit: &gix::Commit<'_>) -> GitCommitSummaryPayload
     }
 }
 
+/// 截断 OID 到 7 字符短格式。
+/// 注意：固定 7 字符在超大仓库（>100 万对象）可能碰撞。
+/// 如需仓库唯一的短 OID，可改用 repo.rev_parse_short(&id)（需传入 &Repository）。
+/// 当前目标用户为中小仓库，7 字符足够。
 fn short_commit_id(id: gix::ObjectId) -> String {
     format!("{:.7}", id)
 }

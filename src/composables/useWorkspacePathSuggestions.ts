@@ -1,6 +1,4 @@
-import { ref } from 'vue';
-import { tauriService } from '@/services/tauri';
-import type { IWorkspaceEntry } from '@/types/editor';
+import { joinFileSystemPath } from '@/utils/file/path';
 
 /** 建议项的种类，与文件图标组件保持一致。 */
 export type TPathSuggestionKind = 'file' | 'directory';
@@ -40,17 +38,19 @@ const DEFAULT_SUGGESTION_LIMIT = 40;
 export const PATH_SUGGESTION_DIRECTORY_CACHE_LIMIT = 64;
 export const PATH_SUGGESTION_FILE_SEARCH_CACHE_LIMIT = 64;
 
+/**
+ * 以下三个辅助函数工作在「相对路径段」上，不经过 path.ts 的 normalizeFileSystemPath，
+ * 因为后者会额外做 verbatim 前缀剥离 + 大小写折叠，会改变相对段的语义。
+ * 仅做分隔符归一化和首尾修剪，保留原始段的内容。
+ */
+/**
+ * 以下三个辅助函数工作在相对路径段上，不经过 path.ts 的 normalizeFileSystemPath，
+ * 因为后者会额外做 verbatim 前缀剥离 + 大小写折叠，会改变相对段的语义。
+ * 仅做分隔符归一化和首尾修剪，保留原始段的内容。
+ */
 const normalizeSlashes = (value: string): string => value.replace(/\\/gu, '/');
 const stripTrailingSlashes = (value: string): string => value.replace(/[\\/]+$/u, '');
 const stripLeadingSlashes = (value: string): string => value.replace(/^[\\/]+/u, '');
-
-// 与 useSidecarChangedDocumentRefresh.joinWorkspacePath 保持一致：统一用正斜杠拼接，
-// 后端（含 Windows）已验证可接受此形式。
-const joinWorkspacePath = (rootPath: string, relativePath: string): string => {
-  const base = stripTrailingSlashes(rootPath);
-  const child = stripLeadingSlashes(normalizeSlashes(relativePath));
-  return child ? `${base}/${child}` : base;
-};
 
 const getFileName = (relativePath: string): string => {
   const segments = normalizeSlashes(relativePath).split('/').filter(Boolean);
@@ -60,43 +60,6 @@ const getFileName = (relativePath: string): string => {
 const getParentPath = (relativePath: string): string => {
   const segments = normalizeSlashes(relativePath).split('/').filter(Boolean);
   return segments.length <= 1 ? '' : segments.slice(0, -1).join('/');
-};
-
-export const getBoundedCacheValue = <T>(cache: Map<string, T>, key: string): T | undefined => {
-  if (!cache.has(key)) {
-    return undefined;
-  }
-
-  const value = cache.get(key) as T;
-  // Map 删除后重插即可维护 LRU 最近访问顺序。
-  cache.delete(key);
-  cache.set(key, value);
-  return value;
-};
-
-export const setBoundedCacheValue = <T>(
-  cache: Map<string, T>,
-  key: string,
-  value: T,
-  limit: number,
-): void => {
-  if (limit <= 0) {
-    cache.clear();
-    return;
-  }
-
-  if (cache.has(key)) {
-    cache.delete(key);
-  }
-  cache.set(key, value);
-
-  while (cache.size > limit) {
-    const oldestKey = cache.keys().next().value;
-    if (oldestKey === undefined) {
-      break;
-    }
-    cache.delete(oldestKey);
-  }
 };
 
 // 包含/排除输入框是以逗号或换行分隔的 glob 列表，补全只应作用于「光标所在的那一段」。
@@ -182,7 +145,7 @@ export const useWorkspacePathSuggestions = (options: IUseWorkspacePathSuggestion
       return cached;
     }
 
-    const absolutePath = joinWorkspacePath(rootPath, relativeDirectory);
+    const absolutePath = joinFileSystemPath(rootPath, relativeDirectory);
     const payload = await tauriService.listWorkspaceEntries(absolutePath, rootPath);
     setBoundedCacheValue(
       directoryEntriesCache,

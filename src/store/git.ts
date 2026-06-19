@@ -233,7 +233,6 @@ export const useGitStore = defineStore('git', () => {
   let pullRequestCacheEpoch = 0;
   let pullRequestPreloadTimer: ReturnType<typeof setTimeout> | null = null;
   let scheduledPullRequestPreloadRepositoryKey: string | null = null;
-  let commitStatsBackgroundTimer: ReturnType<typeof setTimeout> | null = null;
   let isCommitStatsBackgroundRunning = false;
   const queuedCommitStatsIds = new Set<string>();
   const pendingCommitStatsRequests = new Set<string>();
@@ -264,14 +263,17 @@ export const useGitStore = defineStore('git', () => {
   };
 
   const clearCommitStatsBackgroundQueue = (): void => {
-    if (commitStatsBackgroundTimer !== null) {
-      // timer 可能是 setTimeout handle 或 requestIdleCallback handle。
-      // 两种都尝试取消：cancelIdleCallback 不支持时静默跳过。
-      if (typeof window !== 'undefined' && typeof window.cancelIdleCallback === 'function') {
-        window.cancelIdleCallback(commitStatsBackgroundTimer as unknown as number);
+    if (commitStatsTimer !== null) {
+      if (
+        commitStatsTimer.kind === 'idle' &&
+        typeof window !== 'undefined' &&
+        typeof window.cancelIdleCallback === 'function'
+      ) {
+        window.cancelIdleCallback(commitStatsTimer.id);
+      } else if (commitStatsTimer.kind === 'timeout') {
+        clearTimeout(commitStatsTimer.id);
       }
-      clearTimeout(commitStatsBackgroundTimer);
-      commitStatsBackgroundTimer = null;
+      commitStatsTimer = null;
     }
     queuedCommitStatsIds.clear();
     pendingCommitStatsRequests.clear();

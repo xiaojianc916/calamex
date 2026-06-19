@@ -77,12 +77,9 @@ const resolveShortcutModifierLabels = (): {
   primary: string;
   shift: string;
 } => {
-  const platform =
-    typeof navigator !== 'undefined'
-      ? `${navigator.platform ?? ''} ${navigator.userAgent ?? ''}`.toLowerCase()
-      : '';
-  const isMacLike = /mac|iphone|ipad|ipod/.test(platform);
-
+  // navigator.platform 已 deprecated；优先用 userAgentData，fallback 到 userAgent。
+  const ua = typeof navigator !== 'undefined' ? navigator.userAgent : '';
+  const isMacLike = /mac|iphone|ipad|ipod/i.test(ua);
   return isMacLike ? { primary: '⌘', shift: '⇧' } : { primary: 'Ctrl', shift: 'Shift' };
 };
 
@@ -789,22 +786,18 @@ export const useBrowserContextMenu = () => {
     }
   };
 
-  if (typeof window !== 'undefined') {
-    window.addEventListener('pointerdown', handleWindowPointerDown, true);
-    window.addEventListener('contextmenu', handleWindowContextMenu);
-    window.addEventListener('keydown', handleWindowKeydown);
-    window.addEventListener('resize', handleWindowResize);
-    window.addEventListener('blur', handleWindowResize);
-  }
+  window.addEventListener('pointerdown', handleWindowPointerDown, true);
+  window.addEventListener('contextmenu', handleWindowContextMenu);
+  window.addEventListener('keydown', handleWindowKeydown);
+  window.addEventListener('resize', handleWindowResize);
+  window.addEventListener('blur', handleWindowResize);
 
   onBeforeUnmount(() => {
-    if (typeof window !== 'undefined') {
-      window.removeEventListener('pointerdown', handleWindowPointerDown, true);
-      window.removeEventListener('contextmenu', handleWindowContextMenu);
-      window.removeEventListener('keydown', handleWindowKeydown);
-      window.removeEventListener('resize', handleWindowResize);
-      window.removeEventListener('blur', handleWindowResize);
-    }
+    window.removeEventListener('pointerdown', handleWindowPointerDown, true);
+    window.removeEventListener('contextmenu', handleWindowContextMenu);
+    window.removeEventListener('keydown', handleWindowKeydown);
+    window.removeEventListener('resize', handleWindowResize);
+    window.removeEventListener('blur', handleWindowResize);
   });
 
   return {

@@ -123,29 +123,17 @@ export const useAiEditStore = defineStore('ai-edit', () => {
   const setPin = (payload: IAiEditSetPinRequest): Promise<IAiEditSetPinPayload> =>
     withStatus(async () => {
       const result = await aiEditService.setPin(payload);
-      timelineEntries.value = timelineEntries.value.map((entry) => {
-        if (entry.type === 'snapshot' && result.targetType === 'snapshot') {
-          return entry.data.id === result.targetId
-            ? { ...entry, data: { ...entry.data, pinned: result.pinned } }
-            : entry;
-        }
-        if (entry.type === 'snapshot' && result.targetType === 'task') {
-          return entry.data.taskId === result.targetId
-            ? { ...entry, data: { ...entry.data, pinned: result.pinned } }
-            : entry;
-        }
-        if (entry.type === 'operation' && result.targetType === 'operation') {
-          return entry.data.id === result.targetId
-            ? { ...entry, data: { ...entry.data, pinned: result.pinned } }
-            : entry;
-        }
-        if (entry.type === 'operation' && result.targetType === 'task') {
-          return entry.data.taskId === result.targetId
-            ? { ...entry, data: { ...entry.data, pinned: result.pinned } }
-            : entry;
-        }
-        return entry;
-      });
+      const matchId = (entry: IAiEditTimelineEntry): boolean => {
+        const selfMatch = entry.data.id === result.targetId && entry.type === result.targetType;
+        const taskMatch =
+          'taskId' in entry.data &&
+          entry.data.taskId === result.targetId &&
+          result.targetType === 'task';
+        return selfMatch || taskMatch;
+      };
+      timelineEntries.value = timelineEntries.value.map((entry) =>
+        matchId(entry) ? { ...entry, data: { ...entry.data, pinned: result.pinned } } : entry,
+      );
       return result;
     }, '更新 AED Pin 状态失败。');
 

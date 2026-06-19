@@ -9,13 +9,8 @@ const DEFAULT_RUNTIME_WAIT_MS = 2000;
 
 export const desktopRuntimeReady = ref(false);
 
-const resolveTauriInternals = (): ITauriInternals | null => {
-  if (typeof window === 'undefined') {
-    return null;
-  }
-
-  return (window as Window & { __TAURI_INTERNALS__?: ITauriInternals }).__TAURI_INTERNALS__ ?? null;
-};
+const resolveTauriInternals = (): ITauriInternals | null =>
+  (window as Window & { __TAURI_INTERNALS__?: ITauriInternals }).__TAURI_INTERNALS__ ?? null;
 
 const syncDesktopRuntime = (): boolean => {
   const available = typeof resolveTauriInternals()?.invoke === 'function';
@@ -25,17 +20,12 @@ const syncDesktopRuntime = (): boolean => {
 
 const sleep = (delayMs: number): Promise<void> =>
   new Promise((resolve) => {
-    window.setTimeout(resolve, delayMs);
+    setTimeout(resolve, delayMs);
   });
 
 export const waitForDesktopRuntime = async (
   timeoutMs = DEFAULT_RUNTIME_WAIT_MS,
 ): Promise<boolean> => {
-  if (typeof window === 'undefined') {
-    desktopRuntimeReady.value = false;
-    return false;
-  }
-
   if (syncDesktopRuntime()) {
     return true;
   }

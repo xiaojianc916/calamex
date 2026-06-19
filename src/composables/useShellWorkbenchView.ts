@@ -63,45 +63,24 @@ const scheduleStartupNonCriticalTask = (task: () => void, timeoutMs = 1600): voi
 
 const waitForInitialWorkbenchPaint = async (): Promise<void> =>
   new Promise((resolve) => {
-    let settled = false;
-    let firstFrameId: number | null = null;
-    let secondFrameId: number | null = null;
-    let timeoutId: number | null = null;
+    let raf1 = 0;
+    let raf2 = 0;
+    let timer = 0;
 
-    const finish = (): void => {
-      if (settled) {
-        return;
-      }
-
-      settled = true;
-
-      if (timeoutId !== null) {
-        window.clearTimeout(timeoutId);
-      }
-
-      if (firstFrameId !== null) {
-        window.cancelAnimationFrame(firstFrameId);
-      }
-
-      if (secondFrameId !== null) {
-        window.cancelAnimationFrame(secondFrameId);
-      }
-
+    const done = (): void => {
+      cancelAnimationFrame(raf1);
+      cancelAnimationFrame(raf2);
+      clearTimeout(timer);
       resolve();
     };
 
     // 双 rAF：第一帧后浏览器已完成布局但可能尚未完成绘制；
-    // 第二帧回调执行时首帧绘制已落屏，确保终端 attach 时机在首次可见帧之后，
-    // 避免 xterm 在未绘制的容器上初始化导致尺寸计算为 0。
-    firstFrameId = window.requestAnimationFrame(() => {
-      firstFrameId = null;
-      secondFrameId = window.requestAnimationFrame(() => {
-        secondFrameId = null;
-        finish();
-      });
+    // 第二帧回调执行时首帧绘制已落屏，确保终端 attach 时机在首次可见帧之后。
+    raf1 = requestAnimationFrame(() => {
+      raf2 = requestAnimationFrame(done);
     });
 
-    timeoutId = window.setTimeout(finish, READY_PAINT_FALLBACK_TIMEOUT_MS);
+    timer = window.setTimeout(done, READY_PAINT_FALLBACK_TIMEOUT_MS);
   });
 
 export const useShellWorkbenchView = (onReady: () => void) => {
@@ -134,7 +113,7 @@ export const useShellWorkbenchView = (onReady: () => void) => {
   let editorLiveResizeFrameId: number | null = null;
   let globalKeydownCleanup: (() => void) | null = null;
 
-  const sidebarWidth = computed(() => DASHBOARD_SIDEBAR_WIDTH);
+  const sidebarWidth = DASHBOARD_SIDEBAR_WIDTH;
   const visibleWorkspaceRootPath = computed(() => workbench.editorStore.workspaceRootPath);
 
   // 工作台层级 Git 仓库状态初始化：打开工作区时即加载，与左侧 git 侧边栏是否激活解耦，

@@ -153,10 +153,7 @@ fn cdp_session() -> &'static tokio::sync::Mutex<Option<CdpSession>> {
 
 #[cfg(feature = "native_webview")]
 fn now_ms() -> f64 {
-    std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| d.as_millis() as f64)
-        .unwrap_or(0.0)
+    jiff::Timestamp::now().as_millisecond() as f64
 }
 
 // 把任意 CDP 枚举序列化成它的 serde 字符串 tag（避免硬编码枚举变体名）。

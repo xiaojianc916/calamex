@@ -115,13 +115,14 @@ export const formatFileSystemPathForDisplay = (value: string | null | undefined)
   return collapseDuplicateSeparators(formatted);
 };
 
+/**
+ * 处理文本中的 Windows verbatim 前缀，复用 {@link stripWindowsVerbatimPrefix}。
+ * 与 formatFileSystemPathForDisplay 不同，此函数不做路径规范化（normalize / 大小写折叠），
+ * 仅剥离 verbatim 前缀，保留原始路径分隔符与大小写——用于日志、提示文本等展示场景。
+ */
 export const formatFileSystemTextForDisplay = (value: string | null | undefined): string => {
   if (!value) return '';
-  return value
-    .replace(/\\\\\?\\UNC\\/gi, '\\\\')
-    .replace(/\\\\\?\\/g, '')
-    .replace(/\/\/\?\/UNC\//gi, '//')
-    .replace(/\/\/\?\//g, '');
+  return stripWindowsVerbatimPrefix(value);
 };
 
 export const joinDisplayedPath = (
@@ -189,4 +190,19 @@ export const getPathDirectory = (value: string | null | undefined): string => {
   if (!normalized) return '';
   const dir = patheDirname(normalized);
   return dir === '.' ? '' : `${dir}/`;
+};
+
+/**
+ * 仅用正斜杠拼接 rootPath 与 relativePath。
+ * 与 useWorkspacePathSuggestions / useSidecarChangedDocumentRefresh 中的局部
+ * joinWorkspacePath 保持一致：后端（含 Windows）已验证可接受正斜杠形式。
+ */
+export const joinFileSystemPath = (
+  rootPath: string | null | undefined,
+  relativePath: string | null | undefined,
+): string => {
+  if (!rootPath) return relativePath ?? '';
+  const base = rootPath.replace(/[\\/]+$/g, '');
+  const child = (relativePath ?? '').replace(/^[\\/]+/g, '').replace(/\\/g, '/');
+  return child ? `${base}/${child}` : base;
 };

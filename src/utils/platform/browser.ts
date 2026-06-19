@@ -1,10 +1,6 @@
 import { openUrl } from '@tauri-apps/plugin-opener';
 
 const openWithWindow = (url: string): void => {
-  if (typeof window === 'undefined') {
-    return;
-  }
-
   window.open(url, '_blank', 'noopener,noreferrer');
 };
 

@@ -182,24 +182,14 @@ fn validate_slug(raw: &str) -> Result<String, String> {
     Ok(slug.to_string())
 }
 
-/// 把名称转为 ascii slug（小写、非字母数字折叠为单个连字符）。
+/// 把名称转为 slug（支持 Unicode，如中文→拼音）。
+/// slug crate 会将非字母数字字符折叠为连字符并对 Unicode 做拼音化处理。
 fn slugify(name: &str) -> String {
-    let mut slug = String::new();
-    let mut prev_dash = false;
-    for character in name.trim().to_lowercase().chars() {
-        if character.is_ascii_alphanumeric() {
-            slug.push(character);
-            prev_dash = false;
-        } else if !prev_dash && !slug.is_empty() {
-            slug.push('-');
-            prev_dash = true;
-        }
-    }
-    let trimmed = slug.trim_matches('-').to_string();
-    if trimmed.is_empty() {
+    let slug = slug::slugify(name.trim());
+    if slug.is_empty() {
         "skill".to_string()
     } else {
-        trimmed
+        slug
     }
 }
 
@@ -216,26 +206,33 @@ fn allocate_slug(root: &Path, name: &str) -> Result<String, String> {
 }
 
 /// 解析 `SKILL.md`：提取 YAML frontmatter 的 name / description，其余为正文。
+/// 使用 serde_yaml 解析 frontmatter，支持标准 YAML 语法（多行值、数组等）。
 fn parse_skill_document(raw: &str) -> ParsedSkill {
     let normalized = raw.replace("\r\n", "\n");
     if let Some(rest) = normalized.strip_prefix("---\n")
         && let Some(end) = rest.find("\n---")
     {
         let front = &rest[..end];
-        let after = &rest[end + 4..];
-        let body = after.trim_start_matches('\n').to_string();
-        let mut name = String::new();
-        let mut description = String::new();
-        for line in front.lines() {
-            if let Some(value) = line.strip_prefix("name:") {
-                name = unquote(value);
-            } else if let Some(value) = line.strip_prefix("description:") {
-                description = unquote(value);
-            }
+        let body = rest[end + 4..].trim_start_matches('\n').to_string();
+
+        #[derive(serde::Deserialize)]
+        struct SkillFrontmatter {
+            #[serde(default)]
+            name: String,
+            #[serde(default)]
+            description: String,
         }
+
+        let parsed_front: SkillFrontmatter = serde_yaml::from_str(front).unwrap_or(
+            SkillFrontmatter {
+                name: String::new(),
+                description: String::new(),
+            },
+        );
+
         return ParsedSkill {
-            name,
-            description,
+            name: parsed_front.name,
+            description: parsed_front.description,
             body,
         };
     }
@@ -243,19 +240,6 @@ fn parse_skill_document(raw: &str) -> ParsedSkill {
         name: String::new(),
         description: String::new(),
         body: normalized,
-    }
-}
-
-/// 去除 YAML 标量两端的引号。
-fn unquote(value: &str) -> String {
-    let trimmed = value.trim();
-    if trimmed.len() >= 2
-        && ((trimmed.starts_with('"') && trimmed.ends_with('"'))
-            || (trimmed.starts_with('\'') && trimmed.ends_with('\'')))
-    {
-        trimmed[1..trimmed.len() - 1].to_string()
-    } else {
-        trimmed.to_string()
     }
 }
 
