@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 
 import type { TAiThreadReduceEvent } from '@/store/aiThread/events';
 import { nextToolStatus, reduceThread, reduceThreadAll } from '@/store/aiThread/reduce';
+import type { IAiContextReference } from '@/types/ai/context';
 import type {
   IAiThread,
   IAiThreadAssistantMessageEntry,
@@ -9,6 +10,7 @@ import type {
   IAiThreadContextCompactionEntry,
   IAiThreadPlanEntry,
   IAiThreadToolCall,
+  IAiThreadUserMessageEntry,
 } from '@/types/ai/thread';
 
 const ISO = '2026-06-14T09:00:00.000Z';
@@ -96,6 +98,34 @@ describe('reduceThread', () => {
     expect(base.entries).toHaveLength(0);
     expect(next.entries).toHaveLength(1);
     expect(next).not.toBe(base);
+  });
+
+  it('user_message 透传 references；缺省兜底空数组', () => {
+    const ref: IAiContextReference = {
+      id: 'r1',
+      kind: 'current-file',
+      label: 'foo.ts',
+      path: 'src/foo.ts',
+      range: null,
+      contentPreview: '',
+      redacted: false,
+    };
+    const withRefs = reduceThread(createThread(), {
+      kind: 'user_message',
+      id: 'u1',
+      createdAt: ISO,
+      blocks: [{ type: 'text', text: 'hi' }],
+      references: [ref],
+    });
+    expect((withRefs.entries[0] as IAiThreadUserMessageEntry).references).toEqual([ref]);
+
+    const withoutRefs = reduceThread(createThread(), {
+      kind: 'user_message',
+      id: 'u2',
+      createdAt: ISO,
+      blocks: [],
+    });
+    expect((withoutRefs.entries[0] as IAiThreadUserMessageEntry).references).toEqual([]);
   });
 
   it('tool_call 按 id upsert，不重复 append', () => {

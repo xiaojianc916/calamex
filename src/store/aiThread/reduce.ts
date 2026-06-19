@@ -290,6 +290,7 @@ export function reduceThread(thread: IAiThread, event: TAiThreadReduceEvent): IA
         id: event.id,
         createdAt: event.createdAt,
         content: event.blocks,
+        references: event.references ?? [],
       };
       return { ...thread, entries: [...thread.entries, entry] };
     }

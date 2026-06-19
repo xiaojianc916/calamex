@@ -6,6 +6,7 @@ import {
   legacyThreadToThread,
 } from '@/store/aiThread/legacy-adapter';
 import type { IAiAgentPatchSummary, IAiChatMessage } from '@/types/ai';
+import type { IAiContextReference } from '@/types/ai/context';
 import type {
   IAiThreadAssistantMessageEntry,
   IAiThreadToolCall,
@@ -30,6 +31,20 @@ describe('legacyMessageToEntries', () => {
     const entry = entries[0] as IAiThreadUserMessageEntry;
     expect(entry.type).toBe('user_message');
     expect(entry.content).toEqual([{ type: 'text', text: '你好' }]);
+  });
+
+  it('user 消息透传 references 到 user_message entry', () => {
+    const ref: IAiContextReference = {
+      id: 'r1',
+      kind: 'selection',
+      label: 'sel',
+      path: 'src/a.ts',
+      range: { startLine: 1, endLine: 2 },
+      contentPreview: 'x',
+      redacted: false,
+    };
+    const entries = legacyMessageToEntries(userMessage({ references: [ref] }));
+    expect((entries[0] as IAiThreadUserMessageEntry).references).toEqual([ref]);
   });
 
   it('空 user 消息 -> 空 content 数组', () => {

@@ -1,6 +1,7 @@
 import { z } from 'zod';
 
 import { aiTaskPlanStepSchema } from '@/types/ai/agent.schema';
+import { aiContextReferenceSchema } from '@/types/ai/context.schema';
 import {
   aiConversationScrollStateSchema,
   aiConversationTitleStatusSchema,
@@ -31,6 +32,7 @@ export const aiThreadUserMessageEntrySchema = z.object({
   id: z.string().min(1),
   createdAt: z.string().min(1),
   content: z.array(aiThreadContentBlockSchema),
+  references: z.array(aiContextReferenceSchema).default([]),
 });
 
 export const aiThreadAssistantMessageEntrySchema = z.object({

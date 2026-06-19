@@ -8,6 +8,7 @@
  * 为什么是手写联合而非 Zod：该类型是纯前端内部边界（不跨 IPC /
  * event wire），与 `TAgentUiEvent` 同性质，按项目惯例不为内部类型建 schema。
  * ========================================================================== */
+import type { IAiContextReference } from '@/types/ai/context';
 import type {
   IAiThreadChangedFilesEntry,
   IAiThreadContentBlock,
@@ -35,6 +36,7 @@ export type TAiThreadReduceEvent =
       id: string;
       createdAt: string;
       blocks: IAiThreadContentBlock[];
+      references?: IAiContextReference[];
     }
   | {
       kind: 'assistant_delta';

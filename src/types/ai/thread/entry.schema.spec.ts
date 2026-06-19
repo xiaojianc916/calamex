@@ -6,6 +6,7 @@ import {
   aiThreadSchema,
   aiThreadToolCallSchema,
   aiThreadToolKindSchema,
+  aiThreadUserMessageEntrySchema,
 } from '@/types/ai/thread';
 
 const ISO = '2026-06-14T09:00:00.000Z';
@@ -67,6 +68,36 @@ describe('AI thread entry schema', () => {
         'message',
       ]);
     }
+  });
+
+  it('user_message references 缺省兜底为空数组，提供则解析透传', () => {
+    const withDefault = aiThreadUserMessageEntrySchema.parse({
+      type: 'user_message',
+      id: 'u1',
+      createdAt: ISO,
+      content: [],
+    });
+    expect(withDefault.references).toEqual([]);
+
+    const parsed = aiThreadUserMessageEntrySchema.parse({
+      type: 'user_message',
+      id: 'u2',
+      createdAt: ISO,
+      content: [],
+      references: [
+        {
+          id: 'r1',
+          kind: 'current-file',
+          label: 'foo.ts',
+          path: 'src/foo.ts',
+          range: null,
+          contentPreview: '',
+          redacted: false,
+        },
+      ],
+    });
+    expect(parsed.references).toHaveLength(1);
+    expect(parsed.references[0]).toMatchObject({ id: 'r1', kind: 'current-file' });
   });
 
   it('拒绝非法的工具调用状态', () => {

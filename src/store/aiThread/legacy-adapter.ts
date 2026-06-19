@@ -10,8 +10,7 @@
  *   message 展开为：其 tool_call entries（按运行顺序在前）+ assistant_message
  *   entry（最终回答在后）。
  * - 旧消息的 `content` 是单一字符串，映射为单个 text content block。
- * - 附件 / references 映射为富块的工作留到后续细化（双轨期旧 store 仍保留
- *   references 原数据，不会丢失）。
+ * - 旧消息的 references 原样透传到 user_message entry；附件映射为富块留待后续细化。
  * ========================================================================== */
 import { attachChangedFileDiffsToToolCalls } from '@/components/business/ai/thread/projection/attach-changed-file-diffs';
 import type { IAiConversationThread } from '@/store/aiConversation';
@@ -99,6 +98,7 @@ export function legacyMessageToEntries(message: IAiChatMessage): IAiThreadEntry[
         id: message.id,
         createdAt: message.createdAt,
         content: text.trim().length > 0 ? [{ type: 'text', text }] : [],
+        references: message.references,
       },
     ];
   }

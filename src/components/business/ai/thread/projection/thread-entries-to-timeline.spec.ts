@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
+import type { IAiContextReference } from '@/types/ai/context';
 import type { IAiThreadEntry } from '@/types/ai/thread';
 
 import {
@@ -11,7 +12,16 @@ import {
 const ISO = '2026-06-14T09:00:00.000Z';
 
 describe('threadEntriesToTimeline', () => {
-  it('user_message 投影为 user-message, references 暂为空', () => {
+  it('user_message 投影为 user-message, 透传 references', () => {
+    const reference: IAiContextReference = {
+      id: 'r1',
+      kind: 'current-file',
+      label: 'foo.ts',
+      path: 'src/foo.ts',
+      range: null,
+      contentPreview: '',
+      redacted: false,
+    };
     const entries: IAiThreadEntry[] = [
       {
         type: 'user_message',
@@ -21,6 +31,7 @@ describe('threadEntriesToTimeline', () => {
           { type: 'text', text: 'first' },
           { type: 'text', text: 'second' },
         ],
+        references: [reference],
       },
     ];
     const timeline = threadEntriesToTimeline(entries);
@@ -30,7 +41,7 @@ describe('threadEntriesToTimeline', () => {
     if (entry.kind === 'user-message') {
       expect(entry.id).toBe('u1');
       expect(entry.messageId).toBe('u1');
-      expect(entry.references).toEqual([]);
+      expect(entry.references).toEqual([reference]);
       expect(entry.markdown).toContain('first');
       expect(entry.markdown).toContain('second');
     }
@@ -155,7 +166,13 @@ describe('threadEntriesToTimeline', () => {
 
   it('混合 entries 保持输入顺序', () => {
     const entries: IAiThreadEntry[] = [
-      { type: 'user_message', id: 'u1', createdAt: ISO, content: [{ type: 'text', text: 'hi' }] },
+      {
+        type: 'user_message',
+        id: 'u1',
+        createdAt: ISO,
+        content: [{ type: 'text', text: 'hi' }],
+        references: [],
+      },
       { type: 'plan', id: 'p1', createdAt: ISO, steps: [] },
       {
         type: 'assistant_message',

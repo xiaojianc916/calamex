@@ -7,7 +7,7 @@
  * 本片范围(Step 6 骨架,刻意最小化、可逆):
  * - plan 条目暂不进平铺时间线(计划步骤仍由 deriveThreadPlanDetails 的独立面板渲染;
  *   plan-control 审批卡留待批准接线那一片),故此处跳过。
- * - user-message 的 references 暂为空数组(数据模型尚未携带引用,留后续切片搬运)。
+ * - user-message 的 references 由数据模型透传(reduce / legacy-adapter 已携带)。
  * - tool-call 的 terminals 暂为空、awaiting 暂为 false(终端快照重建与 HITL 等待留后续)。
  * - changed-files 仅产出末尾汇总条目,不把 diff 内联到工具条目(数据模型未存 patches)。
  * - streaming 由调用方经 options.streamingMessageId 注入,纯函数默认 false。
@@ -115,7 +115,7 @@ export function threadEntriesToTimeline(
           id: entry.id,
           messageId: entry.id,
           markdown: blocksToMarkdown(entry.content),
-          references: [],
+          references: entry.references,
         });
         break;
       }
