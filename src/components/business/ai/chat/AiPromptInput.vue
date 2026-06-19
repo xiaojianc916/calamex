@@ -60,11 +60,7 @@ import { skillsTauriService } from '@/services/tauri.skills';
 import type { IAiAttachedFile, IAiConfigPayload, TAiAgentNetworkPermission } from '@/types/ai';
 import { isAiAssistantMode, type TAiAssistantMode } from '@/types/ai/assistant-mode';
 import type { TAiExecutionMode } from '@/types/ai/execution-mode';
-import type {
-  IAcpSessionConfigOption,
-  IAcpSessionConfigOptionsState,
-  IAcpSessionModeState,
-} from '@/types/ai/sidecar';
+import type { IAcpSessionConfigOption, IAcpSessionConfigOptionsState } from '@/types/ai/sidecar';
 import type { ISelectedSkill, ISkillSummary } from '@/types/ai/skill';
 import AiErrorNotice from './AiErrorNotice.vue';
 
@@ -147,8 +143,6 @@ const props = defineProps<{
   networkPermission: TAiAgentNetworkPermission;
   isNetworkPermissionSaving?: boolean;
   executionMode: TAiExecutionMode;
-  sessionModes?: IAcpSessionModeState | null;
-  isSessionModeSwitching?: boolean;
   sessionConfigOptions?: IAcpSessionConfigOptionsState | null;
   isSessionConfigOptionSwitching?: boolean;
   resolveAttachment: (file: File) => Promise<boolean>;
@@ -161,7 +155,6 @@ const emit = defineEmits<{
   modelChange: [modelId: string];
   networkPermissionChange: [permission: TAiAgentNetworkPermission];
   executionModeChange: [mode: TAiExecutionMode];
-  sessionModeChange: [modeId: string];
   sessionConfigOptionChange: [configId: string, valueId: string];
   informationSourcesOpen: [];
   personalizationOpen: [];
@@ -331,29 +324,6 @@ const activeModeOption = computed(
 const selectedAgentOption = computed(
   () => agentOptions.find((option) => option.key === selectedAgent.value) ?? agentOptions[0],
 );
-
-// ACP 会话模式选择器（ADR-20260617 · D7-c）：仅在 Kimi ACP agent 且后端提供了可用
-// 模式时显示；VM 由父级经 useAcpSessionModes 下传，选择时回投 modeId 原文。
-const sessionModeOptions = computed(() => props.sessionModes?.availableModes ?? []);
-
-const sessionModeSelectorVisible = computed(
-  () => selectedAgent.value === 'kimi' && sessionModeOptions.value.length > 0,
-);
-
-const currentSessionModeId = computed(() => props.sessionModes?.currentModeId ?? '');
-
-const currentSessionModeLabel = computed(() => {
-  const modes = sessionModeOptions.value;
-  const current = modes.find((mode) => mode.id === currentSessionModeId.value);
-  return current?.name ?? modes[0]?.name ?? '模式';
-});
-
-const handleSessionModeChange = (value: unknown): void => {
-  if (typeof value !== 'string' || !value.trim() || value === currentSessionModeId.value) {
-    return;
-  }
-  emit('sessionModeChange', value);
-};
 
 // ACP 会话配置项选择器（config_options 全量迁移）：仅 Kimi ACP agent 且后端下发配置项时
 // 显示；每个 config option 渲染为独立下拉，VM 由父级经 useAcpSessionConfigOptions 下传，
@@ -1244,30 +1214,6 @@ onBeforeUnmount(() => {
                     />
                     <Bot v-else class="ai-agent-item__icon" :stroke-width="1.6" />
                     <span class="ai-agent-item__label" v-text="agent.label"></span>
-                  </SelectItem>
-                </SelectGroup>
-              </SelectContent>
-            </Select>
-            <Select
-              v-if="sessionModeSelectorVisible"
-              :model-value="currentSessionModeId"
-              :disabled="disabled || isSessionModeSwitching"
-              @update:model-value="handleSessionModeChange"
-            >
-              <SelectTrigger aria-label="选择会话模式" class="ai-agent-trigger">
-                <Route class="ai-agent-trigger__icon" :stroke-width="1.6" />
-                <span class="ai-agent-trigger__label" v-text="currentSessionModeLabel"></span>
-              </SelectTrigger>
-              <SelectContent side="top" align="start" :side-offset="8" class="ai-agent-content">
-                <SelectLabel class="ai-agent-section-label">会话模式</SelectLabel>
-                <SelectGroup>
-                  <SelectItem
-                    v-for="mode in sessionModeOptions"
-                    :key="mode.id"
-                    class="ai-agent-item"
-                    :value="mode.id"
-                  >
-                    <span class="ai-agent-item__label" v-text="mode.name"></span>
                   </SelectItem>
                 </SelectGroup>
               </SelectContent>

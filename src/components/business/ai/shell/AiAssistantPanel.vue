@@ -720,19 +720,8 @@ const handleAgentBackendChange = (agent: TSessionAgentBackend): void => {
     const threadId = assistant.activeConversationId.value;
 
     if (threadId) {
-      void assistant.acpSessionModes.loadModes(threadId).catch(() => undefined);
       void assistant.acpSessionConfigOptions.loadConfigOptions(threadId).catch(() => undefined);
     }
-  }
-};
-
-// ACP 会话模式切换（ADR-20260617 · D7-③-c 发送侧）：选择器回投透传给
-// useAcpSessionModes.selectMode（乐观更新 + setSessionMode 回投，失败回滚并提示）。
-const handleSessionModeChange = async (modeId: string): Promise<void> => {
-  try {
-    await assistant.acpSessionModes.selectMode(modeId);
-  } catch (error) {
-    assistant.error.value = toErrorMessage(error, '切换会话模式失败。');
   }
 };
 
@@ -1252,8 +1241,6 @@ onMounted(() => {
           @cancel="handleCancelUserQuestion" />
         <AiPromptInput v-else v-model="assistant.draft.value" v-model:active-mode="assistant.activeMode.value"
           v-model:agent-backend="sessionAgentBackend"
-          :session-modes="assistant.acpSessionModes.state.value"
-          :is-session-mode-switching="assistant.acpSessionModes.isSwitching.value"
           :session-config-options="assistant.acpSessionConfigOptions.state.value"
           :is-session-config-option-switching="assistant.acpSessionConfigOptions.isSwitching.value"
           :disabled="composerDisabled" :stop-visible="assistant.isSending.value"
@@ -1268,7 +1255,6 @@ onMounted(() => {
           @network-permission-change="handlePromptNetworkPermissionChange"
           @execution-mode-change="handlePromptExecutionModeChange"
           @agent-change="handleAgentBackendChange"
-          @session-mode-change="handleSessionModeChange"
           @session-config-option-change="handleSessionConfigOptionChange"
           @information-sources-open="openPromptInformationSources" @personalization-open="openPromptPersonalization"
           @prewarm="handlePromptPrewarm" />

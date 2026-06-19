@@ -628,39 +628,6 @@ export type TAgentUiEventToolCallUpdate = {
 };
 
 /* ----------------------------------------------------------------------------
- * ACP 会话模式切换 UI 事件（ADR-20260617 · D7-③-b）
- *
- * 投影 ACP `session/update` 的 `current_mode_update`（外部 agent 自行切换当前会话模式，
- * 见 Rust host src-tauri/src/acp/ui_event.rs）：仅携带切换后的 `modeId`（ACP `currentModeId`
- * 原值，逐字透传，不本地映射）。可用模式清单另由会话建立时的 `NewSessionResponse.modes`
- * 提供（见后续 slice）；本事件只负责「当前模式已变更」信号，交前端模式选择器 VM 据
- * `modeId` 高亮当前项。
- * -------------------------------------------------------------------------- */
-export type TAgentUiEventModeUpdate = {
-  type: 'mode_update';
-  modeId: string;
-};
-
-/* ----------------------------------------------------------------------------
- * ACP 会话模式选择器 VM（ADR-20260617 · D7-③-c）
- *
- * 由前端 ACL（components/business/ai/thread/projection/from-acp-session-modes）从
- * `ai_get_session_modes` 的原始 `modes`（ACP SessionModeState）解析而来；
- * `mode_update` UI 事件仅更新 `currentModeId`。VM 与 ACP wire 解耦：UI 只消费
- * 此结构，不直接触碰 ACP 原始负载。
- * -------------------------------------------------------------------------- */
-export interface IAcpSessionModeOption {
-  id: string;
-  name: string;
-  description?: string;
-}
-
-export interface IAcpSessionModeState {
-  currentModeId: string | null;
-  availableModes: IAcpSessionModeOption[];
-}
-
-/* ----------------------------------------------------------------------------
  * ACP 可用斜杠命令 VM（ADR-20260617 · D7-④）
  *
  * 投影 ACP session/update 的 available_commands_update（外部 agent 声明本会话可用的
@@ -756,7 +723,6 @@ export type TAgentUiEvent =
   | { type: 'tool_result'; toolName: string; output: TJsonValue }
   | TAgentUiEventToolCall
   | TAgentUiEventToolCallUpdate
-  | TAgentUiEventModeUpdate
   | TAgentUiEventAvailableCommandsUpdate
   | TAgentUiEventUsageUpdate
   | TAgentUiEventConfigOptionUpdate

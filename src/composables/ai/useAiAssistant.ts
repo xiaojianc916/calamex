@@ -32,7 +32,6 @@ import {
 } from '@/composables/ai/sidecar-stream-listener';
 import { useAcpAvailableCommands } from '@/composables/ai/useAcpAvailableCommands';
 import { useAcpSessionConfigOptions } from '@/composables/ai/useAcpSessionConfigOptions';
-import { useAcpSessionModes } from '@/composables/ai/useAcpSessionModes';
 import { useAcpUsage } from '@/composables/ai/useAcpUsage';
 import { useAiAgentPlan } from '@/composables/ai/useAiAgentPlan';
 import { useAiStream } from '@/composables/ai/useAiStream';
@@ -457,7 +456,6 @@ export const useAiAssistant = (options: IUseAiAssistantOptions) => {
   const aiStream = useAiStream();
   const sidecarAnswerStream = useAiStream();
   const agentPlan = useAiAgentPlan();
-  const acpSessionModes = useAcpSessionModes();
   const acpAvailableCommands = useAcpAvailableCommands();
   const acpUsage = useAcpUsage();
   const acpSessionConfigOptions = useAcpSessionConfigOptions();
@@ -1092,9 +1090,6 @@ export const useAiAssistant = (options: IUseAiAssistantOptions) => {
     // 新增 TAgentUiEvent 成员不会在此触发编译错误。
     for (const event of events) {
       switch (event.type) {
-        case 'mode_update':
-          acpSessionModes.applyModeUpdate(event.modeId);
-          break;
         case 'available_commands_update':
           acpAvailableCommands.applyCommandsUpdate(event.availableCommands);
           break;
@@ -2434,7 +2429,6 @@ export const useAiAssistant = (options: IUseAiAssistantOptions) => {
     activeAssistantBaseMessages.value = [];
     activeAgentMessageId.value = null;
     disposeSidecarAnswerStream();
-    acpSessionModes.reset();
     acpAvailableCommands.reset();
     acpUsage.reset();
     acpSessionConfigOptions.reset();
@@ -2828,7 +2822,6 @@ export const useAiAssistant = (options: IUseAiAssistantOptions) => {
 
   return {
     agentPlan,
-    acpSessionModes,
     acpAvailableCommands,
     acpUsage,
     acpSessionConfigOptions,
