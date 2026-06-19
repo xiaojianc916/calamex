@@ -113,6 +113,10 @@ export const useShellWorkbenchView = (onReady: () => void) => {
   let editorLiveResizeFrameId: number | null = null;
   let globalKeydownCleanup: (() => void) | null = null;
 
+  // 缓存上一次的文档 ID 集合，用于在 watch 回调中做 diff，
+  // 避免每次都 .map() 生成新数组 + new Set() x2。
+  let previousDocumentIdSet: Set<string> = new Set();
+
   const sidebarWidth = DASHBOARD_SIDEBAR_WIDTH;
   const visibleWorkspaceRootPath = computed(() => workbench.editorStore.workspaceRootPath);
 
@@ -197,7 +201,7 @@ export const useShellWorkbenchView = (onReady: () => void) => {
     }
 
     const adjacentIndex = direction === 'back' ? currentIndex - 1 : currentIndex + 1;
-    const adjacentDocument = workbench.editorStore.documents[adjacentIndex];
+    const adjacentDocument = workbench.editorStore.documents[adjacentDocument];
     return adjacentDocument?.id ?? null;
   };
 
@@ -682,44 +686,56 @@ export const useShellWorkbenchView = (onReady: () => void) => {
     },
   );
 
+  // ── documents 变更 watch ──────────────────────────────────────
+  // 优化前：getter 返回 .map(item => item.id) → 每次 Vue 脏检查时分配新数组；
+  // 回调里再 new Set() x2 做 diff。
+  // 优化后：getter 返回 length + activeDocumentId 组合值（两个原始值拼接为字符串），
+  // 只有文档数量或 activeDocumentId 变化时 Vue 才判定为"变化"并触发回调。
+  // 回调内部直接访问最新 documents 数组构建当前 ID Set，与上一轮缓存的
+  // previousDocumentIdSet 做 diff，避免在 getter 中分配新数组。
   watch(
-    () => workbench.editorStore.documents?.map((item) => item.id) ?? [],
-    (documentIds, previousDocumentIds) => {
-      const documentIdSet = new Set(documentIds);
-      // 遍历旧快照：找出已不在新文档列表中的文档 ID（即被关闭的文档）。
-      if (previousDocumentIds) {
-        for (const id of previousDocumentIds) {
-          if (!documentIdSet.has(id)) {
-            docHistory.removeClosedDocument(id);
-          }
+    () => {
+      const docs = workbench.editorStore.documents;
+      return `${docs.length}\u0000${workbench.editorStore.activeDocumentId}`;
+    },
+    () => {
+      const documents = workbench.editorStore.documents;
+      const currentIdSet = new Set(documents.map((item) => item.id));
+
+      // 遍历上一轮的 ID 集合：找出已不在新文档列表中的文档 ID（即被关闭的文档）。
+      for (const id of previousDocumentIdSet) {
+        if (!currentIdSet.has(id)) {
+          docHistory.removeClosedDocument(id);
         }
       }
       // 也清理栈中已不存在的文档
       documentBackStack.value = documentBackStack.value.filter((documentId) =>
-        documentIdSet.has(documentId),
+        currentIdSet.has(documentId),
       );
       documentForwardStack.value = documentForwardStack.value.filter((documentId) =>
-        documentIdSet.has(documentId),
+        currentIdSet.has(documentId),
       );
 
-      // 仅当“新打开了一个文档并将其激活”时才进入编辑模式。
-      // 依据 watcher 提供的旧值快照判定是否新增了文档，读取实时 activeDocumentId，
-      // 与 activeDocumentId watch 的执行顺序无关。切换已打开标签 / 前进后退不会新增文档，
-      // 因此不会再被强制切到编辑模式（修复 activeDocumentId 变化即强制 openEditorMode 的回归）。
-      if (previousDocumentIds === undefined || isRestoringWorkbenchSession.value) {
+      // 仅当"新打开了一个文档并将其激活"时才进入编辑模式。
+      // 依据缓存的旧 ID 集合判定是否新增了文档，读取实时 activeDocumentId。
+      // 切换已打开标签 / 前进后退不会新增文档，因此不会再被强制切到编辑模式
+      //（修复 activeDocumentId 变化即强制 openEditorMode 的回归）。
+      if (previousDocumentIdSet.size === 0 || isRestoringWorkbenchSession.value) {
+        previousDocumentIdSet = currentIdSet;
         return;
       }
 
-      const previousDocumentIdSet = new Set(previousDocumentIds);
       const activeDocumentId = workbench.editorStore.activeDocumentId;
       const hasOpenedAndActivatedNewDocument =
         Boolean(activeDocumentId) &&
-        documentIdSet.has(activeDocumentId as string) &&
+        currentIdSet.has(activeDocumentId as string) &&
         !previousDocumentIdSet.has(activeDocumentId as string);
 
       if (hasOpenedAndActivatedNewDocument) {
         openEditorMode();
       }
+
+      previousDocumentIdSet = currentIdSet;
     },
     { immediate: true },
   );

@@ -1,3 +1,5 @@
+import { joinFileSystemPath } from '@/utils/file/path';
+
 export const getBoundedCacheValue = <K, V>(cache: Map<K, V>, key: K): V | undefined => {
   if (!cache.has(key)) return undefined;
   const value = cache.get(key);
@@ -127,7 +129,7 @@ export const applyPatternSuggestion = (
 };
 
 export const useWorkspacePathSuggestions = (options: IUseWorkspacePathSuggestionsOptions) => {
-  const suggestions = ref<IPathSuggestion[]>([]);
+  const suggestions = ref<IPathSuggestion[]>();
   const open = ref(false);
   const loading = ref(false);
   const activeIndex = ref(-1);
