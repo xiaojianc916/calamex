@@ -146,4 +146,26 @@ describe('AiChatThread(entries 渲染路径)', () => {
 
     expect(wrapper.text()).toContain('还没有对话');
   });
+
+  it('entries 模式下按消息边界渲染 after-message 插槽(检查点)', () => {
+    const wrapper = mount(AiChatThread, {
+      props: {
+        messages: [{ id: 'a1', role: 'assistant', content: '回复', createdAt: '', references: [] }],
+        isTyping: false,
+        renderFromEntries: true,
+        threadEntries: [],
+        platformId: 'deepseek',
+        providerLabel: 'DeepSeek',
+      },
+      slots: {
+        'after-message': (slotProps: { message: { id: string } }) =>
+          h('div', { class: 'after-msg', 'data-message-id': slotProps.message.id }, 'checkpoint'),
+      },
+      global: { stubs },
+    });
+
+    const afterNodes = wrapper.findAll('.after-msg');
+    expect(afterNodes).toHaveLength(1);
+    expect(afterNodes[0]?.attributes('data-message-id')).toBe('a1');
+  });
 });
