@@ -30,16 +30,16 @@ const OPENAI_API_KEY_ENV: &str = "OPENAI_API_KEY";
 
 // Kimi Code 的 provider 级凭证 env 名与默认端点（官方文档核对：moonshotai.github.io/kimi-code）。
 // 注意：`kimi acp` 服务经终端 `/login` 自持久化凭证（Kimi Code OAuth 或 Moonshot 开放平台
-// API key，落 KIMI_HOME），并不从启动环境读取这些变量；故 build_kimi_client_config 不注入它们
-// （子进程 env 仅注入 KIMI_HOME 指向托管目录）。此处仅作文档与未来「托管直连」之用，不改变运行时行为。
+// API key，落 KIMI_CODE_HOME），并不从启动环境读取这些变量；故 build_kimi_client_config 不注入它们
+// （子进程 env 仅注入 KIMI_CODE_HOME 指向托管目录）。此处仅作文档与未来「托管直连」之用，不改变运行时行为。
 const KIMI_API_KEY_ENV: &str = "KIMI_API_KEY";
 const KIMI_BASE_URL_ENV: &str = "KIMI_BASE_URL";
 const KIMI_DEFAULT_BASE_URL: &str = "https://api.moonshot.ai/v1";
 
-// calamex 托管 Kimi 配置目录：经 KIMI_HOME 环境变量把 kimi acp 子进程的配置目录指向本程序
+// calamex 托管 Kimi 配置目录：经 KIMI_CODE_HOME 环境变量把 kimi acp 子进程的配置目录指向本程序
 // 自管目录(品牌存储根下 kimi-home)，使 seed 写入与子进程读取恒为同一份，避免被用户既有的
 // 全局 ~/.kimi/config.toml 截断(详见 resolved_kimi_home / kimi_child_env)。
-const KIMI_HOME_ENV: &str = "KIMI_HOME";
+const KIMI_CODE_HOME_ENV: &str = "KIMI_CODE_HOME";
 const KIMI_MANAGED_HOME_DIR: &str = "kimi-home";
 
 // 托管 config.toml 的归属标记：仅在文件不存在或含此 marker(本程序所写)时才覆盖，
@@ -55,7 +55,7 @@ pub trait ExternalAgentProvisioner {
     fn backend_id(&self) -> AcpBackendId;
 
     /// 拉起子进程前的凭证预置(side-effect:写该 agent 自己的配置文件 / 落 env)。
-    /// 默认 no-op(内置边车与 Codex 暂无需 seed);Kimi 覆盖为写托管 KIMI_HOME/config.toml。
+    /// 默认 no-op(内置边车与 Codex 暂无需 seed);Kimi 覆盖为写托管 KIMI_CODE_HOME/config.toml。
     /// 约定:绝不阻断启动——失败由实现内部记录日志并吞掉,回退该 agent 自身既有登录。
     fn prepare(&self) {}
 
@@ -76,7 +76,7 @@ impl ExternalAgentProvisioner for BuiltinProvisioner {
     }
 }
 
-/// Kimi Code:拉起前把项目网关凭证 seed 进托管 KIMI_HOME/config.toml;启动 kimi acp。
+/// Kimi Code:拉起前把项目网关凭证 seed 进托管 KIMI_CODE_HOME/config.toml;启动 kimi acp。
 pub struct KimiProvisioner;
 
 impl ExternalAgentProvisioner for KimiProvisioner {
@@ -85,20 +85,20 @@ impl ExternalAgentProvisioner for KimiProvisioner {
     }
 
     fn prepare(&self) {
-        // 凭证预置(side-effect:写托管 KIMI_HOME/config.toml)。best-effort + 分级日志,
+        // 凭证预置(side-effect:写托管 KIMI_CODE_HOME/config.toml)。best-effort + 分级日志,
         // 失败仅记录、不阻断启动(回退 Kimi 自身既有登录)。
         match ensure_kimi_managed_config() {
             Ok(true) => log::info!(
                 target: "acp",
-                "已用项目网关配置写入托管 KIMI_HOME 的 config.toml（Kimi 复用项目内既有 Key）。"
+                "已用项目网关配置写入托管 KIMI_CODE_HOME 的 config.toml（Kimi 复用项目内既有 Key）。"
             ),
             Ok(false) => log::info!(
                 target: "acp",
-                "跳过写入托管 KIMI_HOME 的 config.toml（用户自管配置已存在，或项目未配置网关地址）；沿用 Kimi 既有登录。"
+                "跳过写入托管 KIMI_CODE_HOME 的 config.toml（用户自管配置已存在，或项目未配置网关地址）；沿用 Kimi 既有登录。"
             ),
             Err(error) => log::warn!(
                 target: "acp",
-                "预置托管 KIMI_HOME 的 config.toml 失败（回退 Kimi 既有登录）：{error}"
+                "预置托管 KIMI_CODE_HOME 的 config.toml 失败（回退 Kimi 既有登录）：{error}"
             ),
         }
     }
@@ -136,7 +136,7 @@ pub fn provisioner_for(backend: AcpBackendId) -> Box<dyn ExternalAgentProvisione
 /// Kimi Code（Kimi CLI）启动配置：`kimi acp`（原生 ACP）。
 ///
 /// 优先工程内置包 @moonshot-ai/kimi-code（node <绝对入口> acp），否则回退 kimi acp；可经 XIAOJIANC_KIMI_EXE 覆盖为绝对路径。
-/// 鉴权由 Kimi CLI 自身负责（凭据落托管 KIMI_HOME，登录由其自身流程处理），故此处不注入模型 env，仅注入 KIMI_HOME。
+/// 鉴权由 Kimi CLI 自身负责（凭据落托管 KIMI_CODE_HOME，登录由其自身流程处理），故此处不注入模型 env，仅注入 KIMI_CODE_HOME。
 fn build_kimi_client_config() -> AcpClientConfig {
     // 1) 绝对路径覆盖优先：随包/非 PATH 安装的逃生舱，直接作为 program 执行 <exe> acp。
     if let Some(program) = env_or_user_env(KIMI_EXE_ENV) {
@@ -246,22 +246,22 @@ fn build_codex_client_config() -> AcpClientConfig {
 
 // ── Kimi Code 凭证预置（复用项目已保存的网关模型配置）────────────────
 //
-// `kimi acp` 从 `KIMI_HOME/config.toml` 读取 provider / model / 凭证（默认 `~/.kimi`，本程序经
-// kimi_child_env 注入 KIMI_HOME 指向托管目录，见 kimi-cli「Config Files」文档）。本项目已在
+// `kimi acp` 从 `KIMI_CODE_HOME/config.toml` 读取 provider / model / 凭证（默认 `~/.kimi`，本程序经
+// kimi_child_env 注入 KIMI_CODE_HOME 指向托管目录，见 kimi-cli「Config Files」文档）。本项目已在
 // AI 设置里保存了网关模型（selected_model + base_url）与逐厂商 API Key（CredentialStore），
 // 统一由 `crate::ai::gateway::current_sidecar_model_config()` 组装。这里把它映射为一个 OpenAI
-// 兼容（`openai_legacy`）provider 写入托管 KIMI_HOME 的 config.toml，免去用户在终端 `/login`，
+// 兼容（`openai`）provider 写入托管 KIMI_CODE_HOME 的 config.toml，免去用户在终端 `/login`，
 // 直接复用项目内既有 Key——解决「acp protocol error: Authentication required」。
 //
 // 安全：仅在该文件「不存在」或「由本程序托管（含 KIMI_MANAGED_MARKER）」时才写，绝不覆盖用户
 // 手动维护 / OAuth 登录得到的 config.toml（无 marker 即视为用户自管，跳过并保留其既有登录）。
 
-/// 解析「calamex 托管」的 Kimi 配置目录。优先外部显式 KIMI_HOME(逃生舱：用户/CI 可强制
+/// 解析「calamex 托管」的 Kimi 配置目录。优先外部显式 KIMI_CODE_HOME(逃生舱：用户/CI 可强制
 /// 指向自管目录)，否则用 calamex 自管目录(品牌存储根下 kimi-home，如 ~/.calamex/kimi-home)。
 /// 不再回退全局 ~/.kimi——避免被用户既有的、非本程序托管的全局 config.toml 截断
 /// (那会导致 seed 跳过、kimi acp 子进程无凭证而报 Authentication required)。
 fn resolved_kimi_home() -> PathBuf {
-    if let Some(custom) = env_or_user_env(KIMI_HOME_ENV) {
+    if let Some(custom) = env_or_user_env(KIMI_CODE_HOME_ENV) {
         return PathBuf::from(custom);
     }
     managed_kimi_home()
@@ -273,17 +273,17 @@ fn managed_kimi_home() -> PathBuf {
     crate::storage_paths::local_root().join(KIMI_MANAGED_HOME_DIR)
 }
 
-/// 拉起 kimi acp 子进程时注入的 env：把 KIMI_HOME 指向 calamex 托管目录，
+/// 拉起 kimi acp 子进程时注入的 env：把 KIMI_CODE_HOME 指向 calamex 托管目录，
 /// 使子进程读取的 config.toml 与 ensure_kimi_managed_config 写入的恒为同一份。
 fn kimi_child_env() -> Vec<(String, String)> {
     vec![(
-        KIMI_HOME_ENV.to_string(),
+        KIMI_CODE_HOME_ENV.to_string(),
         path_to_string(&resolved_kimi_home()),
     )]
 }
 
 /// 解析 Kimi 配置目录(供 seed 写入)。委托 resolved_kimi_home，恒返回 Some，
-/// 与子进程注入的 KIMI_HOME 指向同一目录。
+/// 与子进程注入的 KIMI_CODE_HOME 指向同一目录。
 fn kimi_home_dir() -> Option<PathBuf> {
     Some(resolved_kimi_home())
 }
@@ -297,7 +297,7 @@ fn toml_str(value: &str) -> String {
 /// [`crate::ai::credential::default_provider_base_url`]。
 ///
 /// 当用户未在 AI 设置里显式填写「Provider 地址」时，网关配置的 base_url 为空，但 Kimi 的
-/// `openai_legacy` provider 必须有一个 base_url 才能复用项目内既存 Key——否则
+/// `openai` provider 必须有一个 base_url 才能复用项目内既存 Key——否则
 /// `collect_kimi_model_entry` 返回 None、整份 config.toml 被跳过，`kimi acp` 启动无凭证而报
 /// 「acp protocol error: Authentication required」。
 ///
@@ -307,7 +307,7 @@ fn default_gateway_base_url(platform: &str) -> Option<&'static str> {
     crate::ai::credential::default_provider_base_url(platform)
 }
 
-/// 单个 Kimi provider 条目（openai_legacy：复用项目内某平台的网关地址 + Key）。
+/// 单个 Kimi provider 条目（openai：复用项目内某平台的网关地址 + Key）。
 struct KimiProviderEntry {
     /// TOML 安全的 provider 裸键（由平台名清洗而来）。
     name: String,
@@ -428,7 +428,7 @@ default_model = {}
         out.push_str(&format!(
             r#"
 [providers.{name}]
-type = "openai_legacy"
+type = "openai"
 base_url = {base_url_q}
 api_key = {api_key_q}
 "#,
@@ -455,20 +455,20 @@ max_context_size = 262144
     out
 }
 
-/// 在拉起 `kimi acp` 前确保托管 KIMI_HOME 的 `config.toml` 含可用凭证（复用项目已存网关配置）。
+/// 在拉起 `kimi acp` 前确保托管 KIMI_CODE_HOME 的 `config.toml` 含可用凭证（复用项目已存网关配置）。
 ///
 /// 返回 `Ok(true)`：已写入/刷新托管配置；`Ok(false)`：有意跳过（用户自管配置已存在，或项目
 /// 尚无可桥接的网关地址）；`Err`：IO / 配置获取失败（调用方仅记录，不阻断启动）。
 fn ensure_kimi_managed_config() -> Result<bool, String> {
     let Some(kimi_dir) = kimi_home_dir() else {
-        return Err("无法定位托管 KIMI_HOME 目录。".to_string());
+        return Err("无法定位托管 KIMI_CODE_HOME 目录。".to_string());
     };
     let config_path = kimi_dir.join("config.toml");
 
     // 已存在且非本程序托管 → 视为用户自管（含 OAuth / 手动 Key），保留不动。
     if config_path.is_file() {
         let existing = fs::read_to_string(&config_path)
-            .map_err(|error| format!("读取托管 KIMI_HOME 的 config.toml 失败：{error}"))?;
+            .map_err(|error| format!("读取托管 KIMI_CODE_HOME 的 config.toml 失败：{error}"))?;
         if !existing.contains(KIMI_MANAGED_MARKER) {
             return Ok(false);
         }
@@ -478,7 +478,7 @@ fn ensure_kimi_managed_config() -> Result<bool, String> {
     // Narrator 为尽力而为的附加模型（解析失败仅跳过该条，不影响主模型 seed）。
     let main_config = crate::ai::gateway::current_sidecar_model_config()?;
     let Some(default_entry) = collect_kimi_model_entry(&main_config) else {
-        // 主模型既无显式网关地址、其厂商也无默认 OpenAI 兼容端点时，无法构造 openai_legacy
+        // 主模型既无显式网关地址、其厂商也无默认 OpenAI 兼容端点时，无法构造 openai
         // provider；交回 Kimi 自身登录。
         return Ok(false);
     };
@@ -497,9 +497,9 @@ fn ensure_kimi_managed_config() -> Result<bool, String> {
 
     let rendered = render_kimi_config_toml(&default_model_name, &providers, &models);
 
-    fs::create_dir_all(&kimi_dir).map_err(|error| format!("创建托管 KIMI_HOME 目录失败：{error}"))?;
+    fs::create_dir_all(&kimi_dir).map_err(|error| format!("创建托管 KIMI_CODE_HOME 目录失败：{error}"))?;
     fs::write(&config_path, rendered)
-        .map_err(|error| format!("写入托管 KIMI_HOME 的 config.toml 失败：{error}"))?;
+        .map_err(|error| format!("写入托管 KIMI_CODE_HOME 的 config.toml 失败：{error}"))?;
     Ok(true)
 }
 
@@ -546,12 +546,12 @@ mod tests {
 
     #[test]
     fn kimi_child_env_injects_managed_kimi_home() {
-        // 子进程 env 注入 KIMI_HOME，指向 calamex 托管目录(resolved_kimi_home)，
+        // 子进程 env 注入 KIMI_CODE_HOME，指向 calamex 托管目录(resolved_kimi_home)，
         // 保证 seed 写入与子进程读取路径一致；该 env 恰含一项且非空。
         let env = kimi_child_env();
         assert_eq!(env.len(), 1);
         let (key, value) = &env[0];
-        assert_eq!(key, KIMI_HOME_ENV);
+        assert_eq!(key, KIMI_CODE_HOME_ENV);
         assert_eq!(value, &path_to_string(&resolved_kimi_home()));
         assert!(!value.trim().is_empty());
     }
@@ -649,7 +649,7 @@ mod tests {
         assert!(rendered.starts_with(KIMI_MANAGED_MARKER));
         assert!(rendered.contains("default_model = "));
         assert!(rendered.contains("[providers.deepseek]"));
-        assert!(rendered.contains("openai_legacy"));
+        assert!(rendered.contains("openai"));
         assert!(rendered.contains("base_url = "));
         assert!(rendered.contains("[models.deepseek-deepseek-v4-pro]"));
         assert!(rendered.contains("deepseek/deepseek-v4-pro"));
