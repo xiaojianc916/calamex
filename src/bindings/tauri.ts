@@ -290,6 +290,14 @@ export type AgentExternalChatRequest_Deserialize = {
 	text: string,
 	threadId: string | null,
 	workspaceRootPath: string | null,
+	/**
+	 *  前端预生成的流式关联键（形如 sidecar:assistantMessageId）。外部 agent 经标准
+	 *  session/prompt 回合发出的 session/update 帧本以 ACP 会话 UUID 标记，前端在回合
+	 *  终了前无从得知该 UUID，导致整轮 live 帧被前端按预生成键过滤丢弃、末尾一次性渲染。
+	 *  命令层据此键在宿主侧把外部帧的 session_id 重写为该前端已知键（见 acp/host.rs 的
+	 *  prompt_with_stream_key），实现真正的逐 token 流式。缺省/空白时回退到 ACP 会话 id。
+	 */
+	sessionId: string | null,
 };
 
 /**
@@ -304,6 +312,14 @@ export type AgentExternalChatRequest_Serialize = {
 	text: string,
 	threadId?: string | null,
 	workspaceRootPath?: string | null,
+	/**
+	 *  前端预生成的流式关联键（形如 sidecar:assistantMessageId）。外部 agent 经标准
+	 *  session/prompt 回合发出的 session/update 帧本以 ACP 会话 UUID 标记，前端在回合
+	 *  终了前无从得知该 UUID，导致整轮 live 帧被前端按预生成键过滤丢弃、末尾一次性渲染。
+	 *  命令层据此键在宿主侧把外部帧的 session_id 重写为该前端已知键（见 acp/host.rs 的
+	 *  prompt_with_stream_key），实现真正的逐 token 流式。缺省/空白时回退到 ACP 会话 id。
+	 */
+	sessionId?: string | null,
 };
 
 /**

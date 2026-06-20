@@ -584,9 +584,9 @@ export type TAgentUiEventDone = {
   type: 'done';
   result: string;
   /** @deprecated 使用 `usage.inputTokens`(由 wire schema 派生)。 */
-  promptTokens?: number;
+  inputTokens?: number;
   /** @deprecated 使用 `usage.outputTokens`(由 wire schema 派生)。 */
-  completionTokens?: number;
+  outputTokens?: number;
   /** @deprecated 使用 `usage.totalTokens`(由 wire schema 派生)。 */
   totalTokens?: number;
   usage?: IAiLanguageModelUsage | null;

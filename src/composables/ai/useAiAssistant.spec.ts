@@ -3517,10 +3517,8 @@ describe('useAiAssistant streaming integration', () => {
   it('外部 Kimi agent 回合在 prompt 进行中实时流式 message_delta（而非末尾一次性渲染）', async () => {
     const { assistant } = createAssistantHarnessContext();
     const promptGate = createDeferred<IAgentExternalChatResultPayload>();
-    let capturedRequest: IAgentExternalChatRequest | null = null;
 
     aiServiceMock.sidecarExternalChat.mockImplementationOnce(async (payload) => {
-      capturedRequest = payload;
       const sessionId = payload.sessionId ?? 'sidecar-external-live-session';
 
       aiServiceMock.emitSidecar({
@@ -3547,6 +3545,7 @@ describe('useAiAssistant streaming integration', () => {
 
     const assistantMessageId = assistant.messages.value[1]?.id;
     expect(assistantMessageId).toBeTruthy();
+    const capturedRequest = aiServiceMock.sidecarExternalChat.mock.calls[0]?.[0];
     expect(capturedRequest?.backend).toBe('kimi');
     expect(capturedRequest?.sessionId).toBe(`sidecar:${assistantMessageId}`);
     expect(assistant.messages.value[1]?.content).toContain('第二段实时到达');

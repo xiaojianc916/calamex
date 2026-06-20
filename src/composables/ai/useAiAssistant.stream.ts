@@ -96,7 +96,7 @@ export interface ISidecarLiveEventBuffer {
 
 export type TSidecarStreamTokenSnapshot = Pick<
   IAiChatStreamRenderState,
-  'promptTokens' | 'completionTokens' | 'totalTokens' | 'usage'
+  'inputTokens' | 'outputTokens' | 'totalTokens' | 'usage'
 >;
 
 export interface ISidecarAnswerStreamMetadata {
