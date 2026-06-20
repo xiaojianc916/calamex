@@ -220,10 +220,13 @@ describe('useMessage', () => {
 });
 `;
 
-// ① 安全检查：除目标文件外，全仓不得有任何 app-message / MessageDetail / DismissDetail 消费方。
+// ① 安全检查（精确探针，不再与 dialog 的同名类型撞车）：
+//   A) 除目标文件外，全仓不得出现 'app-message' 事件名（消息事件总线的唯一标识）。
+//   B) 除目标文件外，不得有文件“从 useMessage”导入被移除的 MessageDetail / DismissDetail。
 const SCAN_DIR = resolve(REPO_ROOT, 'src');
 const TARGETS = new Set([resolve(REPO_ROOT, MESSAGE_PATH), resolve(REPO_ROOT, SPEC_PATH)]);
-const NEEDLES = ['app-message', 'MessageDetail', 'DismissDetail'];
+const USEMSG_IMPORT_RE =
+  /import\s+(?:type\s+)?\{([^}]*)\}\s*from\s*['"](?:@\/composables\/useMessage|\.\/useMessage|\.\.\/composables\/useMessage)['"]/g;
 const offenders = [];
 const walk = (dir) => {
   for (const name of readdirSync(dir)) {
@@ -235,17 +238,24 @@ const walk = (dir) => {
     }
     if (!/\.(ts|tsx|vue|js|mjs)$/.test(name) || TARGETS.has(abs)) continue;
     const text = readFileSync(abs, 'utf8');
-    const hit = NEEDLES.find((n) => text.includes(n));
-    if (hit) offenders.push(relative(REPO_ROOT, abs) + '  ←  ' + hit);
+    const rel = relative(REPO_ROOT, abs);
+    if (text.includes('app-message')) {
+      offenders.push(rel + '  ←  app-message 事件通道');
+    }
+    for (const m of text.matchAll(USEMSG_IMPORT_RE)) {
+      if (/\bMessageDetail\b/.test(m[1]) || /\bDismissDetail\b/.test(m[1])) {
+        offenders.push(rel + '  ←  从 useMessage 导入了将被移除的类型');
+      }
+    }
   }
 };
 if (existsSync(SCAN_DIR)) walk(SCAN_DIR);
 if (offenders.length > 0) {
-  console.error('✗ 仍有文件引用旧事件通道，已中止以免破坏功能：');
+  console.error('✗ 仍有文件依赖将被移除的旧通道/类型，已中止：');
   for (const f of offenders) console.error('   - ' + f);
   process.exit(1);
 }
-console.log('✓ 安全检查通过：除 useMessage 自身外，无任何 app-message 消费方。');
+console.log('✓ 安全检查通过：无 app-message 消费方，也无对 useMessage 旧类型的外部依赖。');
 
 // ② 幂等写入（旧指纹校验）
 const apply = (relPath, next, oldSentinel, newSentinel) => {
