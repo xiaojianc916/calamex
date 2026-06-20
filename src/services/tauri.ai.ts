@@ -209,10 +209,10 @@ type TAiTauriService = Pick<
  * 生成一个无入参的 AI Tauri 服务方法：直接转发到绑定的零参命令。
  * 用于 aiGetConfig / aiTestProvider / aiGetSuggestionPoolCache / aiClearCredentials。
  */
-const voidCommand = (meta: ICommandMeta, invoke: () => Promise<unknown>) => () =>
-  runCommand(meta, undefined, undefined, async () => {
-    await invoke();
-  });
+const voidCommand =
+  <T>(meta: ICommandMeta, invoke: () => Promise<T>) =>
+  () =>
+    runCommand(meta, undefined, undefined, () => invoke());
 
 /**
  * 生成一个带入参的 AI Tauri 服务方法：转发 payload + options 到绑定命令。
