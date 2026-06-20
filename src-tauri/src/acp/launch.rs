@@ -312,7 +312,7 @@ fn resolve_sidecar_root() -> Result<PathBuf, String> {
     ))
 }
 
-fn resolve_node_executable() -> Result<PathBuf, String> {
+pub(super) fn resolve_node_executable() -> Result<PathBuf, String> {
     if let Some(path) = env_or_user_env(NODE_EXE_ENV).map(PathBuf::from)
         && path.is_file()
     {
@@ -434,7 +434,7 @@ fn find_dotenv_value(content: &str, key: &str) -> Option<String> {
 }
 
 /// 进程环境优先，其次 Windows 用户环境（HKCU\\Environment）；均去首尾空白且空值视为无。
-fn env_or_user_env(key: &str) -> Option<String> {
+pub(super) fn env_or_user_env(key: &str) -> Option<String> {
     let process_value = env::var(key).ok().and_then(non_empty_string);
     if process_value.is_some() {
         return process_value;
@@ -490,7 +490,7 @@ fn parse_reg_query_value(output: &str, key: &str) -> Option<String> {
 }
 
 /// 路径 → String（lossy）。ACP 入口 / node 路径在目标平台上均可 UTF-8 表示。
-fn path_to_string(path: &Path) -> String {
+pub(super) fn path_to_string(path: &Path) -> String {
     path.to_string_lossy().into_owned()
 }
 
