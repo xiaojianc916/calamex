@@ -44,7 +44,6 @@ import { aiService } from '@/services/ipc/ai.service';
 import { buildCurrentFileReference } from '@/services/ipc/ai-context.service';
 import { aiEditService } from '@/services/ipc/ai-edit.service';
 import { type IAiPersistedSidecarAgentSession, useAiAgentStore } from '@/store/aiAgent';
-import type { IAiConversationScrollState } from '@/store/aiConversation';
 import { legacyThreadToThread, useAiThreadStore } from '@/store/aiThread';
 import type {
   IAiAgentPatchSummary,
@@ -58,6 +57,7 @@ import type {
   TAiToolConfirmationDecision,
 } from '@/types/ai';
 import type { TAiAssistantMode } from '@/types/ai/assistant-mode';
+import type { IAiConversationScrollState } from '@/types/ai/conversation.schema';
 import type { IAiEditGetDiffPayload, IAiEditOperation } from '@/types/ai/edit';
 import type {
   IAgentSidecarMessage,

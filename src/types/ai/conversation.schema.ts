@@ -1,5 +1,4 @@
 import { z } from 'zod';
-
 import type { IAiChatMessage } from '@/types/ai';
 import {
   aiChatMessageSchema,
@@ -31,10 +30,31 @@ export const aiConversationThreadSchema = z.object({
 
 /**
  * Thread 的 wire 形状由 schema 推断（单一来源），UI 层覆写 messages 为含 UI 衍生字段
- * 的消息。原定义自 @/store/aiConversation 迁来（该 legacy store 已退役），作为 legacy
+ * 的消息。原定义自 legacy aiConversation store 迁来（该 store 已退役），作为 legacy
  * 适配器 / 持久化读路径的中立类型来源，杜绝对已删除 store 的依赖。
  */
 type IAiConversationThreadWire = z.infer<typeof aiConversationThreadSchema>;
+export interface IAiConversationThread extends Omit<IAiConversationThreadWire, 'messages'> {
+  messages: IAiChatMessage[];
+}
+
+/**
+ * 会话滚动位置快照。原定义自 legacy aiConversation store 迁来（该 store 已退役）；
+ * 渲染侧（useAiAssistant 等）仍以此类型读写 thread.scrollState。
+ */
+export interface IAiConversationScrollState {
+  scrollTop: number;
+  scrollHeight: number;
+  clientHeight: number;
+  distanceFromBottom: number;
+  updatedAt: string;
+}
+
+/**
+ * Thread 的 wire 形状由 schema 推断（单一来源），UI 层覆写 messages 为含 UI 衍生字段
+ * 的消息。原定义自 @/store/aiConversation 迁来（该 legacy store 已退役），作为 legacy
+ * 适配器 / 持久化读路径的中立类型来源，杜绝对已删除 store 的依赖。
+ */
 export interface IAiConversationThread extends Omit<IAiConversationThreadWire, 'messages'> {
   messages: IAiChatMessage[];
 }
