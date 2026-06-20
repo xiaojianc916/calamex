@@ -51,6 +51,12 @@ const KIMI_API_KEY_ENV: &str = "KIMI_API_KEY";
 const KIMI_BASE_URL_ENV: &str = "KIMI_BASE_URL";
 const KIMI_DEFAULT_BASE_URL: &str = "https://api.moonshot.ai/v1";
 
+// calamex 托管 Kimi 配置目录：经 KIMI_HOME 环境变量把 kimi acp 子进程的配置目录指向本程序
+// 自管目录(品牌存储根下 kimi-home)，使 seed 写入与子进程读取恒为同一份，避免被用户既有的
+// 全局 ~/.kimi/config.toml 截断(详见 resolved_kimi_home / kimi_child_env)。
+const KIMI_HOME_ENV: &str = "KIMI_HOME";
+const KIMI_MANAGED_HOME_DIR: &str = "kimi-home";
+
 /// 可挂载的 ACP 后端标识（ADR-0015）。`Builtin` 为自家 Node 边车（默认后端，
 /// 行为与历史一致）；其余为外部 ACP 编码 agent。本阶段仅提供启动配置，接线在阶段 2。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -109,7 +115,7 @@ fn build_kimi_client_config() -> AcpClientConfig {
         return AcpClientConfig {
             program,
             args: vec!["acp".to_string()],
-            env: Vec::new(),
+            env: kimi_child_env(),
         };
     }
 
@@ -123,7 +129,7 @@ fn build_kimi_client_config() -> AcpClientConfig {
     AcpClientConfig {
         program: "kimi".to_string(),
         args: vec!["acp".to_string()],
-        env: Vec::new(),
+        env: kimi_child_env(),
     }
 }
 
@@ -140,7 +146,7 @@ fn resolve_bundled_kimi_client_config() -> Option<AcpClientConfig> {
     Some(AcpClientConfig {
         program: path_to_string(&node),
         args: vec![path_to_string(&entry), "acp".to_string()],
-        env: Vec::new(),
+        env: kimi_child_env(),
     })
 }
 
@@ -526,16 +532,36 @@ pub(crate) fn prepare_external_backend_launch(backend: AcpBackendId) {
     }
 }
 
-/// 解析 `~/.kimi` 目录：优先 `KIMI_HOME`，否则用户主目录下 `.kimi`。
-fn kimi_home_dir() -> Option<PathBuf> {
-    if let Some(custom) = env_or_user_env("KIMI_HOME") {
-        return Some(PathBuf::from(custom));
+/// 解析「calamex 托管」的 Kimi 配置目录。优先外部显式 KIMI_HOME(逃生舱：用户/CI 可强制
+/// 指向自管目录)，否则用 calamex 自管目录(品牌存储根下 kimi-home，如 ~/.calamex/kimi-home)。
+/// 不再回退全局 ~/.kimi——避免被用户既有的、非本程序托管的全局 config.toml 截断
+/// (那会导致 seed 跳过、kimi acp 子进程无凭证而报 Authentication required)。
+fn resolved_kimi_home() -> PathBuf {
+    if let Some(custom) = env_or_user_env(KIMI_HOME_ENV) {
+        return PathBuf::from(custom);
     }
-    #[cfg(windows)]
-    let home = env_or_user_env("USERPROFILE");
-    #[cfg(not(windows))]
-    let home = env_or_user_env("HOME");
-    home.map(|value| PathBuf::from(value).join(".kimi"))
+    managed_kimi_home()
+}
+
+/// calamex 自管的 Kimi home：品牌存储根下 kimi-home(如 ~/.calamex/kimi-home)。
+/// 与 storage_paths::local_root() 同源，保证 seed 写入路径与子进程读取路径恒一致。
+fn managed_kimi_home() -> PathBuf {
+    crate::storage_paths::local_root().join(KIMI_MANAGED_HOME_DIR)
+}
+
+/// 拉起 kimi acp 子进程时注入的 env：把 KIMI_HOME 指向 calamex 托管目录，
+/// 使子进程读取的 config.toml 与 ensure_kimi_managed_config 写入的恒为同一份。
+fn kimi_child_env() -> Vec<(String, String)> {
+    vec![(
+        KIMI_HOME_ENV.to_string(),
+        path_to_string(&resolved_kimi_home()),
+    )]
+}
+
+/// 解析 Kimi 配置目录(供 seed 写入)。委托 resolved_kimi_home，恒返回 Some，
+/// 与子进程注入的 KIMI_HOME 指向同一目录。
+fn kimi_home_dir() -> Option<PathBuf> {
+    Some(resolved_kimi_home())
 }
 
 /// 用 Rust Debug 产出带引号且转义合法的字符串，等价于 TOML 基本字符串字面量。
@@ -763,6 +789,18 @@ mod tests {
         let config = build_kimi_client_config();
         assert_eq!(config.args.last().map(String::as_str), Some("acp"));
         assert!(!config.program.trim().is_empty());
+    }
+
+    #[test]
+    fn kimi_child_env_injects_managed_kimi_home() {
+        // 子进程 env 注入 KIMI_HOME，指向 calamex 托管目录(resolved_kimi_home)，
+        // 保证 seed 写入与子进程读取路径一致；该 env 恰含一项且非空。
+        let env = kimi_child_env();
+        assert_eq!(env.len(), 1);
+        let (key, value) = &env[0];
+        assert_eq!(key, KIMI_HOME_ENV);
+        assert_eq!(value, &path_to_string(&resolved_kimi_home()));
+        assert!(!value.trim().is_empty());
     }
 
     #[test]
