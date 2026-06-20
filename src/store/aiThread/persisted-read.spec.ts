@@ -4,12 +4,9 @@ import { nextTick } from 'vue';
 
 import type { IAiThread } from '@/types/ai/thread';
 
-// 隔离持久化读路径：legacy 投影置空 (activeThread=null)；指针恢复注入假实现。
+// 隔离持久化读路径：指针恢复注入假实现。
 const { restoreMock } = vi.hoisted(() => ({ restoreMock: vi.fn() }));
 
-vi.mock('@/store/aiConversation', () => ({
-  useAiConversationStore: () => ({ activeThread: null }),
-}));
 vi.mock('@/store/plugins/debouncedPersistStorage', () => ({
   restoreAttachmentPreviewPointers: (value: unknown) => restoreMock(value),
 }));
@@ -36,9 +33,9 @@ beforeEach(async () => {
 });
 
 describe('aiThread store — 7.5b 持久化读路径', () => {
-  it('activeThread 优先级 live > persisted > projected', async () => {
+  it('activeThread 优先级 live > persisted', async () => {
     const store = useAiThreadStore();
-    expect(store.activeThread).toBeNull(); // projected 为 null（mock）
+    expect(store.activeThread).toBeNull(); // 无 live / persisted → null
 
     store.setPersistedThreads([makeThread('a'), makeThread('b')], 'b');
     await flush();

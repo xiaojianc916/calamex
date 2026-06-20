@@ -13,7 +13,7 @@
  *   其余线程留待 store 侧按活动线程切换惰性恢复（见 7.5b）。
  * - 恢复失败非致命：保留 idb:// 指针并返回未替换结果，下游按缺图处理。
  * ========================================================================== */
-import type { IAiConversationThread } from '@/store/aiConversation';
+
 import {
   type IResolvedPersistedThreads,
   type IResolvePersistedThreadsInput,
@@ -24,6 +24,7 @@ import {
   type IAiThreadEntriesHydrateResult,
 } from '@/store/plugins/aiThreadEntriesStorage';
 import { restoreAttachmentPreviewPointers } from '@/store/plugins/debouncedPersistStorage';
+import type { IAiConversationThread } from '@/types/ai/conversation.schema';
 import type { IAiThread } from '@/types/ai/thread';
 
 export interface IHydrateAiThreadEntriesForRenderInput {

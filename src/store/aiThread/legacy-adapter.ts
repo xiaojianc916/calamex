@@ -13,8 +13,8 @@
  * - 旧消息的 references 原样透传到 user_message entry；附件映射为富块留待后续细化。
  * ========================================================================== */
 import { attachChangedFileDiffsToToolCalls } from '@/components/business/ai/thread/projection/attach-changed-file-diffs';
-import type { IAiConversationThread } from '@/store/aiConversation';
 import type { IAiChatMessage } from '@/types/ai';
+import type { IAiConversationThread } from '@/types/ai/conversation.schema';
 import type {
   IAiThread,
   IAiThreadAssistantMessageEntry,

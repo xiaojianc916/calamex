@@ -9,11 +9,9 @@
 import { defineStore } from 'pinia';
 import { computed, ref, watch } from 'vue';
 
-import { useAiConversationStore } from '@/store/aiConversation';
 import type { TAiThreadReduceEvent } from '@/store/aiThread/events';
 import {
   legacyMessageToEntries,
-  legacyThreadToThread,
   threadEntriesToMessages,
   threadToLegacyThread,
 } from '@/store/aiThread/legacy-adapter';
@@ -24,8 +22,6 @@ import type { IAiChatMessage } from '@/types/ai';
 import type { IAiThread, IAiThreadEntry } from '@/types/ai/thread';
 
 export const useAiThreadStore = defineStore('ai-thread', () => {
-  const conversation = useAiConversationStore();
-
   /**
    * 活动流式线程：Step 5 起由边车监听 -> reduceThread 写入。为 null 时回落
    * 到对旧 active thread 的只读投影。
@@ -84,13 +80,8 @@ export const useAiThreadStore = defineStore('ai-thread', () => {
     { immediate: false },
   );
 
-  /** 把 legacy active thread 适配为 entries 模型（只读派生）。 */
-  const projectedActiveThread = computed<IAiThread | null>(() =>
-    conversation.activeThread ? legacyThreadToThread(conversation.activeThread) : null,
-  );
-
   const activeThread = computed<IAiThread | null>(
-    () => liveThread.value ?? projectedActiveThread.value ?? persistedActiveThread.value,
+    () => liveThread.value ?? persistedActiveThread.value,
   );
 
   const activeEntries = computed<IAiThreadEntry[]>(() => activeThread.value?.entries ?? []);
@@ -388,7 +379,6 @@ export const useAiThreadStore = defineStore('ai-thread', () => {
     authoritativeThreads,
     authoritativeActiveThreadId,
     // getters
-    projectedActiveThread,
     persistedActiveThread,
     activeThread,
     activeEntries,

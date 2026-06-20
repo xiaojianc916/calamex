@@ -1,9 +1,8 @@
 import { describe, expect, it } from 'vitest';
-
-import type { IAiConversationThread } from '@/store/aiConversation';
 import type { IHydrateAiThreadEntriesForRenderInput } from '@/store/aiThread/entriesRenderHydrate';
 import type { IResolvedPersistedThreads } from '@/store/aiThread/hydrate';
 import { runStartupPersistedRead } from '@/store/aiThread/startupPersistedReadWiring';
+import type { IAiConversationThread } from '@/types/ai/conversation.schema';
 import type { IAiThread } from '@/types/ai/thread';
 
 function makeThread(id: string): IAiThread {

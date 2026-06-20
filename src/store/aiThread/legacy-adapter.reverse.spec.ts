@@ -1,7 +1,6 @@
 import { describe, expect, it } from 'vitest';
-
-import type { IAiConversationThread } from '@/store/aiConversation';
 import type { IAiChatMessage } from '@/types/ai';
+import type { IAiConversationThread } from '@/types/ai/conversation.schema';
 
 import {
   legacyMessageToEntries,

@@ -11,7 +11,6 @@
  * 依赖注入：默认 deps 在调用时惰性取 store（需 pinia 已安装）；单测注入假 deps，
  * 无需 pinia / 真实存储。
  * ========================================================================== */
-import { useAiConversationStore } from '@/store/aiConversation';
 import { useAiThreadStore } from '@/store/aiThread';
 import {
   hydrateAiThreadEntriesForRender,
@@ -32,13 +31,9 @@ export interface IRunStartupPersistedReadDeps {
 }
 
 export const defaultDeps: IRunStartupPersistedReadDeps = {
-  readLegacy: () => {
-    const conversation = useAiConversationStore();
-    return {
-      legacyActiveThreadId: conversation.activeThreadId,
-      legacyThreads: conversation.threads,
-    };
-  },
+  // legacy aiConversation store 已退役：迁移已完成，新 entries key 为唯一持久化真源。
+  // 保留 readLegacy 形状（DI 缝与单测仍可注入 legacy 回退），生产默认不再提供 legacy 源。
+  readLegacy: () => ({ legacyActiveThreadId: null, legacyThreads: [] }),
   hydrateForRender: hydrateAiThreadEntriesForRender,
   applyPersisted: (threads, activeThreadId) => {
     useAiThreadStore().setPersistedThreads(threads, activeThreadId);

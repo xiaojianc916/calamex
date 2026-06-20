@@ -1,5 +1,4 @@
 import { describe, expect, it } from 'vitest';
-import type { IAiConversationThread } from '@/store/aiConversation';
 import {
   inferToolKind,
   legacyMessageToEntries,
@@ -7,6 +6,7 @@ import {
 } from '@/store/aiThread/legacy-adapter';
 import type { IAiAgentPatchSummary, IAiChatMessage } from '@/types/ai';
 import type { IAiContextReference } from '@/types/ai/context';
+import type { IAiConversationThread } from '@/types/ai/conversation.schema';
 import type {
   IAiThreadAssistantMessageEntry,
   IAiThreadToolCall,

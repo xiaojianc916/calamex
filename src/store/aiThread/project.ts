@@ -1,6 +1,6 @@
-import type { IAiConversationThread } from '@/store/aiConversation';
 import { normalizeActiveThreadId } from '@/store/aiThread/hydrate';
 import { legacyThreadToThread } from '@/store/aiThread/legacy-adapter';
+import type { IAiConversationThread } from '@/types/ai/conversation.schema';
 import type { IAiThread } from '@/types/ai/thread';
 import { AI_THREAD_PERSIST_VERSION, type IAiThreadPersist } from '@/types/ai/thread/persist.schema';
 

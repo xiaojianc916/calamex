@@ -1,7 +1,6 @@
 import { describe, expect, it } from 'vitest';
-
-import type { IAiConversationThread } from '@/store/aiConversation';
 import { resolvePersistedThreads } from '@/store/aiThread/hydrate';
+import type { IAiConversationThread } from '@/types/ai/conversation.schema';
 
 const ISO_A = '2026-06-19T10:00:00.000Z';
 const ISO_B = '2026-06-19T10:01:00.000Z';

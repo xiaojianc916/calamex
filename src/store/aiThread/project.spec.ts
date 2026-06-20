@@ -1,10 +1,10 @@
 import { describe, expect, it } from 'vitest';
-import type { IAiConversationThread } from '@/store/aiConversation';
 import { resolvePersistedThreads } from '@/store/aiThread/hydrate';
 import {
   projectConversationThreadsToEntries,
   projectConversationToThreadPersist,
 } from '@/store/aiThread/project';
+import type { IAiConversationThread } from '@/types/ai/conversation.schema';
 import { AI_THREAD_PERSIST_VERSION, aiThreadPersistSchema } from '@/types/ai/thread/persist.schema';
 
 const makeLegacyThread = (

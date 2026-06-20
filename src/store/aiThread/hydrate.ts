@@ -1,6 +1,6 @@
-import type { IAiConversationThread } from '@/store/aiConversation';
 import { legacyThreadToThread } from '@/store/aiThread/legacy-adapter';
 import { salvageHydratedThreadEntries } from '@/store/aiThread/persist';
+import type { IAiConversationThread } from '@/types/ai/conversation.schema';
 import type { IAiThread } from '@/types/ai/thread';
 import { aiThreadPersistSchema } from '@/types/ai/thread/persist.schema';
 
