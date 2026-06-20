@@ -14,7 +14,6 @@ import type {
   ITerminalStatusChangePayload,
   ITerminalVisualWritePayload,
   TTerminalConnectionState,
-  TTerminalInputRoute,
 } from '@/types/terminal';
 
 // ─── 可注入的 Tauri PTY 服务接口 ──────────────────────────────────────────────

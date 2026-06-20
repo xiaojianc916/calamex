@@ -4,7 +4,12 @@ import {
   persistQueryClientRestore,
   persistQueryClientSubscribe,
 } from '@tanstack/query-persist-client-core';
-import { QueryClient } from '@tanstack/vue-query';
+import {
+  type DefaultError,
+  type FetchQueryOptions,
+  QueryClient,
+  type QueryKey,
+} from '@tanstack/vue-query';
 import { del, get, set } from 'idb-keyval';
 
 // 30 天:对齐原 src/store/git.ts 中 commit stats 落盘的最长保留窗口,
@@ -40,23 +45,36 @@ const structurallyShareSerializableData = (oldData: unknown, newData: unknown): 
 };
 
 class CalamexQueryClient extends QueryClient {
-  // QueryClient.fetchQuery 是带泛型的重载(fetchQuery<TQueryFnData, TError, TData, ...>)。
-  // override 必须同样声明泛型 <T>,否则调用方写 fetchQuery<IGitCommitDetailPayload>(...)
-  // 会触发 ts(2558)「应有 0 个类型参数但获得 1 个」。这里把 T 透传给 super.fetchQuery
-  // 并作为返回类型,保持与原生签名一致的泛型推断。
-  override fetchQuery<T>(options: Parameters<QueryClient['fetchQuery']>[0]): Promise<T> {
-    const previousData = this.getQueryData(options.queryKey);
+  // 与 QueryClient.fetchQuery 原生重载完全对齐的泛型签名
+  // (TQueryFnData / TError / TData / TQueryKey / TPageParam)。
+  // 旧的单泛型 <T> + Parameters<...>[0] 会带来两个问题：
+  //   1. options 被推断为 MaybeRefDeep<FetchQueryOptions<...>>，无法直接取 .queryKey（ts2339）；
+  //   2. 签名与基类不兼容，导致 CalamexQueryClient 不能赋给 persist-client 期望的 QueryClient（ts2345）。
+  // 透传完整泛型并接收具体 FetchQueryOptions 后，调用方仍可写
+  // fetchQuery<IGitCommitDetailPayload>(...)（TData 默认取 TQueryFnData），且 .queryKey 可直接访问。
+  override fetchQuery<
+    TQueryFnData = unknown,
+    TError = DefaultError,
+    TData = TQueryFnData,
+    TQueryKey extends QueryKey = QueryKey,
+    TPageParam = never,
+  >(
+    options: FetchQueryOptions<TQueryFnData, TError, TData, TQueryKey, TPageParam>,
+  ): Promise<TData> {
+    const previousData = this.getQueryData<TData>(options.queryKey);
 
-    return super.fetchQuery(options).then((data) => {
-      const cachedData = this.getQueryData(options.queryKey) ?? data;
-      const sharedData = structurallyShareSerializableData(previousData, cachedData);
+    return super
+      .fetchQuery<TQueryFnData, TError, TData, TQueryKey, TPageParam>(options)
+      .then((data) => {
+        const cachedData = this.getQueryData<TData>(options.queryKey) ?? data;
+        const sharedData = structurallyShareSerializableData(previousData, cachedData) as TData;
 
-      if (sharedData !== cachedData) {
-        this.setQueryData(options.queryKey, sharedData);
-      }
+        if (sharedData !== cachedData) {
+          this.setQueryData<TData>(options.queryKey, sharedData);
+        }
 
-      return sharedData as T;
-    });
+        return sharedData;
+      });
   }
 }
 

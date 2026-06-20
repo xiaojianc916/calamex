@@ -99,69 +99,121 @@ type TAiEditTauriService = Pick<
   | 'aiEditRevertTask'
 >;
 
+/**
+ * 出参收窄助手：runCommand 通过 invoke 推断出 tauri-specta 生成的「宽」绑定载荷
+ * （字面量联合被放宽成 string）。AED 各方法对外暴露 src/types/ai/edit.ts 的窄契约，
+ * 而后端只会回传枚举内的字面量，故按方法键把结果收窄到声明的返回类型——仅在该 IPC
+ * 边界放宽协变校验，方法体其余部分仍接受完整类型检查。
+ */
+const asNarrowed = <K extends keyof TAiEditTauriService>(
+  _key: K,
+  result: Promise<unknown>,
+): ReturnType<TAiEditTauriService[K]> => result as ReturnType<TAiEditTauriService[K]>;
+
 export const aiEditTauriService: TAiEditTauriService = {
   aiEditGetAuthLevel: () =>
-    runCommand(AI_EDIT_COMMAND_META.aiEditGetAuthLevel, undefined, undefined, () =>
-      commands.aiEditGetAuthLevel(),
+    asNarrowed(
+      'aiEditGetAuthLevel',
+      runCommand(AI_EDIT_COMMAND_META.aiEditGetAuthLevel, undefined, undefined, () =>
+        commands.aiEditGetAuthLevel(),
+      ),
     ),
 
   aiEditSetAuthLevel(payload, options?: IIpcCallOptions) {
-    return runCommand(AI_EDIT_COMMAND_META.aiEditSetAuthLevel, payload, options, () =>
-      commands.aiEditSetAuthLevel(payload),
+    return asNarrowed(
+      'aiEditSetAuthLevel',
+      runCommand(AI_EDIT_COMMAND_META.aiEditSetAuthLevel, payload, options, () =>
+        commands.aiEditSetAuthLevel({ ...payload, taskId: payload.taskId ?? null }),
+      ),
     );
   },
 
   aiEditListTimeline(payload, options?: IIpcCallOptions) {
-    return runCommand(AI_EDIT_COMMAND_META.aiEditListTimeline, payload, options, () =>
-      commands.aiEditListTimeline(payload),
+    return asNarrowed(
+      'aiEditListTimeline',
+      runCommand(AI_EDIT_COMMAND_META.aiEditListTimeline, payload, options, () =>
+        commands.aiEditListTimeline({
+          ...payload,
+          taskId: payload.taskId ?? null,
+          limit: payload.limit ?? null,
+        }),
+      ),
     );
   },
 
   aiEditCreateSnapshot(payload, options?: IIpcCallOptions) {
-    return runCommand(AI_EDIT_COMMAND_META.aiEditCreateSnapshot, payload, options, () =>
-      commands.aiEditCreateSnapshot(payload),
+    return asNarrowed(
+      'aiEditCreateSnapshot',
+      runCommand(AI_EDIT_COMMAND_META.aiEditCreateSnapshot, payload, options, () =>
+        commands.aiEditCreateSnapshot({
+          ...payload,
+          label: payload.label ?? null,
+          taskId: payload.taskId ?? null,
+        }),
+      ),
     );
   },
 
   aiEditSetPin(payload, options?: IIpcCallOptions) {
-    return runCommand(AI_EDIT_COMMAND_META.aiEditSetPin, payload, options, () =>
-      commands.aiEditSetPin(payload),
+    return asNarrowed(
+      'aiEditSetPin',
+      runCommand(AI_EDIT_COMMAND_META.aiEditSetPin, payload, options, () =>
+        commands.aiEditSetPin(payload),
+      ),
     );
   },
 
   aiEditGetDiff(payload, options?: IIpcCallOptions) {
-    return runCommand(AI_EDIT_COMMAND_META.aiEditGetDiff, payload, options, () =>
-      commands.aiEditGetDiff(payload),
+    return asNarrowed(
+      'aiEditGetDiff',
+      runCommand(AI_EDIT_COMMAND_META.aiEditGetDiff, payload, options, () =>
+        commands.aiEditGetDiff(payload),
+      ),
     );
   },
 
   aiEditRestoreSnapshot(payload, options?: IIpcCallOptions) {
-    return runCommand(AI_EDIT_COMMAND_META.aiEditRestoreSnapshot, payload, options, () =>
-      commands.aiEditRestoreSnapshot(payload),
+    return asNarrowed(
+      'aiEditRestoreSnapshot',
+      runCommand(AI_EDIT_COMMAND_META.aiEditRestoreSnapshot, payload, options, () =>
+        commands.aiEditRestoreSnapshot(payload),
+      ),
     );
   },
 
   aiEditUndoOperation(payload, options?: IIpcCallOptions) {
-    return runCommand(AI_EDIT_COMMAND_META.aiEditUndoOperation, payload, options, () =>
-      commands.aiEditUndoOperation(payload),
+    return asNarrowed(
+      'aiEditUndoOperation',
+      runCommand(AI_EDIT_COMMAND_META.aiEditUndoOperation, payload, options, () =>
+        commands.aiEditUndoOperation(payload),
+      ),
     );
   },
 
   aiEditRevertFile(payload, options?: IIpcCallOptions) {
-    return runCommand(AI_EDIT_COMMAND_META.aiEditRevertFile, payload, options, () =>
-      commands.aiEditRevertFile(payload),
+    return asNarrowed(
+      'aiEditRevertFile',
+      runCommand(AI_EDIT_COMMAND_META.aiEditRevertFile, payload, options, () =>
+        commands.aiEditRevertFile(payload),
+      ),
     );
   },
 
   aiEditRevertHunk(payload, options?: IIpcCallOptions) {
-    return runCommand(AI_EDIT_COMMAND_META.aiEditRevertHunk, payload, options, () =>
-      commands.aiEditRevertHunk(payload),
+    return asNarrowed(
+      'aiEditRevertHunk',
+      runCommand(AI_EDIT_COMMAND_META.aiEditRevertHunk, payload, options, () =>
+        commands.aiEditRevertHunk(payload),
+      ),
     );
   },
 
   aiEditRevertTask(payload, options?: IIpcCallOptions) {
-    return runCommand(AI_EDIT_COMMAND_META.aiEditRevertTask, payload, options, () =>
-      commands.aiEditRevertTask(payload),
+    return asNarrowed(
+      'aiEditRevertTask',
+      runCommand(AI_EDIT_COMMAND_META.aiEditRevertTask, payload, options, () =>
+        commands.aiEditRevertTask(payload),
+      ),
     );
   },
 };

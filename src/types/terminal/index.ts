@@ -9,6 +9,7 @@ export type TTerminalRuntimeState =
   | 'switching_to_idle';
 export type TTerminalInputRoute = 'interactive' | 'run' | 'buffered' | 'dropped';
 export type TTerminalDataSource = 'interactive' | 'run' | 'injected_reset' | 'injected_separator';
+export type TThemeMode = 'dark' | 'light';
 
 export interface IEnsureTerminalSessionRequest {
   sessionId: string;

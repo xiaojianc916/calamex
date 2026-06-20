@@ -19,7 +19,6 @@ import type { ITerminalDataEvent, ITerminalVisualWritePayload } from '@/types/te
 import { createHiddenWriteBacklog } from '@/utils/run/hidden-write-backlog';
 import {
   normalizeTerminalAnsiForTheme,
-  previewTerminalDiagnosticText,
   stripInjectedRunSeparatorForTerminalData,
 } from './session-ansi';
 import {
