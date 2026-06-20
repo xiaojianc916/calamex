@@ -35,7 +35,7 @@
 //! 而非上述带外扩展方法：它们不认识 `calamex.dev/*`，只实现标准 session/prompt；
 //! 过程增量全部经 `session/update` 帧由 `EventSink` 转发（投影见 `ui_event`）。
 
-// 过渡期：本模块部分薄宿主方法（web_search / web_fetch / restore_checkpoint / prompt 等）尚未
+// 过渡期：本模块部分薄宿主方法（web_search / web_fetch / restore_checkpoint 等）尚未
 // 全部接线到宿主命令，crate 外暂无调用点；接线后移除该 allow。
 #![allow(dead_code)]
 
@@ -200,6 +200,30 @@ impl AcpHost {
     ) -> Result<StopReason, AcpClientError> {
         let session_id = self.ensure_session(thread_id, workspace_root_path).await?;
         self.handle.prompt(session_id, blocks).await
+    }
+
+    /// 用纯文本驱动一轮**标准 ACP 回合**：把单段文本包成一个 `text` `ContentBlock` 后委托
+    /// `prompt`。供外部 ACP agent（Kimi Code / Codex 等）的主聊天回合使用——它们只认标准
+    /// `session/prompt`，不认识 `calamex.dev/*` 扩展方法。
+    ///
+    /// `ContentBlock` 经其线上 wire 形态（`{ "type": "text", "text": ... }`，与
+    /// `session/update` 下发的 content 同形，见 `ui_event::text_from_content_block`）反序列化
+    /// 构造，避免在宿主侧硬编码 SDK 具体构造路径；序列化我们自己的文本几乎不会失败，失败时
+    /// 归为 `Protocol` 错误上抛。
+    pub async fn prompt_text(
+        &self,
+        thread_id: &str,
+        workspace_root_path: Option<&str>,
+        text: &str,
+    ) -> Result<StopReason, AcpClientError> {
+        let block: ContentBlock = serde_json::from_value(serde_json::json!({
+            "type": "text",
+            "text": text,
+        }))
+        .map_err(|error| {
+            AcpClientError::Protocol(format!("构造 ACP 文本内容块失败：{error}"))
+        })?;
+        self.prompt(thread_id, workspace_root_path, vec![block]).await
     }
 
     /// 投递一个审批决策，唤醒回合内挂起的权限请求（其 `prompt` 随后续跑并最终返回）。
