@@ -157,7 +157,7 @@ export const useAiAgentRun = () => {
   const isRunLifecycleCurrent = (runId: string, token: number): boolean => {
     const run = getRuns().find((item) => item.id === runId) ?? null;
     return (
-      runLifecycleTokens.get(runId) === token && Boolean(run) && !isTerminalRunStatus(run!.status)
+      runLifecycleTokens.get(runId) === token && run !== null && !isTerminalRunStatus(run.status)
     );
   };
 

@@ -121,8 +121,6 @@ impl AcpRuntime {
             return Ok(host.clone());
         }
 
-        // 启动配置解析失败（未找到 node / ACP 入口等）等价于「无法建立传输」，
-        // 故归入 Transport 错误，与连接派生失败同类上抛。
         // 经 provisioner 注册表统一驱动该后端的「启动配置 + 凭证预置」。
         // 新增 ACP agent 后端只需在 provisioner_for 注册一行，runtime 无需改动。
         let provisioner = provisioner_for(backend);

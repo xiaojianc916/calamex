@@ -519,15 +519,15 @@ pub(crate) fn prepare_external_backend_launch(backend: AcpBackendId) {
     match ensure_kimi_managed_config() {
         Ok(true) => log::info!(
             target: "acp",
-            "已用项目网关配置写入 ~/.kimi/config.toml（Kimi 复用项目内既有 Key）。"
+            "已用项目网关配置写入托管 KIMI_HOME 的 config.toml（Kimi 复用项目内既有 Key）。"
         ),
         Ok(false) => log::info!(
             target: "acp",
-            "跳过写入 ~/.kimi/config.toml（用户自管配置已存在，或项目未配置网关地址）；沿用 Kimi 既有登录。"
+            "跳过写入托管 KIMI_HOME 的 config.toml（用户自管配置已存在，或项目未配置网关地址）；沿用 Kimi 既有登录。"
         ),
         Err(error) => log::warn!(
             target: "acp",
-            "预置 ~/.kimi/config.toml 失败（回退 Kimi 既有登录）：{error}"
+            "预置托管 KIMI_HOME 的 config.toml 失败（回退 Kimi 既有登录）：{error}"
         ),
     }
 }
@@ -731,20 +731,20 @@ max_context_size = 262144
     out
 }
 
-/// 在拉起 `kimi acp` 前确保 `~/.kimi/config.toml` 含可用凭证（复用项目已存网关配置）。
+/// 在拉起 `kimi acp` 前确保托管 KIMI_HOME 的 `config.toml` 含可用凭证（复用项目已存网关配置）。
 ///
 /// 返回 `Ok(true)`：已写入/刷新托管配置；`Ok(false)`：有意跳过（用户自管配置已存在，或项目
 /// 尚无可桥接的网关地址）；`Err`：IO / 配置获取失败（调用方仅记录，不阻断启动）。
 fn ensure_kimi_managed_config() -> Result<bool, String> {
     let Some(kimi_dir) = kimi_home_dir() else {
-        return Err("无法定位用户主目录（~/.kimi）。".to_string());
+        return Err("无法定位托管 KIMI_HOME 目录。".to_string());
     };
     let config_path = kimi_dir.join("config.toml");
 
     // 已存在且非本程序托管 → 视为用户自管（含 OAuth / 手动 Key），保留不动。
     if config_path.is_file() {
         let existing = fs::read_to_string(&config_path)
-            .map_err(|error| format!("读取 ~/.kimi/config.toml 失败：{error}"))?;
+            .map_err(|error| format!("读取托管 KIMI_HOME 的 config.toml 失败：{error}"))?;
         if !existing.contains(KIMI_MANAGED_MARKER) {
             return Ok(false);
         }
@@ -773,9 +773,9 @@ fn ensure_kimi_managed_config() -> Result<bool, String> {
 
     let rendered = render_kimi_config_toml(&default_model_name, &providers, &models);
 
-    fs::create_dir_all(&kimi_dir).map_err(|error| format!("创建 ~/.kimi 目录失败：{error}"))?;
+    fs::create_dir_all(&kimi_dir).map_err(|error| format!("创建托管 KIMI_HOME 目录失败：{error}"))?;
     fs::write(&config_path, rendered)
-        .map_err(|error| format!("写入 ~/.kimi/config.toml 失败：{error}"))?;
+        .map_err(|error| format!("写入托管 KIMI_HOME 的 config.toml 失败：{error}"))?;
     Ok(true)
 }
 
