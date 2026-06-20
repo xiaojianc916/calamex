@@ -16,11 +16,6 @@
 import { createPinia } from 'pinia';
 import piniaPluginPersistedstate from 'pinia-plugin-persistedstate';
 
-import {
-  type IConversationStoreLike,
-  installEntriesMirror,
-} from '@/store/aiThread/entriesMirrorBridge';
-
 /** 旧存储 key (v0 格式:裸 IAppSettings JSON) */
 const V0_SETTINGS_KEY = 'sh-editor-app-settings';
 /** v0 遗留主题 key */
@@ -144,12 +139,3 @@ migrateV0toV1();
 
 export const pinia = createPinia();
 pinia.use(piniaPluginPersistedstate);
-
-// Step 7.4d —— entries 双写镜像接线 (Step 8 整体删除)。
-// ai-conversation store 惰性实例化、persistedstate hydrate 之后装载双写镜像;
-// 仅向新 key 投影, 不改变渲染 SoT; 保留惰性 hydrate, 不 eager 实例化。
-pinia.use(({ store }) => {
-  if (store.$id === 'ai-conversation') {
-    installEntriesMirror(store as unknown as IConversationStoreLike);
-  }
-});
