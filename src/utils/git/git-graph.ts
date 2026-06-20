@@ -1,3 +1,4 @@
+import { getBoundedCacheValue, setBoundedCacheValue } from '@/utils/core/lru-cache';
 export type TGitGraphEdgeType = 'pass' | 'in' | 'out';
 
 export interface IGitGraphInputCommit {
@@ -67,27 +68,11 @@ export function clearGitGraphLayoutCache(): void {
   gitGraphLayoutCache.clear();
 }
 
-const getCachedGitGraphLayout = (cacheKey: string): IGitGraphLayout | undefined => {
-  const cached = gitGraphLayoutCache.get(cacheKey);
-  if (!cached) {
-    return undefined;
-  }
-
-  // Map 删除后重插即可维护 LRU 最近访问顺序。
-  gitGraphLayoutCache.delete(cacheKey);
-  gitGraphLayoutCache.set(cacheKey, cached);
-  return cached;
-};
+const getCachedGitGraphLayout = (cacheKey: string): IGitGraphLayout | undefined =>
+  getBoundedCacheValue(gitGraphLayoutCache, cacheKey);
 
 const setCachedGitGraphLayout = (cacheKey: string, layout: IGitGraphLayout): void => {
-  gitGraphLayoutCache.set(cacheKey, layout);
-  while (gitGraphLayoutCache.size > GIT_GRAPH_LAYOUT_CACHE_LIMIT) {
-    const oldestKey = gitGraphLayoutCache.keys().next().value;
-    if (oldestKey === undefined) {
-      break;
-    }
-    gitGraphLayoutCache.delete(oldestKey);
-  }
+  setBoundedCacheValue(gitGraphLayoutCache, cacheKey, layout, GIT_GRAPH_LAYOUT_CACHE_LIMIT);
 };
 
 // 二叉最小堆：维护「空闲泳道下标」的候选集合，支持 O(log n) 取最小。
