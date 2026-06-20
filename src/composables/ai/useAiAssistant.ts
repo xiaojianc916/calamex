@@ -44,7 +44,7 @@ import { aiService } from '@/services/ipc/ai.service';
 import { buildCurrentFileReference } from '@/services/ipc/ai-context.service';
 import { aiEditService } from '@/services/ipc/ai-edit.service';
 import { type IAiPersistedSidecarAgentSession, useAiAgentStore } from '@/store/aiAgent';
-import { type IAiConversationScrollState, useAiConversationStore } from '@/store/aiConversation';
+import type { IAiConversationScrollState } from '@/store/aiConversation';
 import { legacyThreadToThread, useAiThreadStore } from '@/store/aiThread';
 import type {
   IAiAgentPatchSummary,
@@ -220,8 +220,11 @@ const MSG_CALL_FAILED = 'AI 调用失败';
 
 export const useAiAssistant = (options: IUseAiAssistantOptions) => {
   const agentStore = useAiAgentStore();
-  const conversationStore = useAiConversationStore();
   const aiThreadStore = useAiThreadStore();
+  // ④.1 §D：编排器消息读写真源收敛到 aiThread 权威 entries（drop-in）。conversationStore
+  // 别名保留以最小化触点；活动/历史线程改读 legacy 形状 getter（activeConversationThread /
+  // conversationHistoryThreads），其余面（activeMessages / activeThreadId / replace* / 生命周期）1:1 同名。
+  const conversationStore = aiThreadStore;
 
   const draft = ref('');
   const isSending = ref(false);
@@ -393,7 +396,7 @@ export const useAiAssistant = (options: IUseAiAssistantOptions) => {
     threadId: string | null,
     events: readonly TAgentUiEvent[],
   ): void => {
-    const activeThread = conversationStore.activeThread;
+    const activeThread = conversationStore.activeConversationThread;
     const activeThreadId = unref(conversationStore.activeThreadId);
     // 仅当该回合线程正是当前可见线程时才覆盖投影，避免串台到其他会话。
     if (!activeThread || (threadId !== null && threadId !== activeThreadId)) {
@@ -403,7 +406,7 @@ export const useAiAssistant = (options: IUseAiAssistantOptions) => {
       ...activeThread,
       messages: activeThread.messages.filter((message) => message.id !== assistantMessageId),
     });
-    aiThreadStore.setStreamingActiveThread(
+    aiThreadStore.overlayStreamingActiveThread(
       buildLiveThreadFromSidecarEvents(events, {
         baseThread: seedThread,
         assistantMessageId,
@@ -414,9 +417,9 @@ export const useAiAssistant = (options: IUseAiAssistantOptions) => {
 
   const syncDisplayMessagesFromActiveThread = (): void => {
     if (!isConversationWriteBuffered()) {
+      // ④.1 §D：权威 entries 已是 SoT，收尾仅回读消息缓冲；不再 setStreamingActiveThread(null)
+      // （那会把权威线程复位为单空线程、抹掉历史）。最终态由 commitDisplayMessagesToStore 落定。
       displayMessages.value = unref(conversationStore.activeMessages);
-      // Step 6 持久上线:回落到 projectedActiveThread(legacy->entries),不再退回旧 message 路径。
-      aiThreadStore.setStreamingActiveThread(null);
     }
   };
 
@@ -443,10 +446,10 @@ export const useAiAssistant = (options: IUseAiAssistantOptions) => {
     { flush: 'sync' },
   );
 
-  const historyThreads = computed(() => unref(conversationStore.historyThreads));
+  const historyThreads = computed(() => unref(conversationStore.conversationHistoryThreads));
   const activeConversationId = computed(() => unref(conversationStore.activeThreadId));
   const activeConversationScrollState = computed<IAiConversationScrollState | null>(
-    () => conversationStore.activeThread?.scrollState ?? null,
+    () => conversationStore.activeConversationThread?.scrollState ?? null,
   );
   const conversationCheckpoints = computed<IAiConversationCheckpoint[]>(() =>
     buildConversationCheckpoints(messages.value),

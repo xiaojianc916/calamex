@@ -4,7 +4,7 @@ import { ref } from 'vue';
 
 import { useAiAssistant } from '@/composables/ai/useAiAssistant';
 import { useAiAgentStore } from '@/store/aiAgent';
-import { useAiConversationStore } from '@/store/aiConversation';
+import { useAiThreadStore } from '@/store/aiThread';
 import type {
   IAiAgentRun,
   IAiApplyPatchPayload,
@@ -1093,7 +1093,7 @@ describe('useAiAssistant streaming integration', () => {
 
   it('后台只用第一轮问答生成正式会话标题', async () => {
     const assistant = createAssistantHarness();
-    const conversationStore = useAiConversationStore();
+    const conversationStore = useAiThreadStore();
 
     aiServiceMock.queueStreamResponse('第一轮 AI 回答');
     assistant.activeMode.value = 'chat';
@@ -1106,8 +1106,12 @@ describe('useAiAssistant streaming integration', () => {
       userMessage: '如何修复会话记录弹窗？',
       assistantMessage: '第一轮 AI 回答',
     });
-    expect(readReactiveValue(conversationStore.activeThread)?.title).toBe('生成会话标题');
-    expect(readReactiveValue(conversationStore.activeThread)?.titleStatus).toBe('generated');
+    expect(readReactiveValue(conversationStore.activeConversationThread)?.title).toBe(
+      '生成会话标题',
+    );
+    expect(readReactiveValue(conversationStore.activeConversationThread)?.titleStatus).toBe(
+      'generated',
+    );
   });
 
   it('会话标题首次失败后会自动重试', async () => {
@@ -1117,7 +1121,7 @@ describe('useAiAssistant streaming integration', () => {
       return 1;
     });
     const assistant = createAssistantHarness();
-    const conversationStore = useAiConversationStore();
+    const conversationStore = useAiThreadStore();
 
     aiServiceMock.generateConversationTitle
       .mockRejectedValueOnce(new Error('429 Too Many Requests'))
@@ -1133,14 +1137,18 @@ describe('useAiAssistant streaming integration', () => {
     await flushMicrotasks();
 
     expect(aiServiceMock.generateConversationTitle).toHaveBeenCalledTimes(1);
-    expect(readReactiveValue(conversationStore.activeThread)?.titleStatus).toBe('failed');
+    expect(readReactiveValue(conversationStore.activeConversationThread)?.titleStatus).toBe(
+      'failed',
+    );
 
     await vi.advanceTimersByTimeAsync(1500);
     await flushMicrotasks();
 
     expect(aiServiceMock.generateConversationTitle).toHaveBeenCalledTimes(2);
-    expect(readReactiveValue(conversationStore.activeThread)?.title).toBe('重试后标题');
-    expect(readReactiveValue(conversationStore.activeThread)?.titleStatus).toBe('generated');
+    expect(readReactiveValue(conversationStore.activeConversationThread)?.title).toBe('重试后标题');
+    expect(readReactiveValue(conversationStore.activeConversationThread)?.titleStatus).toBe(
+      'generated',
+    );
   });
 
   it('starts a new conversation by clearing draft and transient state', () => {
@@ -1181,7 +1189,7 @@ describe('useAiAssistant streaming integration', () => {
 
   it('switching conversations keeps pending sidecar approval persisted for its original thread', () => {
     const assistant = createAssistantHarness();
-    const conversationStore = useAiConversationStore();
+    const conversationStore = useAiThreadStore();
     const agentStore = useAiAgentStore();
     const firstThreadId = readReactiveValue(assistant.activeConversationId);
 
@@ -1229,7 +1237,7 @@ describe('useAiAssistant streaming integration', () => {
   });
 
   it('hydrates persisted messages from the conversation store', () => {
-    const conversationStore = useAiConversationStore();
+    const conversationStore = useAiThreadStore();
 
     conversationStore.replaceMessages([
       {
@@ -1641,7 +1649,7 @@ describe('useAiAssistant streaming integration', () => {
 
   it('sidecar 首个事件到达前就显示上下文相关的运行状态', async () => {
     const { assistant } = createAssistantHarnessContext();
-    const conversationStore = useAiConversationStore();
+    const conversationStore = useAiThreadStore();
     const sidecarGate = createDeferred<void>();
 
     aiServiceMock.sidecarExecute.mockImplementationOnce(
@@ -1700,7 +1708,7 @@ describe('useAiAssistant streaming integration', () => {
 
   it('streams sidecar tool activity into the assistant message before the final response resolves', async () => {
     const { assistant } = createAssistantHarnessContext();
-    const conversationStore = useAiConversationStore();
+    const conversationStore = useAiThreadStore();
     const sidecarGate = createDeferred<void>();
 
     aiServiceMock.sidecarExecute.mockImplementationOnce(
@@ -1967,7 +1975,7 @@ describe('useAiAssistant streaming integration', () => {
 
   it('sidecar message_delta 合帧刷新，避免长回答逐 token 卡住且不改变最终结果', async () => {
     const { assistant } = createAssistantHarnessContext();
-    const conversationStore = useAiConversationStore();
+    const conversationStore = useAiThreadStore();
     const replaceThreadMessagesSpy = vi.spyOn(conversationStore, 'replaceThreadMessages');
     const sidecarGate = createDeferred<void>();
     const queuedFrames = new Map<number, FrameRequestCallback>();
@@ -2091,7 +2099,7 @@ describe('useAiAssistant streaming integration', () => {
 
   it('sidecar 执行中切换会话仍回写发起会话，避免回来后内容清空', async () => {
     const { assistant } = createAssistantHarnessContext();
-    const conversationStore = useAiConversationStore();
+    const conversationStore = useAiThreadStore();
     const sidecarGate = createDeferred<void>();
     const finalText = '切换会话后仍然保留的 Agent 回复';
 
@@ -2144,7 +2152,9 @@ describe('useAiAssistant streaming integration', () => {
     sidecarGate.resolve(undefined);
     await sendPromise;
 
-    const sourceThread = conversationStore.threads.find((thread) => thread.id === sourceThreadId);
+    const sourceThread = conversationStore.conversationHistoryThreads.find(
+      (thread) => thread.id === sourceThreadId,
+    );
     expect(sourceThread?.messages[1]?.content).toBe(finalText);
     expect(sourceThread?.messages[1]?.stream?.status).toBe('completed');
     expect(conversationStore.activeMessages).toHaveLength(0);

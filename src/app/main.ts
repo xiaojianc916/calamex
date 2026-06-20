@@ -3,9 +3,12 @@ import { VueQueryPlugin } from '@tanstack/vue-query';
 import { queryClient, setupQueryPersistence } from '@/lib/query-client';
 import { applyWindowStage } from '@/services/ipc/window.service';
 import { pinia } from '@/store';
-import { useAiConversationStore } from '@/store/aiConversation';
-import { installEntriesMirror } from '@/store/aiThread/entriesMirrorBridge';
-import { runStartupPersistedRead } from '@/store/aiThread/startupPersistedReadWiring';
+import { useAiThreadStore } from '@/store/aiThread';
+import { installAuthoritativeEntriesMirror } from '@/store/aiThread/authoritativeEntriesMirror';
+import {
+  runStartupPersistedRead,
+  defaultDeps as startupPersistedReadDefaultDeps,
+} from '@/store/aiThread/startupPersistedReadWiring';
 import { hydrateAiConversationStorage } from '@/store/plugins/debouncedPersistStorage';
 import { hydrateSessionStorage } from '@/store/plugins/tauriSessionStorage';
 import { initEditorScrollbarActivity } from '@/utils/editor/editor-scrollbar-activity';
@@ -122,11 +125,19 @@ const bootstrap = async (): Promise<void> => {
       // AI 历史不是首屏必需：延后到首屏后 idle，避免和 session hydrate / Vue mount 抢 IO。
       scheduleIdle(() => {
         void hydrateAiConversationStorage()
-          .then(() => runStartupPersistedRead())
+          .then(() =>
+            runStartupPersistedRead({
+              ...startupPersistedReadDefaultDeps,
+              // ④.1 §C：持久化 SoT 收敛到 aiThread 权威 entries，启动读结果直接灌入
+              // 权威线程（不再走 legacy 回退槽），后续由权威镜像负责落盘。
+              applyPersisted: (threads, activeThreadId) =>
+                useAiThreadStore().setAuthoritativeThreads(threads, activeThreadId),
+            }),
+          )
           .then(() => {
-            // 7.4d 双写接线：必须在 legacy hydrate + 读侧回退槽填充之后再装镜像，
-            // 否则首次立即镜像会把空态写入权威新 key，导致下次启动读到“空且权威”而丢历史。
-            installEntriesMirror(useAiConversationStore());
+            // ④.1 §C 双写接线：必须在 legacy hydrate + 权威线程灌入之后再装权威镜像，
+            // 否则首帧立即镜像会把空态写入 entries key，导致下次启动读到“空且权威”而丢历史。
+            installAuthoritativeEntriesMirror(useAiThreadStore());
           })
           .catch((error: unknown) => {
             console.warn('AI 会话历史后台 hydrate 失败', error);
