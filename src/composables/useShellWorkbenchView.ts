@@ -4,6 +4,7 @@ import { useGitRepositoryStatusBootstrap } from '@/composables/useGitRepositoryS
 import { useShellWorkbenchAiBridge } from '@/composables/useShellWorkbenchAiBridge';
 import { useShellWorkbenchViewportState } from '@/composables/useShellWorkbenchViewportState';
 import { useWorkbench } from '@/composables/useWorkbench';
+import { DEFAULT_TERMINAL_PANEL_HEIGHT } from '@/store/app';
 import { useGitStore } from '@/store/git';
 import type { TWorkbenchPrimaryMode, TWorkbenchSidebarView } from '@/types/app';
 import type {

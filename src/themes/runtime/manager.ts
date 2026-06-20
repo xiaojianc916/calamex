@@ -296,15 +296,8 @@ export class ThemeManager {
       const newId: TVariantId = event.matches ? 'dark' : 'light';
       this.#applyVariant(newId, false);
     };
-
-    if (typeof mq.addEventListener === 'function') {
-      mq.addEventListener('change', handler);
-      this.#systemThemeCleanup = () => mq.removeEventListener('change', handler);
-    } else {
-      // 旧版 API 兼容
-      mq.addListener(handler);
-      this.#systemThemeCleanup = () => mq.removeListener(handler);
-    }
+    mq.addEventListener('change', handler);
+    this.#systemThemeCleanup = () => mq.removeEventListener('change', handler);
   }
 
   #cleanupSystemThemeListener(): void {

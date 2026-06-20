@@ -49,7 +49,7 @@ const RANGE_AI_PANEL_WIDTH = [350, 550] as const satisfies TNumberRange;
 const DEFAULT_AI_PANEL_WIDTH = 450;
 
 const RANGE_TERMINAL_PANEL_HEIGHT = [140, 2000] as const satisfies TNumberRange;
-const DEFAULT_TERMINAL_PANEL_HEIGHT = 236;
+export const DEFAULT_TERMINAL_PANEL_HEIGHT = 236;
 
 const DEFAULT_WORKBENCH_PRIMARY_MODE: TWorkbenchPrimaryMode = 'ai';
 

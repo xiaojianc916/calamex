@@ -1,7 +1,7 @@
 import type { z } from 'zod';
 import type { IPayloadMetrics } from './tauri.ipc-types';
 
-const textEncoder = typeof TextEncoder !== 'undefined' ? new TextEncoder() : null;
+const textEncoder = new TextEncoder();
 
 const serializeForLog = (value: unknown): string => {
   if (value === undefined) {
@@ -21,7 +21,7 @@ const buildPayloadMetricsFromSerialized = (serialized: string): IPayloadMetrics 
   }
 
   return {
-    bytes: textEncoder ? textEncoder.encode(serialized).length : serialized.length,
+    bytes: textEncoder.encode(serialized).length,
   };
 };
 
@@ -50,7 +50,7 @@ export const buildPayloadMetricsOmittingTextFields = <T extends Record<string, u
 
   for (const [field, fieldValue] of Object.entries(value)) {
     if (omittedFieldSet.has(field) && typeof fieldValue === 'string') {
-      omittedBytes += textEncoder ? textEncoder.encode(fieldValue).length : fieldValue.length;
+      omittedBytes += textEncoder.encode(fieldValue).length;
       continue;
     }
 
