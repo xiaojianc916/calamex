@@ -1,29 +1,29 @@
 //! 宿主侧 ACP stdio 子进程的启动配置解析。
 //!
 //! 职责：把「用哪个 node、跑哪个 ACP 入口、注入哪些子进程环境变量」解析成
-//! `client::AcpClientConfig { program, args, env }`,供 `spawn_acp_client` 派生 stdio 子进程。
+//! `client::AcpClientConfig { program, args, env }`，供 `spawn_acp_client` 派生 stdio 子进程。
 //!
-//! 本模块的进程/入口/env 解析逻辑忺实自旧 `agent_sidecar/mod.rs`(原 HTTP 路径的
-//! `resolve_sidecar_root` / `resolve_node_executable` / env 注入等),以便后续删除旧
-//! 模块后本文件仍自包含。与旧 HTTP 路径的关键区别:
-//!   * 入口改为 ACP stdio 入口 `dist/acp/stdio-entry.js`(回退 `tsx + src/acp/stdio-entry.ts`),
-//!     而非旧 `dist/server.js`;
-//!   * stdio 无 HTTP 监听,故不注入 `AGENT_SIDECAR_PORT` / `AGENT_SIDECAR_TOKEN`
-//!     (二者仅用于旧 HTTP 服务的端口与 Bearer 鉴权);
-//!   * 模型配置走逐请求通道(chat / restore 请求携带 `model_config`),而 stdio-entry 仅在
-//!     启动时用 env 做可选预热(`createMastraModelConfigFromEnv()`,缺失会优雅跳过),故
-//!     launch 层不耦合凭证 / 网关,不注入模型 env(职责分离更干净;预热仅推迟到首
-//!     个请求,不影响正确性)。
+//! 本模块的进程/入口/env 解析逻辑总实自旧 `agent_sidecar/mod.rs`（原 HTTP 路径的
+//!     `resolve_sidecar_root` / `resolve_node_executable` / env 注入等），以便后续删除旧
+//!     模块后本文件仍自包含。与旧 HTTP 路径的关键区别：
+//!   * 入口改为 ACP stdio 入口 `dist/acp/stdio-entry.js`（回退 `tsx + src/acp/stdio-entry.ts`），
+//!     而非旧 `dist/server.js`；
+//!   * stdio 无 HTTP 监听，故不注入 `AGENT_SIDECAR_PORT` / `AGENT_SIDECAR_TOKEN`
+//!     （二者仅用于旧 HTTP 服务的端口与 Bearer 鉴权）；
+//!   * 模型配置走逐请求通道（chat / restore 请求携带 `model_config`），而 stdio-entry 仅在
+//!     启动时用 env 做可选预热（`createMastraModelConfigFromEnv()`，缺失会优雅跳过），故
+//!     launch 层不耦合凭证 / 网关，不注入模型 env（职责分离更干净；预热仅推迟到首
+//!     个请求，不影响正确性）。
 //!
-//! SDK 的 `AcpAgent::spawn_process` 只设置 command / args / env,不设 `cwd`;故 `program`
-//! 与入口路径均采用绝对路径,保证与工作目录无关。
+//! SDK 的 `AcpAgent::spawn_process` 只设置 command / args / env，不设 `cwd`；故 `program`
+//! 与入口路径均采用绝对路径，保证与工作目录无关。
 //!
-//! 多后端注册表(ADR-0015 阶段 1):`build_acp_client_config_for(AcpBackendId)` 按后端标识
-//! 解析启动配置。`Builtin` 复用上述自家边车解析(行为与历史一致);外部 ACP
-//! 编码 agent(Kimi Code / Codex 等)给出「程序 + 参数 + env」描述。本阶段仅产出启动
-//! 配置,尚未接入 runtime(接线见阶段 2)。
+//! 多后端注册表（ADR-0015 阶段 1）：`build_acp_client_config_for(AcpBackendId)` 按后端标识
+//! 解析启动配置。`Builtin` 复用上述自家边车解析（行为与历史一致）；外部 ACP
+//! 编码 agent（Kimi Code / Codex 等）给出「程序 + 参数 + env」描述。本阶段仅产出启动
+//! 配置，尚未接入 runtime（接线见阶段 2）。
 //!
-//! 按 cargo feature `acp_client` 门控;接线前不影响现有路径。
+//! 按 cargo feature `acp_client` 门控；接线前不影响现有路径。
 
 #![allow(dead_code)]
 
@@ -38,42 +38,42 @@ const NODE_EXE_ENV: &str = "XIAOJIANC_NODE_EXE";
 const MCP_UVX_PATH_ENV: &str = "AGENT_MCP_UVX_PATH";
 const TAVILY_API_KEY_ENV: &str = "TAVILY_API_KEY";
 
-// 外部 ACP 后端的可执行路径覆盖与凭证 env 键(ADR-0015 阶段 1)。
+// 外部 ACP 后端的可执行路径覆盖与凭证 env 键（ADR-0015 阶段 1）。
 const KIMI_EXE_ENV: &str = "XIAOJIANC_KIMI_EXE";
 const CODEX_ACP_EXE_ENV: &str = "XIAOJIANC_CODEX_ACP_EXE";
 const OPENAI_API_KEY_ENV: &str = "OPENAI_API_KEY";
 
-// Kimi Code 的 provider 级凭证 env 名与默认端点(官方文档核对:moonshotai.github.io/kimi-code)。
-// 注意:`kimi acp` 服务经终端 `/login` 自持久化凭证(Kimi Code OAuth 或 Moonshot 开放平台
-// API key,落 `~/.kimi`),并不从启动环境读取这些变量;故 build_kimi_client_config 有意不注入
-// 它们(env 为空)。此处仅作文档与未来「托管直连」之用,不改变任何运行时行为。
+// Kimi Code 的 provider 级凭证 env 名与默认端点（官方文档核对：moonshotai.github.io/kimi-code）。
+// 注意：`kimi acp` 服务经终端 `/login` 自持久化凭证（Kimi Code OAuth 或 Moonshot 开放平台
+// API key，落 `~/.kimi`），并不从启动环境读取这些变量；故 build_kimi_client_config 有意不注入
+// 它们（env 为空）。此处仅作文档与未来「托管直连」之用，不改变任何运行时行为。
 const KIMI_API_KEY_ENV: &str = "KIMI_API_KEY";
 const KIMI_BASE_URL_ENV: &str = "KIMI_BASE_URL";
 const KIMI_DEFAULT_BASE_URL: &str = "https://api.moonshot.ai/v1";
 
-/// 可挂载的 ACP 后端标识(ADR-0015)。`Builtin` 为自家 Node 边车(默认后端,
-/// 行为与历史一致);其余为外部 ACP 编码 agent。本阶段仅提供启动配置,接线在阶段 2。
+/// 可挂载的 ACP 后端标识（ADR-0015）。`Builtin` 为自家 Node 边车（默认后端，
+/// 行为与历史一致）；其余为外部 ACP 编码 agent。本阶段仅提供启动配置，接线在阶段 2。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum AcpBackendId {
-    /// 自家 Node Mastra 边车(默认后端,行为与历史一致)。
+    /// 自家 Node Mastra 边车（默认后端，行为与历史一致）。
     Builtin,
-    /// Kimi Code(@moonshot-ai/kimi-code):原生 ACP;优先工程内置包(node <入口> acp),否则回退裸 kimi acp;可经 XIAOJIANC_KIMI_EXE 覆盖为绝对路径。
+    /// Kimi Code（@moonshot-ai/kimi-code）：原生 ACP；优先工程内置包（node <入口> acp），否则回退裸 kimi acp；可经 XIAOJIANC_KIMI_EXE 覆盖为绝对路径。
     Kimi,
-    /// Codex CLI:经社区适配器 `codex-acp`,凭 `OPENAI_API_KEY`。
+    /// Codex CLI：经社区适配器 `codex-acp`，凭 `OPENAI_API_KEY`。
     Codex,
 }
 
-/// 解析「默认后端(自家边车)」的启动配置。保持历史签名与行为不变:
+/// 解析「默认后端（自家边车）」的启动配置。保持历史签名与行为不变：
 /// 等价于 `build_acp_client_config_for(AcpBackendId::Builtin)`。
 pub fn build_acp_client_config() -> Result<AcpClientConfig, String> {
     build_acp_client_config_for(AcpBackendId::Builtin)
 }
 
-/// 按后端标识解析 ACP stdio 子进程启动配置(ADR-0015 阶段 1:多后端启动注册表)。
+/// 按后端标识解析 ACP stdio 子进程启动配置（ADR-0015 阶段 1：多后端启动注册表）。
 ///
-/// `Builtin` 复用自家边车解析(node + ACP 入口 + 工具 env),行为与历史一致;
-/// 外部后端给出「程序 + 参数 + env」描述,凭证经 env 注入(遵守 ADR-0009:密钥仅在
-/// Rust/边车侧)。注意:本函数仅产出启动配置,尚未接入 runtime(接线见阶段 2)。
+/// `Builtin` 复用自家边车解析（node + ACP 入口 + 工具 env），行为与历史一致；
+/// 外部后端给出「程序 + 参数 + env」描述，凭证经 env 注入（遵守 ADR-0009：密钥仅在
+/// Rust/边车侧）。注意：本函数仅产出启动配置，尚未接入 runtime（接线见阶段 2）。
 pub fn build_acp_client_config_for(backend: AcpBackendId) -> Result<AcpClientConfig, String> {
     match backend {
         AcpBackendId::Builtin => build_builtin_client_config(),
@@ -82,10 +82,10 @@ pub fn build_acp_client_config_for(backend: AcpBackendId) -> Result<AcpClientCon
     }
 }
 
-/// 自家 Node 边车启动配置(原 `build_acp_client_config` 主体,逐字保留)。
+/// 自家 Node 边车启动配置（原 `build_acp_client_config` 主体，逐字保留）。
 ///
-/// `program` = 解析出的 node 绝对路径;`args` = ACP 入口(优先预编译产物,否则 tsx + 源码);
-/// `env` = 子进程环境变量(工具所需 + 编译缓存)。
+/// `program` = 解析出的 node 绝对路径；`args` = ACP 入口（优先预编译产物，否则 tsx + 源码）；
+/// `env` = 子进程环境变量（工具所需 + 编译缓存）。
 fn build_builtin_client_config() -> Result<AcpClientConfig, String> {
     let sidecar_root = resolve_sidecar_root()?;
     let node = resolve_node_executable()?;
@@ -99,12 +99,12 @@ fn build_builtin_client_config() -> Result<AcpClientConfig, String> {
     })
 }
 
-/// Kimi Code(Kimi CLI)启动配置:`kimi acp`(原生 ACP)。
+/// Kimi Code（Kimi CLI）启动配置：`kimi acp`（原生 ACP）。
 ///
-/// 优先工程内置包 @moonshot-ai/kimi-code(node <绝对入口> acp),否则回退 kimi acp;可经 XIAOJIANC_KIMI_EXE 覆盖为绝对路径。
-/// 鉴权由 Kimi CLI 自身负责(凭据落 ~/.kimi,登录由其自身流程处理),故此处不注入模型 env。
+/// 优先工程内置包 @moonshot-ai/kimi-code（node <绝对入口> acp），否则回退 kimi acp；可经 XIAOJIANC_KIMI_EXE 覆盖为绝对路径。
+/// 鉴权由 Kimi CLI 自身负责（凭据落 ~/.kimi，登录由其自身流程处理），故此处不注入模型 env。
 fn build_kimi_client_config() -> AcpClientConfig {
-    // 1) 绝对路径覆盖优先:随包/非 PATH 安装的逃生舱,直接作为 program 执行 <exe> acp。
+    // 1) 绝对路径覆盖优先：随包/非 PATH 安装的逃生舱，直接作为 program 执行 <exe> acp。
     if let Some(program) = env_or_user_env(KIMI_EXE_ENV) {
         return AcpClientConfig {
             program,
@@ -113,13 +113,13 @@ fn build_kimi_client_config() -> AcpClientConfig {
         };
     }
 
-    // 2) 工程内置 npm 包(@moonshot-ai/kimi-code):以 node <绝对入口> acp 运行,
-    //    Windows 正确,绕开 node_modules/.bin/kimi shim 的 ENOENT。
+    // 2) 工程内置 npm 包（@moonshot-ai/kimi-code）：以 node <绝对入口> acp 运行，
+    //    Windows 正确，绕开 node_modules/.bin/kimi shim 的 ENOENT。
     if let Some(config) = resolve_bundled_kimi_client_config() {
         return config;
     }
 
-    // 3) 兜底:回退裸 kimi(系统 PATH);仅在既无 env 覆盖也未找到内置包时使用。
+    // 3) 兑底：回退裸 kimi（系统 PATH）；仅在既无 env 覆盖也未找到内置包时使用。
     AcpClientConfig {
         program: "kimi".to_string(),
         args: vec!["acp".to_string()],
@@ -127,11 +127,11 @@ fn build_kimi_client_config() -> AcpClientConfig {
     }
 }
 
-/// 解析「工程内置」Kimi Code(@moonshot-ai/kimi-code,经 pnpm add -D 装入工程根 node_modules)
-/// 的启动配置:node <绝对入口> acp。形态为 npm 包(JS CLI),以 node 直接运行绝对入口脚本——
-/// 绝对入口绕开 Windows 上 node_modules/.bin/kimi.CMD shim 的 ENOENT(GUI 进程不继承终端
-/// PATH)。node 解析复用 builtin 的 resolve_node_executable(随包 node 优先,再常见安装位置,
-/// 最后 PATH)。任一步缺失则返回 None,交由上层兜底。
+/// 解析「工程内置」Kimi Code（@moonshot-ai/kimi-code，经 pnpm add -D 装入工程根 node_modules）
+/// 的启动配置：node <绝对入口> acp。形态为 npm 包（JS CLI），以 node 直接运行绝对入口脚本——
+/// 绝对入口绕开 Windows 上 node_modules/.bin/kimi.CMD shim 的 ENOENT（GUI 进程不继承终端
+/// PATH）。node 解析复用 builtin 的 resolve_node_executable（随包 node 优先，再常见安装位置，
+/// 最后 PATH）。任一步缺失则返回 None，交由上层兑底。
 fn resolve_bundled_kimi_client_config() -> Option<AcpClientConfig> {
     let node = resolve_node_executable().ok()?;
     let package_dir = find_kimi_package_dir()?;
@@ -145,8 +145,8 @@ fn resolve_bundled_kimi_client_config() -> Option<AcpClientConfig> {
 }
 
 /// 在候选根的 node_modules/@moonshot-ai/kimi-code 下定位含 package.json 的包目录。
-/// 候选根:随包资源根(打包态)在前,仓库工作区根(开发态,pnpm add -D 落此处的 node_modules)
-/// 兜底——与 sidecar/node 的「随包优先,源码树兜底」解析策略一致。
+/// 候选根：随包资源根（打包态）在前，仓库工作区根（开发态，pnpm add -D 落此处的 node_modules）
+/// 兑底——与 sidecar/node 的「随包优先，源码树兑底」解析策略一致。
 fn find_kimi_package_dir() -> Option<PathBuf> {
     for root in kimi_package_search_roots() {
         let package_dir = root
@@ -160,7 +160,7 @@ fn find_kimi_package_dir() -> Option<PathBuf> {
     None
 }
 
-/// 内置 Kimi 包的候选搜索根:随包资源根(打包态)在前,仓库工作区根(开发态)兜底。
+/// 内置 Kimi 包的候选搜索根：随包资源根（打包态）在前，仓库工作区根（开发态）兑底。
 fn kimi_package_search_roots() -> Vec<PathBuf> {
     let mut roots: Vec<PathBuf> = Vec::new();
     for root in crate::commands::shell_tools::bundled_resource_roots() {
@@ -173,8 +173,8 @@ fn kimi_package_search_roots() -> Vec<PathBuf> {
     roots
 }
 
-/// 从包 package.json 的 bin 字段解析指定命令的入口脚本绝对路径。bin 可为字符串(单一入口)
-/// 或对象(优先 bin_name,否则取首个值);入口相对包目录解析。字段缺失或入口文件不存在时
+/// 从包 package.json 的 bin 字段解析指定命令的入口脚本绝对路径。bin 可为字符串（单一入口）
+/// 或对象（优先 bin_name，否则取首个值）；入口相对包目录解析。字段缺失或入口文件不存在时
 /// 返回 None。
 fn resolve_package_bin_entry(package_dir: &Path, bin_name: &str) -> Option<PathBuf> {
     let manifest = fs::read_to_string(package_dir.join("package.json")).ok()?;
@@ -193,10 +193,10 @@ fn resolve_package_bin_entry(package_dir: &Path, bin_name: &str) -> Option<PathB
     entry.is_file().then_some(entry)
 }
 
-/// Codex CLI 启动配置:经社区适配器 `codex-acp`(非原生 ACP)。
+/// Codex CLI 启动配置：经社区适配器 `codex-acp`（非原生 ACP）。
 ///
-/// 可执行名默认 `codex-acp`,可经 `XIAOJIANC_CODEX_ACP_EXE` 覆盖。凭 `OPENAI_API_KEY`
-/// 鉴权:优先进程/用户环境读取后注入子进程 env(遵守 ADR-0009:密钥仅在 Rust 侧)。
+/// 可执行名默认 `codex-acp`，可经 `XIAOJIANC_CODEX_ACP_EXE` 覆盖。凭 `OPENAI_API_KEY`
+/// 鉴权：优先进程/用户环境读取后注入子进程 env（遵守 ADR-0009：密钥仅在 Rust 侧）。
 fn build_codex_client_config() -> AcpClientConfig {
     let program = env_or_user_env(CODEX_ACP_EXE_ENV).unwrap_or_else(|| "codex-acp".to_string());
     let mut env: Vec<(String, String)> = Vec::new();
@@ -210,9 +210,9 @@ fn build_codex_client_config() -> AcpClientConfig {
     }
 }
 
-/// 解析 ACP stdio 入口参数:优先预编译 `dist/acp/stdio-entry.js`(无需运行时 tsx 转译,
-/// 冷启动更快更稳);不存在时回退 `tsx + src/acp/stdio-entry.ts`,保持开发态与未构建
-/// 场景可用。均使用绝对路径(SDK 不设 cwd)。
+/// 解析 ACP stdio 入口参数：优先预编译 `dist/acp/stdio-entry.js`（无需运行时 tsx 转译，
+/// 冷启动更快更稳）；不存在时回退 `tsx + src/acp/stdio-entry.ts`，保持开发态与未构建
+/// 场景可用。均使用绝对路径（SDK 不设 cwd）。
 fn resolve_entry_args(sidecar_root: &Path) -> Result<Vec<String>, String> {
     let compiled = sidecar_root.join("dist").join("acp").join("stdio-entry.js");
     if compiled.is_file() {
@@ -243,10 +243,10 @@ fn resolve_entry_args(sidecar_root: &Path) -> Result<Vec<String>, String> {
     Ok(vec![path_to_string(&tsx_cli), path_to_string(&entry)])
 }
 
-/// 构造子进程环境变量。仅含 stdio 入口真正需要的项:
-///   * `NODE_COMPILE_CACHE`:复用编译缓存,缩短冷启动(与旧路径一致);
-///   * `TAVILY_API_KEY`:web 工具所需,优先进程/用户环境,缺失时回退 sidecar `.env`;
-///   * `AGENT_MCP_UVX_PATH`:MCP 工具拉起 uvx 所需(Windows 解析)。
+/// 构造子进程环境变量。仅含 stdio 入口真正需要的项：
+///   * `NODE_COMPILE_CACHE`：复用编译缓存，缩短冷启动（与旧路径一致）；
+///   * `TAVILY_API_KEY`：web 工具所需，优先进程/用户环境，缺失时回退 sidecar `.env`；
+///   * `AGENT_MCP_UVX_PATH`：MCP 工具拉起 uvx 所需（Windows 解析）。
 fn build_sidecar_env(sidecar_root: &Path) -> Vec<(String, String)> {
     let mut env: Vec<(String, String)> = Vec::new();
 
@@ -255,7 +255,7 @@ fn build_sidecar_env(sidecar_root: &Path) -> Vec<(String, String)> {
         path_to_string(&sidecar_runtime_dir().join("node-compile-cache")),
     ));
 
-    // 优先用进程/用户环境的 TAVILY_API_KEY;缺失时才回退 sidecar `.env`(与旧路径优先级一致)。
+    // 优先用进程/用户环境的 TAVILY_API_KEY；缺失时才回退 sidecar `.env`（与旧路径优先级一致）。
     if let Some(value) = env_or_user_env(TAVILY_API_KEY_ENV)
         .or_else(|| read_dotenv_key(sidecar_root, TAVILY_API_KEY_ENV))
     {
@@ -269,7 +269,7 @@ fn build_sidecar_env(sidecar_root: &Path) -> Vec<(String, String)> {
     env
 }
 
-/// 运行时可写目录:统一落到品牌根 `.calamex/ai-service`(与 `storage_paths` 一致)。
+/// 运行时可写目录：统一落到品牌根 `.calamex/ai-service`（与 `storage_paths` 一致）。
 fn sidecar_runtime_dir() -> PathBuf {
     crate::storage_paths::local_root().join("ai-service")
 }
@@ -281,8 +281,8 @@ fn resolve_sidecar_root() -> Result<PathBuf, String> {
         return Ok(path);
     }
 
-    // 随包优先:安装包内 resources-bundle/agent-sidecar(含 dist 与 node_modules)。
-    // 与 shell_tools 的解析策略一致:随包优先 → 源码树兑底。
+    // 随包优先：安装包内 resources-bundle/agent-sidecar（含 dist 与 node_modules）。
+    // 与 shell_tools 的解析策略一致：随包优先 → 源码树兑底。
     for root in crate::commands::shell_tools::bundled_resource_roots() {
         let bundled = root.join("agent-sidecar");
         if bundled.join("package.json").is_file() {
@@ -313,7 +313,7 @@ fn resolve_node_executable() -> Result<PathBuf, String> {
         return Ok(path);
     }
 
-    // 随包优先:安装包内 resources-bundle/node/node.exe(目标机无系统 Node 也能运行)。
+    // 随包优先：安装包内 resources-bundle/node/node.exe（目标机无系统 Node 也能运行）。
     for root in crate::commands::shell_tools::bundled_resource_roots() {
         let node_dir = root.join("node");
         for name in ["node.exe", "node"] {
@@ -360,7 +360,7 @@ fn find_executable_in_path(file_name: &str) -> Option<PathBuf> {
     })
 }
 
-/// 解析 uvx 可执行路径(优先 env,其次常见安装位置)。非 Windows 上候选多不存在，返回 None。
+/// 解析 uvx 可执行路径（优先 env，其次常见安装位置）。非 Windows 上候选多不存在，返回 None。
 fn resolve_windows_uvx_path() -> Option<PathBuf> {
     if let Some(path) = env_or_user_env(MCP_UVX_PATH_ENV).map(PathBuf::from)
         && path.is_file()
@@ -394,13 +394,13 @@ fn windows_uvx_candidates() -> Vec<PathBuf> {
     candidates
 }
 
-/// 从 sidecar `.env` 读取指定键(仅在进程/用户环境缺失时作为回退)。
+/// 从 sidecar `.env` 读取指定键（仅在进程/用户环境缺失时作为回退）。
 fn read_dotenv_key(sidecar_root: &Path, key: &str) -> Option<String> {
     let content = fs::read_to_string(sidecar_root.join(".env")).ok()?;
     find_dotenv_value(&content, key)
 }
 
-/// 纯函数:从 dotenv 文本中提取 `key` 的值(跳过空行/注释,去首尾引号,空值视为无)。
+/// 纯函数：从 dotenv 文本中提取 `key` 的值（跳过空行/注释，去首尾引号，空值视为无）。
 fn find_dotenv_value(content: &str, key: &str) -> Option<String> {
     for line in content.lines() {
         let trimmed = line.trim();
@@ -427,7 +427,7 @@ fn find_dotenv_value(content: &str, key: &str) -> Option<String> {
     None
 }
 
-/// 进程环境优先,其次 Windows 用户环境(HKCU\\Environment);均去首尾空白且空值视为无。
+/// 进程环境优先，其次 Windows 用户环境（HKCU\\Environment）；均去首尾空白且空值视为无。
 fn env_or_user_env(key: &str) -> Option<String> {
     let process_value = env::var(key).ok().and_then(non_empty_string);
     if process_value.is_some() {
@@ -483,12 +483,12 @@ fn parse_reg_query_value(output: &str, key: &str) -> Option<String> {
     })
 }
 
-/// 路径 → String(lossy)。ACP 入口 / node 路径在目标平台上均可 UTF-8 表示。
+/// 路径 → String（lossy）。ACP 入口 / node 路径在目标平台上均可 UTF-8 表示。
 fn path_to_string(path: &Path) -> String {
     path.to_string_lossy().into_owned()
 }
 
-// ── Kimi Code 凭证预置（复用项目已保存的网关模型配置）────────────────────────────
+// ── Kimi Code 凭证预置（复用项目已保存的网关模型配置）────────────────
 //
 // `kimi acp` 默认从 `~/.kimi/config.toml` 读取 provider / model / 凭证（见 kimi-cli「Config
 // Files」文档）。本项目已在 AI 设置里保存了网关模型（selected_model + base_url）与逐厂商
@@ -543,28 +543,18 @@ fn toml_str(value: &str) -> String {
     format!("{value:?}")
 }
 
-/// 各受支持厂商的官方 OpenAI 兼容端点。当用户未在 AI 设置里显式填写「Provider 地址」时，
-/// 网关配置的 base_url 为空（Mastra 在主链路内部按 provider 解析端点，无需用户手填），但
-/// Kimi 的 `openai_legacy` provider 必须有一个 base_url 才能复用项目内既存 Key——否则
-/// `collect_kimi_model_entry` 返回 None、整份 config.toml 被跳过，`kimi acp` 启动无凭证而报
-/// 「acp protocol error: Authentication required」。此处按厂商补齐与 Mastra 同源的端点。
+/// Kimi 凭证预置所需的「厂商 → 默认 OpenAI 兼容端点」解析，委托至单一事实源
+/// [`crate::ai::credential::default_provider_base_url`]。
 ///
-/// provider 键与 `crate::ai::credential::supported_provider_ids()` 对齐；deepseek 与 sidecar
-/// `agent-sidecar/src/models/providers/deepseek-mastra-gateway.ts` 的 DEFAULT_DEEPSEEK_BASE_URL、
-/// moonshotai 与本文件 `KIMI_DEFAULT_BASE_URL` 保持同值。注意：这是与 sidecar / Mastra 端点的
-/// 「双写」关系，调整任一厂商端点时两侧需同步（与 `DEFAULT_MASTRA_MODEL` 的跨语言同源约定一致）。
+/// 当用户未在 AI 设置里显式填写「Provider 地址」时，网关配置的 base_url 为空，但 Kimi 的
+/// `openai_legacy` provider 必须有一个 base_url 才能复用项目内既存 Key——否则
+/// `collect_kimi_model_entry` 返回 None、整份 config.toml 被跳过，`kimi acp` 启动无凭证而报
+/// 「acp protocol error: Authentication required」。
+///
+/// 端点表此前在本文件与主链路 sidecar 各写一份（双写易漂移），现已统一收敛到
+/// `ai::credential::default_provider_base_url`；本函数仅作薄封装，保留既有调用点与单测。
 fn default_gateway_base_url(platform: &str) -> Option<&'static str> {
-    match platform.trim() {
-        "openai" => Some("https://api.openai.com/v1"),
-        "anthropic" => Some("https://api.anthropic.com/v1"),
-        "deepseek" => Some("https://api.deepseek.com/v1"),
-        "google" => Some("https://generativelanguage.googleapis.com/v1beta/openai"),
-        "moonshotai" => Some(KIMI_DEFAULT_BASE_URL),
-        "alibaba" => Some("https://dashscope.aliyuncs.com/compatible-mode/v1"),
-        "zhipuai" => Some("https://open.bigmodel.cn/api/paas/v4"),
-        "ollama" => Some("http://localhost:11434/v1"),
-        _ => None,
-    }
+    crate::ai::credential::default_provider_base_url(platform)
 }
 
 /// 单个 Kimi provider 条目（openai_legacy：复用项目内某平台的网关地址 + Key）。
@@ -769,7 +759,7 @@ mod tests {
 
     #[test]
     fn kimi_client_config_uses_acp_subcommand() {
-        // Kimi Code 末位参数恒为 acp:env 覆盖 / 内置包(node <入口> acp)/ PATH 兜底三态统一,program 非空。
+        // Kimi Code 末位参数恒为 acp：env 覆盖 / 内置包（node <入口> acp）/ PATH 兑底三态统一，program 非空。
         let config = build_kimi_client_config();
         assert_eq!(config.args.last().map(String::as_str), Some("acp"));
         assert!(!config.program.trim().is_empty());
@@ -777,8 +767,8 @@ mod tests {
 
     #[test]
     fn codex_client_config_has_no_positional_args() {
-        // Codex 适配器 `codex-acp` 无位置参数;凭证经 env 注入(此处不断言 env 内容,
-        // 因其依赖真实进程环境)。
+        // Codex 适配器 `codex-acp` 无位置参数；凭证经 env 注入（此处不断言 env 内容，
+        // 因其依赖真实进程环境）。
         let config = build_codex_client_config();
         assert!(config.args.is_empty());
         assert!(!config.program.trim().is_empty());
@@ -786,7 +776,7 @@ mod tests {
 
     #[test]
     fn backend_dispatch_routes_external_agents() {
-        // 后端调度:Kimi 末位参数恒为 acp(三态统一),Codex 无位置参数,两者均能产出配置。
+        // 后端调度：Kimi 末位参数恒为 acp（三态统一），Codex 无位置参数，两者均能产出配置。
         let kimi = build_acp_client_config_for(AcpBackendId::Kimi).expect("kimi config");
         assert_eq!(kimi.args.last().map(String::as_str), Some("acp"));
         let codex = build_acp_client_config_for(AcpBackendId::Codex).expect("codex config");
