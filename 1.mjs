@@ -1,18 +1,16 @@
 #!/usr/bin/env node
 /**
- * Brick 2 — 前向通路（sidecar→reduce）工具标题 & 压缩文案 presenter 保真。
+ * Brick 3 — 新建前向单一管线纯组合器（为「实时渲染翻到前向管线」铺接入缝）。
  *
- * 让 reduce/entries 成为渲染单一真源后，前向通路不再丢失 OLD(buildTimelineItems)
- * 已有的语义化工具标题与压缩文案：
- *   - tool.started / tool.completed 标题改用 describeToolAction(同一 presenter 真源)；
- *   - context_compaction 携带 describeRunEvent 文案；
- *   - reduce 事件 tool_completed 增可选 title，完成时刷新展示标题(缺省沿用 started)。
- *
- * 加性、可逆、向后兼容。终端快照/来源/awaiting/diff 内联为 KNOWN-GAP，留后续 sub-brick。
+ * 在 projection 层(层次正确:projection→store 单向，避免 store↔projection 循环)
+ * 新增 live-thread-from-sidecar.ts：把 sidecarEventToReduceEvents(逐事件规范化)
+ * 与 reduceThreadAll(reduce 单写入)串成 buildLiveThreadFromSidecarEvents。
+ * 纯函数、零行为变更(暂无 import 方)，可独立单测变绿。
  *
  * 用法：
- *   node 1.mjs            # 应用
- *   node 1.mjs --check    # dry-run，仅校验匹配、不写盘
+ *   node 1.mjs            # 创建
+ *   node 1.mjs --check    # dry-run，仅打印将创建的文件
+ *   node 1.mjs --force    # 已存在且内容不同则覆盖
  *   REPO_ROOT=/path node 1.mjs
  */
 import fs from 'node:fs';
@@ -20,451 +18,191 @@ import path from 'node:path';
 
 const REPO_ROOT = process.env.REPO_ROOT || process.cwd();
 const DRY = process.argv.includes('--check');
+const FORCE = process.argv.includes('--force');
 
-const read = (rel) => fs.readFileSync(path.join(REPO_ROOT, rel), 'utf8');
-const write = (rel, content) => fs.writeFileSync(path.join(REPO_ROOT, rel), content, 'utf8');
+const BUILDER = `/**
+ * 边车事件流 -> 活动线程(entries 真源)的纯前向组合器。
+ *
+ * 把「逐事件规范化」(sidecarEventToReduceEvents)与「reduce 单写入」(reduceThreadAll)
+ * 串成单一前向管线:边车 UI 事件流 flatMap 成 reduce 规范化事件,再整体回放到基线
+ * 线程上,得到 entries 模型的活动线程。等价于
+ * reduceThreadAll(baseThread, events.flatMap(normalize))，把两步显式串成一条管线，
+ * 作为后续「实时渲染从 legacy-adapter 翻到前向管线」的接入缝。
+ *
+ * 设计取舍:
+ * - 纯函数、无副作用、不持状态、不读时钟:now 与 assistantMessageId 由调用方(回合
+ *   监听层)注入,保证确定性与可单测。
+ * - 仅组合既有纯函数,不复制其逻辑:标题/压缩文案 presenter、工具状态机、chunk 合并
+ *   等全部由下游两函数负责,本层只负责「串起来」。
+ * - 层次方向:本文件属 projection 层,依赖 store 的 reduce 与同层 normalizer;store
+ *   不反向依赖 projection(避免循环依赖)。
+ */
+import { reduceThreadAll } from '@/store/aiThread/reduce';
+import type { TAgentUiEvent } from '@/types/ai/sidecar';
+import type { IAiThread } from '@/types/ai/thread';
 
-const replaceOnce = (rel, content, find, replace) => {
-  const n = content.split(find).length - 1;
-  if (n !== 1) {
-    throw new Error(
-      `[${rel}] 期望恰好 1 处匹配，实际 ${n} 处。请核对源是否漂移：\n--- FIND ---\n${find}\n------------`,
-    );
-  }
-  return content.replace(find, () => replace);
+import { sidecarEventToReduceEvents } from './from-sidecar-events';
+
+export interface IBuildLiveThreadFromSidecarOptions {
+  /** 回放基线线程:通常是本回合开始前的活动线程(entries 真源)。 */
+  baseThread: IAiThread;
+  /** 本回合 assistant 消息 id(正文与思维链共用,见 normalizer)。 */
+  assistantMessageId: string;
+  /** 顶层无内联时间戳事件(message_delta / done / error)的 createdAt(ISO)。 */
+  now: string;
+}
+
+/**
+ * 把一段边车 UI 事件流前向组合为活动线程。纯函数:不修改入参、无副作用。
+ */
+export const buildLiveThreadFromSidecarEvents = (
+  events: readonly TAgentUiEvent[],
+  options: IBuildLiveThreadFromSidecarOptions,
+): IAiThread => {
+  const reduceEvents = events.flatMap((event) =>
+    sidecarEventToReduceEvents(event, {
+      now: options.now,
+      assistantMessageId: options.assistantMessageId,
+    }),
+  );
+  return reduceThreadAll(options.baseThread, reduceEvents);
 };
+`;
 
-const tasks = [
-  /* ---------- 1) 规范化器：presenter 标题 + 压缩文案 ---------- */
-  {
-    rel: 'src/components/business/ai/thread/projection/from-sidecar-events.ts',
-    applied: (c) => c.includes('describeToolAction('),
-    edits: [
-      // 1a. 新增 presenter 导入（@/components 字母序在 @/constants 之前）
-      [
-        `import { classifyRuntimeToolKind } from '@/constants/ai/runtime-tools';`,
-        `import { describeRunEvent, describeToolAction } from '@/components/business/ai/plan/runtime-timeline';\nimport { classifyRuntimeToolKind } from '@/constants/ai/runtime-tools';`,
-      ],
-      // 1b. tool.started 标题 → presenter
-      [
-        `          createdAt: event.timestamp,
-          title: event.toolName,
-          toolKind: RUNTIME_KIND_TO_TOOL_KIND[classifyRuntimeToolKind(event.toolName)],`,
-        `          createdAt: event.timestamp,
-          // 标题经 presenter 语义化（与 OLD buildTimelineItems 同源），消除前向通路「原始工具名」信息丢失。
-          title: describeToolAction(event, event.toolName).action,
-          toolKind: RUNTIME_KIND_TO_TOOL_KIND[classifyRuntimeToolKind(event.toolName)],`,
-      ],
-      // 1c. tool.completed 标题刷新（含/不含 appendContent 两路）
-      [
-        `    case 'agent.tool.completed': {
-      const toolUseId = event.toolUseId ?? event.id;
-      if (isCancelStatus(event.status)) {
-        return [{ kind: 'tool_canceled', id: toolUseId }];
-      }
-      const appendContent = toToolOutputContent(
-        event.ok ? event.resultPreview : (event.errorMessage ?? event.resultPreview),
-      );
-      if (appendContent === undefined) {
-        return [{ kind: 'tool_completed', id: toolUseId, ok: event.ok }];
-      }
-      return [{ kind: 'tool_completed', id: toolUseId, ok: event.ok, appendContent }];
-    }`,
-        `    case 'agent.tool.completed': {
-      const toolUseId = event.toolUseId ?? event.id;
-      if (isCancelStatus(event.status)) {
-        return [{ kind: 'tool_canceled', id: toolUseId }];
-      }
-      // 完成阶段标题经同源 presenter 语义化：完成后由「正在…」刷新为「已完成 / 失败」措辞。
-      const title = describeToolAction(event, event.toolName).action;
-      const appendContent = toToolOutputContent(
-        event.ok ? event.resultPreview : (event.errorMessage ?? event.resultPreview),
-      );
-      if (appendContent === undefined) {
-        return [{ kind: 'tool_completed', id: toolUseId, ok: event.ok, title }];
-      }
-      return [{ kind: 'tool_completed', id: toolUseId, ok: event.ok, title, appendContent }];
-    }`,
-      ],
-      // 1d. context_compaction 文案 → presenter
-      [
-        `    case 'acontext.context_compaction.completed':
-      return [{ kind: 'context_compaction', id: event.compactionId, createdAt: event.timestamp }];`,
-        `    case 'acontext.context_compaction.completed': {
-      // 压缩文案经 presenter（describeRunEvent）语义化，消除前向通路「兜底占位文案」信息丢失。
-      const message = describeRunEvent(event) ?? undefined;
-      return [
-        {
-          kind: 'context_compaction',
-          id: event.compactionId,
-          createdAt: event.timestamp,
-          ...(message !== undefined ? { message } : {}),
-        },
-      ];
-    }`,
-      ],
-    ],
-  },
+const SPEC = `import { describe, expect, it } from 'vitest';
 
-  /* ---------- 2) reduce 事件类型：tool_completed 增可选 title ---------- */
-  {
-    rel: 'src/store/aiThread/events.ts',
-    applied: (c) => c.includes('完成阶段的展示标题'),
-    edits: [
-      [
-        `  | {
-      kind: 'tool_completed';
-      id: string;
-      ok: boolean;
-      appendContent?: IAiThreadToolCallContent[];
-    }`,
-        `  | {
-      kind: 'tool_completed';
-      id: string;
-      ok: boolean;
-      /** 完成阶段的展示标题（presenter「已完成 / 失败」措辞）；缺省则沿用 tool_started 标题。 */
-      title?: string;
-      appendContent?: IAiThreadToolCallContent[];
-    }`,
-      ],
-    ],
-  },
+import type { TAgentRuntimeEvent, TAgentUiEvent } from '@/types/ai/sidecar';
+import type {
+  IAiThread,
+  IAiThreadAssistantMessageEntry,
+  IAiThreadToolCall,
+} from '@/types/ai/thread';
 
-  /* ---------- 3) reduce 写入：完成时刷新标题（缺省沿用） ---------- */
-  {
-    rel: 'src/store/aiThread/reduce.ts',
-    applied: (c) => (c.match(/title: event\.title \|\| current\.title/g) || []).length >= 2,
-    edits: [
-      [
-        `    case 'tool_completed':
-      return {
-        ...current,
-        status: nextToolStatus(current.status, event.ok ? 'completed' : 'failed'),
-        content: event.appendContent
-          ? [...current.content, ...event.appendContent]
-          : current.content,
-      };`,
-        `    case 'tool_completed':
-      return {
-        ...current,
-        // 完成阶段刷新展示标题（presenter「已完成 / 失败」措辞）；缺省沿用 started 标题。
-        title: event.title || current.title,
-        status: nextToolStatus(current.status, event.ok ? 'completed' : 'failed'),
-        content: event.appendContent
-          ? [...current.content, ...event.appendContent]
-          : current.content,
-      };`,
-      ],
-    ],
-  },
+import { buildLiveThreadFromSidecarEvents } from './live-thread-from-sidecar';
 
-  /* ---------- 4) 规范化器 spec：断言委托 presenter（动态期望） ---------- */
-  {
-    rel: 'src/components/business/ai/thread/projection/from-sidecar-events.spec.ts',
-    applied: (c) => c.includes('describeToolAction('),
-    edits: [
-      // 4a. 导入 presenter
-      [
-        `import { classifyRuntimeToolKind } from '@/constants/ai/runtime-tools';`,
-        `import { describeRunEvent, describeToolAction } from '@/components/business/ai/plan/runtime-timeline';\nimport { classifyRuntimeToolKind } from '@/constants/ai/runtime-tools';`,
-      ],
-      // 4b. 工具开始
-      [
-        `  it('工具开始 → tool_started（kind 由工具名经单一映射表派生）', () => {
-    const toolName = 'read_file';
-    expect(
-      sidecarEventToReduceEvents(
-        wrap({ ...makeBase('e1'), type: 'agent.tool.started', toolUseId: 'tool-1', toolName }),
-        OPTIONS,
-      ),
-    ).toEqual([
-      {
-        kind: 'tool_started',
-        id: 'tool-1',
-        createdAt: TS,
-        title: toolName,
-        toolKind: RUNTIME_KIND_TO_TOOL_KIND[classifyRuntimeToolKind(toolName)],
-        status: 'in_progress',
-      },
-    ]);
-  });`,
-        `  it('工具开始 → tool_started（标题经 presenter 派生、kind 由单一映射表派生）', () => {
-    const toolName = 'read_file';
-    const started = {
-      ...makeBase('e1'),
-      type: 'agent.tool.started' as const,
-      toolUseId: 'tool-1',
-      toolName,
-    };
-    expect(sidecarEventToReduceEvents(wrap(started), OPTIONS)).toEqual([
-      {
-        kind: 'tool_started',
-        id: 'tool-1',
-        createdAt: TS,
-        title: describeToolAction(started, toolName).action,
-        toolKind: RUNTIME_KIND_TO_TOOL_KIND[classifyRuntimeToolKind(toolName)],
-        status: 'in_progress',
-      },
-    ]);
-  });`,
-      ],
-      // 4c. 缺 toolUseId
-      [
-        `  it('缺 toolUseId 时回退到事件 id', () => {
-    expect(
-      sidecarEventToReduceEvents(
-        wrap({ ...makeBase('evt-x'), type: 'agent.tool.started', toolName: 'grep' }),
-        OPTIONS,
-      ),
-    ).toEqual([
-      {
-        kind: 'tool_started',
-        id: 'evt-x',
-        createdAt: TS,
-        title: 'grep',
-        toolKind: RUNTIME_KIND_TO_TOOL_KIND[classifyRuntimeToolKind('grep')],
-        status: 'in_progress',
-      },
-    ]);
-  });`,
-        `  it('缺 toolUseId 时回退到事件 id', () => {
-    const started = { ...makeBase('evt-x'), type: 'agent.tool.started' as const, toolName: 'grep' };
-    expect(sidecarEventToReduceEvents(wrap(started), OPTIONS)).toEqual([
-      {
-        kind: 'tool_started',
-        id: 'evt-x',
-        createdAt: TS,
-        title: describeToolAction(started, 'grep').action,
-        toolKind: RUNTIME_KIND_TO_TOOL_KIND[classifyRuntimeToolKind('grep')],
-        status: 'in_progress',
-      },
-    ]);
-  });`,
-      ],
-      // 4d. 工具完成(ok)
-      [
-        `  it('工具完成(ok) → tool_completed', () => {
-    expect(
-      sidecarEventToReduceEvents(
-        wrap({
-          ...makeBase('e1'),
-          type: 'agent.tool.completed',
-          toolUseId: 'tool-1',
-          toolName: 'read_file',
-          ok: true,
-        }),
-        OPTIONS,
-      ),
-    ).toEqual([{ kind: 'tool_completed', id: 'tool-1', ok: true }]);
-  });`,
-        `  it('工具完成(ok) → tool_completed（标题刷新为 presenter 完成措辞）', () => {
-    const completed = {
-      ...makeBase('e1'),
-      type: 'agent.tool.completed' as const,
-      toolUseId: 'tool-1',
-      toolName: 'read_file',
-      ok: true,
-    };
-    expect(sidecarEventToReduceEvents(wrap(completed), OPTIONS)).toEqual([
-      { kind: 'tool_completed', id: 'tool-1', ok: true, title: describeToolAction(completed, 'read_file').action },
-    ]);
-  });`,
-      ],
-      // 4e. 工具完成(ok, resultPreview)
-      [
-        `  it('工具完成(ok, 有 resultPreview) → tool_completed 附 Output 内容块', () => {
-    expect(
-      sidecarEventToReduceEvents(
-        wrap({
-          ...makeBase('e1'),
-          type: 'agent.tool.completed',
-          toolUseId: 'tool-1',
-          toolName: 'read_file',
-          ok: true,
-          resultPreview: '读到 42 行',
-        }),
-        OPTIONS,
-      ),
-    ).toEqual([
-      {
-        kind: 'tool_completed',
-        id: 'tool-1',
-        ok: true,
-        appendContent: [{ type: 'content', block: { type: 'text', text: '读到 42 行' } }],
-      },
-    ]);
-  });`,
-        `  it('工具完成(ok, 有 resultPreview) → tool_completed 附 Output 内容块', () => {
-    const completed = {
-      ...makeBase('e1'),
-      type: 'agent.tool.completed' as const,
-      toolUseId: 'tool-1',
-      toolName: 'read_file',
-      ok: true,
-      resultPreview: '读到 42 行',
-    };
-    expect(sidecarEventToReduceEvents(wrap(completed), OPTIONS)).toEqual([
-      {
-        kind: 'tool_completed',
-        id: 'tool-1',
-        ok: true,
-        title: describeToolAction(completed, 'read_file').action,
-        appendContent: [{ type: 'content', block: { type: 'text', text: '读到 42 行' } }],
-      },
-    ]);
-  });`,
-      ],
-      // 4f. 工具失败
-      [
-        `  it('工具失败 → tool_completed(ok:false) 附 errorMessage 内容块', () => {
-    expect(
-      sidecarEventToReduceEvents(
-        wrap({
-          ...makeBase('e1'),
-          type: 'agent.tool.completed',
-          toolUseId: 'tool-1',
-          toolName: 'read_file',
-          ok: false,
-          errorMessage: '文件不存在',
-        }),
-        OPTIONS,
-      ),
-    ).toEqual([
-      {
-        kind: 'tool_completed',
-        id: 'tool-1',
-        ok: false,
-        appendContent: [{ type: 'content', block: { type: 'text', text: '文件不存在' } }],
-      },
-    ]);
-  });`,
-        `  it('工具失败 → tool_completed(ok:false) 附 errorMessage 内容块', () => {
-    const completed = {
-      ...makeBase('e1'),
-      type: 'agent.tool.completed' as const,
-      toolUseId: 'tool-1',
-      toolName: 'read_file',
-      ok: false,
-      errorMessage: '文件不存在',
-    };
-    expect(sidecarEventToReduceEvents(wrap(completed), OPTIONS)).toEqual([
-      {
-        kind: 'tool_completed',
-        id: 'tool-1',
-        ok: false,
-        title: describeToolAction(completed, 'read_file').action,
-        appendContent: [{ type: 'content', block: { type: 'text', text: '文件不存在' } }],
-      },
-    ]);
-  });`,
-      ],
-      // 4g. 上下文压缩
-      [
-        `  it('上下文压缩完成 → context_compaction', () => {
-    expect(
-      sidecarEventToReduceEvents(
-        wrap({
-          ...makeBase('e1'),
-          type: 'acontext.context_compaction.completed',
-          compactionId: 'cmp-1',
-          reason: 'budget',
-          summaryCharCount: 10,
-        }),
-        OPTIONS,
-      ),
-    ).toEqual([{ kind: 'context_compaction', id: 'cmp-1', createdAt: TS }]);
-  });`,
-        `  it('上下文压缩完成 → context_compaction（附 presenter 文案）', () => {
-    const compaction = {
-      ...makeBase('e1'),
-      type: 'acontext.context_compaction.completed' as const,
-      compactionId: 'cmp-1',
-      reason: 'budget' as const,
-      summaryCharCount: 10,
-    };
-    expect(sidecarEventToReduceEvents(wrap(compaction), OPTIONS)).toEqual([
-      {
-        kind: 'context_compaction',
-        id: 'cmp-1',
-        createdAt: TS,
-        message: describeRunEvent(compaction) ?? undefined,
-      },
-    ]);
-  });`,
-      ],
-    ],
-  },
+const NOW = '2026-06-20T00:00:00.000Z';
+const TS = '2026-06-20T01:02:03.000Z';
 
-  /* ---------- 5) reduce spec：完成刷新 / 缺省沿用标题 ---------- */
-  {
-    rel: 'src/store/aiThread/reduce.spec.ts',
-    applied: (c) => c.includes('刷新展示标题'),
-    edits: [
-      [
-        `    thread = reduceThread(thread, { kind: 'tool_completed', id: 't1', ok: true });
-    thread = reduceThread(thread, { kind: 'tool_progress', id: 't1' });
-    expect((thread.entries[0] as IAiThreadToolCall).status).toBe('completed');
-  });`,
-        `    thread = reduceThread(thread, { kind: 'tool_completed', id: 't1', ok: true });
-    thread = reduceThread(thread, { kind: 'tool_progress', id: 't1' });
-    expect((thread.entries[0] as IAiThreadToolCall).status).toBe('completed');
+const baseThread = (): IAiThread => ({
+  id: 'thread-1',
+  title: '迁移',
+  titleStatus: 'temporary',
+  createdAt: NOW,
+  updatedAt: NOW,
+  entries: [],
+});
+
+const makeBase = (id: string) => ({
+  id,
+  runId: 'run-1',
+  sessionId: 'sess-1',
+  agentId: 'agent-1',
+  timestamp: TS,
+  seq: 1,
+  schemaVersion: 1 as const,
+  redacted: true as const,
+  visibility: 'user' as const,
+});
+
+const wrap = (event: TAgentRuntimeEvent): TAgentUiEvent => ({ type: 'agent_event', event });
+
+describe('buildLiveThreadFromSidecarEvents', () => {
+  it('空事件流:原样回放基线线程(entries 不变)', () => {
+    const result = buildLiveThreadFromSidecarEvents([], {
+      baseThread: baseThread(),
+      assistantMessageId: 'assistant-1',
+      now: NOW,
+    });
+    expect(result.id).toBe('thread-1');
+    expect(result.entries).toEqual([]);
   });
 
-  it('tool_completed 携带 title 时刷新展示标题；缺省沿用 started 标题', () => {
-    let withTitle = createThread();
-    withTitle = reduceThread(withTitle, {
-      kind: 'tool_started',
-      id: 't1',
-      createdAt: ISO,
-      title: '正在查看 foo.ts',
-      toolKind: 'read',
-    });
-    withTitle = reduceThread(withTitle, {
-      kind: 'tool_completed',
-      id: 't1',
-      ok: true,
-      title: '已查看 foo.ts',
-    });
-    expect((withTitle.entries[0] as IAiThreadToolCall).title).toBe('已查看 foo.ts');
+  it('组合 normalizer + reduce:文本增量(同 messageId 合并) + 工具起止 → assistant_message + tool_call', () => {
+    const events: TAgentUiEvent[] = [
+      wrap({ ...makeBase('e1'), type: 'agent.text.delta', text: '答' }),
+      wrap({ ...makeBase('e1b'), type: 'agent.text.delta', text: '案' }),
+      wrap({
+        ...makeBase('e2'),
+        type: 'agent.tool.started',
+        toolUseId: 'tool-1',
+        toolName: 'read_file',
+      }),
+      wrap({
+        ...makeBase('e3'),
+        type: 'agent.tool.completed',
+        toolUseId: 'tool-1',
+        toolName: 'read_file',
+        ok: true,
+      }),
+    ];
 
-    let keepTitle = createThread();
-    keepTitle = reduceThread(keepTitle, {
-      kind: 'tool_started',
-      id: 't2',
-      createdAt: ISO,
-      title: '正在执行 build',
-      toolKind: 'execute',
+    const result = buildLiveThreadFromSidecarEvents(events, {
+      baseThread: baseThread(),
+      assistantMessageId: 'assistant-1',
+      now: NOW,
     });
-    keepTitle = reduceThread(keepTitle, { kind: 'tool_completed', id: 't2', ok: true });
-    expect((keepTitle.entries[0] as IAiThreadToolCall).title).toBe('正在执行 build');
-  });`,
-      ],
-    ],
+
+    expect(result.entries.map((entry) => entry.type)).toEqual(['assistant_message', 'tool_call']);
+
+    // 两条同 assistantMessageId 的文本增量合并为单一 assistant_message(证明 options 贯穿)。
+    const assistants = result.entries.filter(
+      (entry): entry is IAiThreadAssistantMessageEntry => entry.type === 'assistant_message',
+    );
+    expect(assistants).toHaveLength(1);
+    expect(assistants[0].chunks[0]).toMatchObject({ type: 'message', block: { text: '答案' } });
+
+    const tool = result.entries[1] as IAiThreadToolCall;
+    expect(tool.id).toBe('tool-1');
+    expect(tool.status).toBe('completed');
+    // 标题由 presenter 派生(非空);完成态状态机由 reduce 负责。
+    expect(tool.title.length).toBeGreaterThan(0);
+  });
+
+  it('纯函数:不原地突变入参基线线程', () => {
+    const base = baseThread();
+    buildLiveThreadFromSidecarEvents(
+      [wrap({ ...makeBase('e1'), type: 'agent.text.delta', text: 'hi' })],
+      { baseThread: base, assistantMessageId: 'assistant-1', now: NOW },
+    );
+    expect(base.entries).toHaveLength(0);
+  });
+});
+`;
+
+const files = [
+  {
+    rel: 'src/components/business/ai/thread/projection/live-thread-from-sidecar.ts',
+    content: BUILDER,
+  },
+  {
+    rel: 'src/components/business/ai/thread/projection/live-thread-from-sidecar.spec.ts',
+    content: SPEC,
   },
 ];
 
-let changed = 0;
+let created = 0;
 let skipped = 0;
-for (const task of tasks) {
-  const abs = path.join(REPO_ROOT, task.rel);
-  if (!fs.existsSync(abs)) {
-    throw new Error(`缺少文件（源可能漂移）: ${task.rel}`);
-  }
-  let content = read(task.rel);
-  if (task.applied(content)) {
-    console.log(`skip (已应用): ${task.rel}`);
-    skipped += 1;
-    continue;
-  }
-  for (const [find, replace] of task.edits) {
-    content = replaceOnce(task.rel, content, find, replace);
+for (const { rel, content } of files) {
+  const abs = path.join(REPO_ROOT, rel);
+  if (fs.existsSync(abs)) {
+    const cur = fs.readFileSync(abs, 'utf8');
+    if (cur === content) {
+      console.log(`skip (内容一致): ${rel}`);
+      skipped += 1;
+      continue;
+    }
+    if (!FORCE) {
+      throw new Error(`已存在且内容不同，需 --force 覆盖: ${rel}`);
+    }
   }
   if (DRY) {
-    console.log(`[check] 将修改: ${task.rel}`);
-  } else {
-    write(task.rel, content);
-    console.log(`updated: ${task.rel}`);
+    console.log(`[check] 将创建: ${rel}`);
+    created += 1;
+    continue;
   }
-  changed += 1;
+  fs.mkdirSync(path.dirname(abs), { recursive: true });
+  fs.writeFileSync(abs, content, 'utf8');
+  console.log(`created: ${rel}`);
+  created += 1;
 }
-console.log(`\n完成：${changed} 改，${skipped} 跳过${DRY ? '（dry-run，未写盘）' : ''}`);
+console.log(`\n完成：${created} 建，${skipped} 跳过${DRY ? '（dry-run，未写盘）' : ''}`);
