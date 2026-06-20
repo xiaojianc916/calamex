@@ -42,9 +42,9 @@ const total = computed(() => (hasKnownLimit.value ? formatTokensInK(maxTokens.va
 
     <template v-else>
       <div class="flex items-center justify-between gap-3 text-xs">
-        <p class="text-[#09090b]"> displayPercent </p>
+        <p class="text-[#09090b]"> {{displayPercent}} </p>
         <p class="font-mono text-[var(--text-secondary)]">
-           used  /  total 
+           {{used}}  /  {{total}} 
         </p>
       </div>
       <Progress class="context-token-progress" :model-value="usedPercent * PERCENT_MAX" />

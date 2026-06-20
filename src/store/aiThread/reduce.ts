@@ -141,6 +141,8 @@ function applyToolEvent(
     case 'tool_completed':
       return {
         ...current,
+        // 完成阶段刷新展示标题（presenter「已完成 / 失败」措辞）；缺省沿用 started 标题。
+        title: event.title || current.title,
         status: nextToolStatus(current.status, event.ok ? 'completed' : 'failed'),
         content: event.appendContent
           ? [...current.content, ...event.appendContent]

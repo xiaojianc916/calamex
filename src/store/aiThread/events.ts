@@ -71,6 +71,8 @@ export type TAiThreadReduceEvent =
       kind: 'tool_completed';
       id: string;
       ok: boolean;
+      /** 完成阶段的展示标题（presenter「已完成 / 失败」措辞）；缺省则沿用 tool_started 标题。 */
+      title?: string;
       appendContent?: IAiThreadToolCallContent[];
     }
   | { kind: 'tool_canceled'; id: string }

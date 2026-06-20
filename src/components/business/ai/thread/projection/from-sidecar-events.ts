@@ -22,6 +22,10 @@
  *
  * 时间戳取运行时事件内联 timestamp；顶层事件无时间戳，用 options.now。
  * ========================================================================== */
+import {
+  describeRunEvent,
+  describeToolAction,
+} from '@/components/business/ai/plan/runtime-timeline';
 import { classifyRuntimeToolKind } from '@/constants/ai/runtime-tools';
 import type { TAiAssistantChannel, TAiThreadReduceEvent } from '@/store/aiThread/events';
 import type { TAgentRuntimeEvent, TAgentUiEvent } from '@/types/ai/sidecar';
@@ -70,7 +74,8 @@ const fromRuntimeEvent = (
           kind: 'tool_started',
           id: event.toolUseId ?? event.id,
           createdAt: event.timestamp,
-          title: event.toolName,
+          // 标题经 presenter 语义化（与 OLD buildTimelineItems 同源），消除前向通路「原始工具名」信息丢失。
+          title: describeToolAction(event, event.toolName).action,
           toolKind: RUNTIME_KIND_TO_TOOL_KIND[classifyRuntimeToolKind(event.toolName)],
           status: 'in_progress',
         },
@@ -80,13 +85,15 @@ const fromRuntimeEvent = (
       if (isCancelStatus(event.status)) {
         return [{ kind: 'tool_canceled', id: toolUseId }];
       }
+      // 完成阶段标题经同源 presenter 语义化：完成后由「正在…」刷新为「已完成 / 失败」措辞。
+      const title = describeToolAction(event, event.toolName).action;
       const appendContent = toToolOutputContent(
         event.ok ? event.resultPreview : (event.errorMessage ?? event.resultPreview),
       );
       if (appendContent === undefined) {
-        return [{ kind: 'tool_completed', id: toolUseId, ok: event.ok }];
+        return [{ kind: 'tool_completed', id: toolUseId, ok: event.ok, title }];
       }
-      return [{ kind: 'tool_completed', id: toolUseId, ok: event.ok, appendContent }];
+      return [{ kind: 'tool_completed', id: toolUseId, ok: event.ok, title, appendContent }];
     }
     case 'agent.tool.progress': {
       const appendContent = toToolOutputContent(event.dataPreview);
@@ -95,8 +102,18 @@ const fromRuntimeEvent = (
       }
       return [{ kind: 'tool_progress', id: event.toolUseId ?? event.id, appendContent }];
     }
-    case 'acontext.context_compaction.completed':
-      return [{ kind: 'context_compaction', id: event.compactionId, createdAt: event.timestamp }];
+    case 'acontext.context_compaction.completed': {
+      // 压缩文案经 presenter（describeRunEvent）语义化，消除前向通路「兜底占位文案」信息丢失。
+      const message = describeRunEvent(event) ?? undefined;
+      return [
+        {
+          kind: 'context_compaction',
+          id: event.compactionId,
+          createdAt: event.timestamp,
+          ...(message !== undefined ? { message } : {}),
+        },
+      ];
+    }
     case 'agent.run.completed':
       return [{ kind: 'stream_completed' }];
     case 'agent.run.error':

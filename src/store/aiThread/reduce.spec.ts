@@ -163,6 +163,35 @@ describe('reduceThread', () => {
     expect((thread.entries[0] as IAiThreadToolCall).status).toBe('completed');
   });
 
+  it('tool_completed 携带 title 时刷新展示标题；缺省沿用 started 标题', () => {
+    let withTitle = createThread();
+    withTitle = reduceThread(withTitle, {
+      kind: 'tool_started',
+      id: 't1',
+      createdAt: ISO,
+      title: '正在查看 foo.ts',
+      toolKind: 'read',
+    });
+    withTitle = reduceThread(withTitle, {
+      kind: 'tool_completed',
+      id: 't1',
+      ok: true,
+      title: '已查看 foo.ts',
+    });
+    expect((withTitle.entries[0] as IAiThreadToolCall).title).toBe('已查看 foo.ts');
+
+    let keepTitle = createThread();
+    keepTitle = reduceThread(keepTitle, {
+      kind: 'tool_started',
+      id: 't2',
+      createdAt: ISO,
+      title: '正在执行 build',
+      toolKind: 'execute',
+    });
+    keepTitle = reduceThread(keepTitle, { kind: 'tool_completed', id: 't2', ok: true });
+    expect((keepTitle.entries[0] as IAiThreadToolCall).title).toBe('正在执行 build');
+  });
+
   it('stream_cancelled 把所有非终态 tool 收敛为 canceled', () => {
     let thread = createThread();
     thread = reduceThread(thread, {

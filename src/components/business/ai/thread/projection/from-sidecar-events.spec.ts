@@ -1,5 +1,9 @@
 import { describe, expect, it } from 'vitest';
 
+import {
+  describeRunEvent,
+  describeToolAction,
+} from '@/components/business/ai/plan/runtime-timeline';
 import { classifyRuntimeToolKind } from '@/constants/ai/runtime-tools';
 import type { TAgentRuntimeEvent, TAgentUiEvent } from '@/types/ai/sidecar';
 
@@ -67,19 +71,20 @@ describe('sidecarEventToReduceEvents', () => {
     ).toEqual([]);
   });
 
-  it('工具开始 → tool_started（kind 由工具名经单一映射表派生）', () => {
+  it('工具开始 → tool_started（标题经 presenter 派生、kind 由单一映射表派生）', () => {
     const toolName = 'read_file';
-    expect(
-      sidecarEventToReduceEvents(
-        wrap({ ...makeBase('e1'), type: 'agent.tool.started', toolUseId: 'tool-1', toolName }),
-        OPTIONS,
-      ),
-    ).toEqual([
+    const started = {
+      ...makeBase('e1'),
+      type: 'agent.tool.started' as const,
+      toolUseId: 'tool-1',
+      toolName,
+    };
+    expect(sidecarEventToReduceEvents(wrap(started), OPTIONS)).toEqual([
       {
         kind: 'tool_started',
         id: 'tool-1',
         createdAt: TS,
-        title: toolName,
+        title: describeToolAction(started, toolName).action,
         toolKind: RUNTIME_KIND_TO_TOOL_KIND[classifyRuntimeToolKind(toolName)],
         status: 'in_progress',
       },
@@ -87,36 +92,35 @@ describe('sidecarEventToReduceEvents', () => {
   });
 
   it('缺 toolUseId 时回退到事件 id', () => {
-    expect(
-      sidecarEventToReduceEvents(
-        wrap({ ...makeBase('evt-x'), type: 'agent.tool.started', toolName: 'grep' }),
-        OPTIONS,
-      ),
-    ).toEqual([
+    const started = { ...makeBase('evt-x'), type: 'agent.tool.started' as const, toolName: 'grep' };
+    expect(sidecarEventToReduceEvents(wrap(started), OPTIONS)).toEqual([
       {
         kind: 'tool_started',
         id: 'evt-x',
         createdAt: TS,
-        title: 'grep',
+        title: describeToolAction(started, 'grep').action,
         toolKind: RUNTIME_KIND_TO_TOOL_KIND[classifyRuntimeToolKind('grep')],
         status: 'in_progress',
       },
     ]);
   });
 
-  it('工具完成(ok) → tool_completed', () => {
-    expect(
-      sidecarEventToReduceEvents(
-        wrap({
-          ...makeBase('e1'),
-          type: 'agent.tool.completed',
-          toolUseId: 'tool-1',
-          toolName: 'read_file',
-          ok: true,
-        }),
-        OPTIONS,
-      ),
-    ).toEqual([{ kind: 'tool_completed', id: 'tool-1', ok: true }]);
+  it('工具完成(ok) → tool_completed（标题刷新为 presenter 完成措辞）', () => {
+    const completed = {
+      ...makeBase('e1'),
+      type: 'agent.tool.completed' as const,
+      toolUseId: 'tool-1',
+      toolName: 'read_file',
+      ok: true,
+    };
+    expect(sidecarEventToReduceEvents(wrap(completed), OPTIONS)).toEqual([
+      {
+        kind: 'tool_completed',
+        id: 'tool-1',
+        ok: true,
+        title: describeToolAction(completed, 'read_file').action,
+      },
+    ]);
   });
 
   it('工具取消(status=cancelled) → tool_canceled', () => {
@@ -136,46 +140,40 @@ describe('sidecarEventToReduceEvents', () => {
   });
 
   it('工具完成(ok, 有 resultPreview) → tool_completed 附 Output 内容块', () => {
-    expect(
-      sidecarEventToReduceEvents(
-        wrap({
-          ...makeBase('e1'),
-          type: 'agent.tool.completed',
-          toolUseId: 'tool-1',
-          toolName: 'read_file',
-          ok: true,
-          resultPreview: '读到 42 行',
-        }),
-        OPTIONS,
-      ),
-    ).toEqual([
+    const completed = {
+      ...makeBase('e1'),
+      type: 'agent.tool.completed' as const,
+      toolUseId: 'tool-1',
+      toolName: 'read_file',
+      ok: true,
+      resultPreview: '读到 42 行',
+    };
+    expect(sidecarEventToReduceEvents(wrap(completed), OPTIONS)).toEqual([
       {
         kind: 'tool_completed',
         id: 'tool-1',
         ok: true,
+        title: describeToolAction(completed, 'read_file').action,
         appendContent: [{ type: 'content', block: { type: 'text', text: '读到 42 行' } }],
       },
     ]);
   });
 
   it('工具失败 → tool_completed(ok:false) 附 errorMessage 内容块', () => {
-    expect(
-      sidecarEventToReduceEvents(
-        wrap({
-          ...makeBase('e1'),
-          type: 'agent.tool.completed',
-          toolUseId: 'tool-1',
-          toolName: 'read_file',
-          ok: false,
-          errorMessage: '文件不存在',
-        }),
-        OPTIONS,
-      ),
-    ).toEqual([
+    const completed = {
+      ...makeBase('e1'),
+      type: 'agent.tool.completed' as const,
+      toolUseId: 'tool-1',
+      toolName: 'read_file',
+      ok: false,
+      errorMessage: '文件不存在',
+    };
+    expect(sidecarEventToReduceEvents(wrap(completed), OPTIONS)).toEqual([
       {
         kind: 'tool_completed',
         id: 'tool-1',
         ok: false,
+        title: describeToolAction(completed, 'read_file').action,
         appendContent: [{ type: 'content', block: { type: 'text', text: '文件不存在' } }],
       },
     ]);
@@ -201,19 +199,22 @@ describe('sidecarEventToReduceEvents', () => {
     ]);
   });
 
-  it('上下文压缩完成 → context_compaction', () => {
-    expect(
-      sidecarEventToReduceEvents(
-        wrap({
-          ...makeBase('e1'),
-          type: 'acontext.context_compaction.completed',
-          compactionId: 'cmp-1',
-          reason: 'budget',
-          summaryCharCount: 10,
-        }),
-        OPTIONS,
-      ),
-    ).toEqual([{ kind: 'context_compaction', id: 'cmp-1', createdAt: TS }]);
+  it('上下文压缩完成 → context_compaction（附 presenter 文案）', () => {
+    const compaction = {
+      ...makeBase('e1'),
+      type: 'acontext.context_compaction.completed' as const,
+      compactionId: 'cmp-1',
+      reason: 'budget' as const,
+      summaryCharCount: 10,
+    };
+    expect(sidecarEventToReduceEvents(wrap(compaction), OPTIONS)).toEqual([
+      {
+        kind: 'context_compaction',
+        id: 'cmp-1',
+        createdAt: TS,
+        message: describeRunEvent(compaction) ?? undefined,
+      },
+    ]);
   });
 
   it('回合完成 / 错误（运行时事件）', () => {
