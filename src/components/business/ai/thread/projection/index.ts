@@ -1,8 +1,4 @@
 export * from './build-plan-control-message';
-export {
-  buildSingleMessageThreadEntries,
-  clearSingleMessageThreadEntryCache,
-} from './build-single-message-thread-entries';
 export * from './build-thread-entries';
 export * from './derive-run-status';
 export * from './derive-thread-plan-details';
@@ -16,7 +12,6 @@ export * from './from-patch-summary';
 export * from './from-runtime-tool-call';
 export * from './from-sidecar-events';
 export * from './from-wire-tool-call';
-export * from './reconcile-thread-entries';
 export * from './thread-entries-to-timeline';
 export * from './tool-kind';
 export * from './tool-view';

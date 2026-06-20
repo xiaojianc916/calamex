@@ -13,12 +13,7 @@ main "$@"
 
 export const DEFAULT_EXECUTOR: TExecutorKind = 'wsl';
 
-export const getExecutorLabel = (executor: TExecutorKind): string => {
-  switch (executor) {
-    default:
-      return 'WSL2';
-  }
-};
+export const getExecutorLabel = (_executor: TExecutorKind): string => 'WSL2';
 
 export const COMMAND_TEMPLATES: ICommandTemplate[] = [
   {

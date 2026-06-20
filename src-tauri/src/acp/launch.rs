@@ -621,7 +621,9 @@ fn toml_key_sanitize(value: &str) -> String {
             }
         })
         .collect();
-    if sanitized.is_empty() {
+    // 全部为非字母数字字符(清洗后只剩连字符/下划线、无实际内容)也视为空，回退占位，
+    // 避免产生形如 "---" 的无意义 TOML 裸键(原 is_empty 漏掉了这种情况)。
+    if !sanitized.chars().any(|ch| ch.is_ascii_alphanumeric()) {
         "calamex-gateway".to_string()
     } else {
         sanitized
