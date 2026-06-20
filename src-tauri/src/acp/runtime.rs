@@ -39,7 +39,8 @@ use tauri::{AppHandle, Emitter, Runtime};
 use super::approval::ApprovalRequestInfo;
 use super::client::{AcpClientError, AcpStreamFrame};
 use super::host::{AcpHost, ApprovalEmitter, StreamEmitter};
-use super::launch::{AcpBackendId, build_acp_client_config_for};
+use super::launch::AcpBackendId;
+use super::provisioner::provisioner_for;
 
 /// 流式帧 webview 事件名：对齐 `client::AcpStreamFrame` 文档约定的 `ai:sidecar-stream` 契约。
 pub(crate) const ACP_STREAM_EVENT: &str = "ai:sidecar-stream";
@@ -122,9 +123,15 @@ impl AcpRuntime {
 
         // 启动配置解析失败（未找到 node / ACP 入口等）等价于「无法建立传输」，
         // 故归入 Transport 错误，与连接派生失败同类上抛。
-        let config = build_acp_client_config_for(backend).map_err(AcpClientError::Transport)?;
-        // 外部后端拉起前的凭证预置（Kimi：用项目已存网关配置写 ~/.kimi/config.toml；其余 no-op）。
-        super::launch::prepare_external_backend_launch(backend);
+        // 经 provisioner 注册表统一驱动该后端的「启动配置 + 凭证预置」。
+        // 新增 ACP agent 后端只需在 provisioner_for 注册一行，runtime 无需改动。
+        let provisioner = provisioner_for(backend);
+        // 启动配置解析失败（未找到 node / ACP 入口等）等价于「无法建立传输」，归入 Transport 错误。
+        let config = provisioner
+            .launch_config()
+            .map_err(AcpClientError::Transport)?;
+        // 外部后端拉起前的凭证预置（Kimi：写托管 KIMI_HOME/config.toml；Builtin/Codex 为 no-op）。
+        provisioner.prepare();
         let host = Arc::new(AcpHost::spawn(
             config,
             stream_emitter(app.clone()),
@@ -158,9 +165,13 @@ impl AcpRuntime {
             previous.shutdown();
         }
 
-        let config = build_acp_client_config_for(backend).map_err(AcpClientError::Transport)?;
-        // 重建外部后端前同样刷新凭证预置（Kimi 切模型 / 重启时随之刷新 ~/.kimi/config.toml）。
-        super::launch::prepare_external_backend_launch(backend);
+        // 同 get_or_spawn_backend：经 provisioner 注册表统一驱动启动配置 + 凭证预置。
+        let provisioner = provisioner_for(backend);
+        let config = provisioner
+            .launch_config()
+            .map_err(AcpClientError::Transport)?;
+        // 重建外部后端前同样刷新凭证预置（Kimi 切模型 / 重启时随之刷新托管 config.toml）。
+        provisioner.prepare();
         let host = Arc::new(AcpHost::spawn(
             config,
             stream_emitter(app.clone()),

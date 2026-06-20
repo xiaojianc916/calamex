@@ -1,291 +1,87 @@
-// fix-usemessage-unify-pipeline.mjs
-// 用法：
-//   node fix-usemessage-unify-pipeline.mjs --check   # 干跑，不写盘
-//   node fix-usemessage-unify-pipeline.mjs           # 应用
-// 在仓库根目录(D:\com.xiaojianc\my_desktop_app)运行。改完跑 pnpm lint && pnpm typecheck && pnpm test。
-import { readFileSync, writeFileSync, existsSync, readdirSync, statSync } from 'node:fs';
-import { resolve, join, relative } from 'node:path';
+// 5.mjs — 补丁#3：runtime 切到 provisioner 注册表（acp/runtime.rs）
+// 用法：node 5.mjs   （或 node 5.mjs <runtime.rs路径> <provisioner.rs路径>）
+import { readFileSync, writeFileSync, existsSync } from "node:fs";
+import { resolve } from "node:path";
 
-const REPO_ROOT = process.env.REPO_ROOT ?? process.cwd();
-const CHECK_ONLY = process.argv.includes('--check') || process.argv.includes('--dry-run');
+const rtPath = resolve(process.argv[2] ?? "src-tauri/src/acp/runtime.rs");
+const provPath = resolve(process.argv[3] ?? "src-tauri/src/acp/provisioner.rs");
 
-const MESSAGE_PATH = 'src/composables/useMessage.ts';
-const SPEC_PATH = 'src/composables/useMessage.spec.ts';
-
-const NEW_MESSAGE = String.raw`// composables/useMessage.ts
-import { type ExternalToast, toast } from 'vue-sonner';
-import { createPrefixedId } from '@/utils/core/id';
-
-export type TMessageType = 'success' | 'error' | 'warning' | 'info' | 'loading';
-
-export interface MessageOptions {
-  /** 持续时间（毫秒）。传入 0 或 Infinity 表示不自动关闭。*/
-  duration?: number;
-  /** 次要说明文本。*/
-  description?: string;
-  /** 自定义 id；若传入相同 id 会复用/覆盖同一条消息（便于 loading → success 转换）。*/
-  id?: string;
-  /** 关闭时的回调。*/
-  onClose?: () => void;
-}
-
-export interface MessageHandle {
-  id: string;
-  update: (message: string, options?: MessageOptions) => MessageHandle;
-  dismiss: () => void;
-}
-
-const DEFAULT_DURATIONS: Record<TMessageType, number> = {
-  success: 2400,
-  info: 2400,
-  warning: 3600,
-  error: 4800,
-  loading: Number.POSITIVE_INFINITY,
-};
-
-const toToastOptions = (options: MessageOptions | undefined): ExternalToast => ({
-  ...(options?.id ? { id: options.id } : {}),
-  ...(options?.description ? { description: options.description } : {}),
-  ...(options?.duration !== undefined ? { duration: options.duration } : {}),
-  ...(options?.onClose ? { onDismiss: options.onClose } : {}),
-  closeButton: true,
-});
-
-// 统一管线：每种消息类型 → vue-sonner 渲染策略。vue-sonner 的 <Toaster>（见 App.vue）
-// 是唯一的可视化通知通道。null 表示该类型默认不弹窗（success / info 静默，避免频繁打扰），
-// 但仍会顺手关闭同 id 上可能残留的进行中 Toast（如 loading 转圈）。
-const TOAST_RENDERERS: Record<
-  TMessageType,
-  ((message: string, options: ExternalToast) => void) | null
-> = {
-  success: null,
-  info: null,
-  warning: (message, options) => toast.warning(message, options),
-  error: (message, options) => toast.error(message, options),
-  loading: (message, options) => toast.loading(message, options),
-};
-
-/** 生成消息唯一 ID，复用 utils/core/id.ts 的 UUID 标准实现。*/
-const generateMessageId = (): string => createPrefixedId('msg');
-
-const showMessage = (
-  type: TMessageType,
-  message: string,
-  options?: MessageOptions,
-): MessageHandle => {
-  const id = options?.id ?? generateMessageId();
-  const duration = options?.duration ?? DEFAULT_DURATIONS[type];
-
-  const render = TOAST_RENDERERS[type];
-  if (render) {
-    render(message, toToastOptions({ ...options, id, duration }));
-  } else if (options?.id) {
-    // 静默类型（success / info）：清除同 id 上可能残留的进行中 Toast（如 loading → success）。
-    toast.dismiss(options.id);
-  }
-
-  return {
-    id,
-    update: (nextMessage, nextOptions) =>
-      showMessage(type, nextMessage, { ...options, ...nextOptions, id }),
-    dismiss: () => toast.dismiss(id),
-  };
-};
-
-export function useMessage() {
-  const factory =
-    (type: TMessageType) =>
-    (message: string, options?: MessageOptions): MessageHandle =>
-      showMessage(type, message, options);
-
-  const success = factory('success');
-  const error = factory('error');
-  const warning = factory('warning');
-  const info = factory('info');
-  const loading = factory('loading');
-
-  /**
-   * 把一个 Promise 绑定到一条消息上：进行中显示 loading，成功/失败自动切换文案。
-   * 支持 messages 的字符串或函数形式。
-   */
-  const promise = <T>(
-    input: Promise<T> | (() => Promise<T>),
-    messages: {
-      loading: string;
-      success: string | ((value: T) => string);
-      error: string | ((reason: unknown) => string);
-    },
-    options?: MessageOptions,
-  ): Promise<T> => {
-    const handle = loading(messages.loading, { ...options, duration: Number.POSITIVE_INFINITY });
-    const run = typeof input === 'function' ? input() : input;
-    return run.then(
-      (value) => {
-        const text =
-          typeof messages.success === 'function' ? messages.success(value) : messages.success;
-        showMessage('success', text, { ...options, id: handle.id });
-        return value;
-      },
-      (reason) => {
-        const text = typeof messages.error === 'function' ? messages.error(reason) : messages.error;
-        showMessage('error', text, { ...options, id: handle.id });
-        throw reason;
-      },
-    );
-  };
-
-  /** 按 id 关闭；不传 id 表示关闭全部。*/
-  const dismiss = (id?: string): void => {
-    toast.dismiss(id);
-  };
-
-  return {
-    success,
-    error,
-    warning,
-    info,
-    loading,
-    promise,
-    dismiss,
-  };
-}
-
-export type UseMessageReturn = ReturnType<typeof useMessage>;
-`;
-
-const NEW_SPEC = String.raw`import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { useMessage } from '@/composables/useMessage';
-
-const toastMock = vi.hoisted(() => ({
-  success: vi.fn(),
-  error: vi.fn(),
-  warning: vi.fn(),
-  info: vi.fn(),
-  loading: vi.fn(),
-  dismiss: vi.fn(),
-}));
-
-vi.mock('vue-sonner', () => ({
-  toast: toastMock,
-}));
-
-describe('useMessage', () => {
-  beforeEach(() => {
-    vi.clearAllMocks();
-  });
-
-  it('error 通过 Sonner toast 弹出，并透传 id/description/duration', () => {
-    const handle = useMessage().error('保存失败', {
-      id: 'save-error',
-      description: '网络连接中断，请稍后重试。',
-      duration: 7_000,
-    });
-
-    expect(handle.id).toBe('save-error');
-    expect(toastMock.error).toHaveBeenCalledWith('保存失败', {
-      id: 'save-error',
-      description: '网络连接中断，请稍后重试。',
-      duration: 7_000,
-      closeButton: true,
-    });
-  });
-
-  it('dismiss(id) 关闭对应的 Sonner toast', () => {
-    useMessage().dismiss('save-error');
-    expect(toastMock.dismiss).toHaveBeenCalledWith('save-error');
-  });
-
-  it('成功消息不弹出 Toast，但会清除同 id 上残留的进行中 Toast', () => {
-    useMessage().success('保存成功', { id: 'save-ok' });
-    expect(toastMock.success).not.toHaveBeenCalled();
-    expect(toastMock.dismiss).toHaveBeenCalledWith('save-ok');
-  });
-
-  it('info 提示不弹出 Toast', () => {
-    useMessage().info('仅供参考的提示');
-    expect(toastMock.info).not.toHaveBeenCalled();
-  });
-
-  it('警告与错误仍然弹出 Toast', () => {
-    useMessage().warning('请注意检查输入');
-    useMessage().error('操作失败');
-    expect(toastMock.warning).toHaveBeenCalledTimes(1);
-    expect(toastMock.error).toHaveBeenCalledTimes(1);
-  });
-
-  it('loading 进度仍然弹出 Toast', () => {
-    useMessage().loading('正在保存…');
-    expect(toastMock.loading).toHaveBeenCalledTimes(1);
-  });
-});
-`;
-
-// ① 安全检查（精确探针，不再与 dialog 的同名类型撞车）：
-//   A) 除目标文件外，全仓不得出现 'app-message' 事件名（消息事件总线的唯一标识）。
-//   B) 除目标文件外，不得有文件“从 useMessage”导入被移除的 MessageDetail / DismissDetail。
-const SCAN_DIR = resolve(REPO_ROOT, 'src');
-const TARGETS = new Set([resolve(REPO_ROOT, MESSAGE_PATH), resolve(REPO_ROOT, SPEC_PATH)]);
-const USEMSG_IMPORT_RE =
-  /import\s+(?:type\s+)?\{([^}]*)\}\s*from\s*['"](?:@\/composables\/useMessage|\.\/useMessage|\.\.\/composables\/useMessage)['"]/g;
-const offenders = [];
-const walk = (dir) => {
-  for (const name of readdirSync(dir)) {
-    const abs = join(dir, name);
-    const st = statSync(abs);
-    if (st.isDirectory()) {
-      walk(abs);
-      continue;
-    }
-    if (!/\.(ts|tsx|vue|js|mjs)$/.test(name) || TARGETS.has(abs)) continue;
-    const text = readFileSync(abs, 'utf8');
-    const rel = relative(REPO_ROOT, abs);
-    if (text.includes('app-message')) {
-      offenders.push(rel + '  ←  app-message 事件通道');
-    }
-    for (const m of text.matchAll(USEMSG_IMPORT_RE)) {
-      if (/\bMessageDetail\b/.test(m[1]) || /\bDismissDetail\b/.test(m[1])) {
-        offenders.push(rel + '  ←  从 useMessage 导入了将被移除的类型');
-      }
-    }
-  }
-};
-if (existsSync(SCAN_DIR)) walk(SCAN_DIR);
-if (offenders.length > 0) {
-  console.error('✗ 仍有文件依赖将被移除的旧通道/类型，已中止：');
-  for (const f of offenders) console.error('   - ' + f);
+// ---- 前置守卫：patch#2 必须已在工作区 ----
+if (!existsSync(provPath) || !readFileSync(provPath, "utf8").includes("provisioner_for")) {
+  console.error("❌ 未检测到 patch#2：acp/provisioner.rs 不存在或缺少 provisioner_for。请先运行 4.mjs，再跑本脚本。");
   process.exit(1);
 }
-console.log('✓ 安全检查通过：无 app-message 消费方，也无对 useMessage 旧类型的外部依赖。');
 
-// ② 幂等写入（旧指纹校验）
-const apply = (relPath, next, oldSentinel, newSentinel) => {
-  const abs = resolve(REPO_ROOT, relPath);
-  if (!existsSync(abs)) {
-    console.error('✗ 找不到文件: ' + relPath);
+const raw = readFileSync(rtPath, "utf8");
+const usedCrlf = raw.includes("\r\n");
+let src = raw.replace(/\r\n/g, "\n");
+
+if (src.includes("use super::provisioner::provisioner_for;")) {
+  console.log("✓ 已应用过（runtime.rs 已接 provisioner_for），幂等跳过，未改动。");
+  process.exit(0);
+}
+
+function dumpContext(needle) {
+  const head = needle.split("\n")[0];
+  const at = src.indexOf(head);
+  console.error("---- 诊断：目标首行 = " + JSON.stringify(head));
+  console.error("---- runtime.rs 中该首行位置 = " + at);
+  if (at !== -1) console.error("---- 实际上下文 ----\n" + JSON.stringify(src.slice(at, at + 240)));
+}
+
+function applyOnce(label, needle, replacement) {
+  const first = src.indexOf(needle);
+  if (first === -1) {
+    dumpContext(needle);
+    console.error(`❌ [${label}] 未找到目标片段；runtime.rs 可能与预期版本(sha 12fd6434)不一致，已中止且未写入。`);
     process.exit(1);
   }
-  const cur = readFileSync(abs, 'utf8');
-  if (!cur.includes(oldSentinel) && cur.includes(newSentinel)) {
-    console.log('= 已是新版本，跳过: ' + relPath);
-    return;
-  }
-  if (!cur.includes(oldSentinel)) {
-    console.error('✗ 内容与预期旧版本不符（缺 "' + oldSentinel + '"），中止: ' + relPath);
+  if (src.indexOf(needle, first + needle.length) !== -1) {
+    console.error(`❌ [${label}] 目标片段出现多于一次，为安全起见已中止。`);
     process.exit(1);
   }
-  if (CHECK_ONLY) {
-    console.log('- 将重写: ' + relPath);
-    return;
-  }
-  writeFileSync(abs, next, 'utf8');
-  console.log('✓ 已重写: ' + relPath);
-};
+  src = src.slice(0, first) + replacement + src.slice(first + needle.length);
+  console.log(`✓ ${label}`);
+}
 
-apply(MESSAGE_PATH, NEW_MESSAGE, 'app-message', 'TOAST_RENDERERS');
-apply(SPEC_PATH, NEW_SPEC, 'app-message', 'dismiss(id) 关闭对应的 Sonner toast');
-
-console.log(
-  CHECK_ONLY
-    ? '--check 完成（未写盘）。'
-    : '完成。请运行: pnpm lint && pnpm typecheck && pnpm test（git restore 可还原）。',
+// ---- 1/3 调整 import：去掉 build_acp_client_config_for，引入 provisioner_for ----
+applyOnce(
+  "1/3 runtime.rs import 引入 provisioner_for",
+  "use super::launch::{AcpBackendId, build_acp_client_config_for};",
+  "use super::launch::AcpBackendId;\nuse super::provisioner::provisioner_for;"
 );
+
+// ---- 2/3 get_or_spawn_backend 切到 provisioner（保持原顺序：先 launch_config，?早退不 seed，再 prepare）----
+applyOnce(
+  "2/3 get_or_spawn_backend 切到 provisioner_for",
+  "        let config = build_acp_client_config_for(backend).map_err(AcpClientError::Transport)?;\n" +
+  "        // 外部后端拉起前的凭证预置（Kimi：用项目已存网关配置写 ~/.kimi/config.toml；其余 no-op）。\n" +
+  "        super::launch::prepare_external_backend_launch(backend);",
+  "        // 经 provisioner 注册表统一驱动该后端的「启动配置 + 凭证预置」。\n" +
+  "        // 新增 ACP agent 后端只需在 provisioner_for 注册一行，runtime 无需改动。\n" +
+  "        let provisioner = provisioner_for(backend);\n" +
+  "        // 启动配置解析失败（未找到 node / ACP 入口等）等价于「无法建立传输」，归入 Transport 错误。\n" +
+  "        let config = provisioner\n" +
+  "            .launch_config()\n" +
+  "            .map_err(AcpClientError::Transport)?;\n" +
+  "        // 外部后端拉起前的凭证预置（Kimi：写托管 KIMI_HOME/config.toml；Builtin/Codex 为 no-op）。\n" +
+  "        provisioner.prepare();"
+);
+
+// ---- 3/3 restart_backend 切到 provisioner（同序）----
+applyOnce(
+  "3/3 restart_backend 切到 provisioner_for",
+  "        let config = build_acp_client_config_for(backend).map_err(AcpClientError::Transport)?;\n" +
+  "        // 重建外部后端前同样刷新凭证预置（Kimi 切模型 / 重启时随之刷新 ~/.kimi/config.toml）。\n" +
+  "        super::launch::prepare_external_backend_launch(backend);",
+  "        // 同 get_or_spawn_backend：经 provisioner 注册表统一驱动启动配置 + 凭证预置。\n" +
+  "        let provisioner = provisioner_for(backend);\n" +
+  "        let config = provisioner\n" +
+  "            .launch_config()\n" +
+  "            .map_err(AcpClientError::Transport)?;\n" +
+  "        // 重建外部后端前同样刷新凭证预置（Kimi 切模型 / 重启时随之刷新托管 config.toml）。\n" +
+  "        provisioner.prepare();"
+);
+
+writeFileSync(rtPath, usedCrlf ? src.replace(/\n/g, "\r\n") : src, "utf8");
+console.log("✅ 补丁#3 应用完成，已写回 " + (usedCrlf ? "(CRLF)" : "(LF)") + "：runtime.rs 现经 provisioner_for(...) 驱动启动配置 + 凭证预置。");
