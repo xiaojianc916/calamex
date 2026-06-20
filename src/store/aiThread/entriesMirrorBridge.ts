@@ -7,7 +7,7 @@ import { scheduleAiThreadEntriesPersist } from '@/store/plugins/aiThreadEntriesS
  *
  * 把 legacy 会话 store 与新 entries 镜像引擎/读 resolver 接起来, 但不在此处改变
  * 渲染 SoT (legacy 仍是显示来源)。所有外部副作用经 deps 注入, 默认指向真实单例,
- * 便于单测且与具体实现解耦。真实接线 (main.ts) 留待 7.4d; 本模块当前未被引用。
+ * 便于单测且与具体实现解耦。真实接线见 main.ts (Step 7.4d): 在 legacy hydrate 与读侧回退槽填充 (runStartupPersistedRead) 之后调用 installEntriesMirror, 故 entries 新 key当前处于双写 + 双读 soak 阶段 (legacy 持久化仍权威, 渲染 SoT 不变)。
  */
 
 /** 桥所需的会话 store 最小形状 (便于注入假 store 测试)。 */

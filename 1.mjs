@@ -1,89 +1,46 @@
-#!/usr/bin/env node
-// 8.2d · 退役孤儿协议 VM 适配器 from-runtime-tool-call / from-wire-tool-call
-//
-// 已由本地 grep 确证(search_code 不可用 → 用户本地 grep 兜底):
-//   · fromRuntimeToolCall —— 仅出现于 from-runtime-tool-call.ts(定义) + from-runtime-tool-call.spec.ts
-//   · fromWireToolCall    —— 仅出现于 from-wire-tool-call.ts(定义) + from-wire-tool-call.spec.ts
-//   全仓无其他消费者;其唯一历史消费者 build-thread-entries.ts 已于 8.2b 退役 → 现为死代码。
-//
-// 依赖保留(删除后不产生破坏性 orphan):
-//   · tool-kind.ts(RUNTIME_KIND_TO_TOOL_KIND / classifyRuntimeToolKind)仍被 from-sidecar-events 消费
-//   · tool-view.ts / plan-runtime-timeline / constants/ai/runtime-tools 均另有消费者
-//
-// 用法:
-//   node 1.mjs --check     # 干跑
-//   node 1.mjs             # 落盘
-//   REPO_ROOT=/path node 1.mjs
+// 1.mjs — Step 7.4d 文档纠偏：修正 entriesMirrorBridge.ts 过时注释（双写已接线 + soak 中）
+// 用法: node 1.mjs        实际写入
+//      node 1.mjs --check 仅校验匹配、不写盘
+import { readFileSync, writeFileSync } from 'node:fs';
+import { resolve } from 'node:path';
 
-import { readFileSync, writeFileSync, rmSync, existsSync, statSync } from 'node:fs';
-import { resolve, join } from 'node:path';
-
-const REPO_ROOT = process.env.REPO_ROOT ? resolve(process.env.REPO_ROOT) : process.cwd();
+const REPO_ROOT = process.env.REPO_ROOT ?? process.cwd();
 const CHECK = process.argv.includes('--check');
 
-const rel = (p) => join(REPO_ROOT, p);
-const read = (p) => readFileSync(rel(p), 'utf8');
-const toLf = (s) => s.replace(/\r\n/g, '\n');
-
-function write(p, next) {
+const read = (rel) => readFileSync(resolve(REPO_ROOT, rel), 'utf8');
+const write = (rel, next) => {
   if (CHECK) {
-    console.log(`  [dry] write ${p} (${next.length} bytes)`);
+    console.log(`[check] would write ${rel} (${next.length} bytes)`);
     return;
   }
-  writeFileSync(rel(p), next);
-  console.log(`  ✓ write ${p}`);
-}
+  writeFileSync(resolve(REPO_ROOT, rel), next);
+  console.log(`[write] ${rel} (${next.length} bytes)`);
+};
 
-function remove(p) {
-  const abs = rel(p);
-  if (!existsSync(abs)) {
-    throw new Error(`remove 目标不存在：${p}`);
+/** 唯一子串替换；命中数必须 === 1，否则抛错（绝不静默误改/漏改）。 */
+const replaceOnce = (src, oldStr, newStr) => {
+  const idx = src.indexOf(oldStr);
+  if (idx < 0) throw new Error(`replaceOnce: 未找到目标子串:\n${oldStr}`);
+  if (src.indexOf(oldStr, idx + oldStr.length) >= 0) {
+    throw new Error(`replaceOnce: 目标子串出现多次，拒绝替换:\n${oldStr}`);
   }
-  if (!statSync(abs).isFile()) {
-    throw new Error(`remove 目标不是文件：${p}`);
-  }
-  if (CHECK) {
-    console.log(`  [dry] remove ${p}`);
-    return;
-  }
-  rmSync(abs);
-  console.log(`  ✓ remove ${p}`);
+  return src.slice(0, idx) + newStr + src.slice(idx + oldStr.length);
+};
+
+const FILE = 'src/store/aiThread/entriesMirrorBridge.ts';
+
+const OLD =
+  '便于单测且与具体实现解耦。真实接线 (main.ts) 留待 7.4d; 本模块当前未被引用。';
+const NEW =
+  '便于单测且与具体实现解耦。真实接线见 main.ts (Step 7.4d): 在 legacy hydrate 与读侧' +
+  '回退槽填充 (runStartupPersistedRead) 之后调用 installEntriesMirror, 故 entries 新 key' +
+  '当前处于双写 + 双读 soak 阶段 (legacy 持久化仍权威, 渲染 SoT 不变)。';
+
+const src = read(FILE);
+if (src.includes(NEW)) {
+  console.log('[skip] 注释已是最新，无需改动');
+} else {
+  write(FILE, replaceOnce(src, OLD, NEW));
 }
 
-/** 断言恰好命中 numOccurrences 次后替换;用于外科式编辑。 */
-function replaceOnce(src, oldStr, newStr, numOccurrences = 1) {
-  const parts = src.split(oldStr);
-  const hits = parts.length - 1;
-  if (hits !== numOccurrences) {
-    throw new Error(
-      `replaceOnce 命中次数不符:期望 ${numOccurrences},实际 ${hits}\n--- 片段 ---\n${oldStr}`,
-    );
-  }
-  return parts.join(newStr);
-}
-
-console.log(`8.2d 退役孤儿适配器 @ ${REPO_ROOT}${CHECK ? '  (--check 干跑)' : ''}`);
-
-// ---- 1) 删除孤儿文件(定义 + spec)--------------------------------------------
-console.log('\n[1/2] 删除文件');
-const DELETIONS = [
-  'src/components/business/ai/thread/projection/from-runtime-tool-call.ts',
-  'src/components/business/ai/thread/projection/from-runtime-tool-call.spec.ts',
-  'src/components/business/ai/thread/projection/from-wire-tool-call.ts',
-  'src/components/business/ai/thread/projection/from-wire-tool-call.spec.ts',
-];
-for (const p of DELETIONS) {
-  remove(p);
-}
-
-// ---- 2) 摘除 projection 桶的两条 re-export ------------------------------------
-console.log('\n[2/2] 编辑 projection/index.ts');
-{
-  const p = 'src/components/business/ai/thread/projection/index.ts';
-  let src = toLf(read(p)); // LF
-  src = replaceOnce(src, "export * from './from-runtime-tool-call';\n", '');
-  src = replaceOnce(src, "export * from './from-wire-tool-call';\n", '');
-  write(p, src);
-}
-
-console.log(`\n完成${CHECK ? '(干跑,未落盘)' : ''}。`);
+console.log(CHECK ? '[done] check 通过' : '[done] 已更新');
