@@ -1,11 +1,11 @@
-import { openUrl } from '@tauri-apps/plugin-opener';
+import { openExternalUrlViaSystem } from '@/services/ipc/opener.service';
 
 const openWithWindow = (url: string): void => {
   window.open(url, '_blank', 'noopener,noreferrer');
 };
 
 export const openExternalUrl = (url: string): void => {
-  void openUrl(url).catch(() => {
+  void openExternalUrlViaSystem(url).catch(() => {
     openWithWindow(url);
   });
 };

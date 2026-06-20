@@ -48,9 +48,9 @@
 </template>
 
 <script setup lang="ts">
-import { convertFileSrc } from '@tauri-apps/api/core';
 import { computed, onMounted, ref, watch } from 'vue';
 import InlineError from '@/components/common/InlineError.vue';
+import { toAssetUrl } from '@/services/ipc/asset.service';
 import { tauriService } from '@/services/tauri';
 import type { IImageAssetPayload } from '@/types/editor';
 import { toErrorMessage } from '@/utils/error/error';
@@ -69,7 +69,7 @@ const imageNaturalHeight = ref(0);
 
 // 通过 asset 协议把规范化后的真实路径转成 webview 可直接加载的 URL，
 // 由原生层按需流式读取图片，避免 base64 over IPC。
-const imageSrc = computed(() => (assetMeta.value ? convertFileSrc(assetMeta.value.path) : ''));
+const imageSrc = computed(() => (assetMeta.value ? toAssetUrl(assetMeta.value.path) : ''));
 
 const imageSizeLabel = computed(() => {
   if (imageNaturalWidth.value <= 0 || imageNaturalHeight.value <= 0) {

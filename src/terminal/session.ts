@@ -13,10 +13,11 @@
  *   - session.ts（本文件）     → TerminalSession 协调者：布局/视口、事件、PTY、生命周期
  */
 
-import { listen, type UnlistenFn } from '@tauri-apps/api/event';
+import type { UnlistenFn } from '@tauri-apps/api/event';
 import { FitAddon } from '@xterm/addon-fit';
 import { Terminal } from '@xterm/xterm';
 import { markRaw, nextTick, type Ref, ref, shallowRef } from 'vue';
+import { loadTauriEvent } from '@/services/tauri.ipc-runtime';
 import type { TThemeMode } from '@/types/app';
 import type { ITerminalSettings } from '@/types/settings';
 import type {
@@ -293,6 +294,7 @@ export class TerminalSession {
     this._eventListenerRegistration = (async () => {
       const runtimeReady = await waitForDesktopRuntime();
       if (!runtimeReady) return;
+      const { listen } = await loadTauriEvent();
       const [dl, cl, el] = await Promise.all([
         listen<ITerminalDataEvent>('terminal:data', (e) => this._handleDataEvent(e)),
         listen<ITerminalRunCompletedPayload>('terminal:run-completed', (e) =>
