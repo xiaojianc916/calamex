@@ -3,6 +3,8 @@ import { VueQueryPlugin } from '@tanstack/vue-query';
 import { queryClient, setupQueryPersistence } from '@/lib/query-client';
 import { applyWindowStage } from '@/services/ipc/window.service';
 import { pinia } from '@/store';
+import { useAiConversationStore } from '@/store/aiConversation';
+import { installEntriesMirror } from '@/store/aiThread/entriesMirrorBridge';
 import { runStartupPersistedRead } from '@/store/aiThread/startupPersistedReadWiring';
 import { hydrateAiConversationStorage } from '@/store/plugins/debouncedPersistStorage';
 import { hydrateSessionStorage } from '@/store/plugins/tauriSessionStorage';
@@ -121,6 +123,11 @@ const bootstrap = async (): Promise<void> => {
       scheduleIdle(() => {
         void hydrateAiConversationStorage()
           .then(() => runStartupPersistedRead())
+          .then(() => {
+            // 7.4d 双写接线：必须在 legacy hydrate + 读侧回退槽填充之后再装镜像，
+            // 否则首次立即镜像会把空态写入权威新 key，导致下次启动读到“空且权威”而丢历史。
+            installEntriesMirror(useAiConversationStore());
+          })
           .catch((error: unknown) => {
             console.warn('AI 会话历史后台 hydrate 失败', error);
           });
