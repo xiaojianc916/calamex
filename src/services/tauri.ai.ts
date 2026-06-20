@@ -219,7 +219,7 @@ const voidCommand =
  * 覆盖绝大多数 AI 命令（接受 payload + 可选 IIpcCallOptions）。
  */
 const payloadCommand =
-  <P>(meta: ICommandMeta, invoke: (payload: P) => Promise<unknown>) =>
+  <P, T>(meta: ICommandMeta, invoke: (payload: P) => Promise<T>) =>
   (payload: P, options?: IIpcCallOptions) =>
     runCommand(meta, payload, options, () => invoke(payload));
 
@@ -234,9 +234,9 @@ export const aiTauriService: TAiTauriService = {
     commands.aiSaveCredentials(payload),
   ),
 
-  aiClearCredentials: voidCommand(AI_COMMAND_META.aiClearCredentials, () =>
-    commands.aiClearCredentials(),
-  ),
+  aiClearCredentials: voidCommand(AI_COMMAND_META.aiClearCredentials, async () => {
+    await commands.aiClearCredentials();
+  }),
 
   aiTestProvider: voidCommand(AI_COMMAND_META.aiTestProvider, () => commands.aiTestProvider()),
 
@@ -265,7 +265,9 @@ export const aiTauriService: TAiTauriService = {
     commands.aiChatStream(payload),
   ),
 
-  aiCancel: payloadCommand(AI_COMMAND_META.aiCancel, (payload) => commands.aiCancel(payload)),
+  aiCancel: payloadCommand(AI_COMMAND_META.aiCancel, async (payload) => {
+    await commands.aiCancel(payload);
+  }),
 
   aiResolveApproval: payloadCommand(AI_COMMAND_META.aiResolveApproval, (payload) =>
     commands.aiResolveApproval(payload),
