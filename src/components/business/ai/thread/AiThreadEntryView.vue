@@ -10,9 +10,8 @@ import AiThreadUserMessage from './AiThreadUserMessage.vue';
 import type { TAiThreadEntry } from './projection';
 import type { IAiThreadPlanDetails } from './types';
 
-// 单条平铺时间线条目的渲染分派。三处调用方(AiThreadTimeline / AiThreadSingleMessageTimeline /
-// AiChatThread 的逐 entry 虚拟化路径)共用本组件;按 kind 差异化的 patches / workspace 透传
-// 经独立 props 承载,以保持各调用方既有行为不变。
+// 单条平铺时间线条目的渲染分派。当前唯一调用方为 AiChatThread 的逐 entry 虚拟化路径;
+// 按 kind 差异化的 patches / workspace 透传经独立 props 承载,以保持调用方行为不变。
 withDefaults(
   defineProps<{
     entry: TAiThreadEntry;

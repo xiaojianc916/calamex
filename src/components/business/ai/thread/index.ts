@@ -4,7 +4,6 @@ export { default as AiThreadContextCompaction } from './AiThreadContextCompactio
 export { default as AiThreadPlanControl } from './AiThreadPlanControl.vue';
 export { default as AiThreadReasoning } from './AiThreadReasoning.vue';
 export { default as AiThreadRunStatusBar } from './AiThreadRunStatusBar.vue';
-export { default as AiThreadTimeline } from './AiThreadTimeline.vue';
 export { default as AiThreadToolCall } from './AiThreadToolCall.vue';
 export { default as AiThreadUserMessage } from './AiThreadUserMessage.vue';
 export * from './projection';
