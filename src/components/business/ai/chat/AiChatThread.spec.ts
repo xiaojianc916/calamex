@@ -20,6 +20,43 @@ vi.mock('@/components/business/ai/thread/projection', async (importOriginal) => 
   };
 });
 
+// 轻量替身:真实虚拟化依赖布局测量,jsdom/happy-dom 下无意义。这里让虚拟器把全部条目作为
+// 可见行返回,从而只验证 AiChatThread 的渲染与事件逻辑(逐条目渲染、after-message 边界、事件转发)。
+vi.mock('@tanstack/vue-virtual', () => ({
+  useVirtualizer: (optionsInput: unknown) => {
+    const resolveOptions = (): { count: number } => {
+      if (typeof optionsInput === 'function') {
+        return (optionsInput as () => { count: number })();
+      }
+      if (optionsInput && typeof optionsInput === 'object' && 'value' in optionsInput) {
+        return (optionsInput as { value: { count: number } }).value;
+      }
+      return optionsInput as { count: number };
+    };
+
+    const buildRows = () => {
+      const { count } = resolveOptions();
+      return Array.from({ length: count }, (_, index) => ({
+        index,
+        key: index,
+        start: index * 96,
+        size: 96,
+        end: (index + 1) * 96,
+        lane: 0,
+      }));
+    };
+
+    return {
+      value: {
+        getVirtualItems: buildRows,
+        getTotalSize: () => buildRows().length * 96,
+        measureElement: () => {},
+        measure: () => {},
+      },
+    };
+  },
+}));
+
 import AiChatThread from '@/components/business/ai/chat/AiChatThread.vue';
 
 class ResizeObserverMock {
@@ -75,36 +112,6 @@ const createPlanDetails = (
   ...overrides,
 });
 
-// 轻量替身：真实滚动与逐条目渲染分别在各自组件测试中覆盖；此处只验证 AiChatThread
-// 基于投影时间线的逐条目渲染、按消息边界的 after-message 插槽与事件转发。
-const DynamicScrollerStub = defineComponent({
-  name: 'DynamicScroller',
-  props: {
-    items: { type: Array as PropType<readonly unknown[]>, required: true },
-  },
-  setup(props, { slots }) {
-    return () =>
-      h(
-        'div',
-        { class: 'ai-chat-list__scroller' },
-        props.items.flatMap((item, index) => slots.default?.({ item, index, active: true }) ?? []),
-      );
-  },
-});
-
-const DynamicScrollerItemStub = defineComponent({
-  name: 'DynamicScrollerItem',
-  props: {
-    item: { type: Object as PropType<unknown>, required: true },
-    active: { type: Boolean, default: true },
-    sizeDependencies: { type: Array as PropType<readonly unknown[]>, default: () => [] },
-    emitResize: { type: Boolean, default: false },
-  },
-  setup(_props, { slots }) {
-    return () => h('div', { class: 'vue-recycle-scroller__item-view' }, slots.default?.());
-  },
-});
-
 const EntryViewStub = defineComponent({
   name: 'AiThreadEntryView',
   props: {
@@ -142,8 +149,6 @@ const EntryViewStub = defineComponent({
 });
 
 const stubs = {
-  DynamicScroller: DynamicScrollerStub,
-  DynamicScrollerItem: DynamicScrollerItemStub,
   AiThreadEntryView: EntryViewStub,
 };
 
@@ -271,15 +276,17 @@ describe('AiChatThread（entries 渲染路径）', () => {
     expect(wrapper.find('.ai-chat-list').classes()).toContain('overflow-x-hidden');
   });
 
-  it('typing 期间保持 resize 跟随响应', () => {
-    threadEntriesToTimelineMock.mockReturnValue([userEntry]);
+  it('为虚拟行挂载 data-index 以驱动 TanStack 动态测量', () => {
+    threadEntriesToTimelineMock.mockReturnValue([userEntry, assistantEntry]);
 
     const wrapper = mount(AiChatThread, {
-      props: { ...baseProps, messages: [], isTyping: true, threadEntries: [] },
+      props: { ...baseProps, messages: [], isTyping: false, threadEntries: [] },
       global: { stubs },
     });
 
-    expect(wrapper.findComponent({ name: 'DynamicScrollerItem' }).props('emitResize')).toBe(true);
+    const rows = wrapper.findAll('.ai-chat-list__row');
+    expect(rows).toHaveLength(2);
+    expect(rows.map((node) => node.attributes('data-index'))).toEqual(['0', '1']);
   });
 
   it('将 planDetails 透传给 AiThreadEntryView', () => {

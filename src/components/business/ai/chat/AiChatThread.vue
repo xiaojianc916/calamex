@@ -1,10 +1,17 @@
 <script setup lang="ts">
 import { MessageSquare } from '@lucide/vue';
+import { useVirtualizer } from '@tanstack/vue-virtual';
 import { useTimeoutFn } from '@vueuse/core';
 import type { MarkstreamVirtualMetrics } from 'markstream-vue';
-import { computed, nextTick, onBeforeUnmount, provide, ref, watch } from 'vue';
-import { DynamicScroller, DynamicScrollerItem } from 'vue-virtual-scroller';
-import 'vue-virtual-scroller/dist/vue-virtual-scroller.css';
+import {
+  computed,
+  type ComponentPublicInstance,
+  nextTick,
+  onBeforeUnmount,
+  provide,
+  ref,
+  watch,
+} from 'vue';
 import { ConversationEmptyState } from '@/components/ai-elements/conversation';
 import { Message } from '@/components/ai-elements/message';
 import AiThreadEntryView from '@/components/business/ai/thread/AiThreadEntryView.vue';
@@ -81,24 +88,19 @@ const emit = defineEmits<{
 }>();
 
 const VIRTUAL_SCROLLER_MIN_ITEM_SIZE = 96;
-const VIRTUAL_SCROLLER_BUFFER_PX = 1200;
+// 视口外预渲染条目数:约等于原 vue-virtual-scroller 的 1200px buffer(1200 / 96 ≈ 12)。
+const VIRTUAL_SCROLLER_OVERSCAN = 12;
 const BOTTOM_FOLLOW_THRESHOLD_PX = 56;
 const SCROLL_STATE_EMIT_THROTTLE_MS = 100;
 const SCROLLBAR_ACTIVE_MS = 900;
-const ENTRY_SIZE_DEPENDENCY_CACHE_LIMIT = 300;
 const AI_MARKDOWN_VIRTUAL_MEASUREMENT_KEY = 'calamex-ai-markdown:v1';
 
-type TDynamicScrollerExpose = {
-  $el?: unknown;
-  forceUpdate?: (clear?: boolean) => void;
-};
-
-const virtualScrollerRef = ref<unknown>(null);
+const scrollerRef = ref<HTMLElement | null>(null);
 const isScrollbarActive = ref(false);
 const showScrollButton = ref(false);
 
 let pendingBottomScrollFrame: number | null = null;
-// 滚动条激活后 SCROLLBAR_ACTIVE_MS 自动隐藏；immediate: false 仅在 activateScrollbar 时 start。
+// 滚动条激活后 SCROLLBAR_ACTIVE_MS 自动隐藏;immediate: false 仅在 activateScrollbar 时 start。
 const { start: scheduleScrollbarHide } = useTimeoutFn(
   () => {
     isScrollbarActive.value = false;
@@ -108,7 +110,6 @@ const { start: scheduleScrollbarHide } = useTimeoutFn(
 );
 let lastScrollStateEmitAt = 0;
 let shouldFollowBottomAfterResize = true;
-let lastKnownDistanceFromBottom = 0;
 let pendingMarkdownHeightReconcileFrame: number | null = null;
 
 const entryTimeline = computed<TAiThreadEntry[]>(() =>
@@ -191,90 +192,60 @@ const virtualItems = computed<TAiThreadVirtualItem[]>(() => {
   return items;
 });
 
-const getScrollerElement = (): HTMLElement | null => {
-  const candidate = virtualScrollerRef.value;
+// ── @tanstack/vue-virtual 接入 ──────────────────────────────────────────────
+// 滚动容器由本组件持有(.ai-chat-list__scroller);虚拟器在其内部用 sizer + 绝对定位行渲染。
+// 聊天/流式三件套参照 TanStack “Chat UIs Are Lists Until They Aren't” 指南:
+//   - anchorTo: 'end'       末端锚定:流式增高 / prepend 历史时保持视觉位置稳定
+//   - followOnAppend: true  追加消息时,仅当用户已贴底才自动跟随,读历史时不打扰
+//   - scrollEndThreshold    贴底判定阈值,与下方手动跟随兜底共用同一阈值
+//   - getItemKey            prepend 稳定性所必需:索引会变,需用稳定 id 找回同一条目
+const virtualizerOptions = computed(() => ({
+  count: virtualItems.value.length,
+  getScrollElement: () => scrollerRef.value,
+  estimateSize: () => VIRTUAL_SCROLLER_MIN_ITEM_SIZE,
+  overscan: VIRTUAL_SCROLLER_OVERSCAN,
+  getItemKey: (index: number) => virtualItems.value[index]?.id ?? index,
+  anchorTo: 'end' as const,
+  followOnAppend: true,
+  scrollEndThreshold: BOTTOM_FOLLOW_THRESHOLD_PX,
+}));
 
-  if (candidate instanceof HTMLElement) {
-    return candidate;
-  }
+const chatVirtualizer = useVirtualizer<HTMLElement, HTMLElement>(virtualizerOptions);
 
-  if (
-    candidate &&
-    typeof candidate === 'object' &&
-    '$el' in candidate &&
-    candidate.$el instanceof HTMLElement
-  ) {
-    return candidate.$el;
-  }
+const totalSize = computed(() => chatVirtualizer.value.getTotalSize());
 
-  return null;
-};
+const renderRows = computed(() => {
+  const rows = chatVirtualizer.value.getVirtualItems();
+  const resolved: Array<{ row: (typeof rows)[number]; item: TAiThreadVirtualItem }> = [];
 
-const isDynamicScrollerExpose = (value: unknown): value is TDynamicScrollerExpose =>
-  typeof value === 'object' &&
-  value !== null &&
-  (!('forceUpdate' in value) || typeof value.forceUpdate === 'function');
-
-const getDynamicScrollerExpose = (): TDynamicScrollerExpose | null => {
-  const candidate = virtualScrollerRef.value;
-  return isDynamicScrollerExpose(candidate) ? candidate : null;
-};
-
-const virtualScrollRoot = computed<HTMLElement | null>(() => getScrollerElement());
-const virtualThreadKey = computed(() => props.conversationId ?? 'active');
-const virtualMeasurementKey = computed(() => AI_MARKDOWN_VIRTUAL_MEASUREMENT_KEY);
-
-const scheduleMarkdownHeightReconcile = (metrics: MarkstreamVirtualMetrics): void => {
-  if (!Number.isFinite(metrics.totalHeight) || metrics.totalHeight <= 0) {
-    return;
-  }
-
-  if (pendingMarkdownHeightReconcileFrame !== null) {
-    return;
-  }
-
-  pendingMarkdownHeightReconcileFrame = window.requestAnimationFrame(() => {
-    pendingMarkdownHeightReconcileFrame = null;
-
-    getDynamicScrollerExpose()?.forceUpdate?.(false);
-
-    if (shouldFollowBottomAfterResize) {
-      void scrollToBottom('auto');
+  for (const row of rows) {
+    const item = virtualItems.value[row.index];
+    if (item) {
+      resolved.push({ row, item });
     }
-  });
+  }
+
+  return resolved;
+});
+
+// TanStack 通过元素上的 data-index 关联测量结果,故每行都带 :data-index。
+const measureVirtualRow = (el: Element | ComponentPublicInstance | null): void => {
+  if (el instanceof HTMLElement) {
+    chatVirtualizer.value.measureElement(el);
+  }
 };
 
-provide(AI_MARKDOWN_VIRTUAL_SCROLL_KEY, {
-  scrollRoot: virtualScrollRoot,
-  threadKey: virtualThreadKey,
-  measurementKey: virtualMeasurementKey,
-  onHeightChange: scheduleMarkdownHeightReconcile,
-});
+const getScrollElement = (): HTMLElement | null => scrollerRef.value;
 
 const getDistanceFromBottom = (element: HTMLElement): number =>
   Math.max(0, element.scrollHeight - element.scrollTop - element.clientHeight);
 
-const isNearBottom = (): boolean => {
-  const element = getScrollerElement();
-
-  if (!element) {
-    return true;
-  }
-
-  return getDistanceFromBottom(element) <= BOTTOM_FOLLOW_THRESHOLD_PX;
-};
-
+// 在内容变更导致 DOM 增高之前(flush: 'pre')捕获“是否已贴底”,避免增高后再判定时距离已被撑大。
 const rememberBottomFollowState = (): void => {
-  const element = getScrollerElement();
-
-  if (!element) {
-    shouldFollowBottomAfterResize = true;
-    lastKnownDistanceFromBottom = 0;
-    return;
-  }
-
-  lastKnownDistanceFromBottom = getDistanceFromBottom(element);
-  shouldFollowBottomAfterResize = lastKnownDistanceFromBottom <= BOTTOM_FOLLOW_THRESHOLD_PX;
+  const element = getScrollElement();
+  shouldFollowBottomAfterResize = element
+    ? getDistanceFromBottom(element) <= BOTTOM_FOLLOW_THRESHOLD_PX
+    : true;
 };
 
 const emitScrollState = (element: HTMLElement, force = false): void => {
@@ -312,6 +283,7 @@ const cancelPendingMarkdownHeightReconcile = (): void => {
   pendingMarkdownHeightReconcileFrame = null;
 };
 
+// 滚动到底部基于真实 scrollHeight(含 #after 槽内容),与虚拟器 totalSize 无关,确保真正贴底。
 const scrollToBottom = async (behavior: ScrollBehavior = 'auto'): Promise<void> => {
   cancelPendingBottomScroll();
 
@@ -320,7 +292,7 @@ const scrollToBottom = async (behavior: ScrollBehavior = 'auto'): Promise<void> 
   pendingBottomScrollFrame = window.requestAnimationFrame(() => {
     pendingBottomScrollFrame = null;
 
-    const element = getScrollerElement();
+    const element = getScrollElement();
 
     if (!element) {
       return;
@@ -339,7 +311,7 @@ const scrollToBottom = async (behavior: ScrollBehavior = 'auto'): Promise<void> 
 const restoreScrollState = async (): Promise<void> => {
   await nextTick();
 
-  const element = getScrollerElement();
+  const element = getScrollElement();
 
   if (!element) {
     return;
@@ -376,12 +348,42 @@ const handleScrollerScroll = (event: Event): void => {
   activateScrollbar();
 
   const distanceFromBottom = getDistanceFromBottom(element);
-  lastKnownDistanceFromBottom = distanceFromBottom;
   shouldFollowBottomAfterResize = distanceFromBottom <= BOTTOM_FOLLOW_THRESHOLD_PX;
   showScrollButton.value = distanceFromBottom > BOTTOM_FOLLOW_THRESHOLD_PX;
 
   emitScrollState(element);
 };
+
+// markstream 报告流式高度变化时,让虚拟器重测受影响条目(替代 vue-virtual-scroller 的 forceUpdate)。
+const scheduleMarkdownHeightReconcile = (metrics: MarkstreamVirtualMetrics): void => {
+  if (!Number.isFinite(metrics.totalHeight) || metrics.totalHeight <= 0) {
+    return;
+  }
+
+  if (pendingMarkdownHeightReconcileFrame !== null) {
+    return;
+  }
+
+  pendingMarkdownHeightReconcileFrame = window.requestAnimationFrame(() => {
+    pendingMarkdownHeightReconcileFrame = null;
+
+    chatVirtualizer.value.measure();
+
+    if (shouldFollowBottomAfterResize) {
+      void scrollToBottom('auto');
+    }
+  });
+};
+
+const virtualThreadKey = computed(() => props.conversationId ?? 'active');
+const virtualMeasurementKey = computed(() => AI_MARKDOWN_VIRTUAL_MEASUREMENT_KEY);
+
+provide(AI_MARKDOWN_VIRTUAL_SCROLL_KEY, {
+  scrollRoot: scrollerRef,
+  threadKey: virtualThreadKey,
+  measurementKey: virtualMeasurementKey,
+  onHeightChange: scheduleMarkdownHeightReconcile,
+});
 
 const handleChangedFilesRollback = (messageId: string, summaryId: string): void => {
   emit('changedFilesRollback', messageId, summaryId);
@@ -397,102 +399,6 @@ const handlePlanUpdateStepTitle = (stepId: string, title: string): void => {
 
 const handlePlanRemoveStep = (stepId: string): void => {
   emit('planRemoveStep', stepId);
-};
-
-const planSizeSignature = computed(() =>
-  [
-    props.planDetails?.status ?? '',
-    props.planDetails?.steps
-      ?.map((step) => `${step.id}:${step.status}:${step.title.length}`)
-      .join('|') ?? '',
-  ].join('|'),
-);
-
-type TEntrySizeDependencyCacheEntry = {
-  signature: string;
-  dependencies: unknown[];
-};
-
-const entrySizeDependencyCache = new Map<string, TEntrySizeDependencyCacheEntry>();
-
-const trimEntrySizeDependencyCache = (currentEntryId: string): void => {
-  if (
-    entrySizeDependencyCache.size < ENTRY_SIZE_DEPENDENCY_CACHE_LIMIT ||
-    entrySizeDependencyCache.has(currentEntryId)
-  ) {
-    return;
-  }
-
-  const firstKey = entrySizeDependencyCache.keys().next().value;
-  if (typeof firstKey === 'string') {
-    entrySizeDependencyCache.delete(firstKey);
-  }
-};
-
-const buildEntrySizeSignature = (entry: TAiThreadEntry): string => {
-  switch (entry.kind) {
-    case 'user-message':
-      return ['user-message', entry.markdown.length, entry.references.length].join(':');
-    case 'assistant-text':
-      return ['assistant-text', entry.markdown.length, entry.streaming ? 1 : 0].join(':');
-    case 'reasoning':
-      return [
-        'reasoning',
-        entry.segments.length,
-        entry.segments.reduce((total, segment) => total + segment.length, 0),
-        entry.isLong ? 1 : 0,
-        entry.streaming ? 1 : 0,
-        entryExpansion.isExpanded(entry) ? 1 : 0,
-      ].join(':');
-    case 'tool-call':
-      return [
-        'tool-call',
-        entry.toolCall.status,
-        entry.awaiting ? 1 : 0,
-        Object.keys(entry.terminals).length,
-        entryExpansion.isExpanded(entry) ? 1 : 0,
-      ].join(':');
-    case 'plan-control':
-      return ['plan-control', entry.phase, entry.goal.length, planSizeSignature.value].join(':');
-    case 'context-compaction':
-      return ['context-compaction', entry.text.length].join(':');
-    case 'changed-files-summary':
-      return [
-        'changed-files-summary',
-        entry.summary.id,
-        entry.summary.files.length,
-        entry.summary.totalAdditions,
-        entry.summary.totalDeletions,
-        props.revertingChangedFilesSummaryId === entry.summary.id ? 1 : 0,
-        props.pinningChangedFilesSummaryId === entry.summary.id ? 1 : 0,
-      ].join(':');
-    default: {
-      const exhaustive: never = entry;
-      return String(exhaustive);
-    }
-  }
-};
-
-const getEntrySizeDependencies = (entry: TAiThreadEntry): unknown[] => {
-  const signature = buildEntrySizeSignature(entry);
-  const cached = entrySizeDependencyCache.get(entry.id);
-
-  if (cached?.signature === signature) {
-    return cached.dependencies;
-  }
-
-  const dependencies: unknown[] = [entry.id, signature];
-  trimEntrySizeDependencyCache(entry.id);
-  entrySizeDependencyCache.set(entry.id, { signature, dependencies });
-  return dependencies;
-};
-
-const handleDynamicItemResize = (): void => {
-  if (!shouldFollowBottomAfterResize) {
-    return;
-  }
-
-  void scrollToBottom('auto');
 };
 
 const bottomFollowSignature = computed(() => {
@@ -562,27 +468,20 @@ onBeforeUnmount(() => {
       </slot>
     </div>
 
-    <DynamicScroller
+    <div
       v-else
-      ref="virtualScrollerRef"
+      ref="scrollerRef"
       class="ai-chat-list__scroller"
-      :items="virtualItems"
-      key-field="id"
-      :min-item-size="VIRTUAL_SCROLLER_MIN_ITEM_SIZE"
-      :buffer="VIRTUAL_SCROLLER_BUFFER_PX"
       @scroll.passive="handleScrollerScroll"
     >
-      <template #default="{ item, index, active }">
-        <DynamicScrollerItem
-          :item="item"
-          :active="active"
-          :index="index"
-          :data-index="index"
-          :size-dependencies="
-            item.type === 'entry' ? getEntrySizeDependencies(item.entry) : [props.isTyping]
-          "
-          emit-resize
-          @resize="handleDynamicItemResize"
+      <div class="ai-chat-list__sizer" :style="{ height: `${totalSize}px` }">
+        <div
+          v-for="{ row, item } in renderRows"
+          :key="row.key"
+          :ref="measureVirtualRow"
+          :data-index="row.index"
+          class="ai-chat-list__row"
+          :style="{ transform: `translateY(${row.start}px)` }"
         >
           <div class="ai-chat-list__item">
             <template v-if="item.type === 'entry'">
@@ -604,9 +503,9 @@ onBeforeUnmount(() => {
               />
 
               <slot
-                v-if="afterMessageByEntryId.get(item.entry.id)"
+                v-if="afterMessageByEntryId.get(item.id)"
                 name="after-message"
-                :message="afterMessageByEntryId.get(item.entry.id)"
+                :message="afterMessageByEntryId.get(item.id)"
               />
             </template>
 
@@ -619,15 +518,13 @@ onBeforeUnmount(() => {
               <AiThinkingStatus :label="typingLabel" />
             </Message>
           </div>
-        </DynamicScrollerItem>
-      </template>
-
-      <template #after>
-        <div class="ai-chat-list__after">
-          <slot name="after-messages" />
         </div>
-      </template>
-    </DynamicScroller>
+      </div>
+
+      <div class="ai-chat-list__after">
+        <slot name="after-messages" />
+      </div>
+    </div>
 
     <button
       v-if="showScrollButton && virtualItems.length > 0"
@@ -696,6 +593,18 @@ onBeforeUnmount(() => {
 
 .ai-chat-list.is-scrollbar-active .ai-chat-list__scroller::-webkit-scrollbar-thumb {
   background-color: color-mix(in srgb, var(--text-primary) 18%, transparent);
+}
+
+.ai-chat-list__sizer {
+  position: relative;
+  width: 100%;
+}
+
+.ai-chat-list__row {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
 }
 
 .ai-chat-list__item {
