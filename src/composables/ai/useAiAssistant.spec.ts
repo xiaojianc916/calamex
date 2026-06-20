@@ -24,6 +24,8 @@ import type {
   IAiSnapshot,
 } from '@/types/ai/edit';
 import type {
+  IAgentExternalChatRequest,
+  IAgentExternalChatResultPayload,
   IAgentSidecarChatRequest,
   IAgentSidecarCheckpointRestoreRequest,
   IAgentSidecarOrchestrateRequest,
@@ -214,6 +216,13 @@ const aiServiceMock = vi.hoisted(() => {
     createSidecarExecuteResponse(payload.goal),
   );
 
+  const sidecarExternalChat = vi.fn<
+    (payload: IAgentExternalChatRequest) => Promise<IAgentExternalChatResultPayload>
+  >(async (payload) => ({
+    sessionId: payload.sessionId ?? 'sidecar-external-session-1',
+    stopReason: 'EndTurn',
+  }));
+
   const sidecarResolveApproval = vi.fn(async () => ({
     sessionId: 'sidecar-approval-session-1',
     events: [
@@ -310,6 +319,7 @@ const aiServiceMock = vi.hoisted(() => {
     classifyTask,
     sidecarChat: sidecarExecute,
     sidecarExecute,
+    sidecarExternalChat,
     sidecarResolveApproval,
     sidecarRestoreCheckpoint,
     sidecarOrchestrate,
@@ -356,6 +366,7 @@ const aiServiceMock = vi.hoisted(() => {
       applyPatch.mockClear();
       classifyTask.mockClear();
       sidecarExecute.mockClear();
+      sidecarExternalChat.mockClear();
       sidecarResolveApproval.mockClear();
       sidecarRestoreCheckpoint.mockClear();
       sidecarOrchestrate.mockClear();
@@ -376,6 +387,7 @@ vi.mock('@/services/ipc/ai.service', () => ({
     classifyTask: aiServiceMock.classifyTask,
     sidecarChat: aiServiceMock.sidecarChat,
     sidecarExecute: aiServiceMock.sidecarExecute,
+    sidecarExternalChat: aiServiceMock.sidecarExternalChat,
     sidecarResolveApproval: aiServiceMock.sidecarResolveApproval,
     sidecarRestoreCheckpoint: aiServiceMock.sidecarRestoreCheckpoint,
     sidecarOrchestrate: aiServiceMock.sidecarOrchestrate,
@@ -3500,5 +3512,53 @@ describe('useAiAssistant streaming integration', () => {
       expect.arrayContaining([expect.objectContaining({ type: 'rollback.restore.completed' })]),
     );
     expect(assistant.revertingChangedFilesSummaryId.value).toBeNull();
+  });
+
+  it('外部 Kimi agent 回合在 prompt 进行中实时流式 message_delta（而非末尾一次性渲染）', async () => {
+    const { assistant } = createAssistantHarnessContext();
+    const promptGate = createDeferred<IAgentExternalChatResultPayload>();
+    let capturedRequest: IAgentExternalChatRequest | null = null;
+
+    aiServiceMock.sidecarExternalChat.mockImplementationOnce(async (payload) => {
+      capturedRequest = payload;
+      const sessionId = payload.sessionId ?? 'sidecar-external-live-session';
+
+      aiServiceMock.emitSidecar({
+        sessionId,
+        seq: 0,
+        event: { type: 'message_delta', text: '第一段已到达', phase: 'final' },
+      });
+      aiServiceMock.emitSidecar({
+        sessionId,
+        seq: 1,
+        event: { type: 'message_delta', text: '；第二段实时到达', phase: 'final' },
+      });
+
+      // 在回合「进行中」（prompt 尚未返回）阻塞：断言此刻已实时渲染增量、状态仍为 streaming。
+      await promptGate.promise;
+
+      return { sessionId, stopReason: 'EndTurn' };
+    });
+
+    assistant.draft.value = '用 Kimi 跑一轮';
+    const sendPromise = assistant.sendMessage({ agentBackend: 'kimi' });
+
+    await flushMicrotasks();
+
+    const assistantMessageId = assistant.messages.value[1]?.id;
+    expect(assistantMessageId).toBeTruthy();
+    expect(capturedRequest?.backend).toBe('kimi');
+    expect(capturedRequest?.sessionId).toBe(`sidecar:${assistantMessageId}`);
+    expect(assistant.messages.value[1]?.content).toContain('第二段实时到达');
+    expect(assistant.messages.value[1]?.stream?.status).toBe('streaming');
+
+    promptGate.resolve({
+      sessionId: capturedRequest?.sessionId ?? 'sidecar-external-live-session',
+      stopReason: 'EndTurn',
+    });
+    await sendPromise;
+
+    expect(assistant.messages.value[1]?.stream?.status).toBe('completed');
+    expect(assistant.messages.value[1]?.content).toContain('第二段实时到达');
   });
 });

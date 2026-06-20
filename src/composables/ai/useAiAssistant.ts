@@ -1997,8 +1997,10 @@ export const useAiAssistant = (options: IUseAiAssistantOptions) => {
 
   // 外部 ACP 编码 agent（Kimi / Codex，ADR-0015）发送链路：经 agent_sidecar_external_chat
   // 驱动一轮标准 session/prompt。外部 agent 无富信封，过程增量经 session/update 帧走既有
-  // sidecar 流（subscribeSidecarStreamWithPrebuffer + applySidecarLiveEventsToAgentMessage）；
-  // prompt 返回即整轮结束，绑定会话并 flush 后把消息状态收口为 completed。
+  // sidecar 流（subscribeSidecarSessionStream + applySidecarLiveEventsToAgentMessage）。
+  // 流式关键：用前端预生成的 sidecarSessionId 在发起回合「之前」订阅，后端据此把外部帧的
+  // session_id 由 ACP 会话 UUID 重写为该键（见 Rust host.prompt_with_stream_key），实现逐
+  // token 实时渲染；prompt 返回即整轮结束，flush 后把消息状态收口为 completed。
   const executeExternalAgentRequest = async (
     backend: TAgentBackendKind,
     visibleMessages: IAiChatMessage[],
@@ -2033,6 +2035,7 @@ export const useAiAssistant = (options: IUseAiAssistantOptions) => {
     activeAbortController.value = new AbortController();
     const requestAbortController = activeAbortController.value;
 
+    const sidecarSessionId = `sidecar:${assistantMessageId}`;
     const liveEventBuffer = createSidecarLiveEventBuffer((events, freshEvents) => {
       if (requestAbortController.signal.aborted) {
         return;
@@ -2046,26 +2049,32 @@ export const useAiAssistant = (options: IUseAiAssistantOptions) => {
       );
       updateLiveThreadFromSidecarEvents(assistantMessageId, targetThreadId, events);
     });
-    let sidecarStream: Awaited<ReturnType<typeof subscribeSidecarStreamWithPrebuffer>> | null =
-      null;
+    let unlistenSidecarStream: (() => void) | null = null;
 
     try {
-      sidecarStream = await subscribeSidecarStreamWithPrebuffer((event) => {
+      // 关键修复（外部 Kimi 流式）：用前端预生成的 sidecarSessionId 在发起回合「之前」订阅该
+      // 会话的 session/update 帧。后端据此把外部 agent 帧的 session_id 由 ACP 会话 UUID 重写为
+      // 该键（见 Rust host.prompt_with_stream_key），使本订阅即时命中、逐 token 实时渲染——
+      // 取代旧的「subscribeSidecarStreamWithPrebuffer + 回合结束后 bind(result.sessionId)」末尾
+      // 一次性回放。
+      unlistenSidecarStream = await subscribeSidecarSessionStream(sidecarSessionId, (event) => {
         if (requestAbortController.signal.aborted) {
           return;
         }
         liveEventBuffer.push(event);
       });
 
-      const result = await aiService.sidecarExternalChat({
+      await aiService.sidecarExternalChat({
         backend,
         text: messageContent,
+        sessionId: sidecarSessionId,
         workspaceRootPath: options.workspaceRootPath.value,
         ...(targetThreadId ? { threadId: targetThreadId } : {}),
       });
 
-      sidecarStream.bind(result.sessionId);
       liveEventBuffer.flush();
+      unlistenSidecarStream?.();
+      unlistenSidecarStream = null;
 
       if (!requestAbortController.signal.aborted) {
         const currentMessage = findMessageById(assistantMessageId);
@@ -2090,7 +2099,7 @@ export const useAiAssistant = (options: IUseAiAssistantOptions) => {
       }
     } finally {
       liveEventBuffer.dispose();
-      sidecarStream?.dispose();
+      unlistenSidecarStream?.();
       activeAbortController.value = null;
       activeAgentMessageId.value = null;
       commitDisplayMessagesToStore(targetThreadId);

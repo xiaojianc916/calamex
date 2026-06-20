@@ -109,6 +109,12 @@ pub struct AcpHost {
     /// NewSessionResponse.config_options 原样 JSON：Vec SessionConfigOption）。
     /// 最小透传，宿主侧不重建 SDK 类型，与 modes_by_thread 同构。
     config_options_by_thread: Arc<Mutex<HashMap<String, serde_json::Value>>>,
+    /// ACP 会话 id ↔ 前端流式关联键 的重写表（仅外部 agent 标准 prompt 回合用）。
+    /// 外部 agent 发出的 session/update 帧以 ACP 会话 UUID 标记，而前端按预生成的
+    /// sidecar:assistantMessageId 键过滤订阅；prompt_with_stream_key 在回合期间登记
+    /// 「acp_session_id → 前端键」，sink 据此把外部帧的 session_id 重写为前端键后再下发，
+    /// 回合结束即移除。无登记时 sink 原样透传（内置边车帧自带前端键，不命中重写表，行为不变）。
+    stream_key_overrides: Arc<Mutex<HashMap<String, String>>>,
 }
 
 impl AcpHost {
@@ -121,14 +127,26 @@ impl AcpHost {
         let approvals = ApprovalRegistry::new();
         let resolver = approvals.resolver(on_approval);
 
-        // 单一下沉口：把每条 `session/update` 帧原样转发给 emit 闭包。
-        // 帧 → 前端 TAgentUiEvent 的投影由接线层的 emit（runtime::stream_emitter）统一负责：
-        // 它经 ui_event::session_notification_to_ui_event 投影，并对无对应 UI 事件的变体
-        // （tool_call(_update)/plan/usage_update/current_mode_update 等）返回 None 跳过、不下发。
-        // 此处不得再投影，否则会对已投影帧二次投影（其 event 已无 update.sessionUpdate 字段）
-        // 必返回 None 而被丢弃，导致各模式 live 增量为零、气泡无流式。
-        // 终态 done/error 不走 session/update，由 chat_stream 经 app.emit 直接合成补发。
-        let sink: EventSink = Arc::new(move |frame: AcpStreamFrame| emit(frame));
+        // 外部 agent 帧重写表：sink 在转发前依此把「ACP 会话 UUID」标记重写为前端预生成键。
+        let stream_key_overrides = Arc::new(Mutex::new(HashMap::new()));
+        let overrides_for_sink = stream_key_overrides.clone();
+
+        // 单一下沉口：把每条 session/update 帧转发给 emit 闭包，但在转发前按 stream_key_overrides
+        // 重写外部 agent 帧的 session_id（ACP UUID → 前端预生成键）。仅当该帧的 ACP 会话 id 命中
+        // 重写表才改写（外部 prompt 回合期间登记），否则原样透传——内置边车帧自带前端键、不命中
+        // 重写表，行为不变。其余投影语义同前：帧 → 前端 TAgentUiEvent 的投影由接线层的 emit
+        // （runtime::stream_emitter）统一负责，本层不得再投影；终态 done/error 不走 session/update，
+        // 由 chat_stream 经 app.emit 直接合成补发。
+        let sink: EventSink = Arc::new(move |mut frame: AcpStreamFrame| {
+            let remapped_stream_key = frame
+                .session_id
+                .as_deref()
+                .and_then(|acp_session_id| overrides_for_sink.lock().get(acp_session_id).cloned());
+            if let Some(stream_key) = remapped_stream_key {
+                frame.session_id = Some(stream_key);
+            }
+            emit(frame)
+        });
 
         let handle = spawn_acp_client(config, sink, resolver)?;
         Ok(Self {
@@ -137,6 +155,7 @@ impl AcpHost {
             sessions: Arc::new(Mutex::new(HashMap::new())),
             modes_by_thread: Arc::new(Mutex::new(HashMap::new())),
             config_options_by_thread: Arc::new(Mutex::new(HashMap::new())),
+            stream_key_overrides,
         })
     }
 
@@ -198,8 +217,49 @@ impl AcpHost {
         workspace_root_path: Option<&str>,
         blocks: Vec<ContentBlock>,
     ) -> Result<StopReason, AcpClientError> {
+        self.prompt_with_stream_key(thread_id, workspace_root_path, blocks, None)
+            .await
+    }
+
+    /// 同 prompt，但额外接受前端预生成的「流式关联键」用于帧重写（外部 ACP agent 专用）。
+    ///
+    /// 背景：外部 agent 发出的 session/update 帧以 ACP 会话 UUID 标记，而前端在回合发起前只知道
+    /// 自造的 sidecar:assistantMessageId 键并据此订阅过滤。若不重写，整轮 live 帧会被前端丢弃、
+    /// 退化为末尾一次性渲染。
+    ///
+    /// 实现：解析/复用会话拿到 ACP 会话 id 后，若调用方提供了非空且不等于 ACP id 的 stream_key，
+    /// 就在重写表登记「acp_session_id → stream_key」（sink 据此重写外部帧的 session_id），跑完
+    /// prompt 后立即移除该登记（无论成败），把重写作用域严格限定在本回合。stream_key 为 None /
+    /// 空白 / 恰等于 ACP id 时不登记，sink 原样透传（行为同旧 prompt）。
+    pub async fn prompt_with_stream_key(
+        &self,
+        thread_id: &str,
+        workspace_root_path: Option<&str>,
+        blocks: Vec<ContentBlock>,
+        stream_key: Option<&str>,
+    ) -> Result<StopReason, AcpClientError> {
         let session_id = self.ensure_session(thread_id, workspace_root_path).await?;
-        self.handle.prompt(session_id, blocks).await
+        let acp_session_id = session_id.to_string();
+
+        let override_key = stream_key
+            .map(str::trim)
+            .filter(|key| !key.is_empty() && *key != acp_session_id.as_str());
+        let registered = if let Some(key) = override_key {
+            self.stream_key_overrides
+                .lock()
+                .insert(acp_session_id.clone(), key.to_string());
+            true
+        } else {
+            false
+        };
+
+        let outcome = self.handle.prompt(session_id, blocks).await;
+
+        if registered {
+            self.stream_key_overrides.lock().remove(&acp_session_id);
+        }
+
+        outcome
     }
 
     /// 用纯文本驱动一轮**标准 ACP 回合**：把单段文本包成一个 `text` `ContentBlock` 后委托

@@ -171,6 +171,7 @@ pub async fn agent_sidecar_external_chat(
         text,
         thread_id,
         workspace_root_path,
+        session_id: client_stream_session_id,
         ..
     } = payload;
     let thread_id = thread_id.as_deref().unwrap_or_default();
@@ -179,16 +180,31 @@ pub async fn agent_sidecar_external_chat(
     // 把一轮回合收敛成单个 Result，便于在命令边界统一处置失败：ensure_session / prompt 共享
     // 同一条 ACP 连接，任一步失败都按同一策略（驱逐失效宿主 + 翻译提示）处理。
     let outcome: Result<AgentExternalChatResultPayload, crate::acp::AcpClientError> = async {
-        let session_id = host.ensure_session(thread_id, workspace_root_path).await?;
+        // 先解析稳定 ACP 会话（thread_id ↔ SessionId，跨回合复用），作为回退用的会话 id。
+        let acp_session_id = host.ensure_session(thread_id, workspace_root_path).await?;
+
+        // 流式关联键：优先用前端预生成的 session_id（= sidecar:assistantMessageId），它在发起
+        // 回合前就已知、可被 subscribeSidecarSessionStream 即时订阅；外部 agent 发出的
+        // session/update 帧本身以 ACP 会话 UUID 标记，由宿主 sink 依此键重写后再下发（见
+        // host.prompt_with_stream_key），使前端按预生成键过滤即可实时收帧。缺省/空白时回退到
+        // ACP 会话 id（与旧行为一致）。
+        let stream_session_id = client_stream_session_id
+            .as_deref()
+            .map(str::trim)
+            .filter(|key| !key.is_empty())
+            .map(str::to_owned)
+            .unwrap_or_else(|| acp_session_id.to_string());
+
         let stop_reason = host
-            .prompt(
+            .prompt_with_stream_key(
                 thread_id,
                 workspace_root_path,
                 vec![ContentBlock::Text(TextContent::new(text))],
+                Some(stream_session_id.as_str()),
             )
             .await?;
         Ok(AgentExternalChatResultPayload {
-            session_id: session_id.to_string(),
+            session_id: stream_session_id,
             stop_reason: format!("{stop_reason:?}"),
         })
     }

@@ -245,6 +245,13 @@ pub struct AgentExternalChatRequest {
     pub(crate) thread_id: Option<String>,
     #[serde(skip_serializing_if = "is_blank_optional_string")]
     pub(crate) workspace_root_path: Option<String>,
+    /// 前端预生成的流式关联键（形如 sidecar:assistantMessageId）。外部 agent 经标准
+    /// session/prompt 回合发出的 session/update 帧本以 ACP 会话 UUID 标记，前端在回合
+    /// 终了前无从得知该 UUID，导致整轮 live 帧被前端按预生成键过滤丢弃、末尾一次性渲染。
+    /// 命令层据此键在宿主侧把外部帧的 session_id 重写为该前端已知键（见 acp/host.rs 的
+    /// prompt_with_stream_key），实现真正的逐 token 流式。缺省/空白时回退到 ACP 会话 id。
+    #[serde(skip_serializing_if = "is_blank_optional_string")]
+    pub(crate) session_id: Option<String>,
 }
 
 /// 外部 ACP 回合的终态结果（契约层）。
@@ -264,8 +271,9 @@ mod agent_sidecar_contract_tests {
     use serde_json::{Map, Value};
 
     use super::{
-        AgentSidecarAskUserAnswerPayload, AgentSidecarAskUserResumeRequest,
-        AgentSidecarChatRequest, AgentSidecarCheckpointRestoreRequest, AgentSidecarMessagePayload,
+        AgentBackendKind, AgentExternalChatRequest, AgentSidecarAskUserAnswerPayload,
+        AgentSidecarAskUserResumeRequest, AgentSidecarChatRequest,
+        AgentSidecarCheckpointRestoreRequest, AgentSidecarMessagePayload,
         AgentSidecarRollbackStepPath,
     };
 
@@ -474,5 +482,49 @@ mod agent_sidecar_contract_tests {
 
         assert_eq!(object.get("optionIds"), Some(&Value::Array(vec![])));
         assert!(!object.contains_key("text"));
+    }
+
+    #[test]
+    fn external_chat_request_omits_blank_session_and_serializes_present_session() {
+        let omitted = AgentExternalChatRequest {
+            backend: AgentBackendKind::Kimi,
+            text: "继续".to_string(),
+            thread_id: None,
+            workspace_root_path: None,
+            session_id: Some("  ".to_string()),
+        };
+
+        let omitted_object = serialize_object(&omitted);
+
+        assert!(!omitted_object.contains_key("sessionId"));
+        assert!(!omitted_object.contains_key("threadId"));
+        assert!(!omitted_object.contains_key("workspaceRootPath"));
+        assert_eq!(
+            omitted_object.get("backend"),
+            Some(&Value::String("kimi".to_string()))
+        );
+        assert_eq!(
+            omitted_object.get("text"),
+            Some(&Value::String("继续".to_string()))
+        );
+
+        let present = AgentExternalChatRequest {
+            backend: AgentBackendKind::Kimi,
+            text: "继续".to_string(),
+            thread_id: Some("thread-external-1".to_string()),
+            workspace_root_path: None,
+            session_id: Some("sidecar:assistant-1".to_string()),
+        };
+
+        let present_object = serialize_object(&present);
+
+        assert_eq!(
+            present_object.get("sessionId"),
+            Some(&Value::String("sidecar:assistant-1".to_string()))
+        );
+        assert_eq!(
+            present_object.get("threadId"),
+            Some(&Value::String("thread-external-1".to_string()))
+        );
     }
 }

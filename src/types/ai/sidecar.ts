@@ -899,6 +899,13 @@ export interface IAgentExternalChatRequest {
   text: string;
   threadId?: string;
   workspaceRootPath?: string | null;
+  /**
+   * 前端预生成的流式关联键（形如 sidecar:assistantMessageId）。Rust 宿主据此把外部 agent
+   * session/update 帧的 session_id 由 ACP 会话 UUID 重写为该键，使前端
+   * subscribeSidecarSessionStream 能在回合进行中实时收帧（而非末尾一次性渲染）。
+   * 缺省时后端回退到 ACP 会话 id。
+   */
+  sessionId?: string;
 }
 
 export interface IAgentExternalChatResultPayload {
