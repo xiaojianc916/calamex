@@ -403,7 +403,7 @@ export const useAiAssistant = (options: IUseAiAssistantOptions) => {
       ...activeThread,
       messages: activeThread.messages.filter((message) => message.id !== assistantMessageId),
     });
-    aiThreadStore.setLiveThread(
+    aiThreadStore.setStreamingActiveThread(
       buildLiveThreadFromSidecarEvents(events, {
         baseThread: seedThread,
         assistantMessageId,
@@ -416,7 +416,7 @@ export const useAiAssistant = (options: IUseAiAssistantOptions) => {
     if (!isConversationWriteBuffered()) {
       displayMessages.value = unref(conversationStore.activeMessages);
       // Step 6 持久上线:回落到 projectedActiveThread(legacy->entries),不再退回旧 message 路径。
-      aiThreadStore.setLiveThread(null);
+      aiThreadStore.setStreamingActiveThread(null);
     }
   };
 

@@ -94,6 +94,24 @@ export const useAiThreadStore = defineStore('ai-thread', () => {
   }
 
   /**
+   * Step 8 砖3③：流式写真源 → 权威 entries 覆盖。
+   * 把本回合 reduce 回放得到的 IAiThread（buildLiveThreadFromSidecarEvents =
+   * reduceThreadAll 纯回放）作为权威活动线程覆盖，使 renderActiveThread 优先渲染
+   * 权威 entries。thread 为 null 表示本回合收尾：复位为单空线程，渲染回落到响应式
+   * legacy 投影（activeThread）。与既有 liveThread 覆盖机制按构造等价
+   * （selectRenderThread：非空权威胜出，否则回退），故零行为变化。
+   */
+  function setStreamingActiveThread(thread: IAiThread | null): void {
+    if (!thread) {
+      commitAuthoritativeState(threadMutations.ensureActiveThread(null, []));
+      return;
+    }
+    commitAuthoritativeState(
+      threadMutations.commitThreadsState({ threads: [thread], activeThreadId: thread.id }),
+    );
+  }
+
+  /**
    * 灌入启动迁移得到的持久化线程快照（见 7.5c 接线）。
    * 换库语义：替换整组线程并重置去重集；activeThreadId 由调用方传入
    * （通常为 7.5a resolver 归一后的活动线程 id）。同步 kick 活动线程指针恢复，
@@ -321,6 +339,7 @@ export const useAiThreadStore = defineStore('ai-thread', () => {
     renderActiveEntries,
     // actions
     setLiveThread,
+    setStreamingActiveThread,
     setPersistedThreads,
     setPersistedActiveThreadId,
     // Step 8 砖2b：entries 权威写 actions（未接线）
