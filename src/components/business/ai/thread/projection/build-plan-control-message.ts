@@ -1,5 +1,5 @@
 /**
- * 构造承载 Plan 审批信息的合成 assistant 消息,使其经 `buildThreadEntries` 投影为
+ * 构造承载 Plan 审批信息的合成 assistant 消息,经线程条目投影(legacy-adapter)呈现为
  * 时间线内联的 `plan-control` 条目(对齐 Zed 把 plan 作为会话 entry 的取向)。
  *
  * 仅在“等待用户批准计划”阶段产出;计划运行 / 终态不在时间线呈现审批卡(运行态由
@@ -27,7 +27,7 @@ export interface IPlanControlMessageInput {
 /**
  * 在等待批准阶段产出承载 `agentConfirmation` 的合成消息;否则返回 null。
  *
- * `agentConfirmation.status` 固定为 `'pending'`(等待批准),`buildThreadEntries`
+ * `agentConfirmation.status` 固定为 `'pending'`(等待批准),线程条目投影(legacy-adapter)
  * 据此把条目阶段映射为 `awaiting-approval`。`content` 留空,投影时跳过 assistant
  * 文本条目,只产出 `plan-control` 条目。
  */

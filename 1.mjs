@@ -1,12 +1,14 @@
 #!/usr/bin/env node
-// 8.2b · 退役 AiThreadTimeline 死组件 + 随之死掉的 buildThreadEntries 投影链
-//        —— render 双轨正式塌缩为 entries 单一真相源(ADR-0014)。
+// 8.2d · 退役孤儿协议 VM 适配器 from-runtime-tool-call / from-wire-tool-call
 //
-// 已由本地双份 grep 确证(search_code 不可用 → 用户本地 grep 兜底):
-//   · AiThreadTimeline 全仓无运行时 import(仅自身 spec / thread 桶导出 / 注释 / 文档 / 历史脚本)
-//   · buildThreadEntries 唯一运行时消费者即 AiThreadTimeline.vue;删后仅余 spec 与定义自身
-//   · AiChatThread(8.1b 起 entries-only)与 reduce 实时路径均不依赖 buildThreadEntries
-//     → 删除不影响 plan-control / 实时渲染
+// 已由本地 grep 确证(search_code 不可用 → 用户本地 grep 兜底):
+//   · fromRuntimeToolCall —— 仅出现于 from-runtime-tool-call.ts(定义) + from-runtime-tool-call.spec.ts
+//   · fromWireToolCall    —— 仅出现于 from-wire-tool-call.ts(定义) + from-wire-tool-call.spec.ts
+//   全仓无其他消费者;其唯一历史消费者 build-thread-entries.ts 已于 8.2b 退役 → 现为死代码。
+//
+// 依赖保留(删除后不产生破坏性 orphan):
+//   · tool-kind.ts(RUNTIME_KIND_TO_TOOL_KIND / classifyRuntimeToolKind)仍被 from-sidecar-events 消费
+//   · tool-view.ts / plan-runtime-timeline / constants/ai/runtime-tools 均另有消费者
 //
 // 用法:
 //   node 1.mjs --check     # 干跑
@@ -60,56 +62,27 @@ function replaceOnce(src, oldStr, newStr, numOccurrences = 1) {
   return parts.join(newStr);
 }
 
-console.log(`8.2b 退役 AiThreadTimeline 链 @ ${REPO_ROOT}${CHECK ? '  (--check 干跑)' : ''}`);
+console.log(`8.2d 退役孤儿适配器 @ ${REPO_ROOT}${CHECK ? '  (--check 干跑)' : ''}`);
 
-// ---- 1) 删除死组件与投影链(及其 spec)-----------------------------------------
-console.log('\n[1/3] 删除文件');
+// ---- 1) 删除孤儿文件(定义 + spec)--------------------------------------------
+console.log('\n[1/2] 删除文件');
 const DELETIONS = [
-  'src/components/business/ai/thread/AiThreadTimeline.vue',
-  'src/components/business/ai/thread/AiThreadTimeline.spec.ts',
-  'src/components/business/ai/thread/projection/build-thread-entries.ts',
-  'src/components/business/ai/thread/projection/build-thread-entries.spec.ts',
-  'src/components/business/ai/thread/projection/build-thread-entries.acp.spec.ts',
-  'src/components/business/ai/thread/projection/render-parity.golden.spec.ts',
+  'src/components/business/ai/thread/projection/from-runtime-tool-call.ts',
+  'src/components/business/ai/thread/projection/from-runtime-tool-call.spec.ts',
+  'src/components/business/ai/thread/projection/from-wire-tool-call.ts',
+  'src/components/business/ai/thread/projection/from-wire-tool-call.spec.ts',
 ];
 for (const p of DELETIONS) {
   remove(p);
 }
 
-// ---- 2) 摘除桶导出 ------------------------------------------------------------
-console.log('\n[2/3] 编辑桶导出');
+// ---- 2) 摘除 projection 桶的两条 re-export ------------------------------------
+console.log('\n[2/2] 编辑 projection/index.ts');
 {
-  // thread 桶:移除 AiThreadTimeline 具名默认导出
-  const p = 'src/components/business/ai/thread/index.ts';
-  let src = toLf(read(p)); // LF
-  src = replaceOnce(
-    src,
-    "export { default as AiThreadTimeline } from './AiThreadTimeline.vue';\n",
-    '',
-  );
-  write(p, src);
-}
-{
-  // projection 桶:移除 build-thread-entries re-export(8.2a 已先行摘除 single-message / reconcile)
   const p = 'src/components/business/ai/thread/projection/index.ts';
   let src = toLf(read(p)); // LF
-  src = replaceOnce(src, "export * from './build-thread-entries';\n", '');
-  write(p, src);
-}
-
-// ---- 3) 注释保真:AiThreadEntryView 调用方已收敛为单一 entries 路径 -------------
-console.log('\n[3/3] 注释保真');
-{
-  const p = 'src/components/business/ai/thread/AiThreadEntryView.vue';
-  let src = toLf(read(p)); // LF
-  src = replaceOnce(
-    src,
-    '// 单条平铺时间线条目的渲染分派。三处调用方(AiThreadTimeline / AiThreadSingleMessageTimeline /\n' +
-      '// AiChatThread 的逐 entry 虚拟化路径)共用本组件;按 kind 差异化的 patches / workspace 透传\n' +
-      '// 经独立 props 承载,以保持各调用方既有行为不变。\n',
-    '// 单条平铺时间线条目的渲染分派。当前唯一调用方为 AiChatThread 的逐 entry 虚拟化路径;\n' +
-      '// 按 kind 差异化的 patches / workspace 透传经独立 props 承载,以保持调用方行为不变。\n',
-  );
+  src = replaceOnce(src, "export * from './from-runtime-tool-call';\n", '');
+  src = replaceOnce(src, "export * from './from-wire-tool-call';\n", '');
   write(p, src);
 }
 
