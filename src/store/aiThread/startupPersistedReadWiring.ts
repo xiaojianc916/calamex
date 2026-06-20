@@ -31,7 +31,7 @@ export interface IRunStartupPersistedReadDeps {
   applyPersisted: (threads: IAiThread[], activeThreadId: string | null) => void;
 }
 
-const defaultDeps: IRunStartupPersistedReadDeps = {
+export const defaultDeps: IRunStartupPersistedReadDeps = {
   readLegacy: () => {
     const conversation = useAiConversationStore();
     return {

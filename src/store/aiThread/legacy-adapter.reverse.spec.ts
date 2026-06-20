@@ -39,6 +39,40 @@ describe('threadEntriesToMessages', () => {
     expect(messages[1]!.id).toBe('a1');
     expect(messages[1]!.toolCalls?.[0]?.id).toBe('t1');
     expect(messages[1]!.toolCalls?.[0]?.status).toBe('succeeded');
+    expect(messages[1]!.toolCalls?.[0]?.name).toBe('read_file');
+  });
+
+  it('round-trips assistant stream 快照 + acpToolCalls (Approach B 无损)', () => {
+    const streaming: IAiChatMessage = {
+      role: 'assistant',
+      id: 'a2',
+      content: '答案',
+      createdAt: '2026-01-01T00:00:02.000Z',
+      references: [],
+      stream: {
+        status: 'completed',
+        activityText: '正在读取文件',
+        finalAnswerStarted: true,
+        usage: { inputTokens: 12, outputTokens: 34, totalTokens: 46 },
+      },
+      acpToolCalls: [
+        {
+          type: 'tool_call',
+          id: 'acp-1',
+          createdAt: '2026-01-01T00:00:02.000Z',
+          title: 'Read file',
+          kind: 'read',
+          status: 'completed',
+          content: [],
+        },
+      ],
+    };
+    const [message] = threadEntriesToMessages(legacyMessageToEntries(streaming));
+    expect(message?.stream?.status).toBe('completed');
+    expect(message?.stream?.activityText).toBe('正在读取文件');
+    expect(message?.stream?.finalAnswerStarted).toBe(true);
+    expect(message?.stream?.usage?.totalTokens).toBe(46);
+    expect(message?.acpToolCalls?.[0]?.id).toBe('acp-1');
   });
 
   it('skips non-message entries without throwing', () => {

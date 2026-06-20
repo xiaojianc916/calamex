@@ -17,6 +17,7 @@ import type { IAiConversationThread } from '@/store/aiConversation';
 import type { IAiChatMessage } from '@/types/ai';
 import type {
   IAiThread,
+  IAiThreadAssistantMessageEntry,
   IAiThreadEntry,
   IAiThreadToolCall,
   IAiThreadToolCallContent,
@@ -74,6 +75,7 @@ function legacyToolCallToEntry(toolCall: LegacyToolCall, createdAt: string): IAi
     type: 'tool_call',
     id: toolCall.id,
     createdAt,
+    name: toolCall.name,
     title: toolCall.summary || toolCall.name,
     kind: inferToolKind(toolCall.name),
     status: LEGACY_TOOL_STATUS_MAP[toolCall.status],
@@ -110,13 +112,26 @@ export function legacyMessageToEntries(message: IAiChatMessage): IAiThreadEntry[
     toolCallEntries.push(toolCallEntry);
     entries.push(toolCallEntry);
   }
-  if (message.content.trim().length > 0) {
-    entries.push({
+  const assistantChunks: IAiThreadAssistantMessageEntry['chunks'] =
+    message.content.trim().length > 0
+      ? [{ type: 'message', block: { type: 'text', text: message.content } }]
+      : [];
+  // 有正文 / 流式快照 / acpToolCalls 任一即生成 assistant_message entry，使 stream 与
+  // acpToolCalls 在「仅工具调用、无最终正文」的回合也不被丢弃（逆投影据此无损还原）。
+  if (
+    assistantChunks.length > 0 ||
+    message.stream !== undefined ||
+    (message.acpToolCalls?.length ?? 0) > 0
+  ) {
+    const assistantEntry: IAiThreadAssistantMessageEntry = {
       type: 'assistant_message',
       id: message.id,
       createdAt: message.createdAt,
-      chunks: [{ type: 'message', block: { type: 'text', text: message.content } }],
-    });
+      chunks: assistantChunks,
+      ...(message.stream !== undefined ? { stream: message.stream } : {}),
+      ...(message.acpToolCalls !== undefined ? { acpToolCalls: message.acpToolCalls } : {}),
+    };
+    entries.push(assistantEntry);
   }
   if (message.agentConfirmation) {
     entries.push({
@@ -165,11 +180,14 @@ type IAiThreadAssistantChunks = Extract<IAiThreadEntry, { type: 'assistant_messa
  * 线程时用本逆投影重建 message 缓冲（续聊上下文 toSidecarMessages、历史首轮、会话内
  * checkpoint 计算），不再读取 legacy store。
  *
- * 有损边界（与 entries 持久化模型固有限制一致，非新增回归）：
- * - entries 不承载 stream.runtimeEvents / token 统计 / acpToolCalls，逆投影不恢复；
- *   重载后历史回合的 checkpoint（依赖 runtime events）需会话内重新交互产生。
+ * 无损往返（ADR-0014 ④.1 Approach B）：
+ * - assistant_message entry 承载 stream（status/runtimeEvents/activityText/token/usage/
+ *   finalAnswerStarted）与 acpToolCalls；tool_call entry 承载原始 name。故 messages ↔
+ *   entries 往返保真：会话内 checkpoint（依赖 runtime events）、token 统计、工具名均还原。
  * - 折叠规则与正向对称：相邻 tool_call 归并到其后的 assistant_message；changed_files
  *   回挂到对应 assistant；plan / plan_control / context_compaction 续聊无需，跳过。
+ * 残余有损（不影响编排器工作缓冲）：tool_call 的 targetPreview/detailItems 合并为
+ *   detailItems；plan_control（agentConfirmation）续聊不还原。
  * ========================================================================== */
 
 /** 新状态机 -> 旧工具状态（LEGACY_TOOL_STATUS_MAP 的逆）。 */
@@ -193,7 +211,7 @@ function threadToolCallEntryToLegacy(entry: IAiThreadToolCall): LegacyToolCall {
   const elapsedMs = typeof rawOutput?.elapsedMs === 'number' ? rawOutput.elapsedMs : undefined;
   return {
     id: entry.id,
-    name: entry.title,
+    name: entry.name ?? entry.title,
     summary: entry.title,
     status: REVERSE_TOOL_STATUS_MAP[entry.status],
     ...(detailItems.length > 0 ? { detailItems } : {}),
@@ -264,6 +282,8 @@ export function threadEntriesToMessages(entries: readonly IAiThreadEntry[]): IAi
           createdAt: entry.createdAt,
           references: [],
           ...(pendingToolCalls.length > 0 ? { toolCalls: pendingToolCalls } : {}),
+          ...(entry.stream !== undefined ? { stream: entry.stream } : {}),
+          ...(entry.acpToolCalls !== undefined ? { acpToolCalls: entry.acpToolCalls } : {}),
         };
         pendingToolCalls = [];
         pendingToolCreatedAt = null;

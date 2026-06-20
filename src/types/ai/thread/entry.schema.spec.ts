@@ -157,4 +157,45 @@ describe('AI thread entry schema', () => {
   it('entry 联合拒绝未知 type', () => {
     expect(() => aiThreadEntrySchema.parse({ type: 'mystery', id: 'x', createdAt: ISO })).toThrow();
   });
+
+  it('assistant_message 接受可选 stream 快照与 acpToolCalls，tool_call 接受原始 name', () => {
+    const parsed = aiThreadEntrySchema.parse({
+      type: 'assistant_message',
+      id: 'a1',
+      createdAt: ISO,
+      chunks: [{ type: 'message', block: { type: 'text', text: '答案' } }],
+      stream: {
+        status: 'completed',
+        usage: { inputTokens: 1, outputTokens: 2, totalTokens: 3 },
+      },
+      acpToolCalls: [
+        {
+          type: 'tool_call',
+          id: 'acp-1',
+          createdAt: ISO,
+          title: 'Read',
+          kind: 'read',
+          status: 'completed',
+          content: [],
+        },
+      ],
+    });
+    expect(parsed.type).toBe('assistant_message');
+    if (parsed.type === 'assistant_message') {
+      expect(parsed.stream?.status).toBe('completed');
+      expect(parsed.acpToolCalls).toHaveLength(1);
+    }
+
+    const tool = aiThreadToolCallSchema.parse({
+      type: 'tool_call',
+      id: 'tc1',
+      createdAt: ISO,
+      name: 'read_project_file',
+      title: '读取文件',
+      kind: 'read',
+      status: 'completed',
+      content: [],
+    });
+    expect(tool.name).toBe('read_project_file');
+  });
 });

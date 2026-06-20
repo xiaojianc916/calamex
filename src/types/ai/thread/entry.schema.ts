@@ -3,6 +3,7 @@ import { z } from 'zod';
 import { aiTaskPlanStepSchema } from '@/types/ai/agent.schema';
 import { aiContextReferenceSchema } from '@/types/ai/context.schema';
 import { aiAgentPatchSummarySchema } from '@/types/ai/patch.schema';
+import { aiChatMessageStreamSnapshotSchema } from '@/types/ai/schema';
 import { aiThreadContentBlockSchema } from '@/types/ai/thread/content-block.schema';
 import {
   aiThreadScrollStateSchema,
@@ -44,6 +45,18 @@ export const aiThreadAssistantMessageEntrySchema = z.object({
   indented: z.boolean().optional(),
   /** 对标 Zed `is_subagent_output`。 */
   isSubagentOutput: z.boolean().optional(),
+  /**
+   * 运行态流式快照（对标 legacy `IAiChatMessage.stream`）：status / runtimeEvents /
+   * activityText / token 统计 / usage / finalAnswerStarted。复用 ai.schema 的
+   * `aiChatMessageStreamSnapshotSchema`（单一真源），使 entries ↔ messages 逆投影
+   * 无损还原会话内 checkpoint / token / 活动文案。可选以兼容存量与非流式历史条目。
+   */
+  stream: aiChatMessageStreamSnapshotSchema.optional(),
+  /**
+   * ACP openWorld 后端的工具调用投影（对标 legacy `IAiChatMessage.acpToolCalls`）。
+   * 复用本协议层 `aiThreadToolCallSchema`，逆投影原样回挂，免重放 runtimeEvents 重建。
+   */
+  acpToolCalls: z.array(aiThreadToolCallSchema).optional(),
 });
 
 /**

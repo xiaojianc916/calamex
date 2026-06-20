@@ -118,6 +118,24 @@ export const useAiThreadStore = defineStore('ai-thread', () => {
   }
 
   /**
+   * Step 8 ④.1（Approach B）：流式回合中以本回合权威 entries 覆盖**单条**活动线程，
+   * 保留历史其余线程。setStreamingActiveThread 以 [thread] 整组替换会抹掉历史线程，
+   * 在「续聊已有历史」场景丢失其它线程；overlay 改为按 id upsert（命中替换、未命中前插），
+   * 并把活动线程指向本回合，供 §D 编排器每帧覆盖时使用。仍经 commitThreadsState 归一
+   * （trim + ensureActiveThread），与 setStreamingActiveThread 行为一致。
+   */
+  function overlayStreamingActiveThread(thread: IAiThread): void {
+    const state = readAuthoritativeState();
+    const exists = state.threads.some((item) => item.id === thread.id);
+    const threads = exists
+      ? state.threads.map((item) => (item.id === thread.id ? thread : item))
+      : [thread, ...state.threads];
+    commitAuthoritativeState(
+      threadMutations.commitThreadsState({ threads, activeThreadId: thread.id }),
+    );
+  }
+
+  /**
    * 灌入启动迁移得到的持久化线程快照（见 7.5c 接线）。
    * 换库语义：替换整组线程并重置去重集；activeThreadId 由调用方传入
    * （通常为 7.5a resolver 归一后的活动线程 id）。同步 kick 活动线程指针恢复，
@@ -385,6 +403,7 @@ export const useAiThreadStore = defineStore('ai-thread', () => {
     // actions
     setLiveThread,
     setStreamingActiveThread,
+    overlayStreamingActiveThread,
     setPersistedThreads,
     setPersistedActiveThreadId,
     // Step 8 砖2b：entries 权威写 actions（未接线）

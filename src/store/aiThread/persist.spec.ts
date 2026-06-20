@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
 import { salvageHydratedThreadEntries } from '@/store/aiThread/persist';
-import { aiThreadPersistSchema } from '@/types/ai/thread/persist.schema';
+import { AI_THREAD_PERSIST_VERSION, aiThreadPersistSchema } from '@/types/ai/thread/persist.schema';
 
 const ISO = '2026-06-19T09:00:00.000Z';
 
@@ -44,6 +44,52 @@ describe('aiThreadPersistSchema', () => {
     expect(missing.version).toBe(1);
     const invalid = aiThreadPersistSchema.parse({ version: -3, activeThreadId: null, threads: [] });
     expect(invalid.version).toBe(1);
+  });
+
+  it('无损持久化 assistant_message.stream 与 tool_call.name（Approach B）', () => {
+    const parsed = aiThreadPersistSchema.parse({
+      version: AI_THREAD_PERSIST_VERSION,
+      activeThreadId: 't1',
+      threads: [
+        {
+          id: 't1',
+          title: '线程 t1',
+          titleStatus: 'generated',
+          createdAt: ISO,
+          updatedAt: ISO,
+          entries: [
+            {
+              type: 'tool_call',
+              id: 'tc1',
+              createdAt: ISO,
+              name: 'read_project_file',
+              title: '读取文件',
+              kind: 'read',
+              status: 'completed',
+              content: [],
+            },
+            {
+              type: 'assistant_message',
+              id: 'a1',
+              createdAt: ISO,
+              chunks: [{ type: 'message', block: { type: 'text', text: '答案' } }],
+              stream: { status: 'completed', activityText: '读取中' },
+            },
+          ],
+        },
+      ],
+    });
+    const thread = parsed.threads[0];
+    const tool = thread?.entries[0];
+    const assistant = thread?.entries[1];
+    expect(tool?.type).toBe('tool_call');
+    if (tool?.type === 'tool_call') {
+      expect(tool.name).toBe('read_project_file');
+    }
+    expect(assistant?.type).toBe('assistant_message');
+    if (assistant?.type === 'assistant_message') {
+      expect(assistant.stream?.status).toBe('completed');
+    }
   });
 });
 

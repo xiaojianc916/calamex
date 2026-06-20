@@ -58,6 +58,12 @@ export const aiThreadToolCallSchema = z.object({
   createdAt: z.string().min(1),
   /** 对标 `label`（预解析展示名）。 */
   title: z.string(),
+  /**
+   * 原始工具名（对标 legacy `IAiChatMessage` 工具调用的 `name`）。与展示用 `title`
+   * 区分：title 可能被 presenter 改写为 summary 文案，name 始终是工具稳定标识。
+   * 可选以兼容存量快照；逆投影据此无损还原 legacy `toolCall.name`，缺省回退 title。
+   */
+  name: z.string().min(1).optional(),
   kind: aiThreadToolKindSchema,
   status: aiThreadToolCallStatusSchema,
   content: z.array(aiThreadToolCallContentSchema),
