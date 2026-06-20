@@ -106,10 +106,7 @@ const agentRun = useAiAgentRun();
 const agentNetwork = useAiAgentNetwork();
 const webSources = useAiWebSources();
 const aiThreadStore = useAiThreadStore();
-const renderThreadFromEntries = computed(() => aiThreadStore.renderFromEntries);
-const renderThreadEntries = computed(() =>
-  aiThreadStore.renderFromEntries ? aiThreadStore.activeEntries : [],
-);
+const renderThreadEntries = computed(() => aiThreadStore.activeEntries);
 const suggestionPool = useCopilotSuggestions();
 const suggestionRows = computed(() =>
   splitSuggestionsIntoRows(suggestionPool.suggestions.value, 3),
@@ -1234,7 +1231,7 @@ onMounted(() => {
 
     <template #body>
       <AiChatThread :messages="visibleThreadMessages" :is-typing="assistant.isSending.value"
-        :render-from-entries="renderThreadFromEntries" :thread-entries="renderThreadEntries"
+        :thread-entries="renderThreadEntries"
         :platform-id="aiIconPlatformId" :provider-label="aiIconTitle"
         :conversation-id="assistant.activeConversationId.value" :workspace-root-path="workspaceRootPath"
         :scroll-state="assistant.activeConversationScrollState.value" :typing-label="assistantTypingLabel"

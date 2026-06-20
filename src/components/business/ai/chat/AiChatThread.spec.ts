@@ -1,10 +1,26 @@
 import { mount } from '@vue/test-utils';
-import { describe, expect, it, vi } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { defineComponent, h, type PropType } from 'vue';
 
-import AiChatThread from '@/components/business/ai/chat/AiChatThread.vue';
+import type { TAiThreadEntry } from '@/components/business/ai/thread/projection';
 import type { IAiThreadPlanDetails } from '@/components/business/ai/thread/types';
-import type { IAiChatMessage } from '@/types/ai';
+import type { TAiServicePlatformId } from '@/constants/ai/providers';
+
+const { threadEntriesToTimelineMock } = vi.hoisted(() => ({
+  threadEntriesToTimelineMock: vi.fn(),
+}));
+
+vi.mock('@/components/business/ai/thread/projection', async (importOriginal) => {
+  const actual =
+    await importOriginal<typeof import('@/components/business/ai/thread/projection')>();
+
+  return {
+    ...actual,
+    threadEntriesToTimeline: threadEntriesToTimelineMock,
+  };
+});
+
+import AiChatThread from '@/components/business/ai/chat/AiChatThread.vue';
 
 class ResizeObserverMock {
   observe(): void {}
@@ -16,14 +32,34 @@ class ResizeObserverMock {
 
 vi.stubGlobal('ResizeObserver', ResizeObserverMock);
 
-const createMessage = (overrides: Partial<IAiChatMessage>): IAiChatMessage => ({
-  id: 'message-1',
-  role: 'assistant',
-  content: '',
-  createdAt: '2026-04-28T10:00:00.000Z',
+const baseProps: { platformId: TAiServicePlatformId; providerLabel: string } = {
+  platformId: 'deepseek',
+  providerLabel: 'DeepSeek',
+};
+
+const userEntry: TAiThreadEntry = {
+  kind: 'user-message',
+  id: 'u1',
+  messageId: 'u1',
+  markdown: '你好',
   references: [],
-  ...overrides,
-});
+};
+
+const assistantEntry: TAiThreadEntry = {
+  kind: 'assistant-text',
+  id: 'a1',
+  messageId: 'a1',
+  markdown: '回复',
+  streaming: false,
+};
+
+const streamingAssistantEntry: TAiThreadEntry = {
+  kind: 'assistant-text',
+  id: 'a1',
+  messageId: 'a1',
+  markdown: '回复',
+  streaming: true,
+};
 
 const createPlanDetails = (
   overrides: Partial<IAiThreadPlanDetails> = {},
@@ -39,62 +75,44 @@ const createPlanDetails = (
   ...overrides,
 });
 
-// 轻量替身：真实滚动与逐条消息渲染分别在组件自身测试中覆盖；此处只验证
-// AiChatThread 传入的可见消息、逐消息 after-message 插槽与事件转发。
+// 轻量替身：真实滚动与逐条目渲染分别在各自组件测试中覆盖；此处只验证 AiChatThread
+// 基于投影时间线的逐条目渲染、按消息边界的 after-message 插槽与事件转发。
 const DynamicScrollerStub = defineComponent({
   name: 'DynamicScroller',
   props: {
-    items: {
-      type: Array as PropType<readonly unknown[]>,
-      required: true,
-    },
+    items: { type: Array as PropType<readonly unknown[]>, required: true },
   },
   setup(props, { slots }) {
     return () =>
-      h('div', { class: 'ai-chat-list__scroller' }, [
-        ...props.items.flatMap(
-          (item, index) => slots.default?.({ item, index, active: true }) ?? [],
-        ),
-        ...(slots.after?.() ?? []),
-      ]);
+      h(
+        'div',
+        { class: 'ai-chat-list__scroller' },
+        props.items.flatMap((item, index) => slots.default?.({ item, index, active: true }) ?? []),
+      );
   },
 });
 
 const DynamicScrollerItemStub = defineComponent({
   name: 'DynamicScrollerItem',
   props: {
-    item: {
-      type: Object as PropType<unknown>,
-      required: true,
-    },
-    active: {
-      type: Boolean,
-      default: true,
-    },
-    sizeDependencies: {
-      type: Array as PropType<readonly unknown[]>,
-      default: () => [],
-    },
-    emitResize: {
-      type: Boolean,
-      default: false,
-    },
+    item: { type: Object as PropType<unknown>, required: true },
+    active: { type: Boolean, default: true },
+    sizeDependencies: { type: Array as PropType<readonly unknown[]>, default: () => [] },
+    emitResize: { type: Boolean, default: false },
   },
   setup(_props, { slots }) {
     return () => h('div', { class: 'vue-recycle-scroller__item-view' }, slots.default?.());
   },
 });
 
-const VirtualMessageItemStub = {
-  name: 'AiThreadVirtualMessageItem',
-  props: [
-    'message',
-    'workspaceRootPath',
-    'planDetails',
-    'revertingChangedFilesSummaryId',
-    'pinningChangedFilesSummaryId',
-  ],
+const EntryViewStub = defineComponent({
+  name: 'AiThreadEntryView',
+  props: {
+    entry: { type: Object as PropType<TAiThreadEntry>, required: true },
+    planDetails: { type: Object as PropType<IAiThreadPlanDetails>, default: undefined },
+  },
   emits: [
+    'update:open',
     'changedFilesRollback',
     'changedFilesPin',
     'planApprove',
@@ -103,214 +121,187 @@ const VirtualMessageItemStub = {
     'planUpdateStepTitle',
     'planRemoveStep',
   ],
-  template: `
-    <div class="timeline-msg-stub" :data-message-id="message.id">
-      <span class="timeline-msg-content" v-text="message.content"></span>
-      <slot name="after-message" :message="message" />
-      <button class="cf-rollback" @click="$emit('changedFilesRollback', 'm1', 'sum1')"></button>
-      <button class="cf-pin" @click="$emit('changedFilesPin', 'm1', 'sum1', true)"></button>
-      <button class="plan-approve" @click="$emit('planApprove')"></button>
-      <button class="plan-reject" @click="$emit('planReject')"></button>
-      <button class="plan-regenerate" @click="$emit('planRegenerate')"></button>
-      <button class="plan-update" @click="$emit('planUpdateStepTitle', 'step-1', '新标题')"></button>
-      <button class="plan-remove" @click="$emit('planRemoveStep', 'step-2')"></button>
-    </div>
-  `,
-};
+  setup(props, { emit }) {
+    const buttons: Array<[string, () => void]> = [
+      ['cf-rollback', () => emit('changedFilesRollback', 'm1', 'sum1')],
+      ['cf-pin', () => emit('changedFilesPin', 'm1', 'sum1', true)],
+      ['plan-approve', () => emit('planApprove')],
+      ['plan-reject', () => emit('planReject')],
+      ['plan-regenerate', () => emit('planRegenerate')],
+      ['plan-update', () => emit('planUpdateStepTitle', 'step-1', '新标题')],
+      ['plan-remove', () => emit('planRemoveStep', 'step-2')],
+    ];
 
-const threadStubs = {
+    return () =>
+      h(
+        'div',
+        { class: 'entry-stub', 'data-entry-kind': props.entry.kind },
+        buttons.map(([className, onClick]) => h('button', { class: className, onClick })),
+      );
+  },
+});
+
+const stubs = {
   DynamicScroller: DynamicScrollerStub,
   DynamicScrollerItem: DynamicScrollerItemStub,
-  AiThreadVirtualMessageItem: VirtualMessageItemStub,
+  AiThreadEntryView: EntryViewStub,
 };
 
-describe('AiChatThread', () => {
-  it('hides the standalone typing bubble when the last assistant message is already streaming', () => {
+describe('AiChatThread（entries 渲染路径）', () => {
+  beforeEach(() => {
+    threadEntriesToTimelineMock.mockReset();
+    threadEntriesToTimelineMock.mockReturnValue([userEntry, assistantEntry]);
+  });
+
+  it('按投影时间线逐条目渲染', () => {
+    const wrapper = mount(AiChatThread, {
+      props: { ...baseProps, messages: [], isTyping: false, threadEntries: [] },
+      global: { stubs },
+    });
+
+    expect(threadEntriesToTimelineMock).toHaveBeenCalled();
+    const entryNodes = wrapper.findAll('.entry-stub');
+    expect(entryNodes).toHaveLength(2);
+    expect(entryNodes.map((node) => node.attributes('data-entry-kind'))).toEqual([
+      'user-message',
+      'assistant-text',
+    ]);
+  });
+
+  it('时间线为空时渲染空态', () => {
+    threadEntriesToTimelineMock.mockReturnValue([]);
+
+    const wrapper = mount(AiChatThread, {
+      props: { ...baseProps, messages: [], isTyping: false, threadEntries: [] },
+      global: { stubs },
+    });
+
+    expect(wrapper.text()).toContain('还没有对话');
+  });
+
+  it('按消息边界渲染单条 after-message 插槽（检查点）', () => {
     const wrapper = mount(AiChatThread, {
       props: {
-        messages: [createMessage({ stream: { status: 'streaming' } })],
-        isTyping: true,
-        platformId: 'deepseek',
-        providerLabel: 'DeepSeek',
+        ...baseProps,
+        messages: [{ id: 'a1', role: 'assistant', content: '回复', createdAt: '', references: [] }],
+        isTyping: false,
+        threadEntries: [],
       },
-      global: { stubs: threadStubs },
+      slots: {
+        'after-message': (slotProps: { message: { id: string } }) =>
+          h('div', { class: 'after-msg', 'data-message-id': slotProps.message.id }, 'checkpoint'),
+      },
+      global: { stubs },
+    });
+
+    const afterNodes = wrapper.findAll('.after-msg');
+    expect(afterNodes).toHaveLength(1);
+    expect(afterNodes[0]?.attributes('data-message-id')).toBe('a1');
+  });
+
+  it('为每条来源消息分别渲染 after-message 插槽', () => {
+    const wrapper = mount(AiChatThread, {
+      props: {
+        ...baseProps,
+        messages: [
+          { id: 'u1', role: 'user', content: '你好', createdAt: '', references: [] },
+          { id: 'a1', role: 'assistant', content: '回复', createdAt: '', references: [] },
+        ],
+        isTyping: false,
+        threadEntries: [],
+      },
+      slots: {
+        'after-message': (slotProps: { message: { id: string } }) =>
+          h('div', { class: 'after-msg', 'data-message-id': slotProps.message.id }, 'checkpoint'),
+      },
+      global: { stubs },
+    });
+
+    const afterNodes = wrapper.findAll('.after-msg');
+    expect(afterNodes).toHaveLength(2);
+    expect(afterNodes.map((node) => node.attributes('data-message-id'))).toEqual(['u1', 'a1']);
+  });
+
+  it('末条 entry 正在流式时隐藏独立 typing 气泡', () => {
+    threadEntriesToTimelineMock.mockReturnValue([streamingAssistantEntry]);
+
+    const wrapper = mount(AiChatThread, {
+      props: { ...baseProps, messages: [], isTyping: true, threadEntries: [] },
+      global: { stubs },
     });
 
     expect(wrapper.find('.ai-message-typing').exists()).toBe(false);
   });
 
-  it('keeps the standalone typing bubble for non-streaming loading states', () => {
+  it('末条 entry 非流式时保留独立 typing 气泡', () => {
+    threadEntriesToTimelineMock.mockReturnValue([userEntry]);
+
     const wrapper = mount(AiChatThread, {
-      props: {
-        messages: [createMessage({ role: 'user', content: '你好', stream: undefined })],
-        isTyping: true,
-        platformId: 'deepseek',
-        providerLabel: 'DeepSeek',
-      },
-      global: { stubs: threadStubs },
+      props: { ...baseProps, messages: [], isTyping: true, threadEntries: [] },
+      global: { stubs },
     });
 
     expect(wrapper.find('.ai-message-typing').exists()).toBe(true);
   });
 
-  it('uses the provided standalone typing label', () => {
+  it('使用传入的 typing 文案', () => {
+    threadEntriesToTimelineMock.mockReturnValue([userEntry]);
+
     const wrapper = mount(AiChatThread, {
       props: {
-        messages: [createMessage({ role: 'user', content: '生成计划', stream: undefined })],
+        ...baseProps,
+        messages: [],
         isTyping: true,
         typingLabel: '正在生成计划',
-        platformId: 'deepseek',
-        providerLabel: 'DeepSeek',
+        threadEntries: [],
       },
-      global: { stubs: threadStubs },
+      global: { stubs },
     });
 
     expect(wrapper.find('.ai-message-typing').attributes('aria-label')).toBe('正在生成计划');
     expect(wrapper.text()).toContain('正在生成计划');
   });
 
-  it('locks horizontal overflow inside the thread container instead of exposing a bottom slider', () => {
+  it('锁定容器横向溢出，不暴露底部滑块', () => {
     const wrapper = mount(AiChatThread, {
-      props: {
-        messages: [createMessage({ content: '表格内容改为在局部区域滚动' })],
-        isTyping: false,
-        platformId: 'deepseek',
-        providerLabel: 'DeepSeek',
-      },
-      global: { stubs: threadStubs },
+      props: { ...baseProps, messages: [], isTyping: false, threadEntries: [] },
+      global: { stubs },
     });
 
     expect(wrapper.find('.ai-chat-list').classes()).toContain('overflow-x-hidden');
   });
 
-  it('keeps resize following responsive while the assistant is typing', () => {
+  it('typing 期间保持 resize 跟随响应', () => {
+    threadEntriesToTimelineMock.mockReturnValue([userEntry]);
+
     const wrapper = mount(AiChatThread, {
-      props: {
-        messages: [createMessage({ content: '正在生成' })],
-        isTyping: true,
-        platformId: 'deepseek',
-        providerLabel: 'DeepSeek',
-      },
-      global: { stubs: threadStubs },
+      props: { ...baseProps, messages: [], isTyping: true, threadEntries: [] },
+      global: { stubs },
     });
 
     expect(wrapper.findComponent({ name: 'DynamicScrollerItem' }).props('emitResize')).toBe(true);
   });
 
-  it('uses instant resize after typing ends so late layout changes do not animate the viewport', () => {
+  it('将 planDetails 透传给 AiThreadEntryView', () => {
+    threadEntriesToTimelineMock.mockReturnValue([assistantEntry]);
+    const planDetails = createPlanDetails({ summary: '内联计划明细' });
+
     const wrapper = mount(AiChatThread, {
-      props: {
-        messages: [createMessage({ content: '生成完成' })],
-        isTyping: false,
-        platformId: 'deepseek',
-        providerLabel: 'DeepSeek',
-      },
-      global: { stubs: threadStubs },
+      props: { ...baseProps, messages: [], isTyping: false, planDetails, threadEntries: [] },
+      global: { stubs },
     });
 
-    expect(wrapper.findComponent({ name: 'DynamicScroller' }).exists()).toBe(true);
+    expect(wrapper.findComponent({ name: 'AiThreadEntryView' }).props('planDetails')).toEqual(
+      planDetails,
+    );
   });
 
-  it('renders the empty state when there is nothing to show', () => {
+  it('从时间线转发 changed-files 回滚与固定事件', async () => {
+    threadEntriesToTimelineMock.mockReturnValue([assistantEntry]);
+
     const wrapper = mount(AiChatThread, {
-      props: {
-        messages: [],
-        isTyping: false,
-        platformId: 'deepseek',
-        providerLabel: 'DeepSeek',
-      },
-      global: { stubs: threadStubs },
-    });
-
-    expect(wrapper.text()).toContain('还没有对话');
-  });
-
-  it('passes the per-message after-message slot through the flat timeline', () => {
-    const wrapper = mount(AiChatThread, {
-      props: {
-        messages: [
-          createMessage({ id: 'message-1', content: '第一条消息' }),
-          createMessage({ id: 'message-2', content: '第二条消息' }),
-        ],
-        isTyping: false,
-        platformId: 'deepseek',
-        providerLabel: 'DeepSeek',
-      },
-      slots: {
-        'after-message': ({ message }: { message: IAiChatMessage }) =>
-          h('div', { class: 'after-message-stub' }, message.id),
-      },
-      global: { stubs: threadStubs },
-    });
-
-    expect(wrapper.findAll('.after-message-stub')).toHaveLength(2);
-    expect(wrapper.findAll('.after-message-stub').map((node) => node.text())).toEqual([
-      'message-1',
-      'message-2',
-    ]);
-  });
-
-  it('does not render Plan execution synthetic messages in the chat thread', () => {
-    const wrapper = mount(AiChatThread, {
-      props: {
-        messages: [
-          createMessage({ id: 'user-1', role: 'user', content: '执行这个计划' }),
-          createMessage({ id: 'agent-flow:run-1', content: 'AI 正在自动使用工具：读取文件' }),
-        ],
-        hasExtraContent: true,
-        isTyping: false,
-        platformId: 'deepseek',
-        providerLabel: 'DeepSeek',
-      },
-      global: { stubs: threadStubs },
-    });
-
-    expect(wrapper.findAll('.timeline-msg-stub')).toHaveLength(1);
-    expect(wrapper.text()).toContain('执行这个计划');
-    expect(wrapper.text()).not.toContain('AI 正在自动使用工具');
-  });
-
-  it('过滤掉以错误前缀开头的助手回复消息', () => {
-    const wrapper = mount(AiChatThread, {
-      props: {
-        messages: [
-          createMessage({ id: 'user-1', role: 'user', content: '帮我跑一下' }),
-          createMessage({
-            id: 'assistant-error-1',
-            content: 'Agent 执行失败：Node sidecar 未就绪',
-          }),
-        ],
-        isTyping: false,
-        platformId: 'deepseek',
-        providerLabel: 'DeepSeek',
-      },
-      global: { stubs: threadStubs },
-    });
-
-    expect(wrapper.findAll('.timeline-msg-stub')).toHaveLength(1);
-    expect(wrapper.text()).toContain('帮我跑一下');
-    expect(wrapper.text()).not.toContain('Agent 执行失败');
-  });
-
-  it('forwards changed-files rollback and pin events from the timeline', async () => {
-    const wrapper = mount(AiChatThread, {
-      props: {
-        messages: [createMessage({ content: '改动汇总' })],
-        isTyping: false,
-        platformId: 'deepseek',
-        providerLabel: 'DeepSeek',
-      },
-      global: {
-        stubs: {
-          ...threadStubs,
-          AiThreadVirtualMessageItem: {
-            name: 'AiThreadVirtualMessageItem',
-            emits: ['changedFilesRollback', 'changedFilesPin'],
-            template:
-              "<div><button class=\"cf-rollback\" @click=\"$emit('changedFilesRollback', 'm1', 'sum1')\"></button><button class=\"cf-pin\" @click=\"$emit('changedFilesPin', 'm1', 'sum1', true)\"></button></div>",
-          },
-        },
-      },
+      props: { ...baseProps, messages: [], isTyping: false, threadEntries: [] },
+      global: { stubs },
     });
 
     await wrapper.find('.cf-rollback').trigger('click');
@@ -320,65 +311,12 @@ describe('AiChatThread', () => {
     expect(wrapper.emitted('changedFilesPin')?.[0]).toEqual(['m1', 'sum1', true]);
   });
 
-  it('forwards plan details to the flat timeline so plan approval renders inline', () => {
-    const planDetails = createPlanDetails({ summary: '内联计划明细' });
-    const wrapper = mount(AiChatThread, {
-      props: {
-        messages: [createMessage({ id: 'thread-plan-control', content: '' })],
-        isTyping: false,
-        planDetails,
-        platformId: 'deepseek',
-        providerLabel: 'DeepSeek',
-      },
-      global: {
-        stubs: {
-          ...threadStubs,
-          AiThreadVirtualMessageItem: {
-            name: 'AiThreadVirtualMessageItem',
-            props: ['message', 'planDetails'],
-            template: '<div class="timeline-stub" />',
-          },
-        },
-      },
-    });
+  it('从时间线转发 plan 审批与编辑事件', async () => {
+    threadEntriesToTimelineMock.mockReturnValue([assistantEntry]);
 
-    expect(
-      wrapper.findComponent({ name: 'AiThreadVirtualMessageItem' }).props('planDetails'),
-    ).toEqual(planDetails);
-  });
-
-  it('forwards plan approval and edit events from the timeline to the panel', async () => {
     const wrapper = mount(AiChatThread, {
-      props: {
-        messages: [createMessage({ id: 'thread-plan-control', content: '' })],
-        isTyping: false,
-        platformId: 'deepseek',
-        providerLabel: 'DeepSeek',
-      },
-      global: {
-        stubs: {
-          ...threadStubs,
-          AiThreadVirtualMessageItem: {
-            name: 'AiThreadVirtualMessageItem',
-            emits: [
-              'planApprove',
-              'planReject',
-              'planRegenerate',
-              'planUpdateStepTitle',
-              'planRemoveStep',
-            ],
-            template: `
-              <div>
-                <button class="plan-approve" @click="$emit('planApprove')"></button>
-                <button class="plan-reject" @click="$emit('planReject')"></button>
-                <button class="plan-regenerate" @click="$emit('planRegenerate')"></button>
-                <button class="plan-update" @click="$emit('planUpdateStepTitle', 'step-1', '新标题')"></button>
-                <button class="plan-remove" @click="$emit('planRemoveStep', 'step-2')"></button>
-              </div>
-            `,
-          },
-        },
-      },
+      props: { ...baseProps, messages: [], isTyping: false, threadEntries: [] },
+      global: { stubs },
     });
 
     await wrapper.find('.plan-approve').trigger('click');

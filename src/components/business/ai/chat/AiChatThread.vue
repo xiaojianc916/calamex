@@ -18,7 +18,6 @@ import type { TAiServicePlatformId } from '@/constants/ai/providers';
 import type { IAiChatMessage } from '@/types/ai';
 import type { IAiThreadEntry } from '@/types/ai/thread';
 import AiThinkingStatus from './AiThinkingStatus.vue';
-import AiThreadVirtualMessageItem from './AiThreadVirtualMessageItem.vue';
 import { AI_MARKDOWN_VIRTUAL_SCROLL_KEY } from './markstream-virtual-scroll';
 
 interface IAiChatScrollState {
@@ -29,11 +28,6 @@ interface IAiChatScrollState {
 }
 
 type TAiThreadVirtualItem =
-  | {
-      type: 'message';
-      id: string;
-      message: IAiChatMessage;
-    }
   | {
       type: 'entry';
       id: string;
@@ -58,7 +52,6 @@ const props = withDefaults(
     planDetails?: IAiThreadPlanDetails;
     revertingChangedFilesSummaryId?: string | null;
     pinningChangedFilesSummaryId?: string | null;
-    renderFromEntries?: boolean;
     threadEntries?: readonly IAiThreadEntry[];
     streamingMessageId?: string | null;
   }>(),
@@ -71,7 +64,6 @@ const props = withDefaults(
     planDetails: undefined,
     revertingChangedFilesSummaryId: null,
     pinningChangedFilesSummaryId: null,
-    renderFromEntries: false,
     threadEntries: () => [],
     streamingMessageId: null,
   },
@@ -88,22 +80,12 @@ const emit = defineEmits<{
   planRemoveStep: [stepId: string];
 }>();
 
-const TOOL_PROGRESS_PREFIXES = [
-  'AI 正在自动分析并按需调用工具…',
-  'AI 正在自动使用工具：',
-  'Agent 正在调用工具…',
-  'Agent 正在根据你的确认继续执行…',
-] as const;
-
-const ERROR_REPLY_PREFIXES = ['Agent 执行失败：', 'AI 上下文收集失败：', '计划生成失败：'] as const;
-const PLAN_AGENT_FLOW_MESSAGE_ID_PREFIX = 'agent-flow:';
-
 const VIRTUAL_SCROLLER_MIN_ITEM_SIZE = 96;
 const VIRTUAL_SCROLLER_BUFFER_PX = 1200;
 const BOTTOM_FOLLOW_THRESHOLD_PX = 56;
 const SCROLL_STATE_EMIT_THROTTLE_MS = 100;
 const SCROLLBAR_ACTIVE_MS = 900;
-const MESSAGE_SIZE_DEPENDENCY_CACHE_LIMIT = 300;
+const ENTRY_SIZE_DEPENDENCY_CACHE_LIMIT = 300;
 const AI_MARKDOWN_VIRTUAL_MEASUREMENT_KEY = 'calamex-ai-markdown:v1';
 
 type TDynamicScrollerExpose = {
@@ -128,48 +110,6 @@ let lastScrollStateEmitAt = 0;
 let shouldFollowBottomAfterResize = true;
 let lastKnownDistanceFromBottom = 0;
 let pendingMarkdownHeightReconcileFrame: number | null = null;
-
-const isErrorReplyMessage = (message: IAiChatMessage): boolean => {
-  if (message.role !== 'assistant') {
-    return false;
-  }
-
-  const content = message.content.trim();
-
-  if (!content) {
-    return false;
-  }
-
-  return ERROR_REPLY_PREFIXES.some((prefix) => content.startsWith(prefix));
-};
-
-const isPlanAgentFlowMessage = (message: IAiChatMessage): boolean =>
-  message.role === 'assistant' && message.id.startsWith(PLAN_AGENT_FLOW_MESSAGE_ID_PREFIX);
-
-const visibleMessages = computed<IAiChatMessage[]>(() =>
-  props.messages.filter(
-    (message) => !isErrorReplyMessage(message) && !isPlanAgentFlowMessage(message),
-  ),
-);
-
-const hasInlineProgressMessage = computed(() => {
-  const lastMessage = visibleMessages.value.at(-1);
-
-  if (lastMessage?.role !== 'assistant') {
-    return false;
-  }
-
-  const content = lastMessage.content.trim();
-  const isEmptyAssistantPlaceholder =
-    !content && !lastMessage.toolCalls?.length && !lastMessage.actions?.length;
-
-  return (
-    lastMessage.stream?.status === 'streaming' ||
-    Boolean(lastMessage.toolCalls?.length) ||
-    isEmptyAssistantPlaceholder ||
-    TOOL_PROGRESS_PREFIXES.some((prefix) => content.startsWith(prefix))
-  );
-});
 
 const entryTimeline = computed<TAiThreadEntry[]>(() =>
   threadEntriesToTimeline(props.threadEntries ?? [], {
@@ -225,29 +165,21 @@ const shouldRenderStandaloneTyping = computed(() => {
     return false;
   }
 
-  return props.renderFromEntries ? !hasInlineProgressEntry.value : !hasInlineProgressMessage.value;
+  return !hasInlineProgressEntry.value;
 });
 
-const isThreadEmpty = computed(() =>
-  props.renderFromEntries ? entryTimeline.value.length === 0 : visibleMessages.value.length === 0,
-);
+const isThreadEmpty = computed(() => entryTimeline.value.length === 0);
 
 const shouldRenderEmptyState = computed(
   () => isThreadEmpty.value && !props.hasExtraContent && !shouldRenderStandaloneTyping.value,
 );
 
 const virtualItems = computed<TAiThreadVirtualItem[]>(() => {
-  const items: TAiThreadVirtualItem[] = props.renderFromEntries
-    ? entryTimeline.value.map((entry) => ({
-        type: 'entry' as const,
-        id: entry.id,
-        entry,
-      }))
-    : visibleMessages.value.map((message) => ({
-        type: 'message' as const,
-        id: message.id,
-        message,
-      }));
+  const items: TAiThreadVirtualItem[] = entryTimeline.value.map((entry) => ({
+    type: 'entry' as const,
+    id: entry.id,
+    entry,
+  }));
 
   if (shouldRenderStandaloneTyping.value) {
     items.push({
@@ -467,29 +399,6 @@ const handlePlanRemoveStep = (stepId: string): void => {
   emit('planRemoveStep', stepId);
 };
 
-const buildMessageContentSizeSignature = (content: string): string => {
-  if (content.length <= 256) {
-    return content;
-  }
-
-  // Height-affecting changes during streaming are overwhelmingly append-only. Keep a
-  // compact signature instead of handing DynamicScroller the whole markdown payload on
-  // every render. The tail preserves sensitivity to newly closed blocks/lists/code fences.
-  return `${content.length}:${content.slice(0, 64)}:${content.slice(-192)}`;
-};
-
-const buildToolCallSizeSignature = (message: IAiChatMessage): string =>
-  message.toolCalls
-    ?.map((toolCall) =>
-      [
-        toolCall.id,
-        toolCall.status,
-        toolCall.summary.length,
-        toolCall.targetPreview?.length ?? 0,
-      ].join(':'),
-    )
-    .join('|') ?? '';
-
 const planSizeSignature = computed(() =>
   [
     props.planDetails?.status ?? '',
@@ -499,56 +408,16 @@ const planSizeSignature = computed(() =>
   ].join('|'),
 );
 
-type TMessageSizeDependencyCacheEntry = {
+type TEntrySizeDependencyCacheEntry = {
   signature: string;
   dependencies: unknown[];
 };
 
-const messageSizeDependencyCache = new Map<string, TMessageSizeDependencyCacheEntry>();
-
-const trimMessageSizeDependencyCache = (currentMessageId: string): void => {
-  if (
-    messageSizeDependencyCache.size < MESSAGE_SIZE_DEPENDENCY_CACHE_LIMIT ||
-    messageSizeDependencyCache.has(currentMessageId)
-  ) {
-    return;
-  }
-
-  const firstKey = messageSizeDependencyCache.keys().next().value;
-  if (typeof firstKey === 'string') {
-    messageSizeDependencyCache.delete(firstKey);
-  }
-};
-
-const getMessageSizeDependencies = (message: IAiChatMessage): unknown[] => {
-  const dependencies = [
-    buildMessageContentSizeSignature(message.content),
-    message.stream?.status,
-    buildToolCallSizeSignature(message),
-    message.actions?.length ?? 0,
-    message.attachments?.length ?? 0,
-    planSizeSignature.value,
-    props.revertingChangedFilesSummaryId,
-    props.pinningChangedFilesSummaryId,
-  ];
-
-  const signature = dependencies.map((value) => String(value ?? '')).join('\u001f');
-  const cached = messageSizeDependencyCache.get(message.id);
-
-  if (cached?.signature === signature) {
-    return cached.dependencies;
-  }
-
-  trimMessageSizeDependencyCache(message.id);
-  messageSizeDependencyCache.set(message.id, { signature, dependencies });
-  return dependencies;
-};
-
-const entrySizeDependencyCache = new Map<string, TMessageSizeDependencyCacheEntry>();
+const entrySizeDependencyCache = new Map<string, TEntrySizeDependencyCacheEntry>();
 
 const trimEntrySizeDependencyCache = (currentEntryId: string): void => {
   if (
-    entrySizeDependencyCache.size < MESSAGE_SIZE_DEPENDENCY_CACHE_LIMIT ||
+    entrySizeDependencyCache.size < ENTRY_SIZE_DEPENDENCY_CACHE_LIMIT ||
     entrySizeDependencyCache.has(currentEntryId)
   ) {
     return;
@@ -627,36 +496,20 @@ const handleDynamicItemResize = (): void => {
 };
 
 const bottomFollowSignature = computed(() => {
-  if (props.renderFromEntries) {
-    const lastEntry = entryTimeline.value.at(-1);
-    const lastEntryStreaming =
-      lastEntry &&
-      ((lastEntry.kind === 'assistant-text' && lastEntry.streaming) ||
-        (lastEntry.kind === 'reasoning' && lastEntry.streaming))
-        ? 'streaming'
-        : 'idle';
-
-    return [
-      'entries',
-      props.conversationId ?? '',
-      entryTimeline.value.length,
-      lastEntry?.id ?? '',
-      lastEntryStreaming,
-      props.isTyping ? 'typing' : 'idle',
-    ].join(':');
-  }
-
-  const lastMessage = visibleMessages.value.at(-1);
+  const lastEntry = entryTimeline.value.at(-1);
+  const lastEntryStreaming =
+    lastEntry &&
+    ((lastEntry.kind === 'assistant-text' && lastEntry.streaming) ||
+      (lastEntry.kind === 'reasoning' && lastEntry.streaming))
+      ? 'streaming'
+      : 'idle';
 
   return [
-    'messages',
+    'entries',
     props.conversationId ?? '',
-    visibleMessages.value.length,
-    lastMessage?.id ?? '',
-    lastMessage?.content.length ?? 0,
-    lastMessage?.stream?.status ?? '',
-    lastMessage?.toolCalls?.length ?? 0,
-    lastMessage?.actions?.length ?? 0,
+    entryTimeline.value.length,
+    lastEntry?.id ?? '',
+    lastEntryStreaming,
     props.isTyping ? 'typing' : 'idle',
   ].join(':');
 });
@@ -726,37 +579,13 @@ onBeforeUnmount(() => {
           :index="index"
           :data-index="index"
           :size-dependencies="
-            item.type === 'message'
-              ? getMessageSizeDependencies(item.message)
-              : item.type === 'entry'
-                ? getEntrySizeDependencies(item.entry)
-                : [props.isTyping]
+            item.type === 'entry' ? getEntrySizeDependencies(item.entry) : [props.isTyping]
           "
           emit-resize
           @resize="handleDynamicItemResize"
         >
           <div class="ai-chat-list__item">
-            <AiThreadVirtualMessageItem
-              v-if="item.type === 'message'"
-              :message="item.message"
-              :workspace-root-path="workspaceRootPath"
-              :plan-details="planDetails"
-              :reverting-changed-files-summary-id="revertingChangedFilesSummaryId"
-              :pinning-changed-files-summary-id="pinningChangedFilesSummaryId"
-              @changed-files-rollback="handleChangedFilesRollback"
-              @changed-files-pin="handleChangedFilesPin"
-              @plan-approve="emit('planApprove')"
-              @plan-reject="emit('planReject')"
-              @plan-regenerate="emit('planRegenerate')"
-              @plan-update-step-title="handlePlanUpdateStepTitle"
-              @plan-remove-step="handlePlanRemoveStep"
-            >
-              <template #after-message="{ message }">
-                <slot name="after-message" :message="message" />
-              </template>
-            </AiThreadVirtualMessageItem>
-
-            <template v-else-if="item.type === 'entry'">
+            <template v-if="item.type === 'entry'">
               <AiThreadEntryView
                 :entry="item.entry"
                 :open="entryExpansion.isExpanded(item.entry)"
@@ -860,87 +689,54 @@ onBeforeUnmount(() => {
 
 .ai-chat-list__scroller::-webkit-scrollbar-thumb {
   border: 2px solid transparent;
-  border-radius: 999px;
-  background: transparent;
-  background-clip: content-box;
-  transition: background-color 180ms cubic-bezier(0.23, 1, 0.32, 1);
+    background-clip: padding-box;
+  background-color: transparent;
+  border-radius: 9999px;
 }
 
 .ai-chat-list.is-scrollbar-active .ai-chat-list__scroller::-webkit-scrollbar-thumb {
   background-color: color-mix(in srgb, var(--text-primary) 18%, transparent);
 }
 
-.ai-chat-list__scroller::-webkit-scrollbar-thumb:hover {
-  background-color: color-mix(in srgb, var(--text-primary) 28%, transparent);
-}
-
-.ai-chat-list__item,
-.ai-chat-list__after {
-  box-sizing: border-box;
+.ai-chat-list__item {
   width: min(100%, 710px);
-  max-width: 860px;
-  min-width: 0;
   margin-inline: auto;
   padding-inline: 12px;
 }
 
-.ai-chat-list__item {
-  padding-block: 8px;
-  contain: layout style;
-}
-
 .ai-chat-list__after {
-  padding-block: 8px 28px;
+  width: min(100%, 710px);
+  margin-inline: auto;
+  padding: 0 12px 12px;
 }
 
-.ai-chat-list :deep(.vue-recycle-scroller__item-wrapper) {
-  overflow: visible;
-}
-
-.ai-chat-list :deep(.vue-recycle-scroller__item-view) {
-  overflow: visible;
-}
-
-.ai-chat-empty-state {
-  color: var(--text-tertiary);
+.ai-message-typing {
+  width: 100%;
 }
 
 .ai-chat-scroll-button {
   position: absolute;
-  bottom: 14px;
-  left: 50%;
+  right: 18px;
+  bottom: 18px;
   z-index: 2;
   display: inline-flex;
   width: 32px;
   height: 32px;
   align-items: center;
   justify-content: center;
-  border: 1px solid color-mix(in srgb, var(--border-primary) 82%, transparent);
-  border-radius: 999px;
-  background: color-mix(in srgb, var(--surface-primary) 94%, transparent);
-  box-shadow: 0 10px 28px color-mix(in srgb, #000 18%, transparent);
-  color: var(--text-secondary);
+  border: 1px solid var(--border-subtle);
+  border-radius: 9999px;
+  background-color: var(--bg-elevated);
+  box-shadow: 0 6px 18px rgb(0 0 0 / 18%);
+  color: var(--text-primary);
   cursor: pointer;
-  font-size: 16px;
-  line-height: 1;
-  transform: translateX(-50%);
   transition:
-    border-color 160ms ease,
-    background-color 160ms ease,
-    color 160ms ease,
-    transform 160ms ease;
+    background-color 0.15s ease,
+    transform 0.15s ease;
 }
 
 .ai-chat-scroll-button:hover {
-  border-color: color-mix(in srgb, var(--text-primary) 24%, transparent);
-  background: var(--surface-primary);
-  color: var(--text-primary);
-  transform: translateX(-50%) translateY(-1px);
-}
-
-.ai-message-typing {
-  display: flex;
-  min-width: 0;
-  align-items: flex-start;
+  background-color: var(--bg-elevated-hover);
+  transform: translateY(-1px);
 }
 </style>
