@@ -1,264 +1,226 @@
-// codemod ④.2-A — legacy-adapter 逆投影 (entries -> IAiChatMessage[]) + 单测
-// 纯新增、零接线：旧编排器后续将用它从 entries 真源重建 message 工作缓冲。
-import fs from 'node:fs';
-import path from 'node:path';
+#!/usr/bin/env node
+// patch8.mjs — ADR-0015 收尾：Builtin sidecar 主链路统一走 credential::resolve（单一事实源）
+// 幂等：每处编辑「待改签名在 → 改；已应用 → 跳过；都不在 → 报错中止」。
+// 用法：在仓库根目录执行 `node patch8.mjs`，随后到 src-tauri/ 跑 cargo。
+import { readFileSync, writeFileSync } from "node:fs"
+import { join } from "node:path"
 
-const ROOT = process.cwd();
-const ADAPTER = path.resolve(ROOT, 'src/store/aiThread/legacy-adapter.ts');
-const SPEC = path.resolve(ROOT, 'src/store/aiThread/legacy-adapter.reverse.spec.ts');
+const repoRoot = process.cwd()
 
-if (!fs.existsSync(ADAPTER)) {
-  console.error('[ABORT] 找不到 legacy-adapter.ts: ' + ADAPTER);
-  process.exit(1);
+/** 单处幂等编辑。 */
+function applyEdit(content, edit) {
+	const { old, neu, label } = edit
+	const pending = edit.pending ?? old
+	if (content.includes(pending)) {
+		const count = content.split(old).length - 1
+		if (count !== 1) {
+			throw new Error(`${label}: 期望唯一匹配 old，实际 ${count} 处，已中止（文件版本不符）。`)
+		}
+		console.log(`  ✓ 应用: ${label}`)
+		return content.replace(old, neu)
+	}
+	if (edit.applied && content.includes(edit.applied)) {
+		console.log(`  • 跳过(已应用): ${label}`)
+		return content
+	}
+	if (!edit.applied) {
+		console.log(`  • 跳过(目标签名不存在，视为已应用): ${label}`)
+		return content
+	}
+	throw new Error(`${label}: 既无待改签名也无已应用标记，文件与预期版本不一致，已中止。`)
 }
 
-let adapterSrc = fs.readFileSync(ADAPTER, 'utf8');
-if (!adapterSrc.includes('export function legacyThreadToThread')) {
-  console.error('[ABORT] 锚点缺失 (export function legacyThreadToThread)，文件结构与预期不符，未改动。');
-  process.exit(1);
+/** 读取→规整 EOL→顺序应用→还原 EOL→按需写回。 */
+function processFile(relPath, edits) {
+	const abs = join(repoRoot, relPath)
+	const raw = readFileSync(abs, "utf8")
+	const usedCrlf = raw.includes("\r\n")
+	let content = usedCrlf ? raw.replace(/\r\n/g, "\n") : raw
+	const before = content
+	console.log(`\n▶ ${relPath}`)
+	for (const edit of edits) content = applyEdit(content, edit)
+	if (content === before) {
+		console.log(`  （无变化）`)
+		return
+	}
+	const out = usedCrlf ? content.replace(/\n/g, "\r\n") : content
+	writeFileSync(abs, out, "utf8")
+	console.log(`  ✔ 已写回`)
 }
 
-const REVERSE_BLOCK = [
-  '',
-  '/* ============================================================================',
-  ' * Thread -> Legacy 逆投影（ADR-0014 Step 8 ④：entries 单一真源 -> 旧编排器工作缓冲）',
-  ' *',
-  ' * 正向把 message 展开为 entries；本逆向把 entries 折叠回 useAiAssistant 所需的',
-  ' * IAiChatMessage[] 工作缓冲。entries 成为持久化与渲染唯一真源后，编排器在切换/水合',
-  ' * 线程时用本逆投影重建 message 缓冲（续聊上下文 toSidecarMessages、历史首轮、会话内',
-  ' * checkpoint 计算），不再读取 legacy store。',
-  ' *',
-  ' * 有损边界（与 entries 持久化模型固有限制一致，非新增回归）：',
-  ' * - entries 不承载 stream.runtimeEvents / token 统计 / acpToolCalls，逆投影不恢复；',
-  ' *   重载后历史回合的 checkpoint（依赖 runtime events）需会话内重新交互产生。',
-  ' * - 折叠规则与正向对称：相邻 tool_call 归并到其后的 assistant_message；changed_files',
-  ' *   回挂到对应 assistant；plan / plan_control / context_compaction 续聊无需，跳过。',
-  ' * ========================================================================== */',
-  '',
-  '/** 新状态机 -> 旧工具状态（LEGACY_TOOL_STATUS_MAP 的逆）。 */',
-  'const REVERSE_TOOL_STATUS_MAP: Record<TAiThreadToolCallStatus, LegacyToolStatus> = {',
-  "  pending: 'pending',",
-  "  in_progress: 'running',",
-  "  completed: 'succeeded',",
-  "  failed: 'failed',",
-  "  canceled: 'denied',",
-  '};',
-  '',
-  'function toolCallEntryContentToDetailItems(content: IAiThreadToolCall[\'content\']): string[] {',
-  '  return content.flatMap((item) =>',
-  "    item.type === 'content' && item.block.type === 'text' ? [item.block.text] : [],",
-  '  );',
-  '}',
-  '',
-  'function threadToolCallEntryToLegacy(entry: IAiThreadToolCall): LegacyToolCall {',
-  '  const detailItems = toolCallEntryContentToDetailItems(entry.content);',
-  '  const rawOutput = entry.rawOutput as { elapsedMs?: number } | undefined;',
-  "  const elapsedMs = typeof rawOutput?.elapsedMs === 'number' ? rawOutput.elapsedMs : undefined;",
-  '  return {',
-  '    id: entry.id,',
-  '    name: entry.title,',
-  '    summary: entry.title,',
-  '    status: REVERSE_TOOL_STATUS_MAP[entry.status],',
-  '    ...(detailItems.length > 0 ? { detailItems } : {}),',
-  '    ...(elapsedMs !== undefined ? { elapsedMs } : {}),',
-  '  };',
-  '}',
-  '',
-  'function userEntryContentToText(content: IAiThreadUserMessageContent): string {',
-  "  return content.flatMap((block) => (block.type === 'text' ? [block.text] : [])).join('\\n\\n');",
-  '}',
-  '',
-  'function assistantChunksToText(chunks: IAiThreadAssistantChunks): string {',
-  '  return chunks',
-  "    .flatMap((chunk) => (chunk.type === 'message' && chunk.block.type === 'text' ? [chunk.block.text] : []))",
-  "    .join('');",
-  '}',
-  '',
-  '/**',
-  ' * 把 entries 折叠为 IAiChatMessage[]（legacyMessageToEntries 的逆）。',
-  ' * 用于编排器从 entries 真源重建 message 工作缓冲；有损项见文件头说明。',
-  ' */',
-  'export function threadEntriesToMessages(entries: readonly IAiThreadEntry[]): IAiChatMessage[] {',
-  '  const messages: IAiChatMessage[] = [];',
-  '  let pendingToolCalls: LegacyToolCall[] = [];',
-  '  let pendingToolCreatedAt: string | null = null;',
-  '',
-  '  const flushPendingToolCalls = (): void => {',
-  '    if (pendingToolCalls.length === 0) {',
-  '      return;',
-  '    }',
-  '    messages.push({',
-  "      role: 'assistant',",
-  "      id: pendingToolCalls[0]!.id + ':assistant',",
-  "      content: '',",
-  '      createdAt: pendingToolCreatedAt ?? new Date().toISOString(),',
-  '      references: [],',
-  '      toolCalls: pendingToolCalls,',
-  '    });',
-  '    pendingToolCalls = [];',
-  '    pendingToolCreatedAt = null;',
-  '  };',
-  '',
-  '  for (const entry of entries) {',
-  '    switch (entry.type) {',
-  "      case 'user_message': {",
-  '        flushPendingToolCalls();',
-  '        messages.push({',
-  "          role: 'user',",
-  '          id: entry.id,',
-  '          content: userEntryContentToText(entry.content),',
-  '          createdAt: entry.createdAt,',
-  '          references: entry.references,',
-  '        });',
-  '        break;',
-  '      }',
-  "      case 'tool_call': {",
-  '        pendingToolCalls.push(threadToolCallEntryToLegacy(entry));',
-  '        pendingToolCreatedAt = pendingToolCreatedAt ?? entry.createdAt;',
-  '        break;',
-  '      }',
-  "      case 'assistant_message': {",
-  '        const message: IAiChatMessage = {',
-  "          role: 'assistant',",
-  '          id: entry.id,',
-  '          content: assistantChunksToText(entry.chunks),',
-  '          createdAt: entry.createdAt,',
-  '          references: [],',
-  '          ...(pendingToolCalls.length > 0 ? { toolCalls: pendingToolCalls } : {}),',
-  '        };',
-  '        pendingToolCalls = [];',
-  '        pendingToolCreatedAt = null;',
-  '        messages.push(message);',
-  '        break;',
-  '      }',
-  "      case 'changed_files': {",
-  '        flushPendingToolCalls();',
-  '        const target = messages.at(-1);',
-  "        if (target && target.role === 'assistant' && !target.changedFilesSummary) {",
-  '          target.changedFilesSummary = entry.summary;',
-  '        } else {',
-  '          messages.push({',
-  "            role: 'assistant',",
-  "            id: entry.summary.id + ':assistant',",
-  "            content: '',",
-  '            createdAt: entry.createdAt,',
-  '            references: [],',
-  '            changedFilesSummary: entry.summary,',
-  '          });',
-  '        }',
-  '        break;',
-  '      }',
-  '      default:',
-  '        // plan / plan_control / context_compaction：续聊上下文与历史首轮无需，跳过（有损可接受）。',
-  '        break;',
-  '    }',
-  '  }',
-  '',
-  '  flushPendingToolCalls();',
-  '  return messages;',
-  '}',
-  '',
-  '/** 把 IAiThread（entries）折叠回 legacy 会话线程（legacyThreadToThread 的逆，沿用元信息）。 */',
-  'export function threadToLegacyThread(thread: IAiThread): IAiConversationThread {',
-  '  return {',
-  '    id: thread.id,',
-  '    title: thread.title,',
-  '    titleStatus: thread.titleStatus,',
-  '    createdAt: thread.createdAt,',
-  '    updatedAt: thread.updatedAt,',
-  '    messages: threadEntriesToMessages(thread.entries),',
-  '    ...(thread.scrollState ? { scrollState: thread.scrollState } : {}),',
-  '  };',
-  '}',
-  '',
-].join('\n');
+// ───────────────────────── credential/mod.rs ─────────────────────────
+const credentialEdits = [
+	{
+		label: "1a 端点解析器并入尾斜杠归一",
+		applied: ".map(|value| value.trim_end_matches('/').to_string())",
+		old: `/// 端点解析纯函数：调用方显式传入优先（trim 后非空），否则回退到唯一权威表
+/// default_provider_base_url。抽成纯函数以便脱离 keyring 做单元测试。
+pub fn resolve_provider_base_url(
+    provider_id: &str,
+    explicit_base_url: Option<&str>,
+) -> Option<String> {
+    explicit_base_url
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(ToOwned::to_owned)
+        .or_else(|| default_provider_base_url(provider_id.trim()).map(ToOwned::to_owned))
+}`,
+		neu: `/// 端点解析纯函数：调用方显式传入优先（trim 后非空，并裁掉尾部 \`/\`），否则回退到唯一
+/// 权威表 default_provider_base_url。抽成纯函数以便脱离 keyring 做单元测试。
+///
+/// 尾斜杠归一化收敛在此：此前主链路 sidecar 侧自带一份 resolve_sidecar_base_url 仅为裁掉
+/// 尾部 \`/\` 而与本函数双写，现已并入这里，确保 builtin 与外部 agent 共用同一套端点归一规则。
+pub fn resolve_provider_base_url(
+    provider_id: &str,
+    explicit_base_url: Option<&str>,
+) -> Option<String> {
+    explicit_base_url
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(|value| value.trim_end_matches('/').to_string())
+        .or_else(|| default_provider_base_url(provider_id.trim()).map(ToOwned::to_owned))
+}`,
+	},
+	{
+		label: "1b resolve() 摘除 allow(dead_code)",
+		applied: "即以此为唯一入口取 key+端点。",
+		old: `    /// 的结构化错误码）+ 端点按 resolve_provider_base_url 回退。
+    /// 下一步 provisioner 接线后即被消费，届时移除 allow(dead_code)。
+    #[allow(dead_code)]
+    pub fn resolve(`,
+		neu: `    /// 的结构化错误码）+ 端点按 resolve_provider_base_url 回退。
+    /// 主链路 sidecar 模型配置（ai::gateway::model_config）即以此为唯一入口取 key+端点。
+    pub fn resolve(`,
+	},
+	{
+		label: "1c 新增尾斜杠断言",
+		applied: `resolve_provider_base_url("zhipuai", Some("https://gw.example/v1/"))`,
+		old: `        assert_eq!(
+            resolve_provider_base_url("deepseek", Some("  https://proxy.example/v1  ")),
+            Some("https://proxy.example/v1".to_string())
+        );
+        assert_eq!(
+            resolve_provider_base_url("deepseek", Some("   ")),`,
+		neu: `        assert_eq!(
+            resolve_provider_base_url("deepseek", Some("  https://proxy.example/v1  ")),
+            Some("https://proxy.example/v1".to_string())
+        );
+        assert_eq!(
+            resolve_provider_base_url("zhipuai", Some("https://gw.example/v1/")),
+            Some("https://gw.example/v1".to_string())
+        );
+        assert_eq!(
+            resolve_provider_base_url("deepseek", Some("   ")),`,
+	},
+]
 
-// 为逆投影引入两个局部类型别名（从已导入的 schema 推导 entry 子形状，避免新增 import）。
-const TYPE_ALIASES = [
-  '',
-  "type IAiThreadUserMessageContent = Extract<IAiThreadEntry, { type: 'user_message' }>['content'];",
-  "type IAiThreadAssistantChunks = Extract<IAiThreadEntry, { type: 'assistant_message' }>['chunks'];",
-  '',
-].join('\n');
+// ───────────────────────── gateway/model_config.rs ─────────────────────────
+const modelConfigEdits = [
+	{
+		label: "2a 精简 import",
+		applied: "use crate::ai::credential::CredentialStore;",
+		old: `use crate::ai::credential::{default_provider_base_url, CredentialStore};`,
+		neu: `use crate::ai::credential::CredentialStore;`,
+	},
+	{
+		label: "2b sidecar 配置改调 CredentialStore::resolve",
+		applied: "let resolved = CredentialStore::resolve(provider_id, base_url)?;",
+		old: `    let provider_id = model_provider_id(model_id)?;
+    let api_key = CredentialStore::get(provider_id)?;
+    let base_url = resolve_sidecar_base_url(provider_id, base_url);
 
-if (adapterSrc.includes('export function threadEntriesToMessages')) {
-  console.log('[SKIP] legacy-adapter.ts 已包含逆投影，跳过追加。');
-} else {
-  adapterSrc = adapterSrc.replace(/\s*$/, '\n') + TYPE_ALIASES + REVERSE_BLOCK;
-  fs.writeFileSync(ADAPTER, adapterSrc, 'utf8');
-  console.log('[OK] 已向 legacy-adapter.ts 追加逆投影。');
+    Ok(AgentSidecarModelConfigPayload {
+        model_id: model_id.to_string(),
+        api_key: api_key.into(),
+        base_url,
+    })`,
+		neu: `    let provider_id = model_provider_id(model_id)?;
+    let resolved = CredentialStore::resolve(provider_id, base_url)?;
+
+    Ok(AgentSidecarModelConfigPayload {
+        model_id: model_id.to_string(),
+        api_key: resolved.api_key.into(),
+        base_url: resolved.base_url,
+    })`,
+	},
+	{
+		label: "2c 删除本地 resolve_sidecar_base_url",
+		pending: "fn resolve_sidecar_base_url(",
+		old: `/// 解析下发给 sidecar 的 base_url：优先用户在 AI 设置里显式保存的网关地址，缺失（None /
+/// 空白）时按厂商回退官方 OpenAI 兼容端点（单一事实源见
+/// [\`crate::ai::credential::default_provider_base_url\`]）。
+///
+/// 此前主链路缺 base_url 时直接下发 None，依赖 sidecar 内 Mastra 的 provider 注册表解析
+/// 端点——但注册表并不收录全部受支持厂商（如 zhipuai/GLM），导致请求无端点、上游 401
+/// → sidecar 归类 \`AI_PROVIDER_AUTH_FAILED\` → \`runtime.chat\` 报错 → agent/chat 抛错 →
+/// 宿主显示「acp protocol error: Authentication required」。DeepSeek 因有手写网关恒有默认
+/// 端点，故此前唯独 DeepSeek 可用、其余厂商踩坑。该回退与 Kimi 凭证预置
+/// （\`acp::launch::collect_kimi_model_entry\`）同源同策。
+fn resolve_sidecar_base_url(provider_id: &str, base_url: Option<&str>) -> Option<String> {
+    base_url
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(|value| value.trim_end_matches('/').to_string())
+        .or_else(|| default_provider_base_url(provider_id).map(ToOwned::to_owned))
 }
 
-const SPEC_SRC = [
-  "import { describe, expect, it } from 'vitest';",
-  '',
-  "import type { IAiConversationThread } from '@/store/aiConversation';",
-  "import type { IAiChatMessage } from '@/types/ai';",
-  '',
-  'import {',
-  '  legacyMessageToEntries,',
-  '  legacyThreadToThread,',
-  '  threadEntriesToMessages,',
-  '  threadToLegacyThread,',
-  "} from './legacy-adapter';",
-  '',
-  'const userMessage: IAiChatMessage = {',
-  "  role: 'user',",
-  "  id: 'u1',",
-  "  content: 'hello',",
-  "  createdAt: '2026-01-01T00:00:00.000Z',",
-  '  references: [],',
-  '};',
-  '',
-  'const assistantMessage: IAiChatMessage = {',
-  "  role: 'assistant',",
-  "  id: 'a1',",
-  "  content: 'world',",
-  "  createdAt: '2026-01-01T00:00:01.000Z',",
-  '  references: [],',
-  '  toolCalls: [',
-  "    { id: 't1', name: 'read_file', summary: '读取文件', status: 'succeeded', detailItems: ['x'] },",
-  '  ],',
-  '};',
-  '',
-  "describe('threadEntriesToMessages', () => {",
-  "  it('round-trips user + assistant content and tool calls', () => {",
-  '    const entries = [userMessage, assistantMessage].flatMap(legacyMessageToEntries);',
-  '    const messages = threadEntriesToMessages(entries);',
-  "    expect(messages.map((m) => m.role)).toEqual(['user', 'assistant']);",
-  "    expect(messages[0]!.content).toBe('hello');",
-  "    expect(messages[1]!.content).toBe('world');",
-  "    expect(messages[1]!.id).toBe('a1');",
-  "    expect(messages[1]!.toolCalls?.[0]?.id).toBe('t1');",
-  "    expect(messages[1]!.toolCalls?.[0]?.status).toBe('succeeded');",
-  '  });',
-  '',
-  "  it('skips non-message entries without throwing', () => {",
-  '    const entries = legacyMessageToEntries(userMessage);',
-  '    expect(threadEntriesToMessages(entries)).toHaveLength(1);',
-  '  });',
-  '});',
-  '',
-  "describe('threadToLegacyThread', () => {",
-  "  it('inverts legacyThreadToThread meta + content', () => {",
-  '    const thread: IAiConversationThread = {',
-  "      id: 'th1',",
-  "      title: 'T',",
-  "      titleStatus: 'temporary',",
-  "      createdAt: '2026-01-01T00:00:00.000Z',",
-  "      updatedAt: '2026-01-01T00:00:02.000Z',",
-  '      messages: [userMessage, assistantMessage],',
-  '    };',
-  '    const back = threadToLegacyThread(legacyThreadToThread(thread));',
-  "    expect(back.id).toBe('th1');",
-  "    expect(back.title).toBe('T');",
-  "    expect(back.messages.map((m) => m.role)).toEqual(['user', 'assistant']);",
-  "    expect(back.messages[1]!.content).toBe('world');",
-  '  });',
-  '});',
-  '',
-].join('\n');
+/// 把已配置的 selected_model / base_url 组装成 sidecar 模型配置。`,
+		neu: `/// 把已配置的 selected_model / base_url 组装成 sidecar 模型配置。`,
+	},
+	{
+		label: "2d-i 收敛 test import",
+		applied: "    use super::model_provider_id;",
+		old: `    use super::{model_provider_id, resolve_sidecar_base_url};`,
+		neu: `    use super::model_provider_id;`,
+	},
+	{
+		label: "2d-ii 移除已迁移的 base_url 单测",
+		pending: `resolve_sidecar_base_url("mystery", None)`,
+		old: `        assert!(model_provider_id("no-prefix").is_err());
+    }
 
-fs.writeFileSync(SPEC, SPEC_SRC, 'utf8');
-console.log('[OK] 已写入 legacy-adapter.reverse.spec.ts');
-console.log('请运行 pnpm typecheck && pnpm lint --fix && pnpm test 验证后提交。');
+    #[test]
+    fn resolve_base_url_prefers_explicit_override_and_trims_trailing_slash() {
+        assert_eq!(
+            resolve_sidecar_base_url("zhipuai", Some("https://gw.example/v1/")).as_deref(),
+            Some("https://gw.example/v1")
+        );
+    }
+
+    #[test]
+    fn resolve_base_url_falls_back_to_provider_default_when_empty() {
+        // 修复关键路径：用户未手填 Provider 地址（None / 空白）时按厂商回退默认端点，
+        // 而非下发 None 让 sidecar 失去端点 → 401 → Authentication required。
+        assert_eq!(
+            resolve_sidecar_base_url("zhipuai", None).as_deref(),
+            Some("https://open.bigmodel.cn/api/paas/v4")
+        );
+        assert_eq!(
+            resolve_sidecar_base_url("zhipuai", Some("   ")).as_deref(),
+            Some("https://open.bigmodel.cn/api/paas/v4")
+        );
+        assert_eq!(
+            resolve_sidecar_base_url("deepseek", None).as_deref(),
+            Some("https://api.deepseek.com/v1")
+        );
+    }
+
+    #[test]
+    fn resolve_base_url_none_for_unknown_provider_without_override() {
+        assert_eq!(resolve_sidecar_base_url("mystery", None), None);
+    }
+}`,
+		neu: `        assert!(model_provider_id("no-prefix").is_err());
+    }
+}`,
+	},
+]
+
+try {
+	processFile("src-tauri/src/ai/credential/mod.rs", credentialEdits)
+	processFile("src-tauri/src/ai/gateway/model_config.rs", modelConfigEdits)
+	console.log("\n✅ patch8 完成。请在 src-tauri/ 下执行：cargo clippy --all-targets && cargo test")
+} catch (err) {
+	console.error(`\n❌ patch8 失败：${err.message}`)
+	process.exitCode = 1
+}

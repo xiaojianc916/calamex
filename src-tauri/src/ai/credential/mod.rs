@@ -113,8 +113,11 @@ pub struct ResolvedCredential {
     pub base_url: Option<String>,
 }
 
-/// 端点解析纯函数：调用方显式传入优先（trim 后非空），否则回退到唯一权威表
-/// default_provider_base_url。抽成纯函数以便脱离 keyring 做单元测试。
+/// 端点解析纯函数：调用方显式传入优先（trim 后非空，并裁掉尾部 `/`），否则回退到唯一
+/// 权威表 default_provider_base_url。抽成纯函数以便脱离 keyring 做单元测试。
+///
+/// 尾斜杠归一化收敛在此：此前主链路 sidecar 侧自带一份 resolve_sidecar_base_url 仅为裁掉
+/// 尾部 `/` 而与本函数双写，现已并入这里，确保 builtin 与外部 agent 共用同一套端点归一规则。
 pub fn resolve_provider_base_url(
     provider_id: &str,
     explicit_base_url: Option<&str>,
@@ -122,15 +125,14 @@ pub fn resolve_provider_base_url(
     explicit_base_url
         .map(str::trim)
         .filter(|value| !value.is_empty())
-        .map(ToOwned::to_owned)
+        .map(|value| value.trim_end_matches('/').to_string())
         .or_else(|| default_provider_base_url(provider_id.trim()).map(ToOwned::to_owned))
 }
 
 impl CredentialStore {
     /// 解析某厂商的完整凭证视图：keyring 取 key（缺失/空 → Err，沿用 CredentialStore::get
     /// 的结构化错误码）+ 端点按 resolve_provider_base_url 回退。
-    /// 下一步 provisioner 接线后即被消费，届时移除 allow(dead_code)。
-    #[allow(dead_code)]
+    /// 主链路 sidecar 模型配置（ai::gateway::model_config）即以此为唯一入口取 key+端点。
     pub fn resolve(
         provider_id: &str,
         explicit_base_url: Option<&str>,
@@ -172,6 +174,10 @@ mod tests {
         assert_eq!(
             resolve_provider_base_url("deepseek", Some("  https://proxy.example/v1  ")),
             Some("https://proxy.example/v1".to_string())
+        );
+        assert_eq!(
+            resolve_provider_base_url("zhipuai", Some("https://gw.example/v1/")),
+            Some("https://gw.example/v1".to_string())
         );
         assert_eq!(
             resolve_provider_base_url("deepseek", Some("   ")),

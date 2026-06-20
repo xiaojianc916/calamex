@@ -11,10 +11,16 @@ import { computed, ref, watch } from 'vue';
 
 import { useAiConversationStore } from '@/store/aiConversation';
 import type { TAiThreadReduceEvent } from '@/store/aiThread/events';
-import { legacyThreadToThread } from '@/store/aiThread/legacy-adapter';
+import {
+  legacyMessageToEntries,
+  legacyThreadToThread,
+  threadEntriesToMessages,
+  threadToLegacyThread,
+} from '@/store/aiThread/legacy-adapter';
 import { selectRenderThread } from '@/store/aiThread/render-authority';
 import * as threadMutations from '@/store/aiThread/thread-mutations';
 import { restoreAttachmentPreviewPointers } from '@/store/plugins/debouncedPersistStorage';
+import type { IAiChatMessage } from '@/types/ai';
 import type { IAiThread, IAiThreadEntry } from '@/types/ai/thread';
 
 export const useAiThreadStore = defineStore('ai-thread', () => {
@@ -316,6 +322,45 @@ export const useAiThreadStore = defineStore('ai-thread', () => {
     commitAuthoritativeState(threadMutations.commitThreadsState({ threads, activeThreadId }));
   }
 
+  /* ==================================================================
+   * Step 8 ④.2-B：message 形状桥接（useAiConversationStore 编排面的 drop-in）
+   * 在 entries 权威之上提供同名 message 形状读写面，供编排器/标题/历史组合式逐一
+   * 改指本 store。读经 threadEntriesToMessages / threadToLegacyThread 还原（有损
+   * 边界见 legacy-adapter 文件头）；写经 legacyMessageToEntries 折叠为 entries 提交
+   * 到权威线程（单写者）。本步纯新增、无上层调用 → 零行为变化。
+   * ================================================================ */
+  const activeThreadId = computed(() => authoritativeActiveThreadId.value);
+
+  const activeMessages = computed<IAiChatMessage[]>(() =>
+    threadEntriesToMessages(authoritativeActiveThread.value?.entries ?? []),
+  );
+
+  const activeConversationThread = computed(() =>
+    authoritativeActiveThread.value ? threadToLegacyThread(authoritativeActiveThread.value) : null,
+  );
+
+  const conversationHistoryThreads = computed(() =>
+    authoritativeHistoryThreads.value.map(threadToLegacyThread),
+  );
+
+  function replaceMessages(messages: IAiChatMessage[]): void {
+    commitAuthoritativeState(
+      threadMutations.patchActiveThread(readAuthoritativeState(), (thread) => ({
+        ...thread,
+        entries: messages.flatMap(legacyMessageToEntries),
+      })),
+    );
+  }
+
+  function replaceThreadMessages(threadId: string, messages: IAiChatMessage[]): void {
+    commitAuthoritativeState(
+      threadMutations.patchThread(readAuthoritativeState(), threadId, (thread) => ({
+        ...thread,
+        entries: messages.flatMap(legacyMessageToEntries),
+      })),
+    );
+  }
+
   return {
     // state
     liveThread,
@@ -357,6 +402,13 @@ export const useAiThreadStore = defineStore('ai-thread', () => {
     failThreadTitleGeneration,
     setAuthoritativeThreads,
     flushPendingScrollStateUpdates,
+    // Step 8 ④.2-B：message 形状桥接（drop-in for useAiConversationStore，未接线）
+    activeThreadId,
+    activeMessages,
+    activeConversationThread,
+    conversationHistoryThreads,
+    replaceMessages,
+    replaceThreadMessages,
   };
 });
 
