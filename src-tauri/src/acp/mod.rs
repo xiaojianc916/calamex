@@ -9,6 +9,7 @@ mod bridge;
 mod client;
 mod host;
 mod launch;
+mod provisioner;
 mod runtime;
 mod ui_event;
 
@@ -29,6 +30,14 @@ pub use approval::{ApprovalError, ApprovalOptionInfo, ApprovalRegistry, Approval
 // 源，接线在阶段 2（runtime 多 host），故迁移期暂无消费者。
 #[allow(unused_imports)]
 pub use launch::{AcpBackendId, build_acp_client_config, build_acp_client_config_for};
+
+// 外部/内置 ACP 后端「凭证预置 + 启动配置」的统一抽象与注册表(ADR-0015 通用化)。
+// 本阶段仅委托到 launch 既有自由函数,runtime 接线见后续阶段,迁移期暂无 crate 外消费者。
+#[allow(unused_imports)]
+pub use provisioner::{
+    BuiltinProvisioner, CodexProvisioner, ExternalAgentProvisioner, KimiProvisioner,
+    provisioner_for,
+};
 
 // 接线层：把 Tauri 契约请求投影为客户端层 ACP 扩展请求。四条投影（agent/chat、
 // agent/chat/resolve、agent/ask-user/resume、一次性 model/chat）均已由命令层 / 网关 live 调用。
