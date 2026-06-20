@@ -218,47 +218,34 @@ const voidCommand = (meta: ICommandMeta, invoke: () => Promise<unknown>) => () =
  * 生成一个带入参的 AI Tauri 服务方法：转发 payload + options 到绑定命令。
  * 覆盖绝大多数 AI 命令（接受 payload + 可选 IIpcCallOptions）。
  */
-const payloadCommand = <P>(
-  meta: ICommandMeta,
-  invoke: (payload: P) => Promise<unknown>,
-) =>
+const payloadCommand =
+  <P>(meta: ICommandMeta, invoke: (payload: P) => Promise<unknown>) =>
   (payload: P, options?: IIpcCallOptions) =>
     runCommand(meta, payload, options, () => invoke(payload));
 
 export const aiTauriService: TAiTauriService = {
-  aiGetConfig: voidCommand(
-    AI_COMMAND_META.aiGetConfig,
-    () => commands.aiGetConfig(),
+  aiGetConfig: voidCommand(AI_COMMAND_META.aiGetConfig, () => commands.aiGetConfig()),
+
+  aiSaveConfig: payloadCommand(AI_COMMAND_META.aiSaveConfig, (payload) =>
+    commands.aiSaveConfig(payload),
   ),
 
-  aiSaveConfig: payloadCommand(
-    AI_COMMAND_META.aiSaveConfig,
-    (payload) => commands.aiSaveConfig(payload),
+  aiSaveCredentials: payloadCommand(AI_COMMAND_META.aiSaveCredentials, (payload) =>
+    commands.aiSaveCredentials(payload),
   ),
 
-  aiSaveCredentials: payloadCommand(
-    AI_COMMAND_META.aiSaveCredentials,
-    (payload) => commands.aiSaveCredentials(payload),
+  aiClearCredentials: voidCommand(AI_COMMAND_META.aiClearCredentials, () =>
+    commands.aiClearCredentials(),
   ),
 
-  aiClearCredentials: voidCommand(
-    AI_COMMAND_META.aiClearCredentials,
-    () => commands.aiClearCredentials(),
+  aiTestProvider: voidCommand(AI_COMMAND_META.aiTestProvider, () => commands.aiTestProvider()),
+
+  aiTestProviderConfig: payloadCommand(AI_COMMAND_META.aiTestProviderConfig, (payload) =>
+    commands.aiTestProviderConfig(payload),
   ),
 
-  aiTestProvider: voidCommand(
-    AI_COMMAND_META.aiTestProvider,
-    () => commands.aiTestProvider(),
-  ),
-
-  aiTestProviderConfig: payloadCommand(
-    AI_COMMAND_META.aiTestProviderConfig,
-    (payload) => commands.aiTestProviderConfig(payload),
-  ),
-
-  aiConnectProvider: payloadCommand(
-    AI_COMMAND_META.aiConnectProvider,
-    (payload) => commands.aiConnectProvider(payload),
+  aiConnectProvider: payloadCommand(AI_COMMAND_META.aiConnectProvider, (payload) =>
+    commands.aiConnectProvider(payload),
   ),
 
   aiGenerateConversationTitle: payloadCommand(
@@ -266,49 +253,38 @@ export const aiTauriService: TAiTauriService = {
     (payload) => commands.aiGenerateConversationTitle(payload),
   ),
 
-  aiGetSuggestionPoolCache: voidCommand(
-    AI_COMMAND_META.aiGetSuggestionPoolCache,
-    () => commands.aiGetSuggestionPoolCache(),
+  aiGetSuggestionPoolCache: voidCommand(AI_COMMAND_META.aiGetSuggestionPoolCache, () =>
+    commands.aiGetSuggestionPoolCache(),
   ),
 
-  aiGenerateSuggestionPool: payloadCommand(
-    AI_COMMAND_META.aiGenerateSuggestionPool,
-    (payload) => commands.aiGenerateSuggestionPool(payload),
+  aiGenerateSuggestionPool: payloadCommand(AI_COMMAND_META.aiGenerateSuggestionPool, (payload) =>
+    commands.aiGenerateSuggestionPool(payload),
   ),
 
-  aiChatStream: payloadCommand(
-    AI_COMMAND_META.aiChatStream,
-    (payload) => commands.aiChatStream(payload),
+  aiChatStream: payloadCommand(AI_COMMAND_META.aiChatStream, (payload) =>
+    commands.aiChatStream(payload),
   ),
 
-  aiCancel: payloadCommand(
-    AI_COMMAND_META.aiCancel,
-    (payload) => commands.aiCancel(payload),
+  aiCancel: payloadCommand(AI_COMMAND_META.aiCancel, (payload) => commands.aiCancel(payload)),
+
+  aiResolveApproval: payloadCommand(AI_COMMAND_META.aiResolveApproval, (payload) =>
+    commands.aiResolveApproval(payload),
   ),
 
-  aiResolveApproval: payloadCommand(
-    AI_COMMAND_META.aiResolveApproval,
-    (payload) => commands.aiResolveApproval(payload),
+  aiGetSessionConfigOptions: payloadCommand(AI_COMMAND_META.aiGetSessionConfigOptions, (payload) =>
+    commands.aiGetSessionConfigOptions(payload),
   ),
 
-  aiGetSessionConfigOptions: payloadCommand(
-    AI_COMMAND_META.aiGetSessionConfigOptions,
-    (payload) => commands.aiGetSessionConfigOptions(payload),
+  aiSetSessionConfigOption: payloadCommand(AI_COMMAND_META.aiSetSessionConfigOption, (payload) =>
+    commands.aiSetSessionConfigOption(payload),
   ),
 
-  aiSetSessionConfigOption: payloadCommand(
-    AI_COMMAND_META.aiSetSessionConfigOption,
-    (payload) => commands.aiSetSessionConfigOption(payload),
+  aiInlineComplete: payloadCommand(AI_COMMAND_META.aiInlineComplete, (payload) =>
+    commands.aiInlineComplete(payload),
   ),
 
-  aiInlineComplete: payloadCommand(
-    AI_COMMAND_META.aiInlineComplete,
-    (payload) => commands.aiInlineComplete(payload),
-  ),
-
-  aiAgentClassifyTask: payloadCommand(
-    AI_COMMAND_META.aiAgentClassifyTask,
-    (payload) => commands.aiAgentClassifyTask(payload),
+  aiAgentClassifyTask: payloadCommand(AI_COMMAND_META.aiAgentClassifyTask, (payload) =>
+    commands.aiAgentClassifyTask(payload),
   ),
 
   aiAgentSetNetworkPermission: payloadCommand(
@@ -316,23 +292,17 @@ export const aiTauriService: TAiTauriService = {
     (payload) => commands.aiAgentSetNetworkPermission(payload),
   ),
 
-  aiWebSearch: payloadCommand(
-    AI_COMMAND_META.aiWebSearch,
-    (payload) => commands.aiWebSearch(payload),
+  aiWebSearch: payloadCommand(AI_COMMAND_META.aiWebSearch, (payload) =>
+    commands.aiWebSearch(payload),
   ),
 
-  aiWebFetch: payloadCommand(
-    AI_COMMAND_META.aiWebFetch,
-    (payload) => commands.aiWebFetch(payload),
+  aiWebFetch: payloadCommand(AI_COMMAND_META.aiWebFetch, (payload) => commands.aiWebFetch(payload)),
+
+  aiProposePatch: payloadCommand(AI_COMMAND_META.aiProposePatch, (payload) =>
+    commands.aiProposePatch(payload),
   ),
 
-  aiProposePatch: payloadCommand(
-    AI_COMMAND_META.aiProposePatch,
-    (payload) => commands.aiProposePatch(payload),
-  ),
-
-  aiApplyPatch: payloadCommand(
-    AI_COMMAND_META.aiApplyPatch,
-    (payload) => commands.aiApplyPatch(payload),
+  aiApplyPatch: payloadCommand(AI_COMMAND_META.aiApplyPatch, (payload) =>
+    commands.aiApplyPatch(payload),
   ),
 };

@@ -1,5 +1,5 @@
-import { ref } from 'vue';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { ref } from 'vue';
 import { aiService } from '@/services/ipc/ai.service';
 import { useAiProviderConfig } from './useAiAssistant.provider-config';
 
