@@ -4,8 +4,8 @@ import { useVirtualizer } from '@tanstack/vue-virtual';
 import { useTimeoutFn } from '@vueuse/core';
 import type { MarkstreamVirtualMetrics } from 'markstream-vue';
 import {
-  computed,
   type ComponentPublicInstance,
+  computed,
   nextTick,
   onBeforeUnmount,
   provide,

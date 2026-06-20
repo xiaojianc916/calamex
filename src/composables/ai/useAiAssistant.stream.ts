@@ -94,10 +94,11 @@ export interface ISidecarLiveEventBuffer {
   dispose: () => void;
 }
 
-export type TSidecarStreamTokenSnapshot = Pick<
-  IAiChatStreamRenderState,
-  'inputTokens' | 'outputTokens' | 'totalTokens' | 'usage'
->;
+/**
+ * 流式 token 快照 = 共享 usage VM(aiLanguageModelUsageSchema 派生)。
+ * 不再用 render-state 上已弃用的 flat inputTokens/outputTokens/totalTokens 字段。
+ */
+export type TSidecarStreamTokenSnapshot = NonNullable<IAiChatStreamRenderState['usage']>;
 
 export interface ISidecarAnswerStreamMetadata {
   messageId: string;
@@ -157,6 +158,16 @@ export const getLatestSidecarLiveEvents = (
   return latest;
 };
 
+/**
+ * done 事件 / 历史快照可能只携带已弃用的 flat token 字段(无 usage)。
+ * 经此结构化视图读取旧字段,规避 TS6385(deprecated)告警,同时保留对旧负载的兼容。
+ */
+type TLegacyFlatTokenFields = {
+  inputTokens?: number;
+  outputTokens?: number;
+  totalTokens?: number;
+};
+
 export const resolveSidecarDoneStreamTokenSnapshot = (
   event: Extract<TAgentUiEvent, { type: 'done' }> | null | undefined,
 ): TSidecarStreamTokenSnapshot | undefined => {
@@ -164,31 +175,31 @@ export const resolveSidecarDoneStreamTokenSnapshot = (
     return undefined;
   }
 
-  const usage = event.usage ?? undefined;
-  const promptTokens = isNonNegativeFiniteNumber(event.inputTokens)
-    ? event.inputTokens
-    : usage?.inputTokens;
-  const completionTokens = isNonNegativeFiniteNumber(event.outputTokens)
-    ? event.outputTokens
-    : usage?.outputTokens;
-  const totalTokens = isNonNegativeFiniteNumber(event.totalTokens)
-    ? event.totalTokens
-    : usage?.totalTokens;
+  // usage 是唯一非弃用真源:存在即直接采用。
+  if (event.usage) {
+    return event.usage;
+  }
 
-  if (
-    !isNonNegativeFiniteNumber(promptTokens) &&
-    !isNonNegativeFiniteNumber(completionTokens) &&
-    !isNonNegativeFiniteNumber(totalTokens) &&
-    usage === undefined
-  ) {
+  // 回退:旧负载仅带 flat 字段时,经结构化视图读取(规避 deprecated 告警)并补齐为 usage VM。
+  const legacyTokens: TLegacyFlatTokenFields = event;
+  const inputTokens = isNonNegativeFiniteNumber(legacyTokens.inputTokens)
+    ? legacyTokens.inputTokens
+    : undefined;
+  const outputTokens = isNonNegativeFiniteNumber(legacyTokens.outputTokens)
+    ? legacyTokens.outputTokens
+    : undefined;
+  const totalTokens = isNonNegativeFiniteNumber(legacyTokens.totalTokens)
+    ? legacyTokens.totalTokens
+    : undefined;
+
+  if (inputTokens === undefined && outputTokens === undefined && totalTokens === undefined) {
     return undefined;
   }
 
   return {
-    ...(isNonNegativeFiniteNumber(promptTokens) ? { inputTokens: promptTokens } : {}),
-    ...(isNonNegativeFiniteNumber(completionTokens) ? { outputTokens: completionTokens } : {}),
-    ...(isNonNegativeFiniteNumber(totalTokens) ? { totalTokens } : {}),
-    ...(usage ? { usage } : {}),
+    inputTokens: inputTokens ?? 0,
+    outputTokens: outputTokens ?? 0,
+    totalTokens: totalTokens ?? (inputTokens ?? 0) + (outputTokens ?? 0),
   };
 };
 

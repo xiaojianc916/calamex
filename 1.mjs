@@ -1,89 +1,64 @@
-// 修复 token 字段重命名迁移遗留的类型不一致：promptTokens/completionTokens -> inputTokens/outputTokens
-// 用法：项目根目录执行  node fix-token-field-migration.mjs
-import { readFile, writeFile } from 'node:fs/promises';
+// fix-pnpm-overrides-migration.mjs
+// 把 pnpm.overrides 从 package.json 迁移到 pnpm-workspace.yaml (pnpm v10+ 要求)
+// 用法: 在项目根目录运行  node fix-pnpm-overrides-migration.mjs
+import { readFile, writeFile, access } from "node:fs/promises"
+
+const PKG = "package.json"
+const WS = "pnpm-workspace.yaml"
 
 function must(cond, msg) {
   if (!cond) {
-    console.error(`✗ ${msg}`);
-    process.exit(1);
+    console.error("ABORT: " + msg)
+    process.exit(1)
   }
 }
-
-async function patchFile(path, label, transform) {
-  const before = await readFile(path, 'utf8');
-  const after = transform(before);
-  if (after === before) {
-    console.log(`• ${label}: 已是目标状态，跳过`);
-    return;
-  }
-  await writeFile(path, after, 'utf8');
-  console.log(`✓ ${label}: 已修补`);
+async function exists(p) {
+  try { await access(p); return true } catch { return false }
 }
 
-// ① TSidecarStreamTokenSnapshot 的 Pick 键
-await patchFile(
-  'src/composables/ai/useAiAssistant.stream.ts',
-  'TSidecarStreamTokenSnapshot Pick 键',
-  (src) => {
-    const OLD = "'promptTokens' | 'completionTokens' | 'totalTokens' | 'usage'";
-    const NEW = "'inputTokens' | 'outputTokens' | 'totalTokens' | 'usage'";
-    if (src.includes(NEW)) return src;
-    must(src.includes(OLD), `stream.ts 未找到锚点: ${OLD}`);
-    return src.replace(OLD, NEW);
-  },
-);
+const pkgRaw = await readFile(PKG, "utf8")
+const pkg = JSON.parse(pkgRaw)
 
-// ② TAgentUiEventDone 的扁平 token 字段
-await patchFile(
-  'src/types/ai/sidecar.ts',
-  'TAgentUiEventDone 扁平 token 字段',
-  (src) => {
-    let out = src;
-    if (!out.includes('\n  inputTokens?: number;')) {
-      must(out.includes('\n  promptTokens?: number;'), 'sidecar.ts 未找到锚点: promptTokens?: number;');
-      out = out.replace('\n  promptTokens?: number;', '\n  inputTokens?: number;');
-    }
-    if (!out.includes('\n  outputTokens?: number;')) {
-      must(out.includes('\n  completionTokens?: number;'), 'sidecar.ts 未找到锚点: completionTokens?: number;');
-      out = out.replace('\n  completionTokens?: number;', '\n  outputTokens?: number;');
-    }
-    return out;
-  },
-);
+const pnpmField = pkg.pnpm
+const overrides = pnpmField?.overrides
 
-// ③ Kimi 用例 capturedRequest 捕获改读 mock.calls
-await patchFile(
-  'src/composables/ai/useAiAssistant.spec.ts',
-  'Kimi 用例 capturedRequest 捕获方式',
-  (src) => {
-    if (src.includes('const capturedRequest = aiServiceMock.sidecarExternalChat.mock.calls[0]?.[0];')) {
-      return src;
-    }
-    let out = src;
+const wsExists = await exists(WS)
+const wsRaw = wsExists ? await readFile(WS, "utf8") : ""
+const wsHasOverrides = /(^|\n)overrides:/.test(wsRaw)
 
-    const DECL_OLD =
-      '    const promptGate = createDeferred<IAgentExternalChatResultPayload>();\n' +
-      '    let capturedRequest: IAgentExternalChatRequest | null = null;\n\n' +
-      '    aiServiceMock.sidecarExternalChat.mockImplementationOnce(async (payload) => {\n' +
-      '      capturedRequest = payload;\n';
-    const DECL_NEW =
-      '    const promptGate = createDeferred<IAgentExternalChatResultPayload>();\n\n' +
-      '    aiServiceMock.sidecarExternalChat.mockImplementationOnce(async (payload) => {\n';
-    must(out.includes(DECL_OLD), 'spec.ts 未找到锚点: capturedRequest 声明/赋值块');
-    out = out.replace(DECL_OLD, DECL_NEW);
+// 幂等:已经迁移过(package.json 无 pnpm 字段)
+if (!pnpmField) {
+  must(wsHasOverrides, "package.json 已无 pnpm 字段,但 pnpm-workspace.yaml 也没有 overrides:,状态异常,请手动检查。")
+  console.log("已迁移过,无需改动。")
+  process.exit(0)
+}
 
-    const READ_OLD =
-      "    expect(assistantMessageId).toBeTruthy();\n" +
-      "    expect(capturedRequest?.backend).toBe('kimi');\n";
-    const READ_NEW =
-      "    expect(assistantMessageId).toBeTruthy();\n" +
-      "    const capturedRequest = aiServiceMock.sidecarExternalChat.mock.calls[0]?.[0];\n" +
-      "    expect(capturedRequest?.backend).toBe('kimi');\n";
-    must(out.includes(READ_OLD), 'spec.ts 未找到锚点: capturedRequest 读取块');
-    out = out.replace(READ_OLD, READ_NEW);
+must(overrides && typeof overrides === "object", "package.json 的 pnpm 字段里没有 overrides 对象,无法迁移,请手动检查。")
 
-    return out;
-  },
-);
+// 只处理 overrides;若 pnpm 字段里还有别的设置,停下来让你手动迁移,避免丢配置
+const otherKeys = Object.keys(pnpmField).filter((k) => k !== "overrides")
+must(otherKeys.length === 0, `package.json 的 pnpm 字段除 overrides 外还有: ${otherKeys.join(", ")} —— 请手动迁移这些设置,避免丢失。`)
 
-console.log('\n全部完成。建议执行：npx vue-tsc --noEmit  并重启 TS server。');
+// 构造 YAML overrides 块(键值都加引号,兼容 @scope/pkg 之类的键)
+const lines = Object.entries(overrides).map(
+  ([k, v]) => `  ${JSON.stringify(k)}: ${JSON.stringify(String(v))}`,
+)
+const block = `overrides:\n${lines.join("\n")}\n`
+
+// 1) 写 pnpm-workspace.yaml
+if (!wsExists) {
+  await writeFile(WS, block, "utf8")
+  console.log(`已创建 ${WS}`)
+} else {
+  must(!wsHasOverrides, `${WS} 里已存在 overrides: 键,请手动合并,避免覆盖现有配置。`)
+  const sep = wsRaw.length && !wsRaw.endsWith("\n") ? "\n" : ""
+  await writeFile(WS, wsRaw + sep + block, "utf8")
+  console.log(`已向 ${WS} 追加 overrides 块`)
+}
+
+// 2) 从 package.json 删除 pnpm 字段(保留 2 空格缩进 + 末尾换行)
+delete pkg.pnpm
+await writeFile(PKG, JSON.stringify(pkg, null, 2) + "\n", "utf8")
+console.log(`已从 ${PKG} 删除 pnpm 字段`)
+
+console.log("完成。接下来请执行 pnpm install 让 override 真正生效。")

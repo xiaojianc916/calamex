@@ -125,7 +125,6 @@ import {
   type ISidecarAnswerStreamMetadata,
   type ISidecarAnswerStreamState,
   isAiEditOperationEntry,
-  isNonNegativeFiniteNumber,
   mapStreamStatus,
   mapToolConfirmationDecisionToSidecarDecision,
   resolveSidecarDoneStreamTokenSnapshot,
@@ -668,16 +667,8 @@ export const useAiAssistant = (options: IUseAiAssistantOptions) => {
         finalAnswerStarted ??
         message.stream?.finalAnswerStarted ??
         (streamStatus === 'completed' && hasMeaningfulAssistantText(content));
-      const nextPromptTokens = isNonNegativeFiniteNumber(streamTokenSnapshot?.inputTokens)
-        ? streamTokenSnapshot.inputTokens
-        : message.stream?.inputTokens;
-      const nextCompletionTokens = isNonNegativeFiniteNumber(streamTokenSnapshot?.outputTokens)
-        ? streamTokenSnapshot.outputTokens
-        : message.stream?.outputTokens;
-      const nextTotalTokens = isNonNegativeFiniteNumber(streamTokenSnapshot?.totalTokens)
-        ? streamTokenSnapshot.totalTokens
-        : message.stream?.totalTokens;
-      const nextUsage = streamTokenSnapshot?.usage ?? message.stream?.usage;
+      // token 用量统一走非弃用的 usage VM:snapshot 本身即 usage,缺省时沿用既有 message.stream.usage。
+      const nextUsage = streamTokenSnapshot ?? message.stream?.usage;
       const stream = streamStatus
         ? {
             ...message.stream,
@@ -685,13 +676,6 @@ export const useAiAssistant = (options: IUseAiAssistantOptions) => {
             ...(nextActivityText !== undefined ? { activityText: nextActivityText } : {}),
             ...(nextRuntimeEvents?.length ? { runtimeEvents: nextRuntimeEvents } : {}),
             ...(nextFinalAnswerStarted ? { finalAnswerStarted: true } : {}),
-            ...(isNonNegativeFiniteNumber(nextPromptTokens)
-              ? { inputTokens: nextPromptTokens }
-              : {}),
-            ...(isNonNegativeFiniteNumber(nextCompletionTokens)
-              ? { outputTokens: nextCompletionTokens }
-              : {}),
-            ...(isNonNegativeFiniteNumber(nextTotalTokens) ? { totalTokens: nextTotalTokens } : {}),
             ...(nextUsage ? { usage: nextUsage } : {}),
           }
         : message.stream;

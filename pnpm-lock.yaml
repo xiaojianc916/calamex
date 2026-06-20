@@ -4,6 +4,9 @@ settings:
   autoInstallPeers: true
   excludeLinksFromLockfile: false
 
+overrides:
+  rxjs: ^7.8.2
+
 importers:
 
   .:
@@ -239,9 +242,6 @@ importers:
       vue-stick-to-bottom:
         specifier: ^1.0.0
         version: 1.0.0(vue@3.5.38(typescript@6.0.3))
-      vue-virtual-scroller:
-        specifier: ^3.0.4
-        version: 3.0.4(vue@3.5.38(typescript@6.0.3))
       web-tree-sitter:
         specifier: ^0.26.9
         version: 0.26.9
@@ -5518,7 +5518,7 @@ packages:
     resolution: {integrity: sha512-qjcy8pGrgcycDjUOHv8xOPBJ/5PdjqmeB3LhwDt428LEwMgjLWjUdK6n+g0mjSXhLD9WO6NKFMZH85z4ukKM+w==}
     engines: {node: ^20.20.0 || >=22.22.0}
     peerDependencies:
-      rxjs: ^7.0.0
+      rxjs: ^7.8.2
     peerDependenciesMeta:
       rxjs:
         optional: true
@@ -5767,9 +5767,6 @@ packages:
 
   rw@1.3.3:
     resolution: {integrity: sha512-PdhdWy89SiZogBLaw42zdeqtRJ//zFd2PgQavcICDUgJT5oW10QCRKbJ6bg4r0/UY2M6BWd5tkxuGFRvCkgfHQ==}
-
-  rxjs@7.8.1:
-    resolution: {integrity: sha512-AA3TVj+0A2iuIoQkWEK/tqFjBq2j+6PO6Y0zJcvzLAFhEFIO3HL0vls9hWLncZbAAbK0mar7oZ4V079I/qPMxg==}
 
   rxjs@7.8.2:
     resolution: {integrity: sha512-dhKf903U/PQZY6boNNtAGdWbG85WAbjT/1xYoZIC7FAY0yWapOBQVsVrDl58W86//e1VpMNBtRV4MaXfdMySFA==}
@@ -6555,11 +6552,6 @@ packages:
     peerDependencies:
       typescript: '>=5.0.0'
 
-  vue-virtual-scroller@3.0.4:
-    resolution: {integrity: sha512-3qh3c9VUVysuXynaa4fVZ3ncx3VgD7EPRiQcj+jUVZl5u/TTkD3c27XvSEu3JGJfsJt/vVTVziZ3djiiHtW4cQ==}
-    peerDependencies:
-      vue: ^3.3.0
-
   vue@3.5.38:
     resolution: {integrity: sha512-vAMKHfImQlYSy0C+PBue4s3ERZ2xGKfgZg5GXAsLInq1dyh2H78ILVP5sK0KPFPVW4kv+OGCIvBEondcjpZp7A==}
     peerDependencies:
@@ -6804,7 +6796,7 @@ snapshots:
       '@types/uuid': 10.0.0
       compare-versions: 6.1.1
       fast-json-patch: 3.1.1
-      rxjs: 7.8.1
+      rxjs: 7.8.2
       untruncate-json: 0.0.1
       uuid: 11.1.1
       zod: 3.25.76
@@ -7568,7 +7560,7 @@ snapshots:
       '@copilotkit/shared': 1.61.0(@ag-ui/core@0.0.57)
       '@tanstack/pacer': 0.20.1
       phoenix: 1.8.8
-      rxjs: 7.8.1
+      rxjs: 7.8.2
       zod-to-json-schema: 3.25.2(zod@3.25.76)
     transitivePeerDependencies:
       - '@ag-ui/core'
@@ -7581,7 +7573,7 @@ snapshots:
       '@copilotkit/shared': 1.61.0(@ag-ui/core@0.0.57)
       '@tanstack/pacer': 0.20.1
       phoenix: 1.8.8
-      rxjs: 7.8.1
+      rxjs: 7.8.2
       zod-to-json-schema: 3.25.2(zod@4.4.3)
     transitivePeerDependencies:
       - '@ag-ui/core'
@@ -12718,10 +12710,6 @@ snapshots:
 
   rw@1.3.3: {}
 
-  rxjs@7.8.1:
-    dependencies:
-      tslib: 2.8.1
-
   rxjs@7.8.2:
     dependencies:
       tslib: 2.8.1
@@ -13517,10 +13505,6 @@ snapshots:
       '@volar/typescript': 2.4.28
       '@vue/language-core': 3.3.5
       typescript: 6.0.3
-
-  vue-virtual-scroller@3.0.4(vue@3.5.38(typescript@6.0.3)):
-    dependencies:
-      vue: 3.5.38(typescript@6.0.3)
 
   vue@3.5.38(typescript@6.0.3):
     dependencies:

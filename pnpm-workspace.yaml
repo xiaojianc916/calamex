@@ -13,3 +13,5 @@ allowBuilds:
   '@moonshot-ai/kimi-code': true
   koffi: true
   node-pty: true
+overrides:
+  "rxjs": "$rxjs"

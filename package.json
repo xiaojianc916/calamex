@@ -155,10 +155,5 @@
   "bugs": {
     "url": "https://github.com/xiaojianc916/calamex/issues"
   },
-  "homepage": "https://github.com/xiaojianc916/calamex#readme",
-  "pnpm": {
-    "overrides": {
-      "rxjs": "$rxjs"
-    }
-  }
+  "homepage": "https://github.com/xiaojianc916/calamex#readme"
 }
