@@ -1,77 +1,145 @@
-// 6.mjs — 补丁#4：collect_kimi_model_entry 改用 credential::resolve_provider_base_url
-// 用法：node 6.mjs   （或 node 6.mjs <launch.rs路径>）
-import { readFileSync, writeFileSync } from "node:fs";
-import { resolve } from "node:path";
+// 1.mjs — Step 8 砖3① 渲染权威纯核心（未接线，零行为）
+// 运行：node 1.mjs  （仓库根目录 D:\com.xiaojianc\my_desktop_app）
+import { readFileSync, writeFileSync } from 'node:fs';
+import { resolve } from 'node:path';
 
-const lpPath = resolve(process.argv[2] ?? "src-tauri/src/acp/launch.rs");
-const raw = readFileSync(lpPath, "utf8");
-const usedCrlf = raw.includes("\r\n");
-let src = raw.replace(/\r\n/g, "\n");
+const root = process.cwd();
+const p = (rel) => resolve(root, rel);
 
-if (src.includes("credential::resolve_provider_base_url")) {
-  console.log("✓ 已应用过（launch.rs 已用 resolve_provider_base_url），幂等跳过，未改动。");
-  process.exit(0);
-}
-
-function dumpContext(needle) {
-  const head = needle.split("\n")[0];
-  const at = src.indexOf(head);
-  console.error("---- 诊断：目标首行 = " + JSON.stringify(head));
-  console.error("---- launch.rs 中该首行位置 = " + at);
-  if (at !== -1) console.error("---- 实际上下文 ----\n" + JSON.stringify(src.slice(at, at + 320)));
-}
-
-function applyOnce(label, needle, replacement) {
-  const first = src.indexOf(needle);
-  if (first === -1) {
-    dumpContext(needle);
-    console.error("❌ [" + label + "] 未找到目标片段；launch.rs 可能与预期版本(sha 1ef5e07d)不一致，已中止且未写入。");
-    process.exit(1);
+function replaceOnce(content, oldStr, newStr, label) {
+  const parts = content.split(oldStr);
+  if (parts.length !== 2) {
+    throw new Error(`[${label}] 期望命中 1 处锚点，实际命中 ${parts.length - 1} 处`);
   }
-  if (src.indexOf(needle, first + needle.length) !== -1) {
-    console.error("❌ [" + label + "] 目标片段出现多于一次，为安全起见已中止。");
-    process.exit(1);
-  }
-  src = src.slice(0, first) + replacement + src.slice(first + needle.length);
-  console.log("✓ " + label);
+  return parts[0] + newStr + parts[1];
 }
 
-// ---- 1/3 更新函数 doc 注释（去掉对 default_gateway_base_url 的引用，改述统一解析器）----
-applyOnce(
-  "1/3 collect_kimi_model_entry doc 注释",
-  "/// 把一个 sidecar 模型配置解析成「provider + model」成对条目。base_url 优先取用户显式保存的\n" +
-  "/// 网关地址，缺失时回退该厂商的默认 OpenAI 兼容端点（`default_gateway_base_url`）；仅当 model_id\n" +
-  "/// 为空，或厂商既无显式地址又无默认端点时返回 None，交由调用方决定跳过或回退。",
-  "/// 把一个 sidecar 模型配置解析成「provider + model」成对条目。base_url 经统一凭证解析器\n" +
-  "/// credential::resolve_provider_base_url 派生（用户显式网关地址优先，否则回退该厂商默认 OpenAI\n" +
-  "/// 兼容端点）；仅当 model_id 为空，或厂商既无显式地址又无默认端点时返回 None，交由调用方跳过或回退。"
+/* ---------- 1) 新建纯函数模块 render-authority.ts ---------- */
+const renderAuthorityTs = [
+  '/* ============================================================================',
+  ' * 渲染权威选择（ADR-0013 / ADR-0014 Step 8 砖3①）',
+  ' *',
+  ' * 纯函数、无副作用：在 entries 权威线程（authoritative）与既有 legacy 投影',
+  ' * （liveThread ?? 投影 ?? 持久化）之间选择渲染真源。',
+  ' *',
+  ' * 切换语义（strangler）：authoritative 持有 entries 时以其为准，否则回退 legacy。',
+  ' * 写路径接管（砖3②起）前 authoritative 恒为空线程 → 始终回退 legacy → 逐线程',
+  ' * 零行为变化；写路径接管后 authoritative 自然胜出，无需二次改读侧。',
+  ' * ========================================================================== */',
+  "import type { IAiThread } from '@/types/ai/thread';",
+  '',
+  '/**',
+  ' * 渲染线程真源选择：authoritative 含 entries 时优先，否则回退 fallback。',
+  ' * @param authoritative entries 权威活动线程（砖2b store）',
+  ' * @param fallback 既有渲染链路（liveThread ?? 投影 ?? 持久化）',
+  ' */',
+  'export function selectRenderThread(',
+  '  authoritative: IAiThread | null,',
+  '  fallback: IAiThread | null,',
+  '): IAiThread | null {',
+  '  return authoritative && authoritative.entries.length > 0 ? authoritative : fallback;',
+  '}',
+  '',
+].join('\n');
+writeFileSync(p('src/store/aiThread/render-authority.ts'), renderAuthorityTs, 'utf8');
+
+/* ---------- 2) 新建纯函数单测 render-authority.spec.ts ---------- */
+const renderAuthoritySpec = [
+  "import { describe, expect, it } from 'vitest';",
+  '',
+  "import { selectRenderThread } from '@/store/aiThread/render-authority';",
+  "import type { IAiThread, IAiThreadEntry } from '@/types/ai/thread';",
+  '',
+  'const entry = {} as unknown as IAiThreadEntry;',
+  '',
+  'function makeThread(id: string, entries: IAiThreadEntry[]): IAiThread {',
+  '  return { id, entries } as unknown as IAiThread;',
+  '}',
+  '',
+  "describe('selectRenderThread', () => {",
+  "  it('authoritative 持有 entries 时以其为渲染真源', () => {",
+  "    const authoritative = makeThread('a', [entry]);",
+  "    const fallback = makeThread('legacy', [entry, entry]);",
+  '    expect(selectRenderThread(authoritative, fallback)).toBe(authoritative);',
+  '  });',
+  '',
+  "  it('authoritative 为空 entries 时回退 legacy', () => {",
+  "    const authoritative = makeThread('a', []);",
+  "    const fallback = makeThread('legacy', [entry]);",
+  '    expect(selectRenderThread(authoritative, fallback)).toBe(fallback);',
+  '  });',
+  '',
+  "  it('authoritative 为 null 时回退 legacy', () => {",
+  "    const fallback = makeThread('legacy', [entry]);",
+  '    expect(selectRenderThread(null, fallback)).toBe(fallback);',
+  '  });',
+  '',
+  "  it('authoritative 空 entries 且 fallback 为 null 时返回 null', () => {",
+  "    expect(selectRenderThread(makeThread('a', []), null)).toBeNull();",
+  '  });',
+  '',
+  "  it('authoritative 与 fallback 皆 null 时返回 null', () => {",
+  '    expect(selectRenderThread(null, null)).toBeNull();',
+  '  });',
+  '});',
+  '',
+].join('\n');
+writeFileSync(p('src/store/aiThread/render-authority.spec.ts'), renderAuthoritySpec, 'utf8');
+
+/* ---------- 3) 接入 index.ts（仅导出 getter，未接线） ---------- */
+const idxPath = p('src/store/aiThread/index.ts');
+let idx = readFileSync(idxPath, 'utf8');
+
+// 3a) import（置于 legacy-adapter 与 thread-mutations 之间，符合字母序）
+idx = replaceOnce(
+  idx,
+  "import { legacyThreadToThread } from '@/store/aiThread/legacy-adapter';\nimport * as threadMutations from '@/store/aiThread/thread-mutations';",
+  "import { legacyThreadToThread } from '@/store/aiThread/legacy-adapter';\nimport { selectRenderThread } from '@/store/aiThread/render-authority';\nimport * as threadMutations from '@/store/aiThread/thread-mutations';",
+  'import',
 );
 
-// ---- 2/3 base_url 推导改走统一解析器 ----
-applyOnce(
-  "2/3 base_url 推导改用 resolve_provider_base_url",
-  "    // base_url：优先用户在 AI 设置里显式保存的网关地址；缺失时回退该厂商官方 OpenAI 兼容端点。\n" +
-  "    // 此前缺 base_url 会直接返回 None → 整份 config.toml 跳过 → Kimi 无凭证报 Authentication required。\n" +
-  "    let base_url = config\n" +
-  "        .base_url\n" +
-  "        .as_deref()\n" +
-  "        .map(str::trim)\n" +
-  "        .filter(|value| !value.is_empty())\n" +
-  "        .or_else(|| default_gateway_base_url(platform))?;",
-  "    // base_url：经统一凭证解析器 credential::resolve_provider_base_url 派生——显式网关地址优先，\n" +
-  "    // 缺失则回退该厂商默认 OpenAI 兼容端点；与内置边车 / 未来其他 agent 共用同一处解析（单一事实源），\n" +
-  "    // 不再本地复制「显式优先、否则默认」控制流。返回 None（既无显式地址也无默认端点）时整体跳过、\n" +
-  "    // 交回 Kimi 自身登录——此即修复 Authentication required 的关键路径。\n" +
-  "    let base_url =\n" +
-  "        crate::ai::credential::resolve_provider_base_url(platform, config.base_url.as_deref())?;"
+// 3b) 在 authoritativeHasEntries 之后、readAuthoritativeState 之前插入渲染权威 getter
+idx = replaceOnce(
+  idx,
+  "  const authoritativeHasEntries = computed<boolean>(\n    () => authoritativeActiveEntries.value.length > 0,\n  );\n\n  const readAuthoritativeState = (): threadMutations.IAiThreadState => ({",
+  [
+    '  const authoritativeHasEntries = computed<boolean>(',
+    '    () => authoritativeActiveEntries.value.length > 0,',
+    '  );',
+    '',
+    '  /* ----- Step 8 砖3①：渲染权威（authoritative 优先，legacy 投影回退，未接线）-----',
+    '   * 渲染层当前仍读 activeThread / activeEntries；砖3② 才把 Panel 渲染来源切到此。',
+    '   * authoritative 持有 entries 时以其为渲染真源，否则回退既有 liveThread ?? 投影',
+    '   * ?? 持久化 链路，保证写路径接管前逐线程零行为变化。',
+    '   */',
+    '  const renderActiveThread = computed<IAiThread | null>(() =>',
+    '    selectRenderThread(authoritativeActiveThread.value, activeThread.value),',
+    '  );',
+    '  const renderActiveEntries = computed<IAiThreadEntry[]>(',
+    '    () => renderActiveThread.value?.entries ?? [],',
+    '  );',
+    '',
+    '  const readAuthoritativeState = (): threadMutations.IAiThreadState => ({',
+  ].join('\n'),
+  'getters',
 );
 
-// ---- 3/3 base_url 现为 String，直接 move 进结构体字段（去掉冗余 to_string）----
-applyOnce(
-  "3/3 KimiProviderEntry.base_url 直接 move",
-  "            base_url: base_url.to_string(),",
-  "            base_url,"
+// 3c) 在 return 的权威读派生之后导出渲染权威 getter
+idx = replaceOnce(
+  idx,
+  '    // Step 8 砖2b：entries 权威读派生（未接线）\n    authoritativeActiveThread,\n    authoritativeActiveEntries,\n    authoritativeHistoryThreads,\n    authoritativeHasEntries,\n    // actions',
+  '    // Step 8 砖2b：entries 权威读派生（未接线）\n    authoritativeActiveThread,\n    authoritativeActiveEntries,\n    authoritativeHistoryThreads,\n    authoritativeHasEntries,\n    // Step 8 砖3①：渲染权威 getter（未接线）\n    renderActiveThread,\n    renderActiveEntries,\n    // actions',
+  'return-exports',
 );
 
-writeFileSync(lpPath, usedCrlf ? src.replace(/\n/g, "\r\n") : src, "utf8");
-console.log("✅ 补丁#4 应用完成，已写回 " + (usedCrlf ? "(CRLF)" : "(LF)") + "：Kimi seed 的 base_url 解析已收敛到 credential::resolve_provider_base_url。");
+// 3d) barrel 再导出（reduce 之后，符合字母序）
+idx = replaceOnce(
+  idx,
+  "export * from '@/store/aiThread/events';\nexport * from '@/store/aiThread/legacy-adapter';\nexport * from '@/store/aiThread/reduce';",
+  "export * from '@/store/aiThread/events';\nexport * from '@/store/aiThread/legacy-adapter';\nexport * from '@/store/aiThread/reduce';\nexport * from '@/store/aiThread/render-authority';",
+  'barrel',
+);
+
+writeFileSync(idxPath, idx, 'utf8');
+
+console.log('✓ Step 8 砖3① 完成：render-authority.ts(+spec) 新建，index.ts 接入渲染权威 getter（未接线）');

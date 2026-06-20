@@ -12,6 +12,7 @@ import { computed, ref, watch } from 'vue';
 import { useAiConversationStore } from '@/store/aiConversation';
 import type { TAiThreadReduceEvent } from '@/store/aiThread/events';
 import { legacyThreadToThread } from '@/store/aiThread/legacy-adapter';
+import { selectRenderThread } from '@/store/aiThread/render-authority';
 import * as threadMutations from '@/store/aiThread/thread-mutations';
 import { restoreAttachmentPreviewPointers } from '@/store/plugins/debouncedPersistStorage';
 import type { IAiThread, IAiThreadEntry } from '@/types/ai/thread';
@@ -143,6 +144,18 @@ export const useAiThreadStore = defineStore('ai-thread', () => {
   );
   const authoritativeHasEntries = computed<boolean>(
     () => authoritativeActiveEntries.value.length > 0,
+  );
+
+  /* ----- Step 8 砖3①：渲染权威（authoritative 优先，legacy 投影回退，未接线）-----
+   * 渲染层当前仍读 activeThread / activeEntries；砖3② 才把 Panel 渲染来源切到此。
+   * authoritative 持有 entries 时以其为渲染真源，否则回退既有 liveThread ?? 投影
+   * ?? 持久化 链路，保证写路径接管前逐线程零行为变化。
+   */
+  const renderActiveThread = computed<IAiThread | null>(() =>
+    selectRenderThread(authoritativeActiveThread.value, activeThread.value),
+  );
+  const renderActiveEntries = computed<IAiThreadEntry[]>(
+    () => renderActiveThread.value?.entries ?? [],
   );
 
   const readAuthoritativeState = (): threadMutations.IAiThreadState => ({
@@ -303,6 +316,9 @@ export const useAiThreadStore = defineStore('ai-thread', () => {
     authoritativeActiveEntries,
     authoritativeHistoryThreads,
     authoritativeHasEntries,
+    // Step 8 砖3①：渲染权威 getter（未接线）
+    renderActiveThread,
+    renderActiveEntries,
     // actions
     setLiveThread,
     setPersistedThreads,
@@ -328,3 +344,4 @@ export const useAiThreadStore = defineStore('ai-thread', () => {
 export * from '@/store/aiThread/events';
 export * from '@/store/aiThread/legacy-adapter';
 export * from '@/store/aiThread/reduce';
+export * from '@/store/aiThread/render-authority';
