@@ -16,11 +16,6 @@ export default defineConfig({
     environment: 'happy-dom',
     include: ['src/**/*.{spec,test}.ts', 'src/**/*.{spec,test}.vue'],
     exclude: ['node_modules', 'dist', 'target'],
-    server: {
-      deps: {
-        inline: [/vue-markdown-design/],
-      },
-    },
     coverage: {
       provider: 'v8',
       reporter: ['text', 'lcov', 'html'],

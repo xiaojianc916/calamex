@@ -66,7 +66,7 @@ const INJECTED_SEPARATOR_SOURCE: TTerminalDataSource = 'injected_separator';
 
 const ANSI_ESCAPE_CHARACTER_PATTERN = new RegExp(String.fromCharCode(27), 'gu');
 
-const textEncoder = typeof TextEncoder !== 'undefined' ? new TextEncoder() : null;
+const textEncoder = new TextEncoder();
 
 // ---------------------------------------------------------------------------
 // Pure helpers
@@ -80,7 +80,7 @@ const measureBytes = (value: string | Uint8Array): number => {
   if (value instanceof Uint8Array) {
     return value.byteLength;
   }
-  return textEncoder ? textEncoder.encode(value).length : value.length;
+  return textEncoder.encode(value).length;
 };
 
 const previewFrameData = (value: string): string =>

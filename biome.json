@@ -1,5 +1,5 @@
 {
-  "$schema": "https://biomejs.dev/schemas/2.4.16/schema.json",
+  "$schema": "https://biomejs.dev/schemas/2.5.0/schema.json",
   "vcs": {
     "enabled": true,
     "clientKind": "git",
@@ -7,7 +7,7 @@
   },
   "files": {
     "ignoreUnknown": true,
-    "includes": ["src/**/*.{ts,vue,css}", "!src/bindings/tauri.ts", "*.{ts,js,mjs,json}"]
+    "includes": ["src/**/*.{ts,vue,css}", "*.{ts,js,mjs,json}", "!src/bindings/tauri.ts"]
   },
   "formatter": {
     "enabled": true,
@@ -23,7 +23,7 @@
   "linter": {
     "enabled": true,
     "rules": {
-      "recommended": true,
+      "preset": "recommended",
       "correctness": {
         "noUnusedImports": "off",
         "noUnusedVariables": "off"
@@ -81,7 +81,10 @@
       }
     },
     {
-      "includes": ["src/constants/shell/command-catalog.ts", "src/utils/terminal/shell-completion.ts"],
+      "includes": [
+        "src/constants/shell/command-catalog.ts",
+        "src/utils/terminal/shell-completion.ts"
+      ],
       "linter": {
         "rules": {
           "suspicious": {

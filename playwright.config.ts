@@ -15,7 +15,7 @@ export default defineConfig({
     headless: true,
     screenshot: 'only-on-failure',
     trace: 'retain-on-failure',
-    channel: process.platform === 'win32' ? 'msedge' : undefined,
+    channel: 'msedge',
   },
   webServer: {
     command: 'corepack pnpm dev',

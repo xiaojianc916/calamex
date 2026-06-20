@@ -20,15 +20,27 @@
  * @returns 0..=0xFFFFFFFF 的无符号 32-bit 整数
  */
 const computeFnv1a32CodePoints = (value: string): number => {
+  // ASCII fast-path: 对纯 ASCII 输入用 charCodeAt 避免 codePointAt 调用开销
   let hash = 0x811c9dc5;
-  // 索引遍历替代 for...of：避免字符串迭代器协议开销与逐 code point 子串分配。
-  // 通过 codePointAt + 跳过低位代理项保持 code-point 语义，hash 输出与旧实现逐位一致。
+  let isAscii = true;
+  for (let i = 0; i < value.length; i++) {
+    const code = value.charCodeAt(i);
+    if (code > 0x7f) {
+      isAscii = false;
+      break;
+    }
+    hash ^= code;
+    hash = Math.imul(hash, 0x01000193);
+  }
+  if (isAscii) return hash >>> 0;
+
+  // 非 ASCII fallback: 保持原有 code-point 语义
+  hash = 0x811c9dc5;
   for (let i = 0; i < value.length; i += 1) {
     const codePoint = value.codePointAt(i)!;
     hash ^= codePoint;
     hash = Math.imul(hash, 0x01000193);
     if (codePoint > 0xffff) {
-      // 完整 surrogate pair：跳过其低位代理项，避免重复计入。
       i += 1;
     }
   }

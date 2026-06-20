@@ -5,7 +5,7 @@ const config: UserConfig = {
   rules: {
     // scope 必填（R-12.2.1）
     'scope-empty': [2, 'never'],
-    // subject 使用中文（R-G-6），不超过 50 字
+    // subject 不以句号结尾，长度上限 72 字符（中英文混合）
     'subject-max-length': [2, 'always', 72],
     // 不以句号结尾
     'subject-full-stop': [2, 'never', '.'],
