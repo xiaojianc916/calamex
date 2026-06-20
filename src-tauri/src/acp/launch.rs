@@ -630,9 +630,9 @@ fn toml_key_sanitize(value: &str) -> String {
     }
 }
 
-/// 把一个 sidecar 模型配置解析成「provider + model」成对条目。base_url 优先取用户显式保存的
-/// 网关地址，缺失时回退该厂商的默认 OpenAI 兼容端点（`default_gateway_base_url`）；仅当 model_id
-/// 为空，或厂商既无显式地址又无默认端点时返回 None，交由调用方决定跳过或回退。
+/// 把一个 sidecar 模型配置解析成「provider + model」成对条目。base_url 经统一凭证解析器
+/// credential::resolve_provider_base_url 派生（用户显式网关地址优先，否则回退该厂商默认 OpenAI
+/// 兼容端点）；仅当 model_id 为空，或厂商既无显式地址又无默认端点时返回 None，交由调用方跳过或回退。
 fn collect_kimi_model_entry(
     config: &crate::commands::contracts::AgentSidecarModelConfigPayload,
 ) -> Option<KimiSeedEntry> {
@@ -645,19 +645,17 @@ fn collect_kimi_model_entry(
         .map(|(platform, _)| platform.trim())
         .filter(|value| !value.is_empty())
         .unwrap_or(model_id);
-    // base_url：优先用户在 AI 设置里显式保存的网关地址；缺失时回退该厂商官方 OpenAI 兼容端点。
-    // 此前缺 base_url 会直接返回 None → 整份 config.toml 跳过 → Kimi 无凭证报 Authentication required。
-    let base_url = config
-        .base_url
-        .as_deref()
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-        .or_else(|| default_gateway_base_url(platform))?;
+    // base_url：经统一凭证解析器 credential::resolve_provider_base_url 派生——显式网关地址优先，
+    // 缺失则回退该厂商默认 OpenAI 兼容端点；与内置边车 / 未来其他 agent 共用同一处解析（单一事实源），
+    // 不再本地复制「显式优先、否则默认」控制流。返回 None（既无显式地址也无默认端点）时整体跳过、
+    // 交回 Kimi 自身登录——此即修复 Authentication required 的关键路径。
+    let base_url =
+        crate::ai::credential::resolve_provider_base_url(platform, config.base_url.as_deref())?;
     let provider_name = toml_key_sanitize(platform);
     Some(KimiSeedEntry {
         provider: KimiProviderEntry {
             name: provider_name.clone(),
-            base_url: base_url.to_string(),
+            base_url,
             api_key: config.api_key.expose().to_string(),
         },
         model: KimiModelEntry {
