@@ -153,3 +153,159 @@ export function legacyThreadToThread(thread: IAiConversationThread): IAiThread {
     ...(thread.scrollState ? { scrollState: thread.scrollState } : {}),
   };
 }
+
+type IAiThreadUserMessageContent = Extract<IAiThreadEntry, { type: 'user_message' }>['content'];
+type IAiThreadAssistantChunks = Extract<IAiThreadEntry, { type: 'assistant_message' }>['chunks'];
+
+/* ============================================================================
+ * Thread -> Legacy 逆投影（ADR-0014 Step 8 ④：entries 单一真源 -> 旧编排器工作缓冲）
+ *
+ * 正向把 message 展开为 entries；本逆向把 entries 折叠回 useAiAssistant 所需的
+ * IAiChatMessage[] 工作缓冲。entries 成为持久化与渲染唯一真源后，编排器在切换/水合
+ * 线程时用本逆投影重建 message 缓冲（续聊上下文 toSidecarMessages、历史首轮、会话内
+ * checkpoint 计算），不再读取 legacy store。
+ *
+ * 有损边界（与 entries 持久化模型固有限制一致，非新增回归）：
+ * - entries 不承载 stream.runtimeEvents / token 统计 / acpToolCalls，逆投影不恢复；
+ *   重载后历史回合的 checkpoint（依赖 runtime events）需会话内重新交互产生。
+ * - 折叠规则与正向对称：相邻 tool_call 归并到其后的 assistant_message；changed_files
+ *   回挂到对应 assistant；plan / plan_control / context_compaction 续聊无需，跳过。
+ * ========================================================================== */
+
+/** 新状态机 -> 旧工具状态（LEGACY_TOOL_STATUS_MAP 的逆）。 */
+const REVERSE_TOOL_STATUS_MAP: Record<TAiThreadToolCallStatus, LegacyToolStatus> = {
+  pending: 'pending',
+  in_progress: 'running',
+  completed: 'succeeded',
+  failed: 'failed',
+  canceled: 'denied',
+};
+
+function toolCallEntryContentToDetailItems(content: IAiThreadToolCall['content']): string[] {
+  return content.flatMap((item) =>
+    item.type === 'content' && item.block.type === 'text' ? [item.block.text] : [],
+  );
+}
+
+function threadToolCallEntryToLegacy(entry: IAiThreadToolCall): LegacyToolCall {
+  const detailItems = toolCallEntryContentToDetailItems(entry.content);
+  const rawOutput = entry.rawOutput as { elapsedMs?: number } | undefined;
+  const elapsedMs = typeof rawOutput?.elapsedMs === 'number' ? rawOutput.elapsedMs : undefined;
+  return {
+    id: entry.id,
+    name: entry.title,
+    summary: entry.title,
+    status: REVERSE_TOOL_STATUS_MAP[entry.status],
+    ...(detailItems.length > 0 ? { detailItems } : {}),
+    ...(elapsedMs !== undefined ? { elapsedMs } : {}),
+  };
+}
+
+function userEntryContentToText(content: IAiThreadUserMessageContent): string {
+  return content.flatMap((block) => (block.type === 'text' ? [block.text] : [])).join('\n\n');
+}
+
+function assistantChunksToText(chunks: IAiThreadAssistantChunks): string {
+  return chunks
+    .flatMap((chunk) =>
+      chunk.type === 'message' && chunk.block.type === 'text' ? [chunk.block.text] : [],
+    )
+    .join('');
+}
+
+/**
+ * 把 entries 折叠为 IAiChatMessage[]（legacyMessageToEntries 的逆）。
+ * 用于编排器从 entries 真源重建 message 工作缓冲；有损项见文件头说明。
+ */
+export function threadEntriesToMessages(entries: readonly IAiThreadEntry[]): IAiChatMessage[] {
+  const messages: IAiChatMessage[] = [];
+  let pendingToolCalls: LegacyToolCall[] = [];
+  let pendingToolCreatedAt: string | null = null;
+
+  const flushPendingToolCalls = (): void => {
+    if (pendingToolCalls.length === 0) {
+      return;
+    }
+    messages.push({
+      role: 'assistant',
+      id: pendingToolCalls[0]!.id + ':assistant',
+      content: '',
+      createdAt: pendingToolCreatedAt ?? new Date().toISOString(),
+      references: [],
+      toolCalls: pendingToolCalls,
+    });
+    pendingToolCalls = [];
+    pendingToolCreatedAt = null;
+  };
+
+  for (const entry of entries) {
+    switch (entry.type) {
+      case 'user_message': {
+        flushPendingToolCalls();
+        messages.push({
+          role: 'user',
+          id: entry.id,
+          content: userEntryContentToText(entry.content),
+          createdAt: entry.createdAt,
+          references: entry.references,
+        });
+        break;
+      }
+      case 'tool_call': {
+        pendingToolCalls.push(threadToolCallEntryToLegacy(entry));
+        pendingToolCreatedAt = pendingToolCreatedAt ?? entry.createdAt;
+        break;
+      }
+      case 'assistant_message': {
+        const message: IAiChatMessage = {
+          role: 'assistant',
+          id: entry.id,
+          content: assistantChunksToText(entry.chunks),
+          createdAt: entry.createdAt,
+          references: [],
+          ...(pendingToolCalls.length > 0 ? { toolCalls: pendingToolCalls } : {}),
+        };
+        pendingToolCalls = [];
+        pendingToolCreatedAt = null;
+        messages.push(message);
+        break;
+      }
+      case 'changed_files': {
+        flushPendingToolCalls();
+        const target = messages.at(-1);
+        if (target && target.role === 'assistant' && !target.changedFilesSummary) {
+          target.changedFilesSummary = entry.summary;
+        } else {
+          messages.push({
+            role: 'assistant',
+            id: entry.summary.id + ':assistant',
+            content: '',
+            createdAt: entry.createdAt,
+            references: [],
+            changedFilesSummary: entry.summary,
+          });
+        }
+        break;
+      }
+      default:
+        // plan / plan_control / context_compaction：续聊上下文与历史首轮无需，跳过（有损可接受）。
+        break;
+    }
+  }
+
+  flushPendingToolCalls();
+  return messages;
+}
+
+/** 把 IAiThread（entries）折叠回 legacy 会话线程（legacyThreadToThread 的逆，沿用元信息）。 */
+export function threadToLegacyThread(thread: IAiThread): IAiConversationThread {
+  return {
+    id: thread.id,
+    title: thread.title,
+    titleStatus: thread.titleStatus,
+    createdAt: thread.createdAt,
+    updatedAt: thread.updatedAt,
+    messages: threadEntriesToMessages(thread.entries),
+    ...(thread.scrollState ? { scrollState: thread.scrollState } : {}),
+  };
+}

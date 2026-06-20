@@ -1,549 +1,264 @@
-#!/usr/bin/env node
-// patch7.mjs — ADR-0015 收尾：删除 launch.rs 中已搬入 provisioner 的旧实现（清旧）
-//
-// 用法（仓库根目录）：  node patch7.mjs
-// 前置：patch #6 必须已落地（provisioner.rs 自包含 + launch.rs 三基元已 pub(super)）。
-// 行为：
-//   1) 全量覆盖 src-tauri/src/acp/launch.rs —— 仅保留 Builtin 启动解析 + 共享基元 + AcpBackendId；
-//      删去 Kimi/Codex 全部构造器/seed/结构体/常量、多后端分发器 build_acp_client_config_for、
-//      prepare_external_backend_launch，及对应的已迁移单测。
-//   2) provisioner.rs：BuiltinProvisioner 改调 launch::build_acp_client_config()（_for 已删）。
-//   3) mod.rs：re-export 收敛，移除已删除的 build_acp_client_config_for + 更新注释。
-//   覆盖前做必含/必无锚点 sanity-check；全部步骤幂等可重复运行。
-//   运行后请在 src-tauri/ 下：cargo clippy --all-targets && cargo test
-//
-// 仅用 node 内置模块，无第三方依赖。块注释正文里不含 “*/”，故嵌入安全。
+// codemod ④.2-A — legacy-adapter 逆投影 (entries -> IAiChatMessage[]) + 单测
+// 纯新增、零接线：旧编排器后续将用它从 entries 真源重建 message 工作缓冲。
+import fs from 'node:fs';
+import path from 'node:path';
 
-import fs from "node:fs"
-import path from "node:path"
+const ROOT = process.cwd();
+const ADAPTER = path.resolve(ROOT, 'src/store/aiThread/legacy-adapter.ts');
+const SPEC = path.resolve(ROOT, 'src/store/aiThread/legacy-adapter.reverse.spec.ts');
 
-const repoRoot = process.cwd()
-const acpDir = path.join(repoRoot, "src-tauri", "src", "acp")
-const launchPath = path.join(acpDir, "launch.rs")
-const provPath = path.join(acpDir, "provisioner.rs")
-const modPath = path.join(acpDir, "mod.rs")
-
-// 标记串用 concat 拼出，确保「连续标记文本」只在尾部块注释里出现一次。
-function extractBlock(tag) {
-	const start = "/*=== " + tag + "_START ==="
-	const end = "=== " + tag + "_END ===*/"
-	const selfSrc = fs.readFileSync(process.argv[1], "utf8")
-	const i = selfSrc.indexOf(start)
-	const j = selfSrc.indexOf(end)
-	if (i < 0 || j < 0 || j <= i) throw new Error(`无法定位嵌入内容标记：${tag}`)
-	return selfSrc.slice(i + start.length, j).replace(/\r\n/g, "\n").trim() + "\n"
+if (!fs.existsSync(ADAPTER)) {
+  console.error('[ABORT] 找不到 legacy-adapter.ts: ' + ADAPTER);
+  process.exit(1);
 }
 
-function overwriteFromBlock(targetPath, tag, mustInclude, mustExclude) {
-	const content = extractBlock(tag)
-	for (const a of mustInclude) {
-		if (!content.includes(a)) throw new Error(`${tag} 缺少必含锚点：${a}`)
-	}
-	for (const a of mustExclude) {
-		if (content.includes(a)) throw new Error(`${tag} 含有应被删除的内容：${a}`)
-	}
-	const prev = fs.existsSync(targetPath) ? fs.readFileSync(targetPath, "utf8") : ""
-	const useCrlf = prev.includes("\r\n")
-	const out = useCrlf ? content.replace(/\n/g, "\r\n") : content
-	if (prev === out) {
-		console.log(`${path.basename(targetPath)} 已是目标内容，跳过。`)
-		return
-	}
-	fs.writeFileSync(targetPath, out)
-	console.log(`已覆盖 ${path.basename(targetPath)}（${useCrlf ? "CRLF" : "LF"}，${content.length} 字符）。`)
+let adapterSrc = fs.readFileSync(ADAPTER, 'utf8');
+if (!adapterSrc.includes('export function legacyThreadToThread')) {
+  console.error('[ABORT] 锚点缺失 (export function legacyThreadToThread)，文件结构与预期不符，未改动。');
+  process.exit(1);
 }
 
-function surgicalReplace(targetPath, oldStr, newStr, label) {
-	const raw = fs.readFileSync(targetPath, "utf8")
-	const usedCrlf = raw.includes("\r\n")
-	let text = raw.replace(/\r\n/g, "\n")
-	const oldN = oldStr.replace(/\r\n/g, "\n")
-	const newN = newStr.replace(/\r\n/g, "\n")
-	if (text.includes(newN) && !text.includes(oldN)) {
-		console.log(`${path.basename(targetPath)} [${label}] 已是目标内容，跳过。`)
-		return
-	}
-	const count = text.split(oldN).length - 1
-	if (count !== 1) {
-		throw new Error(`${path.basename(targetPath)} [${label}] 需精确匹配 1 次，实际 ${count} 次；已中止未写入。`)
-	}
-	text = text.replace(oldN, newN)
-	const out = usedCrlf ? text.replace(/\n/g, "\r\n") : text
-	fs.writeFileSync(targetPath, out)
-	console.log(`已更新 ${path.basename(targetPath)} [${label}]（${usedCrlf ? "CRLF" : "LF"}）。`)
+const REVERSE_BLOCK = [
+  '',
+  '/* ============================================================================',
+  ' * Thread -> Legacy 逆投影（ADR-0014 Step 8 ④：entries 单一真源 -> 旧编排器工作缓冲）',
+  ' *',
+  ' * 正向把 message 展开为 entries；本逆向把 entries 折叠回 useAiAssistant 所需的',
+  ' * IAiChatMessage[] 工作缓冲。entries 成为持久化与渲染唯一真源后，编排器在切换/水合',
+  ' * 线程时用本逆投影重建 message 缓冲（续聊上下文 toSidecarMessages、历史首轮、会话内',
+  ' * checkpoint 计算），不再读取 legacy store。',
+  ' *',
+  ' * 有损边界（与 entries 持久化模型固有限制一致，非新增回归）：',
+  ' * - entries 不承载 stream.runtimeEvents / token 统计 / acpToolCalls，逆投影不恢复；',
+  ' *   重载后历史回合的 checkpoint（依赖 runtime events）需会话内重新交互产生。',
+  ' * - 折叠规则与正向对称：相邻 tool_call 归并到其后的 assistant_message；changed_files',
+  ' *   回挂到对应 assistant；plan / plan_control / context_compaction 续聊无需，跳过。',
+  ' * ========================================================================== */',
+  '',
+  '/** 新状态机 -> 旧工具状态（LEGACY_TOOL_STATUS_MAP 的逆）。 */',
+  'const REVERSE_TOOL_STATUS_MAP: Record<TAiThreadToolCallStatus, LegacyToolStatus> = {',
+  "  pending: 'pending',",
+  "  in_progress: 'running',",
+  "  completed: 'succeeded',",
+  "  failed: 'failed',",
+  "  canceled: 'denied',",
+  '};',
+  '',
+  'function toolCallEntryContentToDetailItems(content: IAiThreadToolCall[\'content\']): string[] {',
+  '  return content.flatMap((item) =>',
+  "    item.type === 'content' && item.block.type === 'text' ? [item.block.text] : [],",
+  '  );',
+  '}',
+  '',
+  'function threadToolCallEntryToLegacy(entry: IAiThreadToolCall): LegacyToolCall {',
+  '  const detailItems = toolCallEntryContentToDetailItems(entry.content);',
+  '  const rawOutput = entry.rawOutput as { elapsedMs?: number } | undefined;',
+  "  const elapsedMs = typeof rawOutput?.elapsedMs === 'number' ? rawOutput.elapsedMs : undefined;",
+  '  return {',
+  '    id: entry.id,',
+  '    name: entry.title,',
+  '    summary: entry.title,',
+  '    status: REVERSE_TOOL_STATUS_MAP[entry.status],',
+  '    ...(detailItems.length > 0 ? { detailItems } : {}),',
+  '    ...(elapsedMs !== undefined ? { elapsedMs } : {}),',
+  '  };',
+  '}',
+  '',
+  'function userEntryContentToText(content: IAiThreadUserMessageContent): string {',
+  "  return content.flatMap((block) => (block.type === 'text' ? [block.text] : [])).join('\\n\\n');",
+  '}',
+  '',
+  'function assistantChunksToText(chunks: IAiThreadAssistantChunks): string {',
+  '  return chunks',
+  "    .flatMap((chunk) => (chunk.type === 'message' && chunk.block.type === 'text' ? [chunk.block.text] : []))",
+  "    .join('');",
+  '}',
+  '',
+  '/**',
+  ' * 把 entries 折叠为 IAiChatMessage[]（legacyMessageToEntries 的逆）。',
+  ' * 用于编排器从 entries 真源重建 message 工作缓冲；有损项见文件头说明。',
+  ' */',
+  'export function threadEntriesToMessages(entries: readonly IAiThreadEntry[]): IAiChatMessage[] {',
+  '  const messages: IAiChatMessage[] = [];',
+  '  let pendingToolCalls: LegacyToolCall[] = [];',
+  '  let pendingToolCreatedAt: string | null = null;',
+  '',
+  '  const flushPendingToolCalls = (): void => {',
+  '    if (pendingToolCalls.length === 0) {',
+  '      return;',
+  '    }',
+  '    messages.push({',
+  "      role: 'assistant',",
+  "      id: pendingToolCalls[0]!.id + ':assistant',",
+  "      content: '',",
+  '      createdAt: pendingToolCreatedAt ?? new Date().toISOString(),',
+  '      references: [],',
+  '      toolCalls: pendingToolCalls,',
+  '    });',
+  '    pendingToolCalls = [];',
+  '    pendingToolCreatedAt = null;',
+  '  };',
+  '',
+  '  for (const entry of entries) {',
+  '    switch (entry.type) {',
+  "      case 'user_message': {",
+  '        flushPendingToolCalls();',
+  '        messages.push({',
+  "          role: 'user',",
+  '          id: entry.id,',
+  '          content: userEntryContentToText(entry.content),',
+  '          createdAt: entry.createdAt,',
+  '          references: entry.references,',
+  '        });',
+  '        break;',
+  '      }',
+  "      case 'tool_call': {",
+  '        pendingToolCalls.push(threadToolCallEntryToLegacy(entry));',
+  '        pendingToolCreatedAt = pendingToolCreatedAt ?? entry.createdAt;',
+  '        break;',
+  '      }',
+  "      case 'assistant_message': {",
+  '        const message: IAiChatMessage = {',
+  "          role: 'assistant',",
+  '          id: entry.id,',
+  '          content: assistantChunksToText(entry.chunks),',
+  '          createdAt: entry.createdAt,',
+  '          references: [],',
+  '          ...(pendingToolCalls.length > 0 ? { toolCalls: pendingToolCalls } : {}),',
+  '        };',
+  '        pendingToolCalls = [];',
+  '        pendingToolCreatedAt = null;',
+  '        messages.push(message);',
+  '        break;',
+  '      }',
+  "      case 'changed_files': {",
+  '        flushPendingToolCalls();',
+  '        const target = messages.at(-1);',
+  "        if (target && target.role === 'assistant' && !target.changedFilesSummary) {",
+  '          target.changedFilesSummary = entry.summary;',
+  '        } else {',
+  '          messages.push({',
+  "            role: 'assistant',",
+  "            id: entry.summary.id + ':assistant',",
+  "            content: '',",
+  '            createdAt: entry.createdAt,',
+  '            references: [],',
+  '            changedFilesSummary: entry.summary,',
+  '          });',
+  '        }',
+  '        break;',
+  '      }',
+  '      default:',
+  '        // plan / plan_control / context_compaction：续聊上下文与历史首轮无需，跳过（有损可接受）。',
+  '        break;',
+  '    }',
+  '  }',
+  '',
+  '  flushPendingToolCalls();',
+  '  return messages;',
+  '}',
+  '',
+  '/** 把 IAiThread（entries）折叠回 legacy 会话线程（legacyThreadToThread 的逆，沿用元信息）。 */',
+  'export function threadToLegacyThread(thread: IAiThread): IAiConversationThread {',
+  '  return {',
+  '    id: thread.id,',
+  '    title: thread.title,',
+  '    titleStatus: thread.titleStatus,',
+  '    createdAt: thread.createdAt,',
+  '    updatedAt: thread.updatedAt,',
+  '    messages: threadEntriesToMessages(thread.entries),',
+  '    ...(thread.scrollState ? { scrollState: thread.scrollState } : {}),',
+  '  };',
+  '}',
+  '',
+].join('\n');
+
+// 为逆投影引入两个局部类型别名（从已导入的 schema 推导 entry 子形状，避免新增 import）。
+const TYPE_ALIASES = [
+  '',
+  "type IAiThreadUserMessageContent = Extract<IAiThreadEntry, { type: 'user_message' }>['content'];",
+  "type IAiThreadAssistantChunks = Extract<IAiThreadEntry, { type: 'assistant_message' }>['chunks'];",
+  '',
+].join('\n');
+
+if (adapterSrc.includes('export function threadEntriesToMessages')) {
+  console.log('[SKIP] legacy-adapter.ts 已包含逆投影，跳过追加。');
+} else {
+  adapterSrc = adapterSrc.replace(/\s*$/, '\n') + TYPE_ALIASES + REVERSE_BLOCK;
+  fs.writeFileSync(ADAPTER, adapterSrc, 'utf8');
+  console.log('[OK] 已向 legacy-adapter.ts 追加逆投影。');
 }
 
-try {
-	// 1) launch.rs 全量覆盖
-	overwriteFromBlock(
-		launchPath,
-		"LAUNCH_RS",
-		[
-			"pub fn build_acp_client_config()",
-			"fn build_builtin_client_config()",
-			"pub enum AcpBackendId",
-			"pub(super) fn resolve_node_executable(",
-			"pub(super) fn path_to_string(",
-			"pub(super) fn env_or_user_env(",
-			"mod tests {",
-		],
-		[
-			"build_acp_client_config_for",
-			"build_kimi_client_config",
-			"build_codex_client_config",
-			"prepare_external_backend_launch",
-			"ensure_kimi_managed_config",
-			"render_kimi_config_toml",
-			"collect_kimi_model_entry",
-			"KIMI_MANAGED_MARKER",
-		],
-	)
-
-	// 2) provisioner.rs：Builtin 启动配置改调 launch::build_acp_client_config()
-	surgicalReplace(
-		provPath,
-		"launch::build_acp_client_config_for(AcpBackendId::Builtin)",
-		"launch::build_acp_client_config()",
-		"builtin-launch-config",
-	)
-
-	// 3) mod.rs：re-export 收敛（移除 build_acp_client_config_for + 更新注释）
-	surgicalReplace(
-		modPath,
-		"// 启动配置解析：默认后端（自家边车）与多后端注册表（ADR-0015 阶段 1）。\n// build_acp_client_config_for / AcpBackendId 为外部 ACP agent（Kimi/Codex 等）的启动配置\n// 源，接线在阶段 2（runtime 多 host），故迁移期暂无消费者。\n#[allow(unused_imports)]\npub use launch::{AcpBackendId, build_acp_client_config, build_acp_client_config_for};",
-		"// 默认后端（自家边车）启动配置解析入口 + 后端标识枚举。外部 ACP agent（Kimi/Codex 等）的\n// 启动配置 / 凭证预置改由 provisioner 模块各 ExternalAgentProvisioner 自包含（见下）。\n// build_acp_client_config 经 BuiltinProvisioner 消费；AcpBackendId 由 runtime/provisioner 直接消费。\n#[allow(unused_imports)]\npub use launch::{AcpBackendId, build_acp_client_config};",
-		"modrs-reexport",
-	)
-
-	console.log("\npatch7 完成。请在 src-tauri/ 下运行：cargo clippy --all-targets && cargo test")
-} catch (err) {
-	console.error("patch7 失败：" + err.message)
-	process.exitCode = 1
-}
-
-/*=== LAUNCH_RS_START ===
-//! 宿主侧 ACP stdio 子进程的启动配置解析（自家 Node 边车 / Builtin）。
-//!
-//! 职责：把「用哪个 node、跑哪个 ACP 入口、注入哪些子进程环境变量」解析成
-//! `client::AcpClientConfig { program, args, env }`，供 `spawn_acp_client` 派生 stdio 子进程。
-//!
-//! 本模块的进程/入口/env 解析逻辑总实自旧 `agent_sidecar/mod.rs`（原 HTTP 路径的
-//!     `resolve_sidecar_root` / `resolve_node_executable` / env 注入等），以便后续删除旧
-//!     模块后本文件仍自包含。与旧 HTTP 路径的关键区别：
-//!   * 入口改为 ACP stdio 入口 `dist/acp/stdio-entry.js`（回退 `tsx + src/acp/stdio-entry.ts`），
-//!     而非旧 `dist/server.js`；
-//!   * stdio 无 HTTP 监听，故不注入 `AGENT_SIDECAR_PORT` / `AGENT_SIDECAR_TOKEN`
-//!     （二者仅用于旧 HTTP 服务的端口与 Bearer 鉴权）；
-//!   * 模型配置走逐请求通道（chat / restore 请求携带 `model_config`），而 stdio-entry 仅在
-//!     启动时用 env 做可选预热（`createMastraModelConfigFromEnv()`，缺失会优雅跳过），故
-//!     launch 层不耦合凭证 / 网关，不注入模型 env（职责分离更干净；预热仅推迟到首
-//!     个请求，不影响正确性）。
-//!
-//! SDK 的 `AcpAgent::spawn_process` 只设置 command / args / env，不设 `cwd`；故 `program`
-//! 与入口路径均采用绝对路径，保证与工作目录无关。
-//!
-//! 多后端（ADR-0015）：本模块只负责**自家 Node 边车（Builtin）**的启动配置解析，并向同
-//! 目录的 `provisioner` 模块暴露若干共享进程/路径/env 基元（`resolve_node_executable` /
-//! `path_to_string` / `env_or_user_env`，均 `pub(super)`）。外部 ACP 编码 agent（Kimi Code /
-//! Codex 等）的启动配置与凭证预置由各自的 `ExternalAgentProvisioner` 实现自包含，不再经由
-//! 本模块（见 `provisioner.rs`）。
-//!
-//! 按 cargo feature `acp_client` 门控；接线前不影响现有路径。
-
-#![allow(dead_code)]
-
-use fs_err as fs;
-use std::env;
-use std::path::{Path, PathBuf};
-
-use super::client::AcpClientConfig;
-
-const SIDECAR_ROOT_ENV: &str = "XIAOJIANC_AGENT_SIDECAR_ROOT";
-const NODE_EXE_ENV: &str = "XIAOJIANC_NODE_EXE";
-const MCP_UVX_PATH_ENV: &str = "AGENT_MCP_UVX_PATH";
-const TAVILY_API_KEY_ENV: &str = "TAVILY_API_KEY";
-
-/// 可挂载的 ACP 后端标识（ADR-0015）。`Builtin` 为自家 Node 边车（默认后端，行为与历史
-/// 一致）；其余为外部 ACP 编码 agent，其启动配置与凭证预置由 `provisioner` 模块的各
-/// `ExternalAgentProvisioner` 实现自包含（见 `provisioner.rs`）。
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum AcpBackendId {
-    /// 自家 Node Mastra 边车（默认后端，行为与历史一致）。
-    Builtin,
-    /// Kimi Code（@moonshot-ai/kimi-code）：原生 ACP；优先工程内置包（node <入口> acp），否则回退裸 kimi acp；可经 XIAOJIANC_KIMI_EXE 覆盖为绝对路径。
-    Kimi,
-    /// Codex CLI：经社区适配器 `codex-acp`，凭 `OPENAI_API_KEY`。
-    Codex,
-}
-
-/// 解析「默认后端（自家边车）」的启动配置（历史签名与行为不变）。
-pub fn build_acp_client_config() -> Result<AcpClientConfig, String> {
-    build_builtin_client_config()
-}
-
-/// 自家 Node 边车启动配置（默认后端）。
-///
-/// `program` = 解析出的 node 绝对路径；`args` = ACP 入口（优先预编译产物，否则 tsx + 源码）；
-/// `env` = 子进程环境变量（工具所需 + 编译缓存）。
-fn build_builtin_client_config() -> Result<AcpClientConfig, String> {
-    let sidecar_root = resolve_sidecar_root()?;
-    let node = resolve_node_executable()?;
-    let args = resolve_entry_args(&sidecar_root)?;
-    let env = build_sidecar_env(&sidecar_root);
-
-    Ok(AcpClientConfig {
-        program: path_to_string(&node),
-        args,
-        env,
-    })
-}
-
-/// 解析 ACP stdio 入口参数：优先预编译 `dist/acp/stdio-entry.js`（无需运行时 tsx 转译，
-/// 冷启动更快更稳）；不存在时回退 `tsx + src/acp/stdio-entry.ts`，保持开发态与未构建
-/// 场景可用。均使用绝对路径（SDK 不设 cwd）。
-fn resolve_entry_args(sidecar_root: &Path) -> Result<Vec<String>, String> {
-    let compiled = sidecar_root.join("dist").join("acp").join("stdio-entry.js");
-    if compiled.is_file() {
-        return Ok(vec![path_to_string(&compiled)]);
-    }
-
-    let tsx_cli = sidecar_root
-        .join("node_modules")
-        .join("tsx")
-        .join("dist")
-        .join("cli.mjs");
-    let entry = sidecar_root.join("src").join("acp").join("stdio-entry.ts");
-
-    if !tsx_cli.is_file() {
-        return Err(format!(
-            "AGENT_SIDECAR_UNAVAILABLE: 未找到 sidecar TSX 启动器：{}",
-            tsx_cli.display()
-        ));
-    }
-
-    if !entry.is_file() {
-        return Err(format!(
-            "AGENT_SIDECAR_UNAVAILABLE: 未找到 ACP stdio 入口：{}",
-            entry.display()
-        ));
-    }
-
-    Ok(vec![path_to_string(&tsx_cli), path_to_string(&entry)])
-}
-
-/// 构造子进程环境变量。仅含 stdio 入口真正需要的项：
-///   * `NODE_COMPILE_CACHE`：复用编译缓存，缩短冷启动（与旧路径一致）；
-///   * `TAVILY_API_KEY`：web 工具所需，优先进程/用户环境，缺失时回退 sidecar `.env`；
-///   * `AGENT_MCP_UVX_PATH`：MCP 工具拉起 uvx 所需（Windows 解析）。
-fn build_sidecar_env(sidecar_root: &Path) -> Vec<(String, String)> {
-    let mut env: Vec<(String, String)> = Vec::new();
-
-    env.push((
-        "NODE_COMPILE_CACHE".to_string(),
-        path_to_string(&sidecar_runtime_dir().join("node-compile-cache")),
-    ));
-
-    // 优先用进程/用户环境的 TAVILY_API_KEY；缺失时才回退 sidecar `.env`（与旧路径优先级一致）。
-    if let Some(value) = env_or_user_env(TAVILY_API_KEY_ENV)
-        .or_else(|| read_dotenv_key(sidecar_root, TAVILY_API_KEY_ENV))
-    {
-        env.push((TAVILY_API_KEY_ENV.to_string(), value));
-    }
-
-    if let Some(path) = resolve_windows_uvx_path() {
-        env.push((MCP_UVX_PATH_ENV.to_string(), path_to_string(&path)));
-    }
-
-    env
-}
-
-/// 运行时可写目录：统一落到品牌根 `.calamex/ai-service`（与 `storage_paths` 一致）。
-fn sidecar_runtime_dir() -> PathBuf {
-    crate::storage_paths::local_root().join("ai-service")
-}
-
-fn resolve_sidecar_root() -> Result<PathBuf, String> {
-    if let Some(path) = env_or_user_env(SIDECAR_ROOT_ENV).map(PathBuf::from)
-        && path.is_dir()
-    {
-        return Ok(path);
-    }
-
-    // 随包优先：安装包内 resources-bundle/agent-sidecar（含 dist 与 node_modules）。
-    // 与 shell_tools 的解析策略一致：随包优先 → 源码树兑底。
-    for root in crate::commands::shell_tools::bundled_resource_roots() {
-        let bundled = root.join("agent-sidecar");
-        if bundled.join("package.json").is_file() {
-            return Ok(bundled);
-        }
-    }
-
-    let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    let Some(workspace_root) = manifest_dir.parent() else {
-        return Err("AGENT_SIDECAR_UNAVAILABLE: 无法定位仓库根目录。".to_string());
-    };
-    let sidecar_root = workspace_root.join("agent-sidecar");
-
-    if sidecar_root.is_dir() {
-        return Ok(sidecar_root);
-    }
-
-    Err(format!(
-        "AGENT_SIDECAR_UNAVAILABLE: 未找到 agent-sidecar 目录：{}",
-        sidecar_root.display()
-    ))
-}
-
-pub(super) fn resolve_node_executable() -> Result<PathBuf, String> {
-    if let Some(path) = env_or_user_env(NODE_EXE_ENV).map(PathBuf::from)
-        && path.is_file()
-    {
-        return Ok(path);
-    }
-
-    // 随包优先：安装包内 resources-bundle/node/node.exe（目标机无系统 Node 也能运行）。
-    for root in crate::commands::shell_tools::bundled_resource_roots() {
-        let node_dir = root.join("node");
-        for name in ["node.exe", "node"] {
-            let bundled = node_dir.join(name);
-            if bundled.is_file() {
-                return Ok(bundled);
-            }
-        }
-    }
-
-    for candidate in node_executable_candidates() {
-        if candidate.is_file() {
-            return Ok(candidate);
-        }
-    }
-
-    find_executable_in_path("node.exe")
-        .or_else(|| find_executable_in_path("node"))
-        .ok_or_else(|| {
-            "AGENT_SIDECAR_UNAVAILABLE: 未找到 node.exe，请设置 XIAOJIANC_NODE_EXE。".to_string()
-        })
-}
-
-fn node_executable_candidates() -> Vec<PathBuf> {
-    let mut candidates = Vec::new();
-    if let Some(program_files) = env_or_user_env("ProgramFiles") {
-        candidates.push(PathBuf::from(program_files).join("nodejs").join("node.exe"));
-    }
-    if let Some(program_files_x86) = env_or_user_env("ProgramFiles(x86)") {
-        candidates.push(
-            PathBuf::from(program_files_x86)
-                .join("nodejs")
-                .join("node.exe"),
-        );
-    }
-    candidates
-}
-
-fn find_executable_in_path(file_name: &str) -> Option<PathBuf> {
-    env::var_os("PATH").and_then(|path_value| {
-        env::split_paths(&path_value)
-            .map(|directory| directory.join(file_name))
-            .find(|candidate| candidate.is_file())
-    })
-}
-
-/// 解析 uvx 可执行路径（优先 env，其次常见安装位置）。非 Windows 上候选多不存在，返回 None。
-fn resolve_windows_uvx_path() -> Option<PathBuf> {
-    if let Some(path) = env_or_user_env(MCP_UVX_PATH_ENV).map(PathBuf::from)
-        && path.is_file()
-    {
-        return Some(path);
-    }
-
-    windows_uvx_candidates()
-        .into_iter()
-        .find(|candidate| candidate.is_file())
-}
-
-fn windows_uvx_candidates() -> Vec<PathBuf> {
-    let mut candidates = Vec::new();
-    if let Some(user_profile) = env_or_user_env("USERPROFILE") {
-        let user_profile = PathBuf::from(user_profile);
-        candidates.push(user_profile.join(".local").join("bin").join("uvx.exe"));
-        candidates.push(user_profile.join(".cargo").join("bin").join("uvx.exe"));
-    }
-    if let Some(local_app_data) = env_or_user_env("LOCALAPPDATA") {
-        let local_app_data = PathBuf::from(local_app_data);
-        candidates.push(local_app_data.join("Programs").join("uv").join("uvx.exe"));
-        candidates.push(local_app_data.join("uv").join("uvx.exe"));
-    }
-    if let Some(program_files) = env_or_user_env("ProgramFiles") {
-        candidates.push(PathBuf::from(program_files).join("uv").join("uvx.exe"));
-    }
-    if let Some(program_files_x86) = env_or_user_env("ProgramFiles(x86)") {
-        candidates.push(PathBuf::from(program_files_x86).join("uv").join("uvx.exe"));
-    }
-    candidates
-}
-
-/// 从 sidecar `.env` 读取指定键（仅在进程/用户环境缺失时作为回退）。
-fn read_dotenv_key(sidecar_root: &Path, key: &str) -> Option<String> {
-    let content = fs::read_to_string(sidecar_root.join(".env")).ok()?;
-    find_dotenv_value(&content, key)
-}
-
-/// 纯函数：从 dotenv 文本中提取 `key` 的值（跳过空行/注释，去首尾引号，空值视为无）。
-fn find_dotenv_value(content: &str, key: &str) -> Option<String> {
-    for line in content.lines() {
-        let trimmed = line.trim();
-        if trimmed.is_empty() || trimmed.starts_with('#') {
-            continue;
-        }
-
-        let Some((name, raw_value)) = trimmed.split_once('=') else {
-            continue;
-        };
-
-        // Strip "export " prefix for Unix shell convention: export KEY=value
-        let name = name.trim();
-        let name = name.strip_prefix("export ").unwrap_or(name).trim();
-
-        if name != key {
-            continue;
-        }
-
-        let value = raw_value.trim().trim_matches(['"', '\'']);
-        return (!value.is_empty()).then(|| value.to_string());
-    }
-
-    None
-}
-
-/// 进程环境优先，其次 Windows 用户环境（HKCU\\Environment）；均去首尾空白且空值视为无。
-pub(super) fn env_or_user_env(key: &str) -> Option<String> {
-    let process_value = env::var(key).ok().and_then(non_empty_string);
-    if process_value.is_some() {
-        return process_value;
-    }
-
-    read_user_environment_value(key).and_then(non_empty_string)
-}
-
-fn non_empty_string(value: String) -> Option<String> {
-    let trimmed = value.trim();
-    (!trimmed.is_empty()).then(|| trimmed.to_string())
-}
-
-#[cfg(windows)]
-fn read_user_environment_value(key: &str) -> Option<String> {
-    use std::process::{Command, Stdio};
-
-    let output = Command::new("reg.exe")
-        .args(["query", "HKCU\\Environment", "/v", key])
-        .stdin(Stdio::null())
-        .stderr(Stdio::null())
-        .output()
-        .ok()?;
-
-    if !output.status.success() {
-        return None;
-    }
-
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    parse_reg_query_value(&stdout, key)
-}
-
-#[cfg(not(windows))]
-fn read_user_environment_value(_key: &str) -> Option<String> {
-    None
-}
-
-#[cfg(windows)]
-fn parse_reg_query_value(output: &str, key: &str) -> Option<String> {
-    output.lines().find_map(|line| {
-        let trimmed = line.trim();
-        if !trimmed.starts_with(key) {
-            return None;
-        }
-
-        let mut parts = trimmed.split_whitespace();
-        let name = parts.next()?;
-        let _kind = parts.next()?;
-        let value = parts.collect::<Vec<_>>().join(" ");
-
-        (name == key).then_some(value).and_then(non_empty_string)
-    })
-}
-
-/// 路径 → String（lossy）。ACP 入口 / node 路径在目标平台上均可 UTF-8 表示。
-pub(super) fn path_to_string(path: &Path) -> String {
-    path.to_string_lossy().into_owned()
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn find_dotenv_value_extracts_key_skipping_comments_and_blanks() {
-        let content = "# comment\n\nTAVILY_API_KEY=tvly-from-dotenv\nOTHER=ignored\n";
-        assert_eq!(
-            find_dotenv_value(content, "TAVILY_API_KEY").as_deref(),
-            Some("tvly-from-dotenv")
-        );
-    }
-
-    #[test]
-    fn find_dotenv_value_trims_surrounding_quotes() {
-        assert_eq!(
-            find_dotenv_value("TAVILY_API_KEY=\"quoted-value\"", "TAVILY_API_KEY").as_deref(),
-            Some("quoted-value")
-        );
-        assert_eq!(
-            find_dotenv_value("TAVILY_API_KEY='single'", "TAVILY_API_KEY").as_deref(),
-            Some("single")
-        );
-    }
-
-    #[test]
-    fn find_dotenv_value_strips_export_prefix() {
-        assert_eq!(
-            find_dotenv_value("export TAVILY_API_KEY=tvly-exported", "TAVILY_API_KEY").as_deref(),
-            Some("tvly-exported")
-        );
-    }
-
-    #[test]
-    fn find_dotenv_value_returns_none_for_missing_or_empty() {
-        assert_eq!(find_dotenv_value("OTHER=x", "TAVILY_API_KEY"), None);
-        assert_eq!(find_dotenv_value("TAVILY_API_KEY=", "TAVILY_API_KEY"), None);
-        assert_eq!(
-            find_dotenv_value("TAVILY_API_KEY=   ", "TAVILY_API_KEY"),
-            None
-        );
-    }
-
-    #[test]
-    fn non_empty_string_trims_and_rejects_blank() {
-        assert_eq!(
-            non_empty_string("  value  ".to_string()).as_deref(),
-            Some("value")
-        );
-        assert_eq!(non_empty_string("   ".to_string()), None);
-        assert_eq!(non_empty_string(String::new()), None);
-    }
-
-    #[test]
-    fn path_to_string_roundtrips_simple_path() {
-        let path = PathBuf::from("dist").join("acp").join("stdio-entry.js");
-        assert_eq!(path_to_string(&path), path.to_string_lossy().into_owned());
-    }
-
-    #[cfg(windows)]
-    #[test]
-    fn parse_reg_query_value_extracts_value_with_spaces() {
-        let output = "\r\nHKEY_CURRENT_USER\\Environment\r\n    TAVILY_API_KEY    REG_SZ    tvly with spaces\r\n";
-        assert_eq!(
-            parse_reg_query_value(output, "TAVILY_API_KEY").as_deref(),
-            Some("tvly with spaces")
-        );
-        assert_eq!(parse_reg_query_value(output, "MISSING"), None);
-    }
-}
-=== LAUNCH_RS_END ===*/
+const SPEC_SRC = [
+  "import { describe, expect, it } from 'vitest';",
+  '',
+  "import type { IAiConversationThread } from '@/store/aiConversation';",
+  "import type { IAiChatMessage } from '@/types/ai';",
+  '',
+  'import {',
+  '  legacyMessageToEntries,',
+  '  legacyThreadToThread,',
+  '  threadEntriesToMessages,',
+  '  threadToLegacyThread,',
+  "} from './legacy-adapter';",
+  '',
+  'const userMessage: IAiChatMessage = {',
+  "  role: 'user',",
+  "  id: 'u1',",
+  "  content: 'hello',",
+  "  createdAt: '2026-01-01T00:00:00.000Z',",
+  '  references: [],',
+  '};',
+  '',
+  'const assistantMessage: IAiChatMessage = {',
+  "  role: 'assistant',",
+  "  id: 'a1',",
+  "  content: 'world',",
+  "  createdAt: '2026-01-01T00:00:01.000Z',",
+  '  references: [],',
+  '  toolCalls: [',
+  "    { id: 't1', name: 'read_file', summary: '读取文件', status: 'succeeded', detailItems: ['x'] },",
+  '  ],',
+  '};',
+  '',
+  "describe('threadEntriesToMessages', () => {",
+  "  it('round-trips user + assistant content and tool calls', () => {",
+  '    const entries = [userMessage, assistantMessage].flatMap(legacyMessageToEntries);',
+  '    const messages = threadEntriesToMessages(entries);',
+  "    expect(messages.map((m) => m.role)).toEqual(['user', 'assistant']);",
+  "    expect(messages[0]!.content).toBe('hello');",
+  "    expect(messages[1]!.content).toBe('world');",
+  "    expect(messages[1]!.id).toBe('a1');",
+  "    expect(messages[1]!.toolCalls?.[0]?.id).toBe('t1');",
+  "    expect(messages[1]!.toolCalls?.[0]?.status).toBe('succeeded');",
+  '  });',
+  '',
+  "  it('skips non-message entries without throwing', () => {",
+  '    const entries = legacyMessageToEntries(userMessage);',
+  '    expect(threadEntriesToMessages(entries)).toHaveLength(1);',
+  '  });',
+  '});',
+  '',
+  "describe('threadToLegacyThread', () => {",
+  "  it('inverts legacyThreadToThread meta + content', () => {",
+  '    const thread: IAiConversationThread = {',
+  "      id: 'th1',",
+  "      title: 'T',",
+  "      titleStatus: 'temporary',",
+  "      createdAt: '2026-01-01T00:00:00.000Z',",
+  "      updatedAt: '2026-01-01T00:00:02.000Z',",
+  '      messages: [userMessage, assistantMessage],',
+  '    };',
+  '    const back = threadToLegacyThread(legacyThreadToThread(thread));',
+  "    expect(back.id).toBe('th1');",
+  "    expect(back.title).toBe('T');",
+  "    expect(back.messages.map((m) => m.role)).toEqual(['user', 'assistant']);",
+  "    expect(back.messages[1]!.content).toBe('world');",
+  '  });',
+  '});',
+  '',
+].join('\n');
+
+fs.writeFileSync(SPEC, SPEC_SRC, 'utf8');
+console.log('[OK] 已写入 legacy-adapter.reverse.spec.ts');
+console.log('请运行 pnpm typecheck && pnpm lint --fix && pnpm test 验证后提交。');
