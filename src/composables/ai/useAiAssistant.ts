@@ -410,7 +410,6 @@ export const useAiAssistant = (options: IUseAiAssistantOptions) => {
         now: new Date().toISOString(),
       }),
     );
-    aiThreadStore.setRenderFromEntries(true);
   };
 
   const syncDisplayMessagesFromActiveThread = (): void => {

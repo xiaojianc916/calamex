@@ -18,12 +18,6 @@ export const useAiThreadStore = defineStore('ai-thread', () => {
   const conversation = useAiConversationStore();
 
   /**
-   * 双轨期开关：渲染层据此在「旧 messages 路径」与「新 entries 路径」之间切换。
-   * Step 8 收敛后移除。
-   */
-  const renderFromEntries = ref(true);
-
-  /**
    * 活动流式线程：Step 5 起由边车监听 -> reduceThread 写入。为 null 时回落
    * 到对旧 active thread 的只读投影。
    */
@@ -96,10 +90,6 @@ export const useAiThreadStore = defineStore('ai-thread', () => {
     liveThread.value = thread;
   }
 
-  function setRenderFromEntries(value: boolean): void {
-    renderFromEntries.value = value;
-  }
-
   /**
    * 灌入启动迁移得到的持久化线程快照（见 7.5c 接线）。
    * 换库语义：替换整组线程并重置去重集；activeThreadId 由调用方传入
@@ -120,7 +110,6 @@ export const useAiThreadStore = defineStore('ai-thread', () => {
 
   return {
     // state
-    renderFromEntries,
     liveThread,
     persistedThreads,
     persistedActiveThreadId,
@@ -131,7 +120,6 @@ export const useAiThreadStore = defineStore('ai-thread', () => {
     activeEntries,
     // actions
     setLiveThread,
-    setRenderFromEntries,
     setPersistedThreads,
     setPersistedActiveThreadId,
   };
