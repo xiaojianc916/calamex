@@ -25,11 +25,11 @@ pub use client::{
 #[allow(unused_imports)]
 pub use approval::{ApprovalError, ApprovalOptionInfo, ApprovalRegistry, ApprovalRequestInfo};
 
-// 启动配置解析：默认后端（自家边车）与多后端注册表（ADR-0015 阶段 1）。
-// build_acp_client_config_for / AcpBackendId 为外部 ACP agent（Kimi/Codex 等）的启动配置
-// 源，接线在阶段 2（runtime 多 host），故迁移期暂无消费者。
+// 默认后端（自家边车）启动配置解析入口 + 后端标识枚举。外部 ACP agent（Kimi/Codex 等）的
+// 启动配置 / 凭证预置改由 provisioner 模块各 ExternalAgentProvisioner 自包含（见下）。
+// build_acp_client_config 经 BuiltinProvisioner 消费；AcpBackendId 由 runtime/provisioner 直接消费。
 #[allow(unused_imports)]
-pub use launch::{AcpBackendId, build_acp_client_config, build_acp_client_config_for};
+pub use launch::{AcpBackendId, build_acp_client_config};
 
 // 外部/内置 ACP 后端「凭证预置 + 启动配置」的统一抽象与注册表(ADR-0015 通用化)。
 // 本阶段仅委托到 launch 既有自由函数,runtime 接线见后续阶段,迁移期暂无 crate 外消费者。

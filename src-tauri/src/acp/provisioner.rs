@@ -72,7 +72,7 @@ impl ExternalAgentProvisioner for BuiltinProvisioner {
     }
 
     fn launch_config(&self) -> Result<AcpClientConfig, String> {
-        launch::build_acp_client_config_for(AcpBackendId::Builtin)
+        launch::build_acp_client_config()
     }
 }
 
