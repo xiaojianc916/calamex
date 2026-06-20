@@ -15,7 +15,8 @@ import type { IAgentPlanStore, TAgentPlanRecord } from '../plan/plan-store.js';
 import type { IAgentPlanWorkflowStore } from '../plan/plan-workflow-store.js';
 import type { IAgentTokenUsageSnapshot, TAgentRuntimeOutputEvent } from '../contracts/runtime-contracts.js';
 import type { TRollbackStepPath } from '../contracts/runtime-input.js';
-import type { TAskUserResult } from '../../tools/interaction/ask-user.js';
+import type { TAskUserResult } from '../../tools/interaction/ask-user.js';
+import type { TextPart, ImagePart, FilePart } from 'ai';
 
 export const DEFAULT_MASTRA_LOG_FILE = './.agent-sidecar/mastra.log';
 export const DEFAULT_EXECUTION_AGENT_ID = 'calamex-agent-sidecar';
@@ -48,21 +49,11 @@ export type IMcpGatewayMetricLogger = {
     info(data: object, msg?: string): void;
     warn(data: object, msg?: string): void;
 };
-export type TMastraTextPart = {
-    type: 'text';
-    text: string;
-};
-export type TMastraImagePart = {
-    type: 'image';
-    image: string | URL;
-    mediaType?: string;
-};
-export type TMastraFilePart = {
-    type: 'file';
-    data: string | URL;
-    mediaType: string;
-    filename?: string;
-};
+// 复用 AI SDK 官方消息 part 类型（与 @mastra/core 同源），避免本地影子拷贝随 SDK 升级静默漂移。
+// 注意：官方 FilePart.data / ImagePart.image 为 DataContent | URL，比原 string | URL 更宽。
+export type TMastraTextPart = TextPart;
+export type TMastraImagePart = ImagePart;
+export type TMastraFilePart = FilePart;
 export type TMastraUserContent = string | Array<TMastraTextPart | TMastraImagePart | TMastraFilePart>;
 export type TMastraChatMessage =
     | {

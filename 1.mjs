@@ -1,92 +1,95 @@
-// 1.mjs — Brick 1: 移除 store/index.ts 中重复的 entries 双写镜像安装(双装 bug)
-//
-// 背景: installEntriesMirror 被装了两次 ——
-//   (1) src/app/main.ts: hydrate + runStartupPersistedRead 之后(顺序正确, 保留);
-//   (2) src/store/index.ts: pinia 插件在 ai-conversation store 创建时(多余, 删除)。
-// 两次都会 $subscribe + 每次 mutation 投影序列化整库 → 重复开销。保留 (1) 删 (2)。
-// 行为等价: 镜像仍安装一次, 新 key 仍双写; 迁移由安装时的即时镜像覆盖。
-//
-// 用法:
-//   node 1.mjs --check   # 仅校验能否精确命中, 不写盘
-//   node 1.mjs           # 执行并写回
-// 可选: 设 REPO_ROOT 指向仓库根(默认当前工作目录)。
+#!/usr/bin/env node
+// align-mastra-parts-to-ai-sdk.mjs  (v2: 换行/缩进无关)
+// 把 agent-sidecar 手写的消息 part 影子类型改为复用 AI SDK 官方类型。
+// 用法（仓库根目录执行）：
+//   node align-mastra-parts-to-ai-sdk.mjs --check   # 干跑
+//   node align-mastra-parts-to-ai-sdk.mjs           # 写入
+// 写入后：pnpm install && pnpm --dir agent-sidecar typecheck
+// 回滚：git checkout -- agent-sidecar/src/engines/shared/types.ts agent-sidecar/package.json
 
-import { readFileSync, writeFileSync } from 'node:fs';
+import { readFile, writeFile } from 'node:fs/promises';
+import { argv, cwd, exit } from 'node:process';
 import { resolve } from 'node:path';
 
-const REPO_ROOT = process.env.REPO_ROOT ?? process.cwd();
-const CHECK_ONLY = process.argv.includes('--check');
-const target = resolve(REPO_ROOT, 'src/store/index.ts');
+const CHECK = argv.includes('--check');
+const ROOT = cwd();
+const TYPES_PATH = resolve(ROOT, 'agent-sidecar/src/engines/shared/types.ts');
+const PKG_PATH = resolve(ROOT, 'agent-sidecar/package.json');
 
-const join = (arr, eol) => arr.join(eol);
+const AI_IMPORT = `import type { TextPart, ImagePart, FilePart } from 'ai';`;
+const AI_DEP_RANGE = '^5.0.0';
 
-function replaceOnce(content, oldStr, newStr, label) {
-  const count = content.split(oldStr).length - 1;
-  if (count === 0) {
-    throw new Error(`[${label}] 未找到待替换片段(0 次匹配)。源可能已变更, 已中止。`);
+const byCodePoint = (a, b) => (a < b ? -1 : a > b ? 1 : 0);
+const fail = (msg) => { console.error(`✗ ${msg}`); exit(1); };
+
+// 每个手写 part 类型：[类型名, 官方别名]。正则用 \{[^}]*\} 容忍任意缩进/换行（内部无嵌套花括号）。
+const PARTS = [
+  ['TMastraTextPart', 'TextPart'],
+  ['TMastraImagePart', 'ImagePart'],
+  ['TMastraFilePart', 'FilePart'],
+];
+
+async function patchTypes() {
+  const original = await readFile(TYPES_PATH, 'utf8');
+  const EOL = original.includes('\r\n') ? '\r\n' : '\n';
+  const COMMENT =
+    `// 复用 AI SDK 官方消息 part 类型（与 @mastra/core 同源），避免本地影子拷贝随 SDK 升级静默漂移。${EOL}` +
+    `// 注意：官方 FilePart.data / ImagePart.image 为 DataContent | URL，比原 string | URL 更宽。`;
+
+  let next = original;
+  const changes = [];
+
+  // 1) 注入 type-only import（幂等）：插在最后一条 import 语句之后
+  if (next.includes(AI_IMPORT)) {
+    changes.push('types/import: 已存在，跳过');
+  } else {
+    let end = -1;
+    const re = /^import[^\n]*?;\r?$/gm;
+    for (let m; (m = re.exec(next)) !== null; ) end = m.index + m[0].length;
+    if (end < 0) fail('找不到任何 import 语句，无法定位插入点');
+    next = `${next.slice(0, end)}${EOL}${AI_IMPORT}${next.slice(end)}`;
+    changes.push('types/import: 已注入 ai 官方 part 类型');
   }
-  if (count > 1) {
-    throw new Error(`[${label}] 命中 ${count} 次, 预期恰好 1 次, 已中止以免误改。`);
+
+  // 2) 三个手写 part 类型 → 官方别名（幂等、正则匹配）
+  for (const [name, alias] of PARTS) {
+    const aliasLine = `export type ${name} = ${alias};`;
+    if (next.includes(aliasLine)) { changes.push(`types/${name}: 已是别名，跳过`); continue; }
+    const re = new RegExp(`export type ${name} = \\{[^}]*\\};`);
+    if (!re.test(next)) fail(`找不到手写类型 ${name}（可能已改动），请人工核对 types.ts`);
+    const replacement = name === 'TMastraTextPart' ? `${COMMENT}${EOL}${aliasLine}` : aliasLine;
+    next = next.replace(re, replacement);
+    changes.push(`types/${name}: 已替换为 ${alias} 别名`);
   }
-  return content.replace(oldStr, newStr);
+
+  return { changed: next !== original, changes, next };
 }
 
-let content = readFileSync(target, 'utf8');
-const eol = content.includes('\r\n') ? '\r\n' : '\n';
-
-// 幂等短路: 已不含 installEntriesMirror 即视为本砖已应用。
-if (!content.includes('installEntriesMirror')) {
-  console.log('✓ 已是目标状态(store/index.ts 不含 installEntriesMirror), 跳过。');
-  process.exit(0);
+async function patchPkg() {
+  const original = await readFile(PKG_PATH, 'utf8');
+  const EOL = original.includes('\r\n') ? '\r\n' : '\n';
+  const pkg = JSON.parse(original);
+  if (pkg.devDependencies?.ai || pkg.dependencies?.ai) {
+    return { changed: false, changes: ['pkg: ai 依赖已存在，跳过'], next: original };
+  }
+  const merged = { ...(pkg.devDependencies ?? {}), ai: AI_DEP_RANGE };
+  pkg.devDependencies = Object.fromEntries(
+    Object.keys(merged).sort(byCodePoint).map((k) => [k, merged[k]]),
+  );
+  let next = `${JSON.stringify(pkg, null, 2)}\n`;
+  if (EOL === '\r\n') next = next.replace(/\n/g, '\r\n'); // 保留原文件换行风格
+  return { changed: next !== original, changes: [`pkg: devDependencies 新增 "ai": "${AI_DEP_RANGE}"`], next };
 }
 
-// ── 1) 删除 import 块(连同其上方空行, 避免遗留双空行)。
-const importOld = join(
-  [
-    `import piniaPluginPersistedstate from 'pinia-plugin-persistedstate';`,
-    ``,
-    `import {`,
-    `  type IConversationStoreLike,`,
-    `  installEntriesMirror,`,
-    `} from '@/store/aiThread/entriesMirrorBridge';`,
-  ],
-  eol,
-);
-const importNew = `import piniaPluginPersistedstate from 'pinia-plugin-persistedstate';`;
+async function main() {
+  const t = await patchTypes();
+  const p = await patchPkg();
+  for (const c of [...t.changes, ...p.changes]) console.log(`• ${c}`);
 
-// ── 2) 删除文件末尾的 pinia.use 镜像接线块(连同注释), 仅保留前一行。
-const wiringOld = join(
-  [
-    `pinia.use(piniaPluginPersistedstate);`,
-    ``,
-    `// Step 7.4d —— entries 双写镜像接线 (Step 8 整体删除)。`,
-    `// ai-conversation store 惰性实例化、persistedstate hydrate 之后装载双写镜像;`,
-    `// 仅向新 key 投影, 不改变渲染 SoT; 保留惰性 hydrate, 不 eager 实例化。`,
-    `pinia.use(({ store }) => {`,
-    `  if (store.$id === 'ai-conversation') {`,
-    `    installEntriesMirror(store as unknown as IConversationStoreLike);`,
-    `  }`,
-    `});`,
-  ],
-  eol,
-);
-const wiringNew = `pinia.use(piniaPluginPersistedstate);`;
-
-content = replaceOnce(content, importOld, importNew, 'remove-import');
-content = replaceOnce(content, wiringOld, wiringNew, 'remove-wiring');
-
-// 安全断言: 不得残留任何相关引用。
-if (content.includes('installEntriesMirror') || content.includes('IConversationStoreLike')) {
-  throw new Error('替换后仍残留 installEntriesMirror / IConversationStoreLike, 已中止写盘。');
-}
-if (content.includes('entriesMirrorBridge')) {
-  throw new Error('替换后仍残留 entriesMirrorBridge import, 已中止写盘。');
+  if (CHECK) { console.log('\n[--check] 干跑，未写入任何文件。'); return; }
+  if (t.changed) await writeFile(TYPES_PATH, t.next, 'utf8');
+  if (p.changed) await writeFile(PKG_PATH, p.next, 'utf8');
+  console.log('\n✓ 写入完成。请执行：pnpm install && pnpm --dir agent-sidecar typecheck');
 }
 
-if (CHECK_ONLY) {
-  console.log('✓ --check 通过: 两处片段均精确命中 1 次, 可安全应用。');
-  process.exit(0);
-}
-
-writeFileSync(target, content, 'utf8');
-console.log('✓ 已更新 src/store/index.ts: 移除重复的 entries 双写镜像安装及其 import。');
+main().catch((e) => fail(e?.stack ?? String(e)));
