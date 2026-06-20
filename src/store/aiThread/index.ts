@@ -10,7 +10,9 @@ import { defineStore } from 'pinia';
 import { computed, ref, watch } from 'vue';
 
 import { useAiConversationStore } from '@/store/aiConversation';
+import type { TAiThreadReduceEvent } from '@/store/aiThread/events';
 import { legacyThreadToThread } from '@/store/aiThread/legacy-adapter';
+import * as threadMutations from '@/store/aiThread/thread-mutations';
 import { restoreAttachmentPreviewPointers } from '@/store/plugins/debouncedPersistStorage';
 import type { IAiThread, IAiThreadEntry } from '@/types/ai/thread';
 
@@ -108,20 +110,218 @@ export const useAiThreadStore = defineStore('ai-thread', () => {
     persistedActiveThreadId.value = activeThreadId;
   }
 
+  /* ====================================================================
+   * Step 8 砖2b：entries 权威读写真源（thread-mutations 纯函数核之上的薄壳）
+   *
+   * 在既有「只读投影」之外，新增一组以 entries 为真源的权威线程状态 + 读写
+   * actions，全部委托 thread-mutations 纯函数核。本步「只落地、未接线」：
+   *   - 不改 activeThread / activeEntries 渲染权威（仍 liveThread ?? 投影 ?? 持久化）；
+   *   - 不接管持久化（仍由 aiConversation + entriesMirror 负责）；
+   *   - 无任何上层调用以下新 state / actions。
+   * 故本步零行为变化；写路径 / 渲染权威 / 持久化归属切换统一在砖3 完成。
+   *
+   * 滚动节流（pendingScrollStates + timer）按 legacy aiConversation 的 store 层
+   * 语义等价搬运到本层，使砖3 接线为纯连线、无行为漂移。
+   * ================================================================== */
+
+  // 初始权威状态：与 legacy 一致，启动即持有一个空线程（ensureActiveThread 兜底）。
+  const initialAuthoritativeState = threadMutations.ensureActiveThread(null, []);
+  const authoritativeThreads = ref<IAiThread[]>(initialAuthoritativeState.threads);
+  const authoritativeActiveThreadId = ref<string | null>(initialAuthoritativeState.activeThreadId);
+
+  const authoritativeActiveThread = computed<IAiThread | null>(
+    () =>
+      authoritativeThreads.value.find(
+        (thread) => thread.id === authoritativeActiveThreadId.value,
+      ) ?? null,
+  );
+  const authoritativeActiveEntries = computed<IAiThreadEntry[]>(
+    () => authoritativeActiveThread.value?.entries ?? [],
+  );
+  const authoritativeHistoryThreads = computed<IAiThread[]>(() =>
+    authoritativeThreads.value.filter((thread) => thread.entries.length > 0),
+  );
+  const authoritativeHasEntries = computed<boolean>(
+    () => authoritativeActiveEntries.value.length > 0,
+  );
+
+  const readAuthoritativeState = (): threadMutations.IAiThreadState => ({
+    threads: authoritativeThreads.value,
+    activeThreadId: authoritativeActiveThreadId.value,
+  });
+
+  const commitAuthoritativeState = (next: threadMutations.IAiThreadState): void => {
+    authoritativeThreads.value = next.threads;
+    authoritativeActiveThreadId.value = next.activeThreadId;
+  };
+
+  /* ----- 滚动状态节流（等价搬运自 legacy aiConversation 的 store 层实现）----- */
+  const pendingScrollStates = new Map<string, threadMutations.IAiThreadScrollState>();
+  let scrollStateSaveTimer: ReturnType<typeof setTimeout> | null = null;
+
+  const clearScrollStateSaveTimer = (): void => {
+    if (scrollStateSaveTimer !== null) {
+      clearTimeout(scrollStateSaveTimer);
+      scrollStateSaveTimer = null;
+    }
+  };
+
+  /**
+   * flush 缓冲的滚动状态：纯核 setThreadScrollState 已内置归一化 + 等值短路，
+   * 逐条折叠即得与 legacy 批量提交等价的最终状态。
+   */
+  function flushPendingScrollStateUpdates(): void {
+    clearScrollStateSaveTimer();
+    if (pendingScrollStates.size === 0) {
+      return;
+    }
+    const updates = Array.from(pendingScrollStates.entries());
+    pendingScrollStates.clear();
+    const nextState = updates.reduce<threadMutations.IAiThreadState>(
+      (state, [threadId, scrollState]) =>
+        threadMutations.setThreadScrollState(state, threadId, scrollState),
+      readAuthoritativeState(),
+    );
+    commitAuthoritativeState(nextState);
+  }
+
+  const scheduleScrollStateSave = (): void => {
+    if (scrollStateSaveTimer !== null) {
+      return;
+    }
+    scrollStateSaveTimer = setTimeout(() => {
+      scrollStateSaveTimer = null;
+      flushPendingScrollStateUpdates();
+    }, threadMutations.SCROLL_STATE_SAVE_THROTTLE_MS);
+  };
+
+  /* ----- reduce 驱动写入（流式写真源）----- */
+  function applyReduceEvent(event: TAiThreadReduceEvent): void {
+    commitAuthoritativeState(threadMutations.applyReduceEvent(readAuthoritativeState(), event));
+  }
+
+  function applyReduceEvents(events: readonly TAiThreadReduceEvent[]): void {
+    commitAuthoritativeState(threadMutations.applyReduceEvents(readAuthoritativeState(), events));
+  }
+
+  /* ----- 线程生命周期（切换/新建/清空/删除前 flush 滚动，与 legacy 一致）----- */
+  function switchThread(threadId: string): void {
+    if (!authoritativeThreads.value.some((thread) => thread.id === threadId)) {
+      return;
+    }
+    flushPendingScrollStateUpdates();
+    commitAuthoritativeState(threadMutations.switchThread(readAuthoritativeState(), threadId));
+  }
+
+  function startNewThread(): void {
+    flushPendingScrollStateUpdates();
+    commitAuthoritativeState(threadMutations.startNewThread(readAuthoritativeState()));
+  }
+
+  function clearActiveThread(): void {
+    flushPendingScrollStateUpdates();
+    commitAuthoritativeState(threadMutations.clearActiveThread(readAuthoritativeState()));
+  }
+
+  function deleteThread(threadId: string): boolean {
+    if (!authoritativeThreads.value.some((thread) => thread.id === threadId)) {
+      return false;
+    }
+    flushPendingScrollStateUpdates();
+    commitAuthoritativeState(threadMutations.deleteThread(readAuthoritativeState(), threadId));
+    return true;
+  }
+
+  function updateThreadScrollState(
+    threadId: string,
+    scrollState: threadMutations.IAiThreadScrollState,
+  ): void {
+    const thread = authoritativeThreads.value.find((item) => item.id === threadId);
+    if (!thread) {
+      return;
+    }
+    const normalizedScrollState = threadMutations.normalizeScrollStateForPersist(scrollState);
+    const currentScrollState = pendingScrollStates.get(threadId) ?? thread.scrollState;
+    if (threadMutations.isSamePersistedScrollState(currentScrollState, normalizedScrollState)) {
+      return;
+    }
+    pendingScrollStates.set(threadId, normalizedScrollState);
+    scheduleScrollStateSave();
+  }
+
+  /* ----- 标题生成 ----- */
+  function getThreadTitleStatus(threadId: string): threadMutations.TAiThreadTitleStatus {
+    return threadMutations.getThreadTitleStatus(readAuthoritativeState(), threadId);
+  }
+
+  function getFirstRoundForTitle(threadId: string): threadMutations.IAiThreadFirstRound | null {
+    return threadMutations.getFirstRoundForTitle(readAuthoritativeState(), threadId);
+  }
+
+  function markThreadTitleGenerating(threadId: string): void {
+    commitAuthoritativeState(
+      threadMutations.markThreadTitleGenerating(readAuthoritativeState(), threadId),
+    );
+  }
+
+  function completeThreadTitleGeneration(threadId: string, title: string): void {
+    commitAuthoritativeState(
+      threadMutations.completeThreadTitleGeneration(readAuthoritativeState(), threadId, title),
+    );
+  }
+
+  function failThreadTitleGeneration(threadId: string): void {
+    commitAuthoritativeState(
+      threadMutations.failThreadTitleGeneration(readAuthoritativeState(), threadId),
+    );
+  }
+
+  /**
+   * 灌入权威线程快照（砖3 持久化归属切换时由读侧调用）。
+   * 经 commitThreadsState 归一（trim + ensureActiveThread 兜底），空库自动建空线程。
+   */
+  function setAuthoritativeThreads(threads: IAiThread[], activeThreadId: string | null): void {
+    flushPendingScrollStateUpdates();
+    commitAuthoritativeState(threadMutations.commitThreadsState({ threads, activeThreadId }));
+  }
+
   return {
     // state
     liveThread,
     persistedThreads,
     persistedActiveThreadId,
+    // Step 8 砖2b：entries 权威状态（未接线）
+    authoritativeThreads,
+    authoritativeActiveThreadId,
     // getters
     projectedActiveThread,
     persistedActiveThread,
     activeThread,
     activeEntries,
+    // Step 8 砖2b：entries 权威读派生（未接线）
+    authoritativeActiveThread,
+    authoritativeActiveEntries,
+    authoritativeHistoryThreads,
+    authoritativeHasEntries,
     // actions
     setLiveThread,
     setPersistedThreads,
     setPersistedActiveThreadId,
+    // Step 8 砖2b：entries 权威写 actions（未接线）
+    applyReduceEvent,
+    applyReduceEvents,
+    switchThread,
+    startNewThread,
+    clearActiveThread,
+    deleteThread,
+    updateThreadScrollState,
+    getThreadTitleStatus,
+    getFirstRoundForTitle,
+    markThreadTitleGenerating,
+    completeThreadTitleGeneration,
+    failThreadTitleGeneration,
+    setAuthoritativeThreads,
+    flushPendingScrollStateUpdates,
   };
 });
 

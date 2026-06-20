@@ -104,6 +104,49 @@ pub fn default_provider_base_url(provider_id: &str) -> Option<&'static str> {
     }
 }
 
+/// 「解析一次、人人复用」的统一凭证视图。
+/// builtin sidecar 与各外部 agent 的 provisioner 均以此为唯一入口，
+/// 杜绝多处各自从 keyring / 端点表取值导致的漂移。
+pub struct ResolvedCredential {
+    pub provider_id: String,
+    pub api_key: String,
+    pub base_url: Option<String>,
+}
+
+/// 端点解析纯函数：调用方显式传入优先（trim 后非空），否则回退到唯一权威表
+/// default_provider_base_url。抽成纯函数以便脱离 keyring 做单元测试。
+pub fn resolve_provider_base_url(
+    provider_id: &str,
+    explicit_base_url: Option<&str>,
+) -> Option<String> {
+    explicit_base_url
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(ToOwned::to_owned)
+        .or_else(|| default_provider_base_url(provider_id.trim()).map(ToOwned::to_owned))
+}
+
+impl CredentialStore {
+    /// 解析某厂商的完整凭证视图：keyring 取 key（缺失/空 → Err，沿用 CredentialStore::get
+    /// 的结构化错误码）+ 端点按 resolve_provider_base_url 回退。
+    /// 下一步 provisioner 接线后即被消费，届时移除 allow(dead_code)。
+    #[allow(dead_code)]
+    pub fn resolve(
+        provider_id: &str,
+        explicit_base_url: Option<&str>,
+    ) -> Result<ResolvedCredential, String> {
+        let normalized_provider_id = provider_id.trim();
+        let api_key = Self::get(normalized_provider_id)?;
+        let base_url = resolve_provider_base_url(normalized_provider_id, explicit_base_url);
+
+        Ok(ResolvedCredential {
+            provider_id: normalized_provider_id.to_string(),
+            api_key,
+            base_url,
+        })
+    }
+}
+
 fn provider_account(provider_id: &str) -> Result<String, String> {
     let normalized_provider_id = provider_id.trim();
 
@@ -119,7 +162,42 @@ fn provider_account(provider_id: &str) -> Result<String, String> {
 
 #[cfg(test)]
 mod tests {
-    use super::{default_provider_base_url, provider_account, supported_provider_ids};
+    use super::{
+        ResolvedCredential, default_provider_base_url, provider_account,
+        resolve_provider_base_url, supported_provider_ids,
+    };
+
+    #[test]
+    fn resolve_provider_base_url_prefers_explicit_then_falls_back() {
+        assert_eq!(
+            resolve_provider_base_url("deepseek", Some("  https://proxy.example/v1  ")),
+            Some("https://proxy.example/v1".to_string())
+        );
+        assert_eq!(
+            resolve_provider_base_url("deepseek", Some("   ")),
+            Some("https://api.deepseek.com/v1".to_string())
+        );
+        assert_eq!(
+            resolve_provider_base_url("  zhipuai  ", None),
+            Some("https://open.bigmodel.cn/api/paas/v4".to_string())
+        );
+        assert_eq!(resolve_provider_base_url("unknown-vendor", None), None);
+    }
+
+    #[test]
+    fn resolved_credential_exposes_provider_and_base_url() {
+        let resolved = ResolvedCredential {
+            provider_id: "deepseek".to_string(),
+            api_key: "sk-test".to_string(),
+            base_url: resolve_provider_base_url("deepseek", None),
+        };
+        assert_eq!(resolved.provider_id, "deepseek");
+        assert_eq!(
+            resolved.base_url.as_deref(),
+            Some("https://api.deepseek.com/v1")
+        );
+        assert!(!resolved.api_key.is_empty());
+    }
 
     #[test]
     fn provider_account_resolves_supported_vendor() {

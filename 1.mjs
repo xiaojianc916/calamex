@@ -1,443 +1,315 @@
-// 1.mjs — Brick 2a: 新增 entries 模型权威写逻辑纯函数核 + 单测(零接线/零行为变化)
+// 1.mjs — Step 8 Brick 2b: entries store gains authoritative read-write state + actions
+// (delegating to thread-mutations pure core). PURE ADDITIONS, unwired, zero behavior change.
+//   - augments  src/store/aiThread/index.ts
+//   - creates   src/store/aiThread/index.authoritative.spec.ts
+// Render authority (activeThread/activeEntries) and persistence (mirror) are untouched.
 //
-// 产物(均为新增, 不修改任何现有文件):
-//   src/store/aiThread/thread-mutations.ts        纯函数: 创建/标题派生与同步/裁剪/
-//                                                 生命周期/reduce 提交/标题生成/滚动
-//   src/store/aiThread/thread-mutations.spec.ts   vitest 单测
-//
-// 语义对齐 legacy aiConversation(行为等价), 唯一差异: 标题来源 messages -> entries。
-// 沿用本仓 reduce/persist/hydrate「先落纯模块、未接线零行为」惯例; 砖 2b 用它构建
-// store 读写权威态, 砖 3 切换 useAiAssistant 写路径与渲染权威, 砖 4 退役 legacy。
-//
-// 用法:
-//   node 1.mjs --check   # 只报告将创建哪些文件, 不写盘
-//   node 1.mjs           # 创建文件
-// 可选: 设 REPO_ROOT 指向仓库根(默认当前工作目录)。
-// 幂等: 目标已存在且内容一致则跳过; 已存在但不同则中止(不覆盖)。
+// Usage:
+//   REPO_ROOT=D:\com.xiaojianc\my_desktop_app node 1.mjs           (apply)
+//   REPO_ROOT=D:\com.xiaojianc\my_desktop_app node 1.mjs --check   (report only)
 
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
-import { dirname, resolve } from 'node:path';
+import { readFileSync, writeFileSync, existsSync, mkdirSync } from 'node:fs';
+import { dirname, join } from 'node:path';
 
 const REPO_ROOT = process.env.REPO_ROOT ?? process.cwd();
-const CHECK_ONLY = process.argv.includes('--check');
+const CHECK = process.argv.includes('--check');
 
-const MODULE_SRC = String.raw`/* ============================================================================
- * aiThread 权威写逻辑（纯函数核，ADR-0013 / ADR-0014 Step 8）
- *
- * 把 legacy aiConversation store 的线程管理语义（创建 / 标题派生与同步 / 裁剪 /
- * 生命周期 / 标题生成 / 滚动）等价搬运到 entries 模型，作为 entries 成为权威读写
- * 真源（Step 8 砖 3）的基础。本模块纯函数、无 Vue / pinia / IO 依赖，可在 Node
- * 单测独立运行；本步仅落地、未接线（store 仍由 legacy 权威），故零行为变化。
- *
- * 与 legacy 的唯一差异在「标题来源」：从扁平 messages 改为 entries —
- *   - 取首条 user_message 的文本块拼接为标题来源；
- *   - 退一步取首条含文本的 entry（含 assistant_message 正文 chunk）。
- * 其余阈值 / 裁剪 / active 末尾兜底与 legacy 严格一致。
- * ========================================================================== */
+const INDEX_PATH = 'src/store/aiThread/index.ts';
+const SPEC_PATH = 'src/store/aiThread/index.authoritative.spec.ts';
+
+/* ---------------------------------------------------------------- helpers */
+const abs = (rel) => join(REPO_ROOT, rel);
+
+const detectEol = (text) => (text.includes('\r\n') ? '\r\n' : '\n');
+const toLf = (text) => text.replace(/\r\n/g, '\n');
+const fromLf = (text, eol) => (eol === '\n' ? text : text.replace(/\n/g, eol));
+
+function replaceOnce(label, content, oldStr, newStr) {
+	const occurrences = content.split(oldStr).length - 1;
+	if (occurrences !== 1) {
+		throw new Error(`[${label}] expected exactly 1 match, found ${occurrences}`);
+	}
+	// function replacement avoids `$`-pattern interpretation in newStr.
+	return content.replace(oldStr, () => newStr);
+}
+
+function writeFileIdempotent(label, relPath, contents) {
+	const target = abs(relPath);
+	if (existsSync(target)) {
+		const existing = toLf(readFileSync(target, 'utf8'));
+		if (existing === toLf(contents)) {
+			console.log(`[${label}] up-to-date (identical): ${relPath}`);
+			return false;
+		}
+		throw new Error(`[${label}] file exists with different content: ${relPath}`);
+	}
+	if (CHECK) {
+		console.log(`[${label}] would create: ${relPath}`);
+		return true;
+	}
+	mkdirSync(dirname(target), { recursive: true });
+	writeFileSync(target, contents, 'utf8');
+	console.log(`[${label}] created: ${relPath}`);
+	return true;
+}
+
+/* ------------------------------------------------------- index.ts: anchors */
+const OLD_IMPORTS = String.raw`import { useAiConversationStore } from '@/store/aiConversation';
+import { legacyThreadToThread } from '@/store/aiThread/legacy-adapter';
+import { restoreAttachmentPreviewPointers } from '@/store/plugins/debouncedPersistStorage';
+import type { IAiThread, IAiThreadEntry } from '@/types/ai/thread';`;
+
+const NEW_IMPORTS = String.raw`import { useAiConversationStore } from '@/store/aiConversation';
 import type { TAiThreadReduceEvent } from '@/store/aiThread/events';
-import { reduceThread } from '@/store/aiThread/reduce';
-import type { IAiThread, IAiThreadContentBlock, IAiThreadEntry } from '@/types/ai/thread';
-import { createUniqueId } from '@/utils/core/id';
+import { legacyThreadToThread } from '@/store/aiThread/legacy-adapter';
+import * as threadMutations from '@/store/aiThread/thread-mutations';
+import { restoreAttachmentPreviewPointers } from '@/store/plugins/debouncedPersistStorage';
+import type { IAiThread, IAiThreadEntry } from '@/types/ai/thread';`;
 
-export const AI_THREAD_HISTORY_LIMIT = 200;
-const TEMPORARY_TITLE_MAX_CHARS = 24;
-const GENERATED_TITLE_MAX_CHARS = 10;
-export const SCROLL_STATE_SAVE_THROTTLE_MS = 120;
+const FN_BLOCK = String.raw`  /** 切换活动持久化线程（触发指针惰性恢复 watch）。 */
+  function setPersistedActiveThreadId(activeThreadId: string | null): void {
+    persistedActiveThreadId.value = activeThreadId;
+  }`;
 
-export type IAiThreadScrollState = NonNullable<IAiThread['scrollState']>;
-export type TAiThreadTitleStatus = IAiThread['titleStatus'];
+const OLD_RETURN = String.raw`  return {
+    // state
+    liveThread,
+    persistedThreads,
+    persistedActiveThreadId,
+    // getters
+    projectedActiveThread,
+    persistedActiveThread,
+    activeThread,
+    activeEntries,
+    // actions
+    setLiveThread,
+    setPersistedThreads,
+    setPersistedActiveThreadId,
+  };`;
 
-/** 权威线程状态：entries 模型下的 store 内部形状。 */
-export interface IAiThreadState {
-  threads: IAiThread[];
-  activeThreadId: string | null;
-}
+const AUTH_BLOCK = String.raw`  /* ====================================================================
+   * Step 8 砖2b：entries 权威读写真源（thread-mutations 纯函数核之上的薄壳）
+   *
+   * 在既有「只读投影」之外，新增一组以 entries 为真源的权威线程状态 + 读写
+   * actions，全部委托 thread-mutations 纯函数核。本步「只落地、未接线」：
+   *   - 不改 activeThread / activeEntries 渲染权威（仍 liveThread ?? 投影 ?? 持久化）；
+   *   - 不接管持久化（仍由 aiConversation + entriesMirror 负责）；
+   *   - 无任何上层调用以下新 state / actions。
+   * 故本步零行为变化；写路径 / 渲染权威 / 持久化归属切换统一在砖3 完成。
+   *
+   * 滚动节流（pendingScrollStates + timer）按 legacy aiConversation 的 store 层
+   * 语义等价搬运到本层，使砖3 接线为纯连线、无行为漂移。
+   * ================================================================== */
 
-export interface IAiThreadFirstRound {
-  userMessage: string;
-  assistantMessage: string;
-}
+  // 初始权威状态：与 legacy 一致，启动即持有一个空线程（ensureActiveThread 兜底）。
+  const initialAuthoritativeState = threadMutations.ensureActiveThread(null, []);
+  const authoritativeThreads = ref<IAiThread[]>(initialAuthoritativeState.threads);
+  const authoritativeActiveThreadId = ref<string | null>(initialAuthoritativeState.activeThreadId);
 
-const createThreadId = (): string => createUniqueId('ai-thread');
+  const authoritativeActiveThread = computed<IAiThread | null>(
+    () =>
+      authoritativeThreads.value.find(
+        (thread) => thread.id === authoritativeActiveThreadId.value,
+      ) ?? null,
+  );
+  const authoritativeActiveEntries = computed<IAiThreadEntry[]>(
+    () => authoritativeActiveThread.value?.entries ?? [],
+  );
+  const authoritativeHistoryThreads = computed<IAiThread[]>(() =>
+    authoritativeThreads.value.filter((thread) => thread.entries.length > 0),
+  );
+  const authoritativeHasEntries = computed<boolean>(
+    () => authoritativeActiveEntries.value.length > 0,
+  );
 
-/* ----- text extraction --------------------------------------------------- */
-const blocksText = (blocks: IAiThreadContentBlock[]): string =>
-  blocks.flatMap((block) => (block.type === 'text' ? [block.text] : [])).join('');
+  const readAuthoritativeState = (): threadMutations.IAiThreadState => ({
+    threads: authoritativeThreads.value,
+    activeThreadId: authoritativeActiveThreadId.value,
+  });
 
-const entryPlainText = (entry: IAiThreadEntry): string => {
-  if (entry.type === 'user_message') {
-    return blocksText(entry.content);
-  }
-  if (entry.type === 'assistant_message') {
-    return entry.chunks
-      .flatMap((chunk) =>
-        chunk.type === 'message' && chunk.block.type === 'text' ? [chunk.block.text] : [],
-      )
-      .join('');
-  }
-  return '';
-};
-
-const lastEntryCreatedAt = (entries: IAiThreadEntry[]): string | null =>
-  entries.at(-1)?.createdAt ?? null;
-
-/* ----- title helpers (ported verbatim from legacy aiConversation) -------- */
-const normalizeTitleSource = (value: string): string =>
-  value.normalize('NFC').replace(/\s+/gu, ' ').trim();
-
-const clipUnicodeText = (value: string, maxChars: number): string => {
-  const characters = Array.from(value);
-  if (characters.length <= maxChars) {
-    return value;
-  }
-  return characters.slice(0, maxChars).join('') + '…';
-};
-
-export const deriveTemporaryThreadTitle = (entries: IAiThreadEntry[]): string => {
-  let source = '';
-  for (const entry of entries) {
-    if (entry.type === 'user_message') {
-      const text = blocksText(entry.content).trim();
-      if (text) {
-        source = text;
-        break;
-      }
-    }
-  }
-  if (!source) {
-    for (const entry of entries) {
-      const text = entryPlainText(entry).trim();
-      if (text) {
-        source = text;
-        break;
-      }
-    }
-  }
-  if (!source) {
-    return '新对话';
-  }
-  return clipUnicodeText(normalizeTitleSource(source), TEMPORARY_TITLE_MAX_CHARS);
-};
-
-// 头尾各类引号 / 括号字符；命中即剥除（与 legacy 一致）。
-const TITLE_TRIM_LEADING = /^["'“”‘’《》【】「」『』\s]+/gu;
-const TITLE_TRIM_TRAILING = /["'“”‘’《》【】「」『』\s]+$/gu;
-
-export const normalizeGeneratedTitle = (title: string): string => {
-  const normalized = normalizeTitleSource(title)
-    .replace(TITLE_TRIM_LEADING, '')
-    .replace(TITLE_TRIM_TRAILING, '');
-  return clipUnicodeText(normalized, GENERATED_TITLE_MAX_CHARS).replace(/…$/u, '');
-};
-
-/* ----- thread factory + meta sync ---------------------------------------- */
-export const createThread = (
-  entries: IAiThreadEntry[] = [],
-  now: string = new Date().toISOString(),
-): IAiThread => ({
-  id: createThreadId(),
-  title: deriveTemporaryThreadTitle(entries),
-  titleStatus: 'temporary',
-  createdAt: now,
-  updatedAt: lastEntryCreatedAt(entries) ?? now,
-  entries,
-});
-
-/**
- * 同步线程元信息：generated 标题再归一保持；否则由 entries 派生临时标题。
- * updatedAt 取末条 entry 的 createdAt（无 entry 则沿用原值）。
- */
-export const syncThreadMeta = (thread: IAiThread): IAiThread => {
-  const generatedTitle =
-    thread.titleStatus === 'generated' ? normalizeGeneratedTitle(thread.title) : '';
-  return {
-    ...thread,
-    title: generatedTitle || deriveTemporaryThreadTitle(thread.entries),
-    titleStatus: generatedTitle ? 'generated' : thread.titleStatus,
-    updatedAt: lastEntryCreatedAt(thread.entries) ?? thread.updatedAt,
+  const commitAuthoritativeState = (next: threadMutations.IAiThreadState): void => {
+    authoritativeThreads.value = next.threads;
+    authoritativeActiveThreadId.value = next.activeThreadId;
   };
-};
 
-/* ----- trim + active resolution (ported from legacy) --------------------- */
-export const trimThreads = (threads: IAiThread[], activeThreadId: string | null): IAiThread[] => {
-  const activeThread = activeThreadId
-    ? (threads.find((thread) => thread.id === activeThreadId) ?? null)
-    : null;
-  const trimmedNonEmptyThreads = threads
-    .filter((thread) => thread.entries.length > 0)
-    .slice(-AI_THREAD_HISTORY_LIMIT);
-  // 始终保住当前 active：无论空白新会话还是因 slice 窗口落在最近 N 之外，
-  // 都不能裁掉，否则静默丢失用户正在查看的会话（与 legacy 一致）。
-  if (activeThread && !trimmedNonEmptyThreads.some((thread) => thread.id === activeThread.id)) {
-    return [...trimmedNonEmptyThreads, activeThread];
-  }
-  return trimmedNonEmptyThreads;
-};
+  /* ----- 滚动状态节流（等价搬运自 legacy aiConversation 的 store 层实现）----- */
+  const pendingScrollStates = new Map<string, threadMutations.IAiThreadScrollState>();
+  let scrollStateSaveTimer: ReturnType<typeof setTimeout> | null = null;
 
-/** active 必须指向现存线程；否则落到末尾线程（空库则新建空线程）。 */
-export const ensureActiveThread = (
-  activeThreadId: string | null,
-  threads: IAiThread[],
-): IAiThreadState => {
-  if (threads.length === 0) {
-    const emptyThread = createThread();
-    return { activeThreadId: emptyThread.id, threads: [emptyThread] };
-  }
-  const resolvedActiveThreadId =
-    activeThreadId && threads.some((thread) => thread.id === activeThreadId)
-      ? activeThreadId
-      : (threads.at(-1)?.id ?? null);
-  return { activeThreadId: resolvedActiveThreadId, threads };
-};
-
-/**
- * 提交线程状态：仅当线程数超过历史上限时才 trim（与 legacy 性能不变量一致），
- * 再经 ensureActiveThread 归一 active。未改动线程保持原引用（结构共享）。
- */
-export const commitThreadsState = (next: IAiThreadState): IAiThreadState => {
-  const trimmedThreads =
-    next.threads.length > AI_THREAD_HISTORY_LIMIT
-      ? trimThreads(next.threads, next.activeThreadId)
-      : next.threads;
-  return ensureActiveThread(next.activeThreadId, trimmedThreads);
-};
-
-/* ----- patch helpers ----------------------------------------------------- */
-export const patchActiveThread = (
-  state: IAiThreadState,
-  updater: (thread: IAiThread) => IAiThread,
-): IAiThreadState => {
-  let working = state;
-  if (!working.threads.some((thread) => thread.id === working.activeThreadId)) {
-    const emptyThread = createThread();
-    working = commitThreadsState({
-      activeThreadId: emptyThread.id,
-      threads: [...working.threads, emptyThread],
-    });
-  }
-  const currentId = working.activeThreadId;
-  if (!currentId) {
-    return working;
-  }
-  return commitThreadsState({
-    activeThreadId: currentId,
-    threads: working.threads.map((thread) =>
-      thread.id === currentId ? syncThreadMeta(updater(thread)) : thread,
-    ),
-  });
-};
-
-export const patchThread = (
-  state: IAiThreadState,
-  threadId: string,
-  updater: (thread: IAiThread) => IAiThread,
-): IAiThreadState => {
-  if (!state.threads.some((thread) => thread.id === threadId)) {
-    return state;
-  }
-  return commitThreadsState({
-    activeThreadId: state.activeThreadId,
-    threads: state.threads.map((thread) =>
-      thread.id === threadId ? syncThreadMeta(updater(thread)) : thread,
-    ),
-  });
-};
-
-/* ----- reduce-driven commit (流式写真源) --------------------------------- */
-export const applyReduceEvent = (
-  state: IAiThreadState,
-  event: TAiThreadReduceEvent,
-): IAiThreadState => patchActiveThread(state, (thread) => reduceThread(thread, event));
-
-export const applyReduceEvents = (
-  state: IAiThreadState,
-  events: readonly TAiThreadReduceEvent[],
-): IAiThreadState => events.reduce<IAiThreadState>((acc, event) => applyReduceEvent(acc, event), state);
-
-/* ----- thread lifecycle -------------------------------------------------- */
-export const startNewThread = (state: IAiThreadState): IAiThreadState => {
-  const nextThread = createThread();
-  return commitThreadsState({
-    activeThreadId: nextThread.id,
-    threads: [...state.threads, nextThread],
-  });
-};
-
-export const switchThread = (state: IAiThreadState, threadId: string): IAiThreadState =>
-  state.threads.some((thread) => thread.id === threadId)
-    ? { ...state, activeThreadId: threadId }
-    : state;
-
-/**
- * 删除当前 active thread 并以空 thread 顶替（语义同 legacy clearActiveThread：
- * 不是清空消息，而是丢弃当前线程换新）。
- */
-export const clearActiveThread = (state: IAiThreadState): IAiThreadState => {
-  const remainingThreads = state.activeThreadId
-    ? state.threads.filter((thread) => thread.id !== state.activeThreadId)
-    : state.threads.slice();
-  const nextThread = createThread();
-  return commitThreadsState({
-    activeThreadId: nextThread.id,
-    threads: [...remainingThreads, nextThread],
-  });
-};
-
-export const deleteThread = (state: IAiThreadState, threadId: string): IAiThreadState => {
-  if (!state.threads.some((thread) => thread.id === threadId)) {
-    return state;
-  }
-  const remainingThreads = state.threads.filter((thread) => thread.id !== threadId);
-  const nextActiveThreadId =
-    state.activeThreadId === threadId
-      ? (remainingThreads.at(-1)?.id ?? null)
-      : state.activeThreadId;
-  return commitThreadsState({ activeThreadId: nextActiveThreadId, threads: remainingThreads });
-};
-
-/* ----- title generation -------------------------------------------------- */
-export function getFirstRoundFromEntries(entries: IAiThreadEntry[]): IAiThreadFirstRound | null {
-  const firstUserIndex = entries.findIndex(
-    (entry) => entry.type === 'user_message' && blocksText(entry.content).trim().length > 0,
-  );
-  if (firstUserIndex < 0) {
-    return null;
-  }
-  const firstUser = entries[firstUserIndex];
-  if (firstUser.type !== 'user_message') {
-    return null;
-  }
-  let assistantMessage = '';
-  for (let index = firstUserIndex + 1; index < entries.length; index += 1) {
-    const entry = entries[index];
-    if (entry.type === 'assistant_message') {
-      const text = entryPlainText(entry).trim();
-      if (text) {
-        assistantMessage = text;
-        break;
-      }
+  const clearScrollStateSaveTimer = (): void => {
+    if (scrollStateSaveTimer !== null) {
+      clearTimeout(scrollStateSaveTimer);
+      scrollStateSaveTimer = null;
     }
-  }
-  if (!assistantMessage) {
-    return null;
-  }
-  return {
-    userMessage: normalizeTitleSource(blocksText(firstUser.content)),
-    assistantMessage: normalizeTitleSource(assistantMessage),
   };
-}
 
-export const getThreadTitleStatus = (
-  state: IAiThreadState,
-  threadId: string,
-): TAiThreadTitleStatus =>
-  state.threads.find((thread) => thread.id === threadId)?.titleStatus ?? 'temporary';
-
-export const getFirstRoundForTitle = (
-  state: IAiThreadState,
-  threadId: string,
-): IAiThreadFirstRound | null => {
-  const thread = state.threads.find((item) => item.id === threadId);
-  return thread ? getFirstRoundFromEntries(thread.entries) : null;
-};
-
-export const markThreadTitleGenerating = (
-  state: IAiThreadState,
-  threadId: string,
-): IAiThreadState =>
-  patchThread(state, threadId, (thread) => ({
-    ...thread,
-    titleStatus: thread.titleStatus === 'generated' ? 'generated' : 'generating',
-  }));
-
-export const completeThreadTitleGeneration = (
-  state: IAiThreadState,
-  threadId: string,
-  title: string,
-): IAiThreadState => {
-  const normalizedTitle = normalizeGeneratedTitle(title);
-  return patchThread(state, threadId, (thread) =>
-    normalizedTitle
-      ? { ...thread, title: normalizedTitle, titleStatus: 'generated' }
-      : { ...thread, titleStatus: 'failed' },
-  );
-};
-
-export const failThreadTitleGeneration = (
-  state: IAiThreadState,
-  threadId: string,
-): IAiThreadState =>
-  patchThread(state, threadId, (thread) => ({
-    ...thread,
-    titleStatus: thread.titleStatus === 'generated' ? 'generated' : 'failed',
-  }));
-
-/* ----- scroll state ------------------------------------------------------ */
-export const normalizeScrollStateForPersist = (
-  scrollState: IAiThreadScrollState,
-): IAiThreadScrollState => ({
-  ...scrollState,
-  scrollTop: Math.round(scrollState.scrollTop),
-  scrollHeight: Math.round(scrollState.scrollHeight),
-  clientHeight: Math.round(scrollState.clientHeight),
-  distanceFromBottom: Math.round(scrollState.distanceFromBottom),
-});
-
-export const isSamePersistedScrollState = (
-  left: IAiThreadScrollState | undefined,
-  right: IAiThreadScrollState,
-): boolean => {
-  if (!left) {
-    return false;
+  /**
+   * flush 缓冲的滚动状态：纯核 setThreadScrollState 已内置归一化 + 等值短路，
+   * 逐条折叠即得与 legacy 批量提交等价的最终状态。
+   */
+  function flushPendingScrollStateUpdates(): void {
+    clearScrollStateSaveTimer();
+    if (pendingScrollStates.size === 0) {
+      return;
+    }
+    const updates = Array.from(pendingScrollStates.entries());
+    pendingScrollStates.clear();
+    const nextState = updates.reduce<threadMutations.IAiThreadState>(
+      (state, [threadId, scrollState]) =>
+        threadMutations.setThreadScrollState(state, threadId, scrollState),
+      readAuthoritativeState(),
+    );
+    commitAuthoritativeState(nextState);
   }
-  return (
-    left.scrollTop === right.scrollTop &&
-    left.scrollHeight === right.scrollHeight &&
-    left.clientHeight === right.clientHeight &&
-    left.distanceFromBottom === right.distanceFromBottom
-  );
-};
 
-/** 写入归一化后的滚动状态；等价则短路返回原 state（去抖 / 节流留待 store 层）。 */
-export const setThreadScrollState = (
-  state: IAiThreadState,
-  threadId: string,
-  scrollState: IAiThreadScrollState,
-): IAiThreadState => {
-  const thread = state.threads.find((item) => item.id === threadId);
-  if (!thread) {
-    return state;
+  const scheduleScrollStateSave = (): void => {
+    if (scrollStateSaveTimer !== null) {
+      return;
+    }
+    scrollStateSaveTimer = setTimeout(() => {
+      scrollStateSaveTimer = null;
+      flushPendingScrollStateUpdates();
+    }, threadMutations.SCROLL_STATE_SAVE_THROTTLE_MS);
+  };
+
+  /* ----- reduce 驱动写入（流式写真源）----- */
+  function applyReduceEvent(event: TAiThreadReduceEvent): void {
+    commitAuthoritativeState(threadMutations.applyReduceEvent(readAuthoritativeState(), event));
   }
-  const normalizedScrollState = normalizeScrollStateForPersist(scrollState);
-  if (isSamePersistedScrollState(thread.scrollState, normalizedScrollState)) {
-    return state;
+
+  function applyReduceEvents(events: readonly TAiThreadReduceEvent[]): void {
+    commitAuthoritativeState(threadMutations.applyReduceEvents(readAuthoritativeState(), events));
   }
-  return patchThread(state, threadId, (item) => ({ ...item, scrollState: normalizedScrollState }));
-};
-`;
 
-const SPEC_SRC = String.raw`import { describe, expect, it } from 'vitest';
+  /* ----- 线程生命周期（切换/新建/清空/删除前 flush 滚动，与 legacy 一致）----- */
+  function switchThread(threadId: string): void {
+    if (!authoritativeThreads.value.some((thread) => thread.id === threadId)) {
+      return;
+    }
+    flushPendingScrollStateUpdates();
+    commitAuthoritativeState(threadMutations.switchThread(readAuthoritativeState(), threadId));
+  }
 
+  function startNewThread(): void {
+    flushPendingScrollStateUpdates();
+    commitAuthoritativeState(threadMutations.startNewThread(readAuthoritativeState()));
+  }
+
+  function clearActiveThread(): void {
+    flushPendingScrollStateUpdates();
+    commitAuthoritativeState(threadMutations.clearActiveThread(readAuthoritativeState()));
+  }
+
+  function deleteThread(threadId: string): boolean {
+    if (!authoritativeThreads.value.some((thread) => thread.id === threadId)) {
+      return false;
+    }
+    flushPendingScrollStateUpdates();
+    commitAuthoritativeState(threadMutations.deleteThread(readAuthoritativeState(), threadId));
+    return true;
+  }
+
+  function updateThreadScrollState(
+    threadId: string,
+    scrollState: threadMutations.IAiThreadScrollState,
+  ): void {
+    const thread = authoritativeThreads.value.find((item) => item.id === threadId);
+    if (!thread) {
+      return;
+    }
+    const normalizedScrollState = threadMutations.normalizeScrollStateForPersist(scrollState);
+    const currentScrollState = pendingScrollStates.get(threadId) ?? thread.scrollState;
+    if (threadMutations.isSamePersistedScrollState(currentScrollState, normalizedScrollState)) {
+      return;
+    }
+    pendingScrollStates.set(threadId, normalizedScrollState);
+    scheduleScrollStateSave();
+  }
+
+  /* ----- 标题生成 ----- */
+  function getThreadTitleStatus(threadId: string): threadMutations.TAiThreadTitleStatus {
+    return threadMutations.getThreadTitleStatus(readAuthoritativeState(), threadId);
+  }
+
+  function getFirstRoundForTitle(threadId: string): threadMutations.IAiThreadFirstRound | null {
+    return threadMutations.getFirstRoundForTitle(readAuthoritativeState(), threadId);
+  }
+
+  function markThreadTitleGenerating(threadId: string): void {
+    commitAuthoritativeState(
+      threadMutations.markThreadTitleGenerating(readAuthoritativeState(), threadId),
+    );
+  }
+
+  function completeThreadTitleGeneration(threadId: string, title: string): void {
+    commitAuthoritativeState(
+      threadMutations.completeThreadTitleGeneration(readAuthoritativeState(), threadId, title),
+    );
+  }
+
+  function failThreadTitleGeneration(threadId: string): void {
+    commitAuthoritativeState(
+      threadMutations.failThreadTitleGeneration(readAuthoritativeState(), threadId),
+    );
+  }
+
+  /**
+   * 灌入权威线程快照（砖3 持久化归属切换时由读侧调用）。
+   * 经 commitThreadsState 归一（trim + ensureActiveThread 兜底），空库自动建空线程。
+   */
+  function setAuthoritativeThreads(threads: IAiThread[], activeThreadId: string | null): void {
+    flushPendingScrollStateUpdates();
+    commitAuthoritativeState(threadMutations.commitThreadsState({ threads, activeThreadId }));
+  }`;
+
+const NEW_RETURN = String.raw`  return {
+    // state
+    liveThread,
+    persistedThreads,
+    persistedActiveThreadId,
+    // Step 8 砖2b：entries 权威状态（未接线）
+    authoritativeThreads,
+    authoritativeActiveThreadId,
+    // getters
+    projectedActiveThread,
+    persistedActiveThread,
+    activeThread,
+    activeEntries,
+    // Step 8 砖2b：entries 权威读派生（未接线）
+    authoritativeActiveThread,
+    authoritativeActiveEntries,
+    authoritativeHistoryThreads,
+    authoritativeHasEntries,
+    // actions
+    setLiveThread,
+    setPersistedThreads,
+    setPersistedActiveThreadId,
+    // Step 8 砖2b：entries 权威写 actions（未接线）
+    applyReduceEvent,
+    applyReduceEvents,
+    switchThread,
+    startNewThread,
+    clearActiveThread,
+    deleteThread,
+    updateThreadScrollState,
+    getThreadTitleStatus,
+    getFirstRoundForTitle,
+    markThreadTitleGenerating,
+    completeThreadTitleGeneration,
+    failThreadTitleGeneration,
+    setAuthoritativeThreads,
+    flushPendingScrollStateUpdates,
+  };`;
+
+const OLD_B = `${FN_BLOCK}\n\n${OLD_RETURN}`;
+const NEW_B = `${FN_BLOCK}\n\n${AUTH_BLOCK}\n\n${NEW_RETURN}`;
+
+/* -------------------------------------------------------- spec file (new) */
+const SPEC_CONTENTS = String.raw`import { createPinia, setActivePinia } from 'pinia';
+import { beforeEach, describe, expect, it } from 'vitest';
+
+import { useAiThreadStore } from '@/store/aiThread';
 import type { TAiThreadReduceEvent } from '@/store/aiThread/events';
-import {
-  AI_THREAD_HISTORY_LIMIT,
-  applyReduceEvent,
-  clearActiveThread,
-  commitThreadsState,
-  completeThreadTitleGeneration,
-  createThread,
-  deleteThread,
-  deriveTemporaryThreadTitle,
-  failThreadTitleGeneration,
-  getFirstRoundFromEntries,
-  markThreadTitleGenerating,
-  normalizeGeneratedTitle,
-  setThreadScrollState,
-  startNewThread,
-  switchThread,
-  type IAiThreadScrollState,
-  type IAiThreadState,
-} from '@/store/aiThread/thread-mutations';
 import type { IAiThread, IAiThreadEntry } from '@/types/ai/thread';
 
 const AT = '2026-01-01T00:00:00.000Z';
@@ -450,15 +322,6 @@ const userEntry = (id: string, text: string, createdAt: string = AT): IAiThreadE
   references: [],
 });
 
-const nonEmptyThread = (id: string): IAiThread => ({
-  id,
-  title: 'thread ' + id,
-  titleStatus: 'temporary',
-  createdAt: AT,
-  updatedAt: AT,
-  entries: [userEntry(id + '-u', 'hi')],
-});
-
 const userEvent = (id: string, text: string, createdAt: string = AT): TAiThreadReduceEvent => ({
   kind: 'user_message',
   id,
@@ -467,7 +330,7 @@ const userEvent = (id: string, text: string, createdAt: string = AT): TAiThreadR
   references: [],
 });
 
-const scroll = (scrollTop: number): IAiThreadScrollState => ({
+const scroll = (scrollTop: number) => ({
   scrollTop,
   scrollHeight: 1000,
   clientHeight: 500,
@@ -475,186 +338,157 @@ const scroll = (scrollTop: number): IAiThreadScrollState => ({
   updatedAt: AT,
 });
 
-describe('thread-mutations 标题派生', () => {
-  it('createThread 空线程标题为「新对话」、状态 temporary、无 entries', () => {
-    const thread = createThread([], AT);
-    expect(thread.title).toBe('新对话');
-    expect(thread.titleStatus).toBe('temporary');
-    expect(thread.entries).toEqual([]);
-    expect(thread.createdAt).toBe(AT);
-    expect(thread.updatedAt).toBe(AT);
+describe('useAiThreadStore Step8砖2b 权威读写（未接线，零行为）', () => {
+  beforeEach(() => {
+    setActivePinia(createPinia());
   });
 
-  it('deriveTemporaryThreadTitle 取首条 user_message 文本，折叠空白并裁剪到 24 字', () => {
-    expect(deriveTemporaryThreadTitle([userEntry('u1', '  hello   world  ')])).toBe('hello world');
-    const long = 'x'.repeat(40);
-    const title = deriveTemporaryThreadTitle([userEntry('u2', long)]);
-    expect(Array.from(title)).toHaveLength(25); // 24 + 省略号
-    expect(title.endsWith('…')).toBe(true);
+  it('初始权威状态持有一个空线程，且不影响既有渲染派生', () => {
+    const store = useAiThreadStore();
+    expect(store.authoritativeThreads).toHaveLength(1);
+    expect(store.authoritativeActiveThreadId).toBe(store.authoritativeThreads[0].id);
+    expect(store.authoritativeActiveEntries).toEqual([]);
+    expect(store.authoritativeHasEntries).toBe(false);
+    // 渲染权威仍走 legacy 投影，未被新状态影响。
+    expect(store.activeEntries).toEqual([]);
   });
 
-  it('normalizeGeneratedTitle 去引号、裁剪到 10 字、去尾省略号', () => {
-    expect(normalizeGeneratedTitle('“标题”')).toBe('标题');
-    const clipped = normalizeGeneratedTitle('一二三四五六七八九十十一十二');
-    expect(Array.from(clipped)).toHaveLength(10);
-    expect(clipped.endsWith('…')).toBe(false);
-  });
-});
-
-describe('thread-mutations reduce 提交', () => {
-  it('applyReduceEvent 在空态下新建线程并追加 user_message entry', () => {
-    const state: IAiThreadState = { threads: [], activeThreadId: null };
-    const next = applyReduceEvent(
-      state,
-      userEvent('m1', 'first question', '2026-02-02T00:00:00.000Z'),
+  it('applyReduceEvent 写入权威 active 线程，渲染派生 activeEntries 不受影响', () => {
+    const store = useAiThreadStore();
+    store.applyReduceEvent(userEvent('m1', 'first question'));
+    expect(store.authoritativeActiveEntries).toHaveLength(1);
+    expect(store.authoritativeActiveEntries[0].type).toBe('user_message');
+    const active = store.authoritativeThreads.find(
+      (thread) => thread.id === store.authoritativeActiveThreadId,
     );
-    expect(next.threads).toHaveLength(1);
-    expect(next.activeThreadId).toBe(next.threads[0].id);
-    expect(next.threads[0].entries).toHaveLength(1);
-    expect(next.threads[0].entries[0].type).toBe('user_message');
-    expect(next.threads[0].title).toBe('first question');
-    expect(next.threads[0].updatedAt).toBe('2026-02-02T00:00:00.000Z');
-  });
-});
-
-describe('thread-mutations 生命周期', () => {
-  it('startNewThread 追加空线程并切为 active', () => {
-    const base: IAiThreadState = { threads: [nonEmptyThread('a')], activeThreadId: 'a' };
-    const next = startNewThread(base);
-    expect(next.threads).toHaveLength(2);
-    expect(next.activeThreadId).not.toBe('a');
-    const active = next.threads.find((thread) => thread.id === next.activeThreadId);
-    expect(active?.entries).toEqual([]);
+    expect(active?.title).toBe('first question');
+    // 关键零行为断言：未接线，渲染权威 activeEntries 仍为空。
+    expect(store.activeEntries).toEqual([]);
   });
 
-  it('switchThread 命中才切换，未命中保持原引用', () => {
-    const base: IAiThreadState = {
-      threads: [nonEmptyThread('a'), nonEmptyThread('b')],
-      activeThreadId: 'a',
+  it('startNewThread / switchThread 管理权威线程', () => {
+    const store = useAiThreadStore();
+    store.applyReduceEvent(userEvent('m1', 'q'));
+    const firstId = store.authoritativeActiveThreadId as string;
+    store.startNewThread();
+    expect(store.authoritativeThreads).toHaveLength(2);
+    expect(store.authoritativeActiveThreadId).not.toBe(firstId);
+    store.switchThread(firstId);
+    expect(store.authoritativeActiveThreadId).toBe(firstId);
+    store.switchThread('missing');
+    expect(store.authoritativeActiveThreadId).toBe(firstId);
+  });
+
+  it('deleteThread 命中返回 true 并移除，未命中返回 false', () => {
+    const store = useAiThreadStore();
+    store.applyReduceEvent(userEvent('m1', 'q'));
+    store.startNewThread();
+    const ids = store.authoritativeThreads.map((thread) => thread.id);
+    expect(store.deleteThread(ids[0])).toBe(true);
+    expect(store.authoritativeThreads.some((thread) => thread.id === ids[0])).toBe(false);
+    expect(store.deleteThread('missing')).toBe(false);
+  });
+
+  it('clearActiveThread 丢弃当前 active 换空线程', () => {
+    const store = useAiThreadStore();
+    store.applyReduceEvent(userEvent('m1', 'q'));
+    const before = store.authoritativeActiveThreadId;
+    store.clearActiveThread();
+    expect(store.authoritativeActiveThreadId).not.toBe(before);
+    expect(store.authoritativeActiveEntries).toEqual([]);
+    expect(store.authoritativeThreads.some((thread) => thread.id === before)).toBe(false);
+  });
+
+  it('滚动状态节流：updateThreadScrollState 缓冲，flush 后写入归一整数', () => {
+    const store = useAiThreadStore();
+    const threadId = store.authoritativeActiveThreadId as string;
+    store.updateThreadScrollState(threadId, scroll(12.7));
+    const beforeFlush = store.authoritativeThreads.find((thread) => thread.id === threadId);
+    expect(beforeFlush?.scrollState).toBeUndefined();
+    store.flushPendingScrollStateUpdates();
+    const afterFlush = store.authoritativeThreads.find((thread) => thread.id === threadId);
+    expect(afterFlush?.scrollState?.scrollTop).toBe(13);
+  });
+
+  it('标题生成：generating -> generated，且 generated 不被 failed 回退', () => {
+    const store = useAiThreadStore();
+    store.applyReduceEvent(userEvent('m1', 'q'));
+    const threadId = store.authoritativeActiveThreadId as string;
+    store.markThreadTitleGenerating(threadId);
+    expect(store.getThreadTitleStatus(threadId)).toBe('generating');
+    store.completeThreadTitleGeneration(threadId, '  新标题  ');
+    expect(store.getThreadTitleStatus(threadId)).toBe('generated');
+    store.failThreadTitleGeneration(threadId);
+    expect(store.getThreadTitleStatus(threadId)).toBe('generated');
+  });
+
+  it('setAuthoritativeThreads + getFirstRoundForTitle 取首轮问答', () => {
+    const store = useAiThreadStore();
+    const thread: IAiThread = {
+      id: 'seed',
+      title: 'seed',
+      titleStatus: 'temporary',
+      createdAt: AT,
+      updatedAt: AT,
+      entries: [
+        userEntry('u', 'question'),
+        {
+          type: 'assistant_message',
+          id: 'a',
+          createdAt: AT,
+          chunks: [{ type: 'message', block: { type: 'text', text: 'answer' } }],
+        },
+      ],
     };
-    expect(switchThread(base, 'b').activeThreadId).toBe('b');
-    expect(switchThread(base, 'missing')).toBe(base);
-  });
-
-  it('deleteThread 删除 active 时回退到末尾线程', () => {
-    const base: IAiThreadState = {
-      threads: [nonEmptyThread('a'), nonEmptyThread('b'), nonEmptyThread('c')],
-      activeThreadId: 'b',
-    };
-    const next = deleteThread(base, 'b');
-    expect(next.threads.map((thread) => thread.id)).toEqual(['a', 'c']);
-    expect(next.activeThreadId).toBe('c');
-  });
-
-  it('deleteThread 删除最后一条线程时兜底新建空线程', () => {
-    const base: IAiThreadState = { threads: [nonEmptyThread('only')], activeThreadId: 'only' };
-    const next = deleteThread(base, 'only');
-    expect(next.threads).toHaveLength(1);
-    expect(next.threads[0].id).not.toBe('only');
-    expect(next.threads[0].entries).toEqual([]);
-    expect(next.activeThreadId).toBe(next.threads[0].id);
-  });
-
-  it('clearActiveThread 移除当前 active 并以空线程顶替', () => {
-    const base: IAiThreadState = { threads: [nonEmptyThread('a')], activeThreadId: 'a' };
-    const next = clearActiveThread(base);
-    expect(next.threads.some((thread) => thread.id === 'a')).toBe(false);
-    expect(next.threads).toHaveLength(1);
-    expect(next.threads[0].entries).toEqual([]);
-  });
-});
-
-describe('thread-mutations 裁剪', () => {
-  it('线程数超过上限时裁剪，但始终保住 active', () => {
-    const threads: IAiThread[] = [];
-    for (let index = 0; index <= AI_THREAD_HISTORY_LIMIT; index += 1) {
-      threads.push(nonEmptyThread('t' + index));
-    }
-    const next = commitThreadsState({ threads, activeThreadId: 't0' });
-    expect(next.threads.length).toBe(AI_THREAD_HISTORY_LIMIT + 1);
-    expect(next.threads.some((thread) => thread.id === 't0')).toBe(true);
-    expect(next.activeThreadId).toBe('t0');
-  });
-});
-
-describe('thread-mutations 标题生成', () => {
-  it('markThreadTitleGenerating 把非 generated 置为 generating', () => {
-    const base: IAiThreadState = { threads: [nonEmptyThread('a')], activeThreadId: 'a' };
-    expect(markThreadTitleGenerating(base, 'a').threads[0].titleStatus).toBe('generating');
-  });
-
-  it('completeThreadTitleGeneration 成功写入归一标题，空标题落 failed', () => {
-    const base: IAiThreadState = { threads: [nonEmptyThread('a')], activeThreadId: 'a' };
-    const ok = completeThreadTitleGeneration(base, 'a', '  新标题  ');
-    expect(ok.threads[0].title).toBe('新标题');
-    expect(ok.threads[0].titleStatus).toBe('generated');
-    const empty = completeThreadTitleGeneration(base, 'a', '   ');
-    expect(empty.threads[0].titleStatus).toBe('failed');
-  });
-
-  it('failThreadTitleGeneration 把非 generated 置为 failed', () => {
-    const base: IAiThreadState = { threads: [nonEmptyThread('a')], activeThreadId: 'a' };
-    expect(failThreadTitleGeneration(base, 'a').threads[0].titleStatus).toBe('failed');
-  });
-
-  it('getFirstRoundFromEntries 取首轮 user / assistant 文本', () => {
-    const entries: IAiThreadEntry[] = [
-      userEntry('u', 'question'),
-      {
-        type: 'assistant_message',
-        id: 'a',
-        createdAt: AT,
-        chunks: [{ type: 'message', block: { type: 'text', text: 'answer' } }],
-      },
-    ];
-    expect(getFirstRoundFromEntries(entries)).toEqual({
+    store.setAuthoritativeThreads([thread], 'seed');
+    expect(store.getFirstRoundForTitle('seed')).toEqual({
       userMessage: 'question',
       assistantMessage: 'answer',
     });
-    expect(getFirstRoundFromEntries([userEntry('u', 'only question')])).toBeNull();
-  });
-});
-
-describe('thread-mutations 滚动状态', () => {
-  it('setThreadScrollState 写入归一化后的整数滚动位置', () => {
-    const base: IAiThreadState = { threads: [nonEmptyThread('a')], activeThreadId: 'a' };
-    const next = setThreadScrollState(base, 'a', scroll(12.7));
-    expect(next.threads[0].scrollState?.scrollTop).toBe(13);
-  });
-
-  it('setThreadScrollState 对等价(四舍五入相同)滚动状态短路返回原状态', () => {
-    const base: IAiThreadState = { threads: [nonEmptyThread('a')], activeThreadId: 'a' };
-    const once = setThreadScrollState(base, 'a', scroll(12.7));
-    const twice = setThreadScrollState(once, 'a', scroll(13.2));
-    expect(twice).toBe(once);
   });
 });
 `;
 
-const files = [
-  { path: 'src/store/aiThread/thread-mutations.ts', content: MODULE_SRC },
-  { path: 'src/store/aiThread/thread-mutations.spec.ts', content: SPEC_SRC },
-];
+/* --------------------------------------------------------------- run it */
+function patchIndex() {
+	const target = abs(INDEX_PATH);
+	if (!existsSync(target)) {
+		throw new Error(`missing file: ${INDEX_PATH}`);
+	}
+	const raw = readFileSync(target, 'utf8');
+	const eol = detectEol(raw);
+	let content = toLf(raw);
 
-let wrote = 0;
-let skipped = 0;
-for (const file of files) {
-  const abs = resolve(REPO_ROOT, file.path);
-  if (existsSync(abs)) {
-    if (readFileSync(abs, 'utf8') === file.content) {
-      console.log('= 已存在且一致, 跳过: ' + file.path);
-      skipped += 1;
-      continue;
-    }
-    throw new Error('目标已存在且内容不同, 已中止以免覆盖: ' + file.path);
-  }
-  if (CHECK_ONLY) {
-    console.log('+ 将创建: ' + file.path);
-    continue;
-  }
-  mkdirSync(dirname(abs), { recursive: true });
-  writeFileSync(abs, file.content, 'utf8');
-  console.log('✓ 已创建: ' + file.path);
-  wrote += 1;
+	if (content.includes('authoritativeThreads')) {
+		console.log(`[index] already applied (found authoritativeThreads): ${INDEX_PATH}`);
+		return false;
+	}
+
+	content = replaceOnce('index/imports', content, OLD_IMPORTS, NEW_IMPORTS);
+	content = replaceOnce('index/body', content, OLD_B, NEW_B);
+
+	// post-assertions
+	for (const needle of [
+		`import * as threadMutations from '@/store/aiThread/thread-mutations';`,
+		'function applyReduceEvent(',
+		'function setAuthoritativeThreads(',
+		'flushPendingScrollStateUpdates,',
+	]) {
+		if (!content.includes(needle)) {
+			throw new Error(`[index] post-assert failed, missing: ${needle}`);
+		}
+	}
+
+	if (CHECK) {
+		console.log(`[index] would patch: ${INDEX_PATH}`);
+		return true;
+	}
+	writeFileSync(target, fromLf(content, eol), 'utf8');
+	console.log(`[index] patched: ${INDEX_PATH}`);
+	return true;
 }
-console.log(CHECK_ONLY ? '--check 完成(未写盘)。' : '完成: 新建 ' + wrote + ' 个, 跳过 ' + skipped + ' 个。');
+
+patchIndex();
+writeFileIdempotent('spec', SPEC_PATH, SPEC_CONTENTS);
+
+console.log(CHECK ? 'check complete (no writes).' : 'Brick 2b applied.');
