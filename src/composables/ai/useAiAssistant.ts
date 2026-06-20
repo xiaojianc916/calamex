@@ -406,13 +406,35 @@ export const useAiAssistant = (options: IUseAiAssistantOptions) => {
       ...activeThread,
       messages: activeThread.messages.filter((message) => message.id !== assistantMessageId),
     });
-    aiThreadStore.overlayStreamingActiveThread(
-      buildLiveThreadFromSidecarEvents(events, {
-        baseThread: seedThread,
-        assistantMessageId,
-        now: new Date().toISOString(),
-      }),
+    const liveThread = buildLiveThreadFromSidecarEvents(events, {
+      baseThread: seedThread,
+      assistantMessageId,
+      now: new Date().toISOString(),
+    });
+    // reduce 回放出的 assistant entry 不带 stream(runtimeEvents/token/活动文案),overlay 会以它
+    // 覆盖掉 commit 写入的带 stream 版本,导致流式过程中 activeMessages 丢失 stream。用本回合消息
+    // 缓冲里同 id 助手消息的 stream/patches 富集该 entry,保留富时间线又不丢流式快照。
+    const bufferedAssistant = displayMessages.value.find(
+      (message) => message.id === assistantMessageId,
     );
+    const enrichedThread =
+      bufferedAssistant && (bufferedAssistant.stream || bufferedAssistant.patches?.length)
+        ? {
+            ...liveThread,
+            entries: liveThread.entries.map((entry) =>
+              entry.type === 'assistant_message' && entry.id === assistantMessageId
+                ? {
+                    ...entry,
+                    ...(bufferedAssistant.stream ? { stream: bufferedAssistant.stream } : {}),
+                    ...(bufferedAssistant.patches && bufferedAssistant.patches.length > 0
+                      ? { patches: [...bufferedAssistant.patches] }
+                      : {}),
+                  }
+                : entry,
+            ),
+          }
+        : liveThread;
+    aiThreadStore.overlayStreamingActiveThread(enrichedThread);
   };
 
   const syncDisplayMessagesFromActiveThread = (): void => {

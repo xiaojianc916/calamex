@@ -130,6 +130,7 @@ export function legacyMessageToEntries(message: IAiChatMessage): IAiThreadEntry[
       chunks: assistantChunks,
       ...(message.stream !== undefined ? { stream: message.stream } : {}),
       ...(message.acpToolCalls !== undefined ? { acpToolCalls: message.acpToolCalls } : {}),
+      ...(message.patches && message.patches.length > 0 ? { patches: [...message.patches] } : {}),
     };
     entries.push(assistantEntry);
   }
@@ -284,6 +285,7 @@ export function threadEntriesToMessages(entries: readonly IAiThreadEntry[]): IAi
           ...(pendingToolCalls.length > 0 ? { toolCalls: pendingToolCalls } : {}),
           ...(entry.stream !== undefined ? { stream: entry.stream } : {}),
           ...(entry.acpToolCalls !== undefined ? { acpToolCalls: entry.acpToolCalls } : {}),
+          ...(entry.patches !== undefined ? { patches: entry.patches } : {}),
         };
         pendingToolCalls = [];
         pendingToolCreatedAt = null;

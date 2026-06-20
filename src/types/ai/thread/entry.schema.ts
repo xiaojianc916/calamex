@@ -3,7 +3,7 @@ import { z } from 'zod';
 import { aiTaskPlanStepSchema } from '@/types/ai/agent.schema';
 import { aiContextReferenceSchema } from '@/types/ai/context.schema';
 import { aiAgentPatchSummarySchema } from '@/types/ai/patch.schema';
-import { aiChatMessageStreamSnapshotSchema } from '@/types/ai/schema';
+import { aiChatMessageStreamSnapshotSchema, aiPatchSetSchema } from '@/types/ai/schema';
 import { aiThreadContentBlockSchema } from '@/types/ai/thread/content-block.schema';
 import {
   aiThreadScrollStateSchema,
@@ -51,12 +51,17 @@ export const aiThreadAssistantMessageEntrySchema = z.object({
    * `aiChatMessageStreamSnapshotSchema`（单一真源），使 entries ↔ messages 逆投影
    * 无损还原会话内 checkpoint / token / 活动文案。可选以兼容存量与非流式历史条目。
    */
-  stream: aiChatMessageStreamSnapshotSchema.optional(),
+  stream: aiChatMessageStreamSnapshotSchema.optional().catch(undefined),
   /**
    * ACP openWorld 后端的工具调用投影（对标 legacy `IAiChatMessage.acpToolCalls`）。
    * 复用本协议层 `aiThreadToolCallSchema`，逆投影原样回挂，免重放 runtimeEvents 重建。
    */
-  acpToolCalls: z.array(aiThreadToolCallSchema).optional(),
+  acpToolCalls: z.array(aiThreadToolCallSchema).optional().catch(undefined),
+  /**
+   * 顶层 patches 往返(对标 legacy IAiChatMessage.patches):折叠 diff 卡 / 回滚反向 patch 依赖。
+   * 复用 ai.schema 的 aiPatchSetSchema 单一真源,使 entries 在持久化与逆投影中无损还原。
+   */
+  patches: z.array(aiPatchSetSchema).optional(),
 });
 
 /**
