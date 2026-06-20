@@ -114,31 +114,33 @@ const aiServiceMock = vi.hoisted(() => {
       sessionId: string;
     }>
   >(async (payload) => {
-    void payload;
+    // chat 模式已迁移为「前端预生成流式关联键」：FE 在调用前用 streamSessionId 订阅，后端据此
+    // 把本回合帧的 session_id 重写为该键。Mock 据此把增量/终态 emit 在 payload.streamSessionId
+    // 上，对齐真实后端（与外部 agent 测试同款范式）。
+    const streamKey = payload.streamSessionId ?? CHAT_SESSION_ID;
+    activeChatSessionId = streamKey;
     const queued = queuedStreamResponses.shift();
     if (!queued) {
-      activeChatSessionId = CHAT_SESSION_ID;
       return {
         streamId: STREAM_ID,
         assistantMessageId: ASSISTANT_MESSAGE_ID,
         providerType: 'mastra',
         model: MOCK_MODEL,
-        sessionId: activeChatSessionId,
+        sessionId: streamKey,
       };
     }
 
-    activeChatSessionId = queued.sessionId;
     void Promise.resolve().then(() => {
       for (const chunk of queued.content.match(/.{1,24}/g) ?? []) {
-        emitChatDelta(chunk, queued.sessionId);
+        emitChatDelta(chunk, streamKey);
       }
 
       if (queued.terminalKind === 'error') {
-        emitChatError(queued.terminalMessage ?? 'AI 流式响应失败', queued.sessionId);
+        emitChatError(queued.terminalMessage ?? 'AI 流式响应失败', streamKey);
         return;
       }
 
-      emitChatDone(queued.content, queued.sessionId);
+      emitChatDone(queued.content, streamKey);
     });
 
     return {
@@ -146,7 +148,7 @@ const aiServiceMock = vi.hoisted(() => {
       assistantMessageId: queued.assistantMessageId,
       providerType: 'mastra',
       model: MOCK_MODEL,
-      sessionId: queued.sessionId,
+      sessionId: streamKey,
     };
   });
 

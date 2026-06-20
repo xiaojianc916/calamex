@@ -273,6 +273,12 @@ export const aiProviderConnectionPayloadSchema = z.object({
  * ========================================================================== */
 export const aiChatRequestSchema = z.object({
   threadId: z.string().nullable(),
+  /**
+   * 前端预生成的流式关联键（sidecar:assistantMessageId）。chat 模式发起回合前据此订阅
+   * `ai:sidecar-stream`；后端把本回合 session/update 帧的 session_id 重写为该键，实现逐
+   * token 实时渲染。与 threadId 同为 required-nullable（对齐 Rust `Option<String>`）。
+   */
+  streamSessionId: z.string().nullable(),
   messages: z.array(aiChatMessageSchema).min(1),
   references: z.array(aiContextReferenceSchema),
 });

@@ -26,10 +26,7 @@ import {
   projectSidecarEventsToToolState,
   projectSidecarExecuteResponse,
 } from '@/composables/ai/sidecar-events';
-import {
-  subscribeSidecarSessionStream,
-  subscribeSidecarStreamWithPrebuffer,
-} from '@/composables/ai/sidecar-stream-listener';
+import { subscribeSidecarSessionStream } from '@/composables/ai/sidecar-stream-listener';
 import { useAcpAvailableCommands } from '@/composables/ai/useAcpAvailableCommands';
 import { useAcpSessionConfigOptions } from '@/composables/ai/useAcpSessionConfigOptions';
 import { useAcpUsage } from '@/composables/ai/useAcpUsage';
@@ -2148,11 +2145,15 @@ export const useAiAssistant = (options: IUseAiAssistantOptions) => {
         settle();
       }
     });
-    let sidecarStream: Awaited<ReturnType<typeof subscribeSidecarStreamWithPrebuffer>> | null =
-      null;
+    const sidecarSessionId = `sidecar:${assistantMessageId}`;
+    let unlistenSidecarStream: (() => void) | null = null;
 
     try {
-      sidecarStream = await subscribeSidecarStreamWithPrebuffer((event) => {
+      // chat 模式与外部 agent 同款零竞态流式：用前端预生成的 sidecarSessionId 在发起回合
+      // 「之前」订阅 session/update 帧；后端 chat_stream_via_acp 据此把本回合帧的 session_id
+      // 由 ACP 会话 UUID 重写为该键（见 Rust host.agent_chat_with_stream_key），逐 token 实时
+      // 渲染。取代旧的「subscribeSidecarStreamWithPrebuffer + 回合返回后 bind(sessionId)」。
+      unlistenSidecarStream = await subscribeSidecarSessionStream(sidecarSessionId, (event) => {
         if (requestAbortController.signal.aborted) {
           return;
         }
@@ -2161,19 +2162,12 @@ export const useAiAssistant = (options: IUseAiAssistantOptions) => {
 
       const stream = await aiService.chatStream({
         threadId,
+        streamSessionId: sidecarSessionId,
         messages: requestMessages,
         references,
       });
 
       activeStreamId.value = stream.streamId;
-
-      const sessionId = stream.sessionId;
-
-      if (!sessionId) {
-        throw new Error('AI 流式响应缺少 sessionId,无法订阅 ACP 流。');
-      }
-
-      sidecarStream.bind(sessionId);
 
       if (requestAbortController.signal.aborted) {
         settle();
@@ -2189,6 +2183,8 @@ export const useAiAssistant = (options: IUseAiAssistantOptions) => {
       });
 
       liveEventBuffer.flush();
+      unlistenSidecarStream?.();
+      unlistenSidecarStream = null;
 
       if (!errorMessage.value) {
         clearAttachedFiles({ revokePreviews: false });
@@ -2201,7 +2197,7 @@ export const useAiAssistant = (options: IUseAiAssistantOptions) => {
       }
     } finally {
       liveEventBuffer.dispose();
-      sidecarStream?.dispose();
+      unlistenSidecarStream?.();
       activeStreamResolve.value = null;
       activeStreamId.value = null;
       activeAbortController.value = null;

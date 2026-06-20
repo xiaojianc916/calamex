@@ -172,6 +172,17 @@ async fn chat_stream_via_acp(
             )
         })?;
     let session_key = session_id.to_string();
+    // 前端预生成的「流式关联键」（sidecar:assistantMessageId）：用于把本回合 session/update
+    // 帧的 session_id 由 ACP 会话 UUID 重写为该键，实现逐 token 实时渲染（与外部 agent 的
+    // prompt_with_stream_key 同构）。缺省（未携带 stream_session_id）时回退为 ACP 会话 id，
+    // 行为同旧路径。
+    let stream_key = payload
+        .stream_session_id
+        .as_deref()
+        .map(str::trim)
+        .filter(|key| !key.is_empty())
+        .map(str::to_owned)
+        .unwrap_or_else(|| session_key.clone());
 
     // Batch 2c 接线：主聊天回合改走 agent/chat 扩展方法（满信封），替代原生 host.chat
     // 的有损 session/update 累积路径。ask 模式语义不变；过程增量仍经同一 EventSink
@@ -195,10 +206,16 @@ async fn chat_stream_via_acp(
     let request = crate::acp::chat_request_to_agent_chat_ext(chat_request, session_key.clone());
 
     let task_app = app.clone();
-    let task_session_key = session_key.clone();
+    // 终态 done/error 经 app.emit 合成补发，键用前端流式关联键 stream_key（FE 据此订阅）；
+    // task_acp_session_id 为本回合 ACP 会话 id，供 agent_chat_with_stream_key 登记帧重写表。
+    let task_session_key = stream_key.clone();
+    let task_acp_session_id = session_key.clone();
 
     tokio::spawn(async move {
-        match host.agent_chat(request).await {
+        match host
+            .agent_chat_with_stream_key(request, &task_acp_session_id, Some(task_session_key.as_str()))
+            .await
+        {
             Ok(response) => {
                 audit::emit(AiAuditEventKind::ChatCompleted);
                 let result_text = response.result.clone().unwrap_or_default();
@@ -225,7 +242,7 @@ async fn chat_stream_via_acp(
         assistant_message_id,
         provider_type: response_provider_type,
         model,
-        session_id: session_key,
+        session_id: stream_key,
     })
 }
 

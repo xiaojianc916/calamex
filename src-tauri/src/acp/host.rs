@@ -511,6 +511,44 @@ impl AcpHost {
         })
     }
 
+    /// 同 agent_chat，但额外接受前端预生成的「流式关联键」用于帧重写（内置 chat 回合专用）。
+    ///
+    /// 背景与 prompt_with_stream_key 同构：agent_chat 回合的过程增量经 session/update 帧由
+    /// EventSink 转发，帧以 ACP 会话 UUID 标记，而前端在回合发起前只知道自造的
+    /// sidecar:assistantMessageId 键并据此订阅过滤。若不重写，整轮 live 帧会被前端丢弃、退化
+    /// 为末尾一次性渲染。
+    ///
+    /// 实现：调用方传入本回合的 ACP 会话 id 与前端预生成的 stream_key，若 stream_key 非空且
+    /// 不等于 ACP id，就在重写表登记「acp_session_id → stream_key」（sink 据此重写帧的
+    /// session_id），跑完 agent_chat 后立即移除（无论成败），把重写作用域严格限定在本回合。
+    /// stream_key 为 None / 空白 / 恰等于 ACP id 时不登记，sink 原样透传（行为同旧 agent_chat）。
+    pub async fn agent_chat_with_stream_key(
+        &self,
+        request: AgentChatExtRequest,
+        acp_session_id: &str,
+        stream_key: Option<&str>,
+    ) -> Result<AgentSidecarResponsePayload, AcpClientError> {
+        let override_key = stream_key
+            .map(str::trim)
+            .filter(|key| !key.is_empty() && *key != acp_session_id);
+        let registered = if let Some(key) = override_key {
+            self.stream_key_overrides
+                .lock()
+                .insert(acp_session_id.to_string(), key.to_string());
+            true
+        } else {
+            false
+        };
+
+        let outcome = self.agent_chat(request).await;
+
+        if registered {
+            self.stream_key_overrides.lock().remove(acp_session_id);
+        }
+
+        outcome
+    }
+
     /// 恢复一轮挂起在审批门的 agent 对话（扩展方法 `calamex.dev/agent/chat/resolve`）。
     ///
     /// 镜像旧 http `/approval/resolve` → `runtime.resolveApproval(...)`：携带上一段返回信封里
