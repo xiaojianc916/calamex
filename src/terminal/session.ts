@@ -95,6 +95,12 @@ export type {
 
 // ─── TerminalSession 类 ───────────────────────────────────────────────────────
 
+// PTY 列宽/行高的合法区间常量：取代散落的魔法数字，集中表达约束。
+const TERMINAL_MIN_COLS = 2;
+const TERMINAL_MAX_COLS = 5000;
+const TERMINAL_MIN_ROWS = 1;
+const TERMINAL_MAX_ROWS = 3000;
+
 /**
  * 终端会话实体，遵循 R-20.2.3 定义的接口契约；一个实例对应一个 PTY 连接。
  */
@@ -348,20 +354,18 @@ export class TerminalSession {
           }, TERMINAL_COLD_START_HINT_DELAY_MS)
         : null;
     try {
-      let payload = await this._tauri.ensureTerminalSession({
+      // 列宽/行高入参在两处 ensureTerminalSession 调用中完全一致，抽成 builder 防漂移；
+      // 边界改用 #14 注入的具名常量。
+      const buildEnsureArgs = () => ({
         sessionId: this.id,
         cwd: null,
-        cols: resolveInteger(terminal.cols, DEFAULT_COLS, 2, 5000),
-        rows: resolveInteger(terminal.rows, DEFAULT_ROWS, 1, 3000),
+        cols: resolveInteger(terminal.cols, DEFAULT_COLS, TERMINAL_MIN_COLS, TERMINAL_MAX_COLS),
+        rows: resolveInteger(terminal.rows, DEFAULT_ROWS, TERMINAL_MIN_ROWS, TERMINAL_MAX_ROWS),
       });
+      let payload = await this._tauri.ensureTerminalSession(buildEnsureArgs());
       if (!payload.created && this._resetOrphanedBackendSession) {
         await this._tauri.closeTerminalSession({ sessionId: this.id });
-        payload = await this._tauri.ensureTerminalSession({
-          sessionId: this.id,
-          cwd: null,
-          cols: resolveInteger(terminal.cols, DEFAULT_COLS, 2, 5000),
-          rows: resolveInteger(terminal.rows, DEFAULT_ROWS, 1, 3000),
-        });
+        payload = await this._tauri.ensureTerminalSession(buildEnsureArgs());
       }
       this.session.value = payload;
       this._startHeartbeat();

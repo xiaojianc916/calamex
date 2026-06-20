@@ -292,8 +292,12 @@ pub async fn agent_sidecar_resolve_ask_user(
 #[specta::specta]
 pub async fn agent_sidecar_restore_checkpoint(
     app: AppHandle,
-    payload: AgentSidecarCheckpointRestoreRequest,
+    mut payload: AgentSidecarCheckpointRestoreRequest,
 ) -> Result<AgentSidecarResponsePayload, String> {
+    // 与 chat / resolve_* 同源：检查点恢复会驱动续跑回合，缺省时也需补齐主模型配置，
+    // 否则 sidecar 退回未注入的环境兜底并报"AI 模型未配置"。
+    ensure_model_config(&mut payload.model_config)?;
+
     acp_host(&app)?
         .restore_checkpoint(crate::acp::CheckpointRestoreRequest {
             run_id: payload.run_id,

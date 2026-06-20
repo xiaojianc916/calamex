@@ -625,3 +625,12 @@ fn get_git_pull_request_support_parses_gitlab_remote() -> Result<(), String> {
 
     Ok(())
 }
+
+#[test]
+fn short_commit_id_truncates_to_seven_hex_chars() {
+    // 钉住 short_commit_id 依赖的 \`{:.7}\` 截断行为：避免 gix ObjectId 的 Display
+    // 实现变更后短 OID 长度悄悄改变而无人察觉。
+    let id = gix::ObjectId::from_hex(b"1234567890abcdef1234567890abcdef12345678")
+        .expect("valid sha1 hex");
+    assert_eq!(short_commit_id(id), "1234567");
+}

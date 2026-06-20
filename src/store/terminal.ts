@@ -204,7 +204,7 @@ export const useTerminalRuntimeStore = defineStore('terminal-runtime', () => {
 
   // -- per-session active run helpers (FE-1 多会话) ---------------------------
 
-  /** 写入/更新某会话的活动运行镜像。重新赋值 Map 以可靠触发依赖它的 computed/watcher。 */
+  /** 写入/更新某会话的活动运行镜像。Vue 对 Map.set/delete 有响应性，原地更新即可触发依赖它的 computed/watcher。 */
   const setSessionActiveRun = (run: ITerminalRunHandle): void => {
     sessionActiveRuns.value.set(run.sessionId, run);
   };
@@ -310,9 +310,9 @@ export const useTerminalRuntimeStore = defineStore('terminal-runtime', () => {
   // -- per-session state (P0 多会话地基) ---------------------------------------
 
   /**
-   * 收到某会话的状态转移。重新赋值新 Map,确保依赖 sessionStates 的
-   * computed / watcher 可靠触发。后端仅在发生合法转移时发事件,所以这
-   * 里不再校验转移合法性,只记录目标态。
+   * 收到某会话的状态转移。Vue 对 Map.set/delete 有响应性,原地更新即可触发
+   * 依赖 sessionStates 的 computed / watcher。后端仅在发生合法转移时发事件,
+   * 所以这里不再校验转移合法性,只记录目标态。
    */
   const applySessionStateChanged = (payload: ITerminalSessionStateChangedPayload): void => {
     sessionStates.value.set(payload.sessionId, payload.to);

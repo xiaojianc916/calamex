@@ -225,6 +225,11 @@ async fn download_file_inner(
     // 校验下载字节数，防止静默截断（与上传路径保持一致）。
     if let Some(expected) = expected_size {
         ensure_expected_transfer_size(written, expected, "下载远程文件")?;
+    } else {
+        // 远端未提供 size 元数据时无法校验完整性：明确告警而非静默接受可能被截断的下载。
+        log::warn!(
+            "远端未返回文件大小，跳过下载完整性校验（remote_path={remote_path}, written={written}）。"
+        );
     }
 
     let partial_for_replace = partial.clone();
