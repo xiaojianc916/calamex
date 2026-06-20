@@ -4,8 +4,8 @@ import { useVirtualizer } from '@tanstack/vue-virtual';
 import { useTimeoutFn } from '@vueuse/core';
 import type { MarkstreamVirtualMetrics } from 'markstream-vue';
 import {
-  type ComponentPublicInstance,
   computed,
+  type ComponentPublicInstance,
   nextTick,
   onBeforeUnmount,
   provide,
@@ -90,6 +90,7 @@ const emit = defineEmits<{
 const VIRTUAL_SCROLLER_MIN_ITEM_SIZE = 96;
 // 视口外预渲染条目数:约等于原 vue-virtual-scroller 的 1200px buffer(1200 / 96 ≈ 12)。
 const VIRTUAL_SCROLLER_OVERSCAN = 12;
+// 贴底判定阈值:同时作为 scrollEndThreshold 传给虚拟器,isAtEnd()/followOnAppend 均用它。
 const BOTTOM_FOLLOW_THRESHOLD_PX = 56;
 const SCROLL_STATE_EMIT_THROTTLE_MS = 100;
 const SCROLLBAR_ACTIVE_MS = 900;
@@ -99,7 +100,6 @@ const scrollerRef = ref<HTMLElement | null>(null);
 const isScrollbarActive = ref(false);
 const showScrollButton = ref(false);
 
-let pendingBottomScrollFrame: number | null = null;
 // 滚动条激活后 SCROLLBAR_ACTIVE_MS 自动隐藏;immediate: false 仅在 activateScrollbar 时 start。
 const { start: scheduleScrollbarHide } = useTimeoutFn(
   () => {
@@ -109,7 +109,6 @@ const { start: scheduleScrollbarHide } = useTimeoutFn(
   { immediate: false },
 );
 let lastScrollStateEmitAt = 0;
-let shouldFollowBottomAfterResize = true;
 let pendingMarkdownHeightReconcileFrame: number | null = null;
 
 const entryTimeline = computed<TAiThreadEntry[]>(() =>
@@ -192,12 +191,11 @@ const virtualItems = computed<TAiThreadVirtualItem[]>(() => {
   return items;
 });
 
-// ── @tanstack/vue-virtual 接入 ──────────────────────────────────────────────
-// 滚动容器由本组件持有(.ai-chat-list__scroller);虚拟器在其内部用 sizer + 绝对定位行渲染。
-// 聊天/流式三件套参照 TanStack “Chat UIs Are Lists Until They Aren't” 指南:
+// ── @tanstack/vue-virtual 接入（滚动/跟随完全交给库）────────────────────────────────
+// 聊天场景的钉底与跟随逻辑全部交给虚拟器(参照 TanStack “Chat UIs Are Lists Until They Aren't”):
 //   - anchorTo: 'end'       末端锚定:流式增高 / prepend 历史时保持视觉位置稳定
-//   - followOnAppend: true  追加消息时,仅当用户已贴底才自动跟随,读历史时不打扰
-//   - scrollEndThreshold    贴底判定阈值,与下方手动跟随兜底共用同一阈值
+//   - followOnAppend: true  追加消息时,仅当用户已贴底(scrollEndThreshold 内)才自动跟随
+//   - scrollEndThreshold    贴底判定阈值,isAtEnd()/followOnAppend 共用
 //   - getItemKey            prepend 稳定性所必需:索引会变,需用稳定 id 找回同一条目
 const virtualizerOptions = computed(() => ({
   count: virtualItems.value.length,
@@ -237,17 +235,8 @@ const measureVirtualRow = (el: Element | ComponentPublicInstance | null): void =
 
 const getScrollElement = (): HTMLElement | null => scrollerRef.value;
 
-const getDistanceFromBottom = (element: HTMLElement): number =>
-  Math.max(0, element.scrollHeight - element.scrollTop - element.clientHeight);
-
-// 在内容变更导致 DOM 增高之前(flush: 'pre')捕获“是否已贴底”,避免增高后再判定时距离已被撑大。
-const rememberBottomFollowState = (): void => {
-  const element = getScrollElement();
-  shouldFollowBottomAfterResize = element
-    ? getDistanceFromBottom(element) <= BOTTOM_FOLLOW_THRESHOLD_PX
-    : true;
-};
-
+// 滚动遥测仍需上报给父级(跨会话持久化/恢复是应用级状态,库不管)。
+// scrollTop/scrollHeight/clientHeight 本质是 DOM 读取;distanceFromBottom 交给 getDistanceFromEnd()。
 const emitScrollState = (element: HTMLElement, force = false): void => {
   const now = performance.now();
 
@@ -261,17 +250,8 @@ const emitScrollState = (element: HTMLElement, force = false): void => {
     scrollTop: element.scrollTop,
     scrollHeight: element.scrollHeight,
     clientHeight: element.clientHeight,
-    distanceFromBottom: getDistanceFromBottom(element),
+    distanceFromBottom: chatVirtualizer.value.getDistanceFromEnd(),
   });
-};
-
-const cancelPendingBottomScroll = (): void => {
-  if (pendingBottomScrollFrame === null) {
-    return;
-  }
-
-  window.cancelAnimationFrame(pendingBottomScrollFrame);
-  pendingBottomScrollFrame = null;
 };
 
 const cancelPendingMarkdownHeightReconcile = (): void => {
@@ -283,29 +263,10 @@ const cancelPendingMarkdownHeightReconcile = (): void => {
   pendingMarkdownHeightReconcileFrame = null;
 };
 
-// 滚动到底部基于真实 scrollHeight(含 #after 槽内容),与虚拟器 totalSize 无关,确保真正贴底。
-const scrollToBottom = async (behavior: ScrollBehavior = 'auto'): Promise<void> => {
-  cancelPendingBottomScroll();
-
-  await nextTick();
-
-  pendingBottomScrollFrame = window.requestAnimationFrame(() => {
-    pendingBottomScrollFrame = null;
-
-    const element = getScrollElement();
-
-    if (!element) {
-      return;
-    }
-
-    element.scrollTo({
-      top: Math.max(0, element.scrollHeight - element.clientHeight),
-      behavior,
-    });
-
-    showScrollButton.value = false;
-    emitScrollState(element, true);
-  });
+// “跳到最新”按钮:直接用虚拟器的 scrollToEnd,与 anchorTo/isAtEnd 共用同一套末端语义。
+const handleJumpToLatest = (): void => {
+  chatVirtualizer.value.scrollToEnd({ behavior: 'smooth' });
+  showScrollButton.value = false;
 };
 
 const restoreScrollState = async (): Promise<void> => {
@@ -319,17 +280,20 @@ const restoreScrollState = async (): Promise<void> => {
 
   const scrollState = props.scrollState;
 
+  // 无保存位置(如新会话):直接跳到末端。
   if (!scrollState) {
-    await scrollToBottom('auto');
+    chatVirtualizer.value.scrollToEnd({ behavior: 'auto' });
+    showScrollButton.value = false;
     return;
   }
 
+  // 跨会话恢复是应用级持久化,库不提供;恢复原始 scrollTop 后,用 isAtEnd() 决定按钮显隐。
   element.scrollTop = Math.max(
     0,
     Math.min(scrollState.scrollTop, element.scrollHeight - element.clientHeight),
   );
 
-  showScrollButton.value = getDistanceFromBottom(element) > BOTTOM_FOLLOW_THRESHOLD_PX;
+  showScrollButton.value = !chatVirtualizer.value.isAtEnd();
   emitScrollState(element, true);
 };
 
@@ -347,14 +311,13 @@ const handleScrollerScroll = (event: Event): void => {
 
   activateScrollbar();
 
-  const distanceFromBottom = getDistanceFromBottom(element);
-  shouldFollowBottomAfterResize = distanceFromBottom <= BOTTOM_FOLLOW_THRESHOLD_PX;
-  showScrollButton.value = distanceFromBottom > BOTTOM_FOLLOW_THRESHOLD_PX;
+  // 贴底判定交给库:isAtEnd() 内部用 scrollEndThreshold,与 followOnAppend 一致。
+  showScrollButton.value = !chatVirtualizer.value.isAtEnd();
 
   emitScrollState(element);
 };
 
-// markstream 报告流式高度变化时,让虚拟器重测受影响条目(替代 vue-virtual-scroller 的 forceUpdate)。
+// markstream 报告流式高度变化时,只需让虚拟器重测;anchorTo: 'end' 会在已贴底时自动保持钉底。
 const scheduleMarkdownHeightReconcile = (metrics: MarkstreamVirtualMetrics): void => {
   if (!Number.isFinite(metrics.totalHeight) || metrics.totalHeight <= 0) {
     return;
@@ -366,12 +329,7 @@ const scheduleMarkdownHeightReconcile = (metrics: MarkstreamVirtualMetrics): voi
 
   pendingMarkdownHeightReconcileFrame = window.requestAnimationFrame(() => {
     pendingMarkdownHeightReconcileFrame = null;
-
     chatVirtualizer.value.measure();
-
-    if (shouldFollowBottomAfterResize) {
-      void scrollToBottom('auto');
-    }
   });
 };
 
@@ -401,25 +359,6 @@ const handlePlanRemoveStep = (stepId: string): void => {
   emit('planRemoveStep', stepId);
 };
 
-const bottomFollowSignature = computed(() => {
-  const lastEntry = entryTimeline.value.at(-1);
-  const lastEntryStreaming =
-    lastEntry &&
-    ((lastEntry.kind === 'assistant-text' && lastEntry.streaming) ||
-      (lastEntry.kind === 'reasoning' && lastEntry.streaming))
-      ? 'streaming'
-      : 'idle';
-
-  return [
-    'entries',
-    props.conversationId ?? '',
-    entryTimeline.value.length,
-    lastEntry?.id ?? '',
-    lastEntryStreaming,
-    props.isTyping ? 'typing' : 'idle',
-  ].join(':');
-});
-
 watch(
   () => props.conversationId,
   () => {
@@ -428,22 +367,7 @@ watch(
   { immediate: true },
 );
 
-watch(
-  bottomFollowSignature,
-  async () => {
-    rememberBottomFollowState();
-
-    await nextTick();
-
-    if (shouldFollowBottomAfterResize) {
-      await scrollToBottom('auto');
-    }
-  },
-  { flush: 'pre' },
-);
-
 onBeforeUnmount(() => {
-  cancelPendingBottomScroll();
   cancelPendingMarkdownHeightReconcile();
 });
 </script>
@@ -531,7 +455,7 @@ onBeforeUnmount(() => {
       class="ai-chat-scroll-button"
       type="button"
       aria-label="滚动到底部"
-      @click="scrollToBottom('smooth')"
+      @click="handleJumpToLatest"
     >
       ↓
     </button>

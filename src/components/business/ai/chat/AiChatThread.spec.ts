@@ -21,7 +21,7 @@ vi.mock('@/components/business/ai/thread/projection', async (importOriginal) => 
 });
 
 // 轻量替身:真实虚拟化依赖布局测量,jsdom/happy-dom 下无意义。这里让虚拟器把全部条目作为
-// 可见行返回,从而只验证 AiChatThread 的渲染与事件逻辑(逐条目渲染、after-message 边界、事件转发)。
+// 可见行返回,并补齐聊天专用方法(isAtEnd/getDistanceFromEnd/scrollToEnd),只验证渲染与事件逻辑。
 vi.mock('@tanstack/vue-virtual', () => ({
   useVirtualizer: (optionsInput: unknown) => {
     const resolveOptions = (): { count: number } => {
@@ -52,6 +52,9 @@ vi.mock('@tanstack/vue-virtual', () => ({
         getTotalSize: () => buildRows().length * 96,
         measureElement: () => {},
         measure: () => {},
+        isAtEnd: () => true,
+        getDistanceFromEnd: () => 0,
+        scrollToEnd: () => {},
       },
     };
   },
