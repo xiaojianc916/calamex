@@ -321,17 +321,8 @@ export class SidecarAgent extends AbstractAgent {
   // -------------------------------------------------------------------------
   override clone(): SidecarAgent {
     // Structured clone for messages and state so the new instance is fully
-    // isolated. Falls back to JSON clone if structuredClone is unavailable.
-    const cloneDeep = <T>(v: T): T => {
-      if (typeof structuredClone === 'function') {
-        try {
-          return structuredClone(v);
-        } catch {
-          // fallthrough
-        }
-      }
-      return JSON.parse(JSON.stringify(v)) as T;
-    };
+    // isolated (Node >= 26 / modern WebView guarantee structuredClone).
+    const cloneDeep = <T>(v: T): T => structuredClone(v);
 
     return new SidecarAgent({
       agentId: this.agentId,

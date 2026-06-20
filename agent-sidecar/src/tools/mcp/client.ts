@@ -342,7 +342,7 @@ const createMastraMcpServers = (
   const result: Record<string, MastraMCPServerDefinition> = {};
 
   for (const config of configs) {
-    if (Object.prototype.hasOwnProperty.call(result, config.name)) {
+    if (Object.hasOwn(result, config.name)) {
       errors.push(`MCP server 名称重复：${config.name}，已忽略后续配置。`);
       continue;
     }

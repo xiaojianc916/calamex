@@ -106,7 +106,7 @@ const agentRun = useAiAgentRun();
 const agentNetwork = useAiAgentNetwork();
 const webSources = useAiWebSources();
 const aiThreadStore = useAiThreadStore();
-const renderThreadEntries = computed(() => aiThreadStore.activeEntries);
+const renderThreadEntries = computed(() => aiThreadStore.renderActiveEntries);
 const suggestionPool = useCopilotSuggestions();
 const suggestionRows = computed(() =>
   splitSuggestionsIntoRows(suggestionPool.suggestions.value, 3),

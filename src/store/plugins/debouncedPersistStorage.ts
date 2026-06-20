@@ -281,7 +281,7 @@ export const restoreAttachmentPreviewPointers = async <T>(
     return { changed: false, value };
   }
 
-  const cloned = JSON.parse(JSON.stringify(value)) as T;
+  const cloned = structuredClone(value);
   const changed = await restoreAttachmentPreviewPayloads(cloned);
 
   return changed ? { changed, value: cloned } : { changed: false, value };
