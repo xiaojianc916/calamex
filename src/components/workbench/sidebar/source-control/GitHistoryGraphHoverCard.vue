@@ -326,8 +326,10 @@ const formatAbsolute = (value: string | null | undefined): string => {
   color: #1a7f37;
 }
 
-.git-history-graph-hovercard-open > span:first-child {
-  width: 13px;
-  height: 13px;
+/* 复制 / GitHub 图标（lucide 与 GithubIcon 均渲染为 svg）统一为 14px 正常尺寸。 */
+.git-history-graph-hovercard-action svg,
+.git-history-graph-hovercard-open svg {
+  width: 14px;
+  height: 14px;
 }
 </style>
