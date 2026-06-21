@@ -305,9 +305,19 @@ impl AcpRuntime {
 /// 回合累积器在 host 侧 `EventSink` 已先行消费原始帧，故此处投影不影响响应信封重建。
 fn stream_emitter<R: Runtime>(app: AppHandle<R>) -> StreamEmitter {
     Arc::new(move |frame: AcpStreamFrame| {
-        let Some(ui_event) = super::ui_event::session_notification_to_ui_event(&frame.event) else {
-            return;
-        };
+    // [diag·临时] 打印每条 session/update 原始判别式与内容类型；验证完即回退本段。
+    log::info!(
+        target: "acp",
+        "[diag] session/update raw: session_id={:?} seq={} sessionUpdate={:?} content.type={:?}",
+        frame.session_id,
+        frame.seq,
+        frame.event.get("update").and_then(|u| u.get("sessionUpdate")).and_then(|v| v.as_str()),
+        frame.event.get("update").and_then(|u| u.get("content")).and_then(|c| c.get("type")).and_then(|v| v.as_str()),
+    );
+    let Some(ui_event) = super::ui_event::session_notification_to_ui_event(&frame.event) else {
+        log::info!(target: "acp", "[diag] ^ dropped (未投影) seq={}", frame.seq);
+        return;
+    };
         let payload = AcpStreamFrame {
             session_id: frame.session_id,
             seq: frame.seq,

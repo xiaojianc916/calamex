@@ -2863,6 +2863,7 @@ export const useAiAssistant = (options: IUseAiAssistantOptions) => {
     agentSteps,
     attachedFiles,
     restoringCheckpointId,
+    activeAgentMessageId,
     sendButtonLabel,
     // provider config actions
     loadConfig,
