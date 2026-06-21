@@ -738,6 +738,18 @@ export interface IAcpSessionModesState {
   availableModes: IAcpSessionMode[];
 }
 
+/* ----------------------------------------------------------------------------
+ * ACP 会话当前模式变更 UI 事件（session/update 的 current_mode_update）
+ *
+ * 外部 agent（如 Kimi）在回合中自行切换模式时，经 session/update 下发
+ * current_mode_update（仅携带新的 currentModeId）。前端据此回灌模式选择器高亮，
+ * 不整份替换 availableModes（沿用 ai_get_session_modes 拉取的完整列表）。
+ * -------------------------------------------------------------------------- */
+export type TAgentUiEventCurrentModeUpdate = {
+  type: 'current_mode_update';
+  currentModeId: string | null;
+};
+
 export type TAgentUiEvent =
   | { type: 'message_delta'; text: string; phase?: 'stage' | 'final' }
   | { type: 'agent_event'; event: TAgentRuntimeEvent }
@@ -750,6 +762,7 @@ export type TAgentUiEvent =
   | TAgentUiEventAvailableCommandsUpdate
   | TAgentUiEventUsageUpdate
   | TAgentUiEventConfigOptionUpdate
+  | TAgentUiEventCurrentModeUpdate
   | { type: 'approval_required'; request: IApprovalRequest }
   | { type: 'ask_user_required'; requestId: string; request: IAskUserRequest }
   | { type: 'diff_ready'; files: IDiffFile[] }

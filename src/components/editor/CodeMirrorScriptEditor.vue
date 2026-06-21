@@ -1137,14 +1137,14 @@ const createSearchPanel = (view: EditorView): Panel => {
   const positionAt = (clientX: number, clientY: number): void => {
     const width = dom.offsetWidth || SEARCH_POPUP_WIDTH;
     const height = dom.offsetHeight || SEARCH_POPUP_ESTIMATED_HEIGHT;
-    const x = Math.min(
-      Math.max(SEARCH_POPUP_MARGIN, clientX),
-      window.innerWidth - width - SEARCH_POPUP_MARGIN,
-    );
-    const y = Math.min(
-      Math.max(SEARCH_POPUP_MARGIN, clientY),
-      window.innerHeight - height - SEARCH_POPUP_MARGIN,
-    );
+    // 严格夹在编辑器盒子(.cm-editor)内,任意方向都不许越界
+    const bounds = view.dom.getBoundingClientRect();
+    const minX = bounds.left + SEARCH_POPUP_MARGIN;
+    const maxX = bounds.right - width - SEARCH_POPUP_MARGIN;
+    const minY = bounds.top + SEARCH_POPUP_MARGIN;
+    const maxY = bounds.bottom - height - SEARCH_POPUP_MARGIN;
+    const x = maxX < minX ? minX : Math.min(Math.max(minX, clientX), maxX);
+    const y = maxY < minY ? minY : Math.min(Math.max(minY, clientY), maxY);
     dom.style.left = `${x}px`;
     dom.style.top = `${y}px`;
     const rect = dom.getBoundingClientRect();
@@ -1314,14 +1314,14 @@ const createGotoLinePanel = (view: EditorView): Panel => {
   const positionAt = (clientX: number, clientY: number): void => {
     const width = dom.offsetWidth || SEARCH_POPUP_WIDTH;
     const height = dom.offsetHeight || SEARCH_POPUP_ESTIMATED_HEIGHT;
-    const x = Math.min(
-      Math.max(SEARCH_POPUP_MARGIN, clientX),
-      window.innerWidth - width - SEARCH_POPUP_MARGIN,
-    );
-    const y = Math.min(
-      Math.max(SEARCH_POPUP_MARGIN, clientY),
-      window.innerHeight - height - SEARCH_POPUP_MARGIN,
-    );
+    // 严格夹在编辑器盒子(.cm-editor)内,任意方向都不许越界
+    const bounds = view.dom.getBoundingClientRect();
+    const minX = bounds.left + SEARCH_POPUP_MARGIN;
+    const maxX = bounds.right - width - SEARCH_POPUP_MARGIN;
+    const minY = bounds.top + SEARCH_POPUP_MARGIN;
+    const maxY = bounds.bottom - height - SEARCH_POPUP_MARGIN;
+    const x = maxX < minX ? minX : Math.min(Math.max(minX, clientX), maxX);
+    const y = maxY < minY ? minY : Math.min(Math.max(minY, clientY), maxY);
     dom.style.left = `${x}px`;
     dom.style.top = `${y}px`;
     const rect = dom.getBoundingClientRect();

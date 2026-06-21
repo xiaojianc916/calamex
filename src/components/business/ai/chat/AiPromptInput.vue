@@ -1119,6 +1119,7 @@ onBeforeUnmount(() => {
                   <span class="ai-settings-menu-label">添加skill</span>
                 </DropdownMenuItem>
                 <DropdownMenuItem
+                  v-if="!sessionModesVisible"
                   class="ai-settings-menu-item is-mode"
                   @pointerenter="handleModeMenuItemPointerEnter"
                   @pointerleave="scheduleModeSubmenuClose"
@@ -1182,6 +1183,30 @@ onBeforeUnmount(() => {
                 </DropdownMenuItem>
               </DropdownMenuContent>
             </DropdownMenu>
+            <Select
+              v-if="sessionModesVisible"
+              :model-value="sessionModeCurrentId"
+              :disabled="disabled || isSessionModeSwitching"
+              @update:model-value="handleSessionModeChange"
+            >
+              <SelectTrigger aria-label="选择模式" class="ai-agent-trigger">
+                <SlidersHorizontal class="ai-agent-trigger__icon" :stroke-width="1.6" />
+                <span class="ai-agent-trigger__label" v-text="resolveSessionModeLabel()"></span>
+              </SelectTrigger>
+              <SelectContent side="top" align="start" :side-offset="8" class="ai-agent-content">
+                <SelectLabel class="ai-agent-section-label">模式</SelectLabel>
+                <SelectGroup>
+                  <SelectItem
+                    v-for="mode in sessionModeList"
+                    :key="mode.id"
+                    class="ai-agent-item"
+                    :value="mode.id"
+                  >
+                    <span class="ai-agent-item__label" v-text="mode.name"></span>
+                  </SelectItem>
+                </SelectGroup>
+              </SelectContent>
+            </Select>
             <template v-if="sessionConfigOptionsVisible">
               <Select
                 v-for="configOption in sessionConfigOptionList"
