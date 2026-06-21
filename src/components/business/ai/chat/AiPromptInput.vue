@@ -22,7 +22,6 @@ import {
   ContextContentHeader,
   ContextInputUsage,
   ContextOutputUsage,
-  ContextTrigger,
 } from '@/components/ai-elements/context';
 import { PromptInputAttachmentsDisplay } from '@/components/ai-elements/prompt-input';
 import { collectConnectedPlatformIds } from '@/components/business/ai/chat/connected-platforms';
@@ -309,9 +308,13 @@ const modeSelectItems = computed<{ key: string; label: string }[]>(() =>
   selectedAgent.value === 'kimi' ? KIMI_MODES : modeOptions,
 );
 
-const modeSelectValue = computed(() =>
-  selectedAgent.value === 'kimi' ? kimiMode.value : activeMode.value,
-);
+// 当前模式 key：若原始值（如 kimiMode 默认 'normal'）不在可选集中，回退到首项，
+// 保证子菜单入口文案与勾选状态始终有效、不为空。
+const modeSelectValue = computed(() => {
+  const raw = selectedAgent.value === 'kimi' ? kimiMode.value : activeMode.value;
+  const items = modeSelectItems.value;
+  return items.some((mode) => mode.key === raw) ? raw : (items[0]?.key ?? raw);
+});
 
 const handleModeSelect = (value: unknown): void => {
   if (typeof value !== 'string' || !value.trim()) {
@@ -324,7 +327,7 @@ const handleModeSelect = (value: unknown): void => {
   handleModeChange(value);
 };
 
-// 二级菜单入口右侧展示的当前模式文案。
+// 二级菜单入口左侧展示的当前模式文案。
 const modeSelectValueLabel = computed(() => {
   const current = modeSelectItems.value.find((mode) => mode.key === modeSelectValue.value);
   return current?.label ?? '';
@@ -911,8 +914,7 @@ onMounted(() => {
                 <DropdownMenuSub>
                   <DropdownMenuSubTrigger class="ai-settings-menu-item ai-settings-submenu-trigger">
                     <Route class="ai-settings-menu-icon" />
-                    <span class="ai-settings-menu-label">模式</span>
-                    <span class="ai-settings-menu-value" v-text="modeSelectValueLabel"></span>
+                    <span class="ai-settings-menu-label" v-text="modeSelectValueLabel"></span>
                     <ChevronRight class="ai-settings-menu-chevron" />
                   </DropdownMenuSubTrigger>
                   <DropdownMenuSubContent
