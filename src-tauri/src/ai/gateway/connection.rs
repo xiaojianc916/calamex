@@ -133,7 +133,7 @@ async fn test_provider_connection_candidate(
     if reply.is_empty() {
         return Err(errors::error(
             "AI_RESPONSE_INVALID",
-            "模型连接成功但未返回任何内容，请确认所选模型与对应厂商 API Key 是否匹配可用。",
+            "模型连接成功但未返回任何内容，请确认所选模型与对应 API Key 是否匹配可用。",
         ));
     }
 

@@ -248,7 +248,7 @@ fn build_codex_client_config() -> AcpClientConfig {
 //
 // `kimi acp` 从 `KIMI_CODE_HOME/config.toml` 读取 provider / model / 凭证（默认 `~/.kimi`，本程序经
 // kimi_child_env 注入 KIMI_CODE_HOME 指向托管目录，见 kimi-cli「Config Files」文档）。本项目已在
-// AI 设置里保存了网关模型（selected_model + base_url）与逐厂商 API Key（CredentialStore），
+// AI 设置里保存了网关模型（selected_model + base_url）与逐API Key（CredentialStore），
 // 统一由 `crate::ai::gateway::current_sidecar_model_config()` 组装。这里把它映射为一个 OpenAI
 // 兼容（`openai`）provider 写入托管 KIMI_CODE_HOME 的 config.toml，免去用户在终端 `/login`，
 // 直接复用项目内既有 Key——解决「acp protocol error: Authentication required」。

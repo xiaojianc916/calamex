@@ -93,7 +93,7 @@ pub fn save_credentials(
             alias: alias
                 .map(str::trim)
                 .filter(|value| !value.is_empty())
-                .unwrap_or("厂商 API Key")
+                .unwrap_or("API Key")
                 .to_string(),
             key_preview: mask_api_key(api_key),
         },

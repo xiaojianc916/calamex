@@ -640,7 +640,7 @@ watch(
                     <div class="ai-credential-key-wrap">
                       <Input id="ai-provider-key" v-model="providerKey" class="ai-credential-input ai-credential-key-input"
                         :type="isKeyVisible ? 'text' : 'password'" autocomplete="off" spellcheck="false"
-                        :placeholder="selectedProviderHasCredentials ? '输入新 Key 后覆盖保存' : '粘贴厂商 API Key'"
+                        :placeholder="selectedProviderHasCredentials ? '输入新 Key 后覆盖保存' : '粘贴 API Key'"
                         :aria-invalid="providerKeyError ? 'true' : 'false'" />
                       <Button class="ai-credential-key-toggle" variant="ghost" size="icon-sm" type="button"
                         :aria-label="isKeyVisible ? '隐藏 API Key' : '显示 API Key'" @click="isKeyVisible = !isKeyVisible">

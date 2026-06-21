@@ -221,7 +221,7 @@ export const aiModelEndpointConfigPayloadSchema = z.object({
 export const aiCredentialStatusPayloadSchema = z.object({
   providerId: z.string().min(1),
   hasCredentials: z.boolean(),
-  alias: z.string().default('厂商 API Key'),
+  alias: z.string().default('API Key'),
   keyPreview: z.string().default(''),
 });
 

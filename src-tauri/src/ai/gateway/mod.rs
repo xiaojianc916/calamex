@@ -239,7 +239,7 @@ fn credential_status_payloads(
                 alias: stored
                     .map(|entry| entry.alias.trim())
                     .filter(|value| !value.is_empty())
-                    .unwrap_or("厂商 API Key")
+                    .unwrap_or("API Key")
                     .to_string(),
                 key_preview: stored
                     .map(|entry| entry.key_preview.trim())

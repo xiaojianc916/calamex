@@ -56,9 +56,9 @@ import { escapeRegExp } from '@/utils/core/regex';
 import { normalizeFileSystemPath } from '@/utils/file/path';
 
 /**
- * Tavily（信息源）API Key 的落盘策略 —— 与厂商 API Key 不同的「受控例外」。
+ * Tavily（信息源）API Key 的落盘策略 —— 与API Key 不同的「受控例外」。
  *
- * 厂商 API Key 走 `ai_save_credentials`/`ai_connect_provider` 存入操作系统 keyring，
+ * API Key 走 `ai_save_credentials`/`ai_connect_provider` 存入操作系统 keyring，
  * store 与前端不持有明文。但 Tavily Key 由 agent-sidecar（独立子进程）在启动时从
  * **进程环境变量**读取，拿不到桌面端的 OS keyring，因此只能以明文写入 sidecar 的
  * `agent-sidecar/.env`（下方常量）。
