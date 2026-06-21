@@ -70,17 +70,6 @@ const AI_MARKDOWN_HISTORY_MAX_LIVE_NODES = 320;
 const AI_MARKDOWN_LIVE_NODE_BUFFER = 60;
 const AI_MARKDOWN_VIRTUAL_EMIT_INTERVAL_MS = 96;
 const AI_MARKDOWN_VIRTUAL_HEIGHT_DIFF_THRESHOLD_PX = 4;
-const AI_MARKDOWN_SMOOTH_STREAMING_OPTIONS = {
-  minCharsPerSecond: 60,
-  maxCharsPerSecond: 1400,
-  targetLatencyMs: 700,
-  catchUpLatencyMs: 250,
-  catchUpThreshold: 400,
-  maxCommitFps: 60,
-  startDelayMs: 0,
-  maxCharsPerCommit: 96,
-  flushOnFinish: false,
-} as const;
 
 interface IAiMarkdownNormalizeCacheRecord {
   content: string;
@@ -175,10 +164,11 @@ const renderContent = ref(normalizedContent.value);
 // markstream-vue 1.x 的 `smooth-streaming="auto"` 会在首次客户端渲染时避免 pacing 静态内容；
 // 这对历史消息是对的，但对正在流式输出、且可能被虚拟列表重新挂载的消息会把当前 backlog 一次性渲染出来。
 // 官方源码里只有 `smooth-streaming=true` 会强制首屏也进入 smooth stream controller，因此：
-//  - 当前组件只要见过 live stream，就保持 smooth-streaming=true，直到组件卸载；final 只触发 finish，
-//    不 flush，避免“先空白、最后整段突然出现”。
+//  - 当前组件只要见过 live stream，就保持 smooth-streaming=true，直到组件卸载；final 只触发 finish。
 //  - 历史/恢复消息没有见过 live stream，smooth-streaming=false，完整内容立即渲染，不慢放旧消息。
 //  - typewriter=false 只关闭光标；平滑揭示由 smooth streaming + max-live-nodes=0 负责。
+//  - smooth-streaming-options 不再自定义，沿用官方默认 pacing（开箱即用，避免自调参数把逐字揭示
+//    变成一块一块的 catch-up 突发）。
 const smoothStreaming = computed(() => {
   if (isShellWindowResizing.value) {
     return false;
@@ -368,7 +358,6 @@ onBeforeUnmount(() => {
       mode="chat"
       :defer-nodes-until-visible="false"
       :smooth-streaming="smoothStreaming"
-      :smooth-streaming-options="AI_MARKDOWN_SMOOTH_STREAMING_OPTIONS"
       :parse-coalesce-ms="AI_MARKDOWN_PARSE_COALESCE_MS"
       :fade="false"
       :max-live-nodes="maxLiveNodes"
