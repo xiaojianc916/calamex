@@ -2,7 +2,7 @@
 import { useFrontendTool } from '@copilotkit/vue';
 import { Bot, SquarePen, Trash2 } from '@lucide/vue';
 import { AnimatePresence, Motion } from 'motion-v';
-import { computed, defineAsyncComponent, onMounted, ref } from 'vue';
+import { computed, defineAsyncComponent, onMounted, ref, watch } from 'vue';
 import { z } from 'zod';
 import QuestionPrompt from '@/components/ai-elements/question/QuestionPrompt.vue';
 import AiChatThread from '@/components/business/ai/chat/AiChatThread.vue';
@@ -741,6 +741,47 @@ const handleAgentBackendChange = (agent: unknown): void => {
     }
   }
 };
+
+// Kimi 默认即为当前会话后端，但 loadModes 此前仅在「手动切到 kimi」时触发；
+// 这里补齐：挂载即 kimi、会话切换、以及每轮回复结束（此时 ACP 会话已建立）后
+// 重新拉取内置模式，确保 availableModes 非空、模式选择器能正常替换硬编码菜单。
+const refreshKimiSessionModes = (): void => {
+  if (sessionAgentBackend.value !== 'kimi') {
+    return;
+  }
+
+  const threadId = assistant.activeConversationId.value;
+
+  if (!threadId) {
+    return;
+  }
+
+  void assistant.acpSessionConfigOptions.loadConfigOptions(threadId).catch(() => undefined);
+  void assistant.acpSessionModes.loadModes(threadId).catch(() => undefined);
+};
+
+watch(
+  () =>
+    [
+      sessionAgentBackend.value,
+      assistant.activeConversationId.value,
+      assistant.isSending.value,
+    ] as const,
+  ([backend, threadId, isSending], previous) => {
+    if (backend !== 'kimi' || !threadId || isSending) {
+      return;
+    }
+
+    const backendChanged = !previous || previous[0] !== backend;
+    const threadChanged = !previous || previous[1] !== threadId;
+    const sendingJustFinished = Boolean(previous) && previous[2] === true;
+
+    if (backendChanged || threadChanged || sendingJustFinished) {
+      refreshKimiSessionModes();
+    }
+  },
+  { immediate: true },
+);
 
 // ACP 会话配置项切换（config_options 全量迁移发送侧）：选择器回投透传给
 // useAcpSessionConfigOptions.selectConfigOption（乐观更新 + setSessionConfigOption 回投，

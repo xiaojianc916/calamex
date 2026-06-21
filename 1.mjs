@@ -1,98 +1,110 @@
-// scripts/codemods/floating-search-border-shadow.mjs
-// 浮动查找/转到弹窗:宽度更小、图标更小、边框=双层描边(#e7e6e4/#efefee)+8层1px阴影(#f7→#fe)
-// 用法: node scripts/codemods/floating-search-border-shadow.mjs
+#!/usr/bin/env node
+// apply-kimi-modes-trigger.mjs
+// 补齐 Kimi 内置模式选择器的加载触发：挂载即 kimi / 会话切换 / 每轮回复结束后重新 loadModes。
+// 用法：node apply-kimi-modes-trigger.mjs [--dry]
 import { readFileSync, writeFileSync } from 'node:fs';
+import { resolve } from 'node:path';
 
-const FILE = 'src/components/editor/CodeMirrorScriptEditor.vue';
-const src0 = readFileSync(FILE, 'utf8');
+const DRY = process.argv.includes('--dry');
+const ROOT = process.cwd();
+const TARGET = 'src/components/business/ai/shell/AiAssistantPanel.vue';
 
-// 幂等:最外层 10px 阴影环已存在则跳过
-if (src0.includes('0 0 0 10px #fefefe')) {
-  console.log('[skip] 边框/阴影叠加已应用,无需重复。');
-  process.exit(0);
+const blockLines = [
+  '// Kimi 默认即为当前会话后端，但 loadModes 此前仅在「手动切到 kimi」时触发；',
+  '// 这里补齐：挂载即 kimi、会话切换、以及每轮回复结束（此时 ACP 会话已建立）后',
+  '// 重新拉取内置模式，确保 availableModes 非空、模式选择器能正常替换硬编码菜单。',
+  'const refreshKimiSessionModes = (): void => {',
+  "  if (sessionAgentBackend.value !== 'kimi') {",
+  '    return;',
+  '  }',
+  '',
+  '  const threadId = assistant.activeConversationId.value;',
+  '',
+  '  if (!threadId) {',
+  '    return;',
+  '  }',
+  '',
+  '  void assistant.acpSessionConfigOptions.loadConfigOptions(threadId).catch(() => undefined);',
+  '  void assistant.acpSessionModes.loadModes(threadId).catch(() => undefined);',
+  '};',
+  '',
+  'watch(',
+  '  () =>',
+  '    [',
+  '      sessionAgentBackend.value,',
+  '      assistant.activeConversationId.value,',
+  '      assistant.isSending.value,',
+  '    ] as const,',
+  '  ([backend, threadId, isSending], previous) => {',
+  "    if (backend !== 'kimi' || !threadId || isSending) {",
+  '      return;',
+  '    }',
+  '',
+  '    const backendChanged = !previous || previous[0] !== backend;',
+  '    const threadChanged = !previous || previous[1] !== threadId;',
+  '    const sendingJustFinished = Boolean(previous) && previous[2] === true;',
+  '',
+  '    if (backendChanged || threadChanged || sendingJustFinished) {',
+  '      refreshKimiSessionModes();',
+  '    }',
+  '  },',
+  '  { immediate: true },',
+  ');',
+];
+
+const edits = [
+  {
+    label: 'import watch from vue',
+    marker: 'defineAsyncComponent, onMounted, ref, watch }',
+    old: "import { computed, defineAsyncComponent, onMounted, ref } from 'vue';",
+    new: "import { computed, defineAsyncComponent, onMounted, ref, watch } from 'vue';",
+  },
+  {
+    label: 'insert refreshKimiSessionModes + watch',
+    marker: 'const refreshKimiSessionModes',
+    anchor: '// ACP 会话配置项切换（config_options 全量迁移发送侧）：选择器回投透传给',
+  },
+];
+
+const path = resolve(ROOT, TARGET);
+let content = readFileSync(path, 'utf8');
+const eol = content.includes('\r\n') ? '\r\n' : '\n';
+let edited = 0;
+let skipped = 0;
+
+for (const edit of edits) {
+  if (content.includes(edit.marker)) {
+    console.log(`SKIP  ${edit.label} (marker present)`);
+    skipped += 1;
+    continue;
+  }
+
+  let oldStr;
+  let newStr;
+  if (edit.anchor) {
+    oldStr = edit.anchor;
+    newStr = blockLines.join(eol) + eol + eol + edit.anchor;
+  } else {
+    oldStr = edit.old;
+    newStr = edit.new;
+  }
+
+  const count = content.split(oldStr).length - 1;
+  if (count !== 1) {
+    console.error(`FAIL  ${edit.label} (${count} matches, expected 1)`);
+    process.exit(1);
+  }
+
+  content = content.split(oldStr).join(newStr);
+  console.log(`EDIT  ${edit.label}`);
+  edited += 1;
 }
 
-let src = src0;
-const replaceOnce = (from, to) => {
-  const i = src.indexOf(from);
-  if (i === -1) throw new Error(`锚点未找到:\n${from}`);
-  if (src.indexOf(from, i + from.length) !== -1) throw new Error(`锚点不唯一:\n${from}`);
-  src = src.slice(0, i) + to + src.slice(i + from.length);
-};
-
-// 1) JS 定位回退宽度常量 320 → 272(与 CSS 对齐)
-replaceOnce('const SEARCH_POPUP_WIDTH = 320;', 'const SEARCH_POPUP_WIDTH = 272;');
-
-// 2) 弹窗宽度 320 → 272
-replaceOnce(
-  '  width: 320px;\n  max-width: calc(100vw - 24px);',
-  '  width: 272px;\n  max-width: calc(100vw - 24px);',
-);
-
-// 3) 边框/阴影:单层描边 → 双层描边 + 8 层 1px 阴影(圆角保持 12px)
-replaceOnce(
-  `  background: #ffffff;
-  border: 1px solid #e6e8eb;
-  border-radius: 12px;
-  box-shadow: 0 10px 30px rgba(15, 23, 42, 0.12), 0 0 0 0.5px rgba(15, 23, 42, 0.04);`,
-  `  background: #ffffff;
-  border: none;
-  border-radius: 12px;
-  box-shadow:
-    0 0 0 1px #e7e6e4,
-    0 0 0 2px #efefee,
-    0 0 0 3px #f7f7f7,
-    0 0 0 4px #f8f8f8,
-    0 0 0 5px #f9f9f9,
-    0 0 0 6px #fafafa,
-    0 0 0 7px #fbfbfb,
-    0 0 0 8px #fcfcfc,
-    0 0 0 9px #fdfdfd,
-    0 0 0 10px #fefefe;`,
-);
-
-// 4) 拖拽手柄盒子 22 → 20
-replaceOnce('  width: 22px;\n  height: 22px;', '  width: 20px;\n  height: 20px;');
-
-// 5) 手柄图标 15 → 13
-replaceOnce(
-  `.cm-floating-search__grip svg {
-  width: 15px;
-  height: 15px;
-}`,
-  `.cm-floating-search__grip svg {
-  width: 13px;
-  height: 13px;
-}`,
-);
-
-// 6) 图标按钮盒子 26 → 22,圆角 7 → 6
-replaceOnce(
-  `  width: 26px;
-  height: 26px;
-  flex-shrink: 0;
-  padding: 0;
-  border: none;
-  border-radius: 7px;`,
-  `  width: 22px;
-  height: 22px;
-  flex-shrink: 0;
-  padding: 0;
-  border: none;
-  border-radius: 6px;`,
-);
-
-// 7) 按钮图标 16 → 14
-replaceOnce(
-  `.cm-floating-search__btn svg {
-  width: 16px;
-  height: 16px;
-}`,
-  `.cm-floating-search__btn svg {
-  width: 14px;
-  height: 14px;
-}`,
-);
-
-writeFileSync(FILE, src, 'utf8');
-console.log('[done] 已更新:宽度272 / 图标缩小 / 双层描边+8层阴影。');
+if (DRY) {
+  console.log(`DRY   edited=${edited} skipped=${skipped} (no write)`);
+} else if (edited > 0) {
+  writeFileSync(path, content, 'utf8');
+  console.log(`WROTE ${TARGET} edited=${edited} skipped=${skipped}`);
+} else {
+  console.log(`NOOP  edited=${edited} skipped=${skipped}`);
+}
