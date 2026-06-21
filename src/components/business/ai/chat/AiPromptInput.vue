@@ -913,6 +913,7 @@ onMounted(() => {
                   <button
                     type="button"
                     class="ai-network-switch"
+                    @pointerdown.prevent
                     :class="{ 'is-on': networkPermissionEnabled }"
                     :aria-pressed="networkPermissionEnabled"
                     tabindex="-1"
@@ -923,7 +924,7 @@ onMounted(() => {
                 </DropdownMenuItem>
                 <DropdownMenuItem
                   class="ai-settings-menu-item"
-                  @select.prevent="handleOpenInformationSources"
+                  @select="handleOpenInformationSources"
                 >
                   <Network class="ai-settings-menu-icon" />
                   <span class="ai-settings-menu-label">我的信息源</span>
@@ -931,7 +932,7 @@ onMounted(() => {
                 </DropdownMenuItem>
                 <DropdownMenuItem
                   class="ai-settings-menu-item"
-                  @select.prevent="openSkillsManager"
+                  @select="openSkillsManager"
                 >
                   <Plus class="ai-settings-menu-icon" />
                   <span class="ai-settings-menu-label">添加skill</span>
@@ -948,6 +949,7 @@ onMounted(() => {
                   <button
                     type="button"
                     class="ai-network-switch"
+                    @pointerdown.prevent
                     :class="{ 'is-on': executionAutonomous }"
                     :aria-pressed="executionAutonomous"
                     tabindex="-1"
@@ -958,7 +960,7 @@ onMounted(() => {
                 </DropdownMenuItem>
                 <DropdownMenuItem
                   class="ai-settings-menu-item"
-                  @select.prevent="handleOpenPersonalization"
+                  @select="handleOpenPersonalization"
                 >
                   <Paintbrush class="ai-settings-menu-icon" />
                   <span class="ai-settings-menu-label">个性化</span>
@@ -1590,8 +1592,8 @@ onMounted(() => {
 
 .ai-network-switch {
   position: relative;
-  width: 36px;
-  height: 20px;
+  width: 30px;
+  height: 18px;
   border: 0;
   border-radius: 999px;
   background: var(--ai-menu-border);
@@ -1607,8 +1609,8 @@ onMounted(() => {
   position: absolute;
   top: 2px;
   left: 2px;
-  width: 16px;
-  height: 16px;
+  width: 14px;
+  height: 14px;
   border-radius: 999px;
   background: #ffffff;
   box-shadow: 0 1px 2px color-mix(in srgb, var(--text-primary) 16%, transparent);
@@ -1616,7 +1618,7 @@ onMounted(() => {
 }
 
 .ai-network-switch.is-on .ai-network-switch__thumb {
-  transform: translateX(16px);
+  transform: translateX(12px);
 }
 
 .ai-model-content {
