@@ -317,7 +317,29 @@ const handleScrollerScroll = (event: Event): void => {
   emitScrollState(element);
 };
 
-// markstream 报告流式高度变化时,只需让虚拟器重测;anchorTo: 'end' 会在已贴底时自动保持钉底。
+// 仅重测“当前已渲染的行”各自的真实高度,绝不调用 chatVirtualizer.measure()。
+// measure() 会清空整张测量缓存、把所有行回退到 estimateSize(96px):窗口从任务栏最小化/恢复时,
+// resize 结束的内容 flush 会让 markstream 重新 emit heightChange,若此时整表重置,短消息(如“我的”
+// 消息,真实高度约 40px)会先按 96px 撑开、再被真实高度收回,造成消息块“先大后小”地抽动。
+// measureElement 只更新对应行的真实测量值,其余行(含离屏行)的缓存原样保留,跨恢复不再跳变。
+const reconcileRenderedRowHeights = (): void => {
+  const scrollElement = scrollerRef.value;
+
+  if (!scrollElement) {
+    return;
+  }
+
+  const renderedRows = scrollElement.querySelectorAll<HTMLElement>(
+    '.ai-chat-list__row[data-index]',
+  );
+
+  renderedRows.forEach((rowElement) => {
+    chatVirtualizer.value.measureElement(rowElement);
+  });
+};
+
+// markstream 报告流式高度变化时,做非破坏式重测(只重测已渲染行),保留其余行的测量缓存,
+// 避免窗口恢复时的整表重置抽动;anchorTo: 'end' 会在已贴底时自动保持钉底。
 const scheduleMarkdownHeightReconcile = (metrics: MarkstreamVirtualMetrics): void => {
   if (!Number.isFinite(metrics.totalHeight) || metrics.totalHeight <= 0) {
     return;
@@ -329,7 +351,7 @@ const scheduleMarkdownHeightReconcile = (metrics: MarkstreamVirtualMetrics): voi
 
   pendingMarkdownHeightReconcileFrame = window.requestAnimationFrame(() => {
     pendingMarkdownHeightReconcileFrame = null;
-    chatVirtualizer.value.measure();
+    reconcileRenderedRowHeights();
   });
 };
 
