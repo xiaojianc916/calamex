@@ -132,7 +132,6 @@ export const useAiAgentRun = () => {
   const runLifecycleTokens = new Map<string, number>();
 
   const getRuns = (): IAiAgentRun[] => unref(store.runs);
-  const getActiveRun = (): IAiAgentRun | null => unref(store.activeRun);
   const getPendingToolConfirmation = () => unref(store.pendingToolConfirmation);
 
   const setMode = (nextMode: TAiAgentPanelMode): void => {

@@ -749,6 +749,12 @@ export type AiChatRequest = {
 	threadId: string | null,
 	messages: AiChatMessagePayload[],
 	references: AiContextReferencePayload[],
+	/**
+	 *  前端预生成的流式关联键（sidecar:assistantMessageId）。chat 模式发起回合前据此
+	 *  订阅 ai:sidecar-stream；后端把本回合 session/update 帧的 session_id 重写为该键，
+	 *  实现逐 token 实时渲染。与 thread_id 同为可选可空（前端总会携带，缺省回退会话 id）。
+	 */
+	streamSessionId: string | null,
 };
 
 export type AiChatStreamPayload = {

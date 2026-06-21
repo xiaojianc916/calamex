@@ -27,14 +27,15 @@ export const useAiProviderConfig = ({
     // config.value 变为 nullish，导致面板里所有读取 config.value.selectedModel 的 computed
     // 崩溃（Vue render failed）。这里用默认配置兜底，保证 config 永远是合法 payload，
     // 正常返回值时行为不变。
-    config.value = (await aiService.getConfig()) ?? createDefaultAiConfigPayload();
+    config.value =
+      ((await aiService.getConfig()) as IAiConfigPayload) ?? createDefaultAiConfigPayload();
   };
 
   const saveConfig = async (
     nextConfig: IAiConfigPayload,
     role: TAiModelRole = 'main',
   ): Promise<void> => {
-    config.value = await aiService.saveConfig({
+    config.value = (await aiService.saveConfig({
       role,
       providerType:
         role === 'narrator' ? nextConfig.narrator.providerType : nextConfig.providerType,
@@ -44,7 +45,7 @@ export const useAiProviderConfig = ({
       inlineCompletionEnabled: nextConfig.inlineCompletionEnabled,
       chatEnabled: nextConfig.chatEnabled,
       agentEnabled: nextConfig.agentEnabled,
-    });
+    })) as IAiConfigPayload;
   };
 
   const saveCredentials = async (
@@ -52,11 +53,11 @@ export const useAiProviderConfig = ({
     providerId: string,
     alias?: string,
   ): Promise<void> => {
-    config.value = await aiService.saveCredentials({
+    config.value = (await aiService.saveCredentials({
       providerId,
       alias,
       apiKey,
-    });
+    })) as IAiConfigPayload;
   };
 
   const getProviderIdForRoleConfig = (nextConfig: IAiConfigPayload, role: TAiModelRole): string => {
@@ -113,7 +114,7 @@ export const useAiProviderConfig = ({
     // 不在保存时做在线连通性验证。因此保存 Key 不会因为一次网络往返的超时/失败被打断，
     // 也不会误报「连接测试未通过」。连接测试改由用户显式点击「测试」按钮触发
     // （testProviderConfig / testProvider）。
-    config.value = result.config;
+    config.value = result.config as IAiConfigPayload;
 
     // 返回后端给出的保存确认文案（纯保存模式下 test 恒为 ok，仅作为「已保存」反馈）。
     return result.test.message;

@@ -21,7 +21,7 @@ export const useAiConversationTitles = (deps: IUseAiConversationTitlesDeps) => {
   const { conversationStore } = deps;
 
   const pendingTitleThreadIds = new Set<string>();
-  const pendingTitleRetryTimers = new Map<string, ReturnType<typeof window.setTimeout>>();
+  const pendingTitleRetryTimers = new Map<string, number>();
   const titleRetryAttemptByThreadId = new Map<string, number>();
 
   const clearConversationTitleRetryTimer = (threadId: string): void => {

@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { ref } from 'vue';
 import { aiService } from '@/services/ipc/ai.service';
+import type { IAiConfigPayload } from '@/types/ai';
 import { useAiProviderConfig } from './useAiAssistant.provider-config';
 
 // 仅 mock 运行期依赖；类型 import 在编译期被擦除，无需 mock。
@@ -40,7 +41,7 @@ vi.mock('@/constants/ai/providers', () => ({
 
 type TConnectResult = Awaited<ReturnType<typeof aiService.connectProvider>>;
 
-const buildConfigInput = () => ({
+const buildConfigInput = (): IAiConfigPayload => ({
   providerType: 'mastra',
   selectedModel: 'deepseek/deepseek-v4-pro',
   baseUrl: null,
