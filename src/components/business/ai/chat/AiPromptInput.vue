@@ -171,7 +171,7 @@ const modeOptions: IAiPromptModeOption[] = [
 
 // Kimi Code 官方内置模式（固定集合，非 ACP 动态公示）。
 const KIMI_MODES: { key: string; label: string }[] = [
-  { key: 'normal', label: 'Default' },
+  { key: 'default', label: 'Default' },
   { key: 'plan', label: 'Plan' },
   { key: 'auto', label: 'Auto' },
   { key: 'yolo', label: 'YOLO' },
