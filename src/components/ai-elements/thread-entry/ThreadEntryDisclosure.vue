@@ -1,7 +1,8 @@
 <script setup lang="ts">
 import { ChevronDown, ChevronRight } from '@lucide/vue';
+import { AnimatePresence, motion } from 'motion-v';
 import type { HTMLAttributes } from 'vue';
-import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible';
+import { Collapsible, CollapsibleTrigger } from '@/components/ui/collapsible';
 import { cn } from '@/lib/utils';
 
 /**
@@ -11,6 +12,10 @@ import { cn } from '@/lib/utils';
  *
  * `leadingChevron` 对齐 Zed 工具调用行：折叠箭头（▶ 展开转为 ▼）放在行首最左侧，
  * 位于工具图标之前；此时隐藏行尾箭头。默认（思考块等）仍为行尾箭头。
+ *
+ * 展开 / 折叠过渡由 motion-v 驱动：高度做弹簧(spring)插值、配合透明度淑入淑出，
+ * 形成更自然的开合动画（替代原 tw-animate 的线性 slide/fade）。由 AnimatePresence
+ * 管理进 / 出场，故折叠时内容在退场动画结束后才卸载。
  *
  * 纯展示：展开状态由上层受控（`open` + `update:open`），组件自身不持有长期状态，
  * 也不感知任何业务含义；所有内容通过插槽注入。
@@ -73,20 +78,23 @@ const handleUpdateOpen = (value: boolean): void => {
         <ChevronDown class="thread-entry-disclosure__chevron size-4 shrink-0 text-muted-foreground transition-transform group-data-[state=open]:rotate-180" v-if="!props.disabled && !props.leadingChevron" aria-hidden="true" />
       </button>
     </CollapsibleTrigger>
-    <CollapsibleContent
-      v-if="!props.disabled"
-      :class="
-        cn(
-          'overflow-hidden outline-none',
-          'data-[state=closed]:animate-out data-[state=open]:animate-in',
-          'data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0',
-          'data-[state=closed]:slide-out-to-top-1 data-[state=open]:slide-in-from-top-1',
-        )
-      "
-    >
-      <div class="thread-entry-disclosure__content mt-1 min-w-0 pl-6">
-        <slot name="content" />
-      </div>
-    </CollapsibleContent>
+    <AnimatePresence :initial="false">
+      <motion.div
+        v-if="!props.disabled && props.open"
+        key="thread-entry-disclosure-content"
+        class="thread-entry-disclosure__panel overflow-hidden outline-none"
+        :initial="{ height: 0, opacity: 0 }"
+        :animate="{ height: 'auto', opacity: 1 }"
+        :exit="{ height: 0, opacity: 0 }"
+        :transition="{
+          height: { type: 'spring', stiffness: 320, damping: 34, mass: 0.9 },
+          opacity: { duration: 0.2, ease: 'easeOut' },
+        }"
+      >
+        <div class="thread-entry-disclosure__content mt-1 min-w-0 pl-6">
+          <slot name="content" />
+        </div>
+      </motion.div>
+    </AnimatePresence>
   </Collapsible>
 </template>
