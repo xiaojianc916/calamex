@@ -144,12 +144,19 @@ export const useWorkspaceSearch = (options: IUseWorkspaceSearchOptions) => {
   let searchResultsByScopeState = createEmptyResultsByScope();
   let searchGroupsByScopeState = createEmptyGroupsByScope();
 
+  // 同一次搜索内按 resultKey 复用 item 对象（含其惰性 snippetSegments 缓存）：流式预览阶段
+  // 已建好的内容命中 item，在命令最终权威结果覆盖时直接复用，避免整集重建与随之而来的 GC。
+  const resultItemCache = new Map<string, ISearchResultItem>();
+
+  const buildResultKey = (result: IWorkspaceSearchResult): string =>
+    `${result.kind}:${result.path}:${result.lineNumber ?? 0}:${result.matchStart ?? -1}:${result.matchEnd ?? -1}`;
+
   const toResultItem = (result: IWorkspaceSearchResult): ISearchResultItem => {
     let cachedSegments: ISnippetSegment[] | null = null;
     return {
       path: result.path,
       relativePath: result.relativePath,
-      resultKey: `${result.kind}:${result.path}:${result.lineNumber ?? 0}:${result.matchStart ?? -1}:${result.matchEnd ?? -1}`,
+      resultKey: buildResultKey(result),
       reason: result.kind,
       get snippetSegments(): ISnippetSegment[] {
         if (cachedSegments) return cachedSegments;
@@ -211,7 +218,12 @@ export const useWorkspaceSearch = (options: IUseWorkspaceSearchOptions) => {
     }
     resultChunks.value = [...resultChunks.value, results];
     for (const result of results) {
-      const item = toResultItem(result);
+      const key = buildResultKey(result);
+      let item = resultItemCache.get(key);
+      if (!item) {
+        item = toResultItem(result);
+        resultItemCache.set(key, item);
+      }
       appendResultToScope('all', item);
       appendResultToScope(item.reason, item);
     }
@@ -223,6 +235,11 @@ export const useWorkspaceSearch = (options: IUseWorkspaceSearchOptions) => {
     resultChunks.value = [];
     searchResultsByScopeState = createEmptyResultsByScope();
     searchGroupsByScopeState = createEmptyGroupsByScope();
+    // 仅在「重置为空」（新搜索开始 / 清空 / 出错）时丢弃复用缓存；命令最终权威结果覆盖流式
+    // 预览时（results 非空）保留缓存，使同 resultKey 的内容命中 item 直接复用、避免整集重建。
+    if (results.length === 0) {
+      resultItemCache.clear();
+    }
     appendBackendResults(results);
     if (results.length === 0) {
       searchResultsRevision.value += 1;
@@ -328,6 +345,18 @@ export const useWorkspaceSearch = (options: IUseWorkspaceSearchOptions) => {
     appendBackendResults(nextResults);
   };
 
+  // 流式刷新间隔随已累积结果数自适应放大：结果越多，每次刷新触发的全量重算
+  // （searchResultGroups / flatSearchRows / 虚拟化器 measure）越贵，故降低刷新频率，
+  // 把整段流式的重算总量从 ~O(N²) 拉回近 O(N)。仍是渐进出结果，只是到几千条后刷新
+  // 粒度变粗——人眼本就追不动高频刷新的几千条，体感无损。
+  const nextStreamFlushDelayMs = (): number => {
+    const accumulated = searchResultsByScopeState.all.length;
+    if (accumulated >= 8000) return 480;
+    if (accumulated >= 2000) return 240;
+    if (accumulated >= 500) return 96;
+    return SEARCH_STREAM_FLUSH_INTERVAL_MS;
+  };
+
   const scheduleStreamResultsFlush = (): void => {
     if (streamResultsFlushTimer) {
       return;
@@ -335,7 +364,7 @@ export const useWorkspaceSearch = (options: IUseWorkspaceSearchOptions) => {
     streamResultsFlushTimer = setTimeout(() => {
       streamResultsFlushTimer = null;
       flushPendingStreamResults();
-    }, SEARCH_STREAM_FLUSH_INTERVAL_MS);
+    }, nextStreamFlushDelayMs());
   };
 
   const invalidateInFlightSearch = (): void => {

@@ -1547,16 +1547,16 @@ onMounted(() => {
 
 .ai-settings-menu {
   position: relative;
-  width: min(300px, calc(100vw - 24px));
+  width: min(248px, calc(100vw - 24px));
   padding: 5px;
   overflow: visible;
-  border: 1px solid #eeedeb;
+  border: none;
   border-radius: 8px;
-  box-shadow: var(--ai-menu-shadow);
+  box-shadow: 0 0 0 1px #e7e6e4, 0 0 0 2px #efefee, 0 0 0 3px #f7f7f7, 0 0 0 4px #f8f8f8, 0 0 0 5px #f9f9f9, 0 0 0 6px #fafafa, 0 0 0 7px #fbfbfb, 0 0 0 8px #fcfcfc, 0 0 0 9px #fdfdfd, 0 0 0 10px #fefefe;
 }
 .ai-settings-menu-item {
   display: grid;
-  grid-template-columns: 18px minmax(0, 1fr) auto auto;
+  grid-template-columns: 16px minmax(0, 1fr) auto auto;
   gap: 9px;
   min-height: 34px;
   align-items: center;
@@ -1575,8 +1575,8 @@ onMounted(() => {
 
 .ai-settings-menu-icon,
 .ai-settings-menu-chevron {
-  width: 18px;
-  height: 18px;
+  width: 16px;
+  height: 16px;
   color: var(--ai-menu-text);
   stroke-width: 1.8;
 }

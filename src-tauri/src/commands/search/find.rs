@@ -640,18 +640,18 @@ fn search_one_file_content(
                                 return false;
                             }
                         };
-                        let match_start = match count_to_u32(
-                            byte_to_char_offset(line, found.start()),
-                            "匹配起始列",
-                        ) {
+                        let match_start_chars = byte_to_char_offset(line, found.start());
+                        let match_start = match count_to_u32(match_start_chars, "匹配起始列") {
                             Ok(value) => value,
                             Err(error) => {
                                 conversion_error = Some(error);
                                 return false;
                             }
                         };
+                        // match_end 由 match_start 加命中片段自身码点数推出，
+                        // 省去第二次从行首到命中结尾的 O(位置) 码点计数。
                         let match_end = match count_to_u32(
-                            byte_to_char_offset(line, found.end()),
+                            match_start_chars + line[found.start()..found.end()].chars().count(),
                             "匹配结束列",
                         ) {
                             Ok(value) => value,
