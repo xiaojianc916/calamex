@@ -41,24 +41,24 @@ describe('AiThreadReasoning', () => {
     vi.useRealTimers();
   });
 
-  it('流式时标题做微光(shimmer)并显示“正在推理…”', () => {
+  it('流式时标题做微光(shimmer)并显示“Thinking”', () => {
     const wrapper = mount(AiThreadReasoning, {
       props: { entry: makeEntry({ streaming: true }), open: false },
       global: { stubs },
     });
     const title = wrapper.find('.ai-thread-reasoning__title');
     expect(title.classes()).toContain('is-streaming');
-    expect(title.text()).toBe('正在推理…');
+    expect(title.text()).toBe('Thinking');
   });
 
-  it('完成态标题不再微光,显示“推理”,且不显示用时', () => {
+  it('完成态标题不再微光,显示“Thinking”,且不显示用时', () => {
     const wrapper = mount(AiThreadReasoning, {
       props: { entry: makeEntry({ streaming: false }), open: false },
       global: { stubs },
     });
     const title = wrapper.find('.ai-thread-reasoning__title');
     expect(title.classes()).not.toContain('is-streaming');
-    expect(title.text()).toBe('推理');
+    expect(title.text()).toBe('Thinking');
     expect(wrapper.find('.ai-thread-reasoning__elapsed').exists()).toBe(false);
   });
 
