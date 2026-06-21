@@ -5,7 +5,9 @@ use super::scan::{
 };
 use super::stream::ContentBatchSink;
 use super::types::{WorkspaceSearchRequest, WorkspaceSearchResult, WorkspaceSearchResultKind};
-use super::util::{byte_to_char_offset, count_to_u32, i64_to_i32, trim_line, u64_to_u32};
+use super::util::{
+    byte_to_char_offset, count_to_u32, i64_to_i32, trim_line, u64_to_u32, window_around_match,
+};
 use ast_grep_language::{LanguageExt, SupportLang};
 use grep_matcher::Matcher as GrepMatcher;
 use grep_regex::RegexMatcherBuilder;
@@ -254,6 +256,9 @@ pub(super) fn search_file_names(
                     line_text: None,
                     match_start: None,
                     match_end: None,
+                    window_start: None,
+                    truncated_left: false,
+                    truncated_right: false,
                     score: i64_to_i32(-(score as i64), "搜索评分")?,
                 }))
             },
@@ -403,6 +408,19 @@ fn search_one_file_fuzzy(
         let first = indices.iter().copied().min().unwrap_or(0);
         let last = indices.iter().copied().max().unwrap_or(first);
         let line_number = count_to_u32(line_index + 1, "行号")?;
+        let trimmed_line = trim_line(line);
+        let match_start_byte = trimmed_line
+            .char_indices()
+            .nth(first as usize)
+            .map(|(offset, _)| offset)
+            .unwrap_or(trimmed_line.len());
+        let match_end_byte = trimmed_line
+            .char_indices()
+            .nth(last as usize + 1)
+            .map(|(offset, _)| offset)
+            .unwrap_or(trimmed_line.len());
+        let (windowed_text, window_start, truncated_left, truncated_right) =
+            window_around_match(&trimmed_line, match_start_byte, match_end_byte);
 
         local.push(WorkspaceSearchResult {
             path: path_display.clone(),
@@ -410,9 +428,12 @@ fn search_one_file_fuzzy(
             name: file.name.clone(),
             kind: WorkspaceSearchResultKind::Content,
             line_number: Some(line_number),
-            line_text: Some(trim_line(line)),
+            line_text: Some(windowed_text),
             match_start: Some(first),
             match_end: Some(last + 1),
+            window_start: Some(window_start),
+            truncated_left,
+            truncated_right,
             // 与精确内容命中保持一致的评分量级（line*4 + 列），确保 all 范围下
             // 文件名命中（负分）仍排在内容命中之前，且内容内部按位置排序。
             score: i64_to_i32((line_number as i64 * 4) + first as i64, "搜索评分")?,
@@ -468,13 +489,16 @@ pub(super) fn search_structural_contents(
                     .saturating_sub(line_range.start)
                     .min(line.len())
                     .max(match_start);
+                let trimmed_line = trim_line(line);
+                let (windowed_text, window_start, truncated_left, truncated_right) =
+                    window_around_match(&trimmed_line, match_start, match_end);
                 local.push(WorkspaceSearchResult {
                     path: path_display.clone(),
                     relative_path: file.relative_path.clone(),
                     name: file.name.clone(),
                     kind: WorkspaceSearchResultKind::Content,
                     line_number: Some(count_to_u32(start.line() + 1, "行号")?),
-                    line_text: Some(trim_line(line)),
+                    line_text: Some(windowed_text),
                     match_start: Some(count_to_u32(
                         byte_to_char_offset(line, match_start),
                         "匹配起始列",
@@ -483,6 +507,9 @@ pub(super) fn search_structural_contents(
                         byte_to_char_offset(line, match_end),
                         "匹配结束列",
                     )?),
+                    window_start: Some(window_start),
+                    truncated_left,
+                    truncated_right,
                     score: i64_to_i32(
                         ((start.line() + 1) as i64 * 4) + start.byte_point().1 as i64,
                         "搜索评分",
@@ -553,6 +580,9 @@ pub(super) fn search_symbols(
                     line_text: Some(symbol.line_text.clone()),
                     match_start: None,
                     match_end: None,
+                    window_start: None,
+                    truncated_left: false,
+                    truncated_right: false,
                     score: i64_to_i32(-(score as i64) + symbol.line_number as i64, "搜索评分")?,
                 }))
             },
@@ -638,15 +668,20 @@ fn search_one_file_content(
                                 return false;
                             }
                         };
+                        let (windowed_text, window_start, truncated_left, truncated_right) =
+                            window_around_match(&line_text, found.start(), found.end());
                         results.push(WorkspaceSearchResult {
                             path: path_display.clone(),
                             relative_path: file.relative_path.clone(),
                             name: file.name.clone(),
                             kind: WorkspaceSearchResultKind::Content,
                             line_number: Some(line_number),
-                            line_text: Some(line_text.clone()),
+                            line_text: Some(windowed_text),
                             match_start: Some(match_start),
                             match_end: Some(match_end),
+                            window_start: Some(window_start),
+                            truncated_left,
+                            truncated_right,
                             score,
                         });
                         matched_in_file += 1;

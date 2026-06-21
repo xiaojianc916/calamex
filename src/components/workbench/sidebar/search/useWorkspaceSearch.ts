@@ -154,20 +154,32 @@ export const useWorkspaceSearch = (options: IUseWorkspaceSearchOptions) => {
       get snippetSegments(): ISnippetSegment[] {
         if (cachedSegments) return cachedSegments;
         const rawSnippetText = result.lineText ?? result.name;
+        // 后端已把命中所在行裁成窗口文本（lineText）；matchStart/End 是原行内的绝对码点偏移，
+        // 减去 windowStart 才是命中在窗口文本内的高亮区间。
+        const windowStart = result.windowStart ?? 0;
         const rawMatchRange =
           result.matchStart !== null && result.matchEnd !== null
-            ? ([result.matchStart, result.matchEnd] as [number, number])
+            ? ([result.matchStart - windowStart, result.matchEnd - windowStart] as [number, number])
             : null;
         const preview =
           result.lineText === null
             ? { text: rawSnippetText, range: rawMatchRange }
             : trimBoundaryWhitespaceWithRange(rawSnippetText, rawMatchRange);
-        cachedSegments =
-          result.kind === 'content' && preview.range
-            ? toAnchoredSnippetSegments(buildMatchSegments(preview.text, preview.range))
-            : toAnchoredSnippetSegments(
-                matcher.value.highlight(trimBoundaryWhitespace(preview.text)),
-              );
+        if (result.kind === 'content' && preview.range) {
+          let segments = toAnchoredSnippetSegments(buildMatchSegments(preview.text, preview.range));
+          // 窗口两侧仍有内容被裁时补数据级省略号（与替换预览口径一致）。
+          if (result.truncatedLeft) {
+            segments = [{ text: '…', matched: false, part: 'prefix' }, ...segments];
+          }
+          if (result.truncatedRight) {
+            segments = [...segments, { text: '…', matched: false, part: 'suffix' }];
+          }
+          cachedSegments = segments;
+        } else {
+          cachedSegments = toAnchoredSnippetSegments(
+            matcher.value.highlight(trimBoundaryWhitespace(preview.text)),
+          );
+        }
         return cachedSegments;
       },
       score: result.score,

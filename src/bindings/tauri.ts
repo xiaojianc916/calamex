@@ -2282,6 +2282,15 @@ export type WorkspaceSearchResult = {
 	lineText: string | null,
 	matchStart: number | null,
 	matchEnd: number | null,
+	/**
+	 *  line_text 已按显示列预算裁成窗口文本；window_start 是窗口首字符在原始整行中的码点
+	 *  偏移。前端用 match_start - window_start 得到命中在窗口文本内的高亮区间；match_start /
+	 *  match_end 仍是原行内的绝对码点偏移（用于编辑器跳转与结果去重）。无窗口结果为 None。
+	 */
+	windowStart?: number | null,
+	/**  窗口左 / 右两侧是否仍有被裁掉的内容；前端据此渲染数据级省略号（与替换预览口径一致）。 */
+	truncatedLeft?: boolean,
+	truncatedRight?: boolean,
 	score: number,
 };
 
