@@ -838,6 +838,9 @@ export const shikiEditorChromeTheme = EditorView.theme(
       backgroundColor: SHIKI_BACKGROUND,
       color: '#6e7781',
       border: 'none',
+      // 行号 / gutter 文本禁止鼠标选中（macOS WKWebView 需 -webkit- 前缀，故双写）。
+      userSelect: 'none',
+      WebkitUserSelect: 'none',
     },
     '.cm-activeLine': {
       backgroundColor: 'rgba(0, 0, 0, 0.04)',

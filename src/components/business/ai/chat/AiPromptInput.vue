@@ -905,7 +905,7 @@ onMounted(() => {
               >
                 <DropdownMenuItem
                   class="ai-settings-menu-item"
-                  :disabled="disabled || isNetworkPermissionSaving"
+                  :disabled="disabled"
                   @select.prevent="toggleNetworkPermission"
                 >
                   <Globe class="ai-settings-menu-icon" />

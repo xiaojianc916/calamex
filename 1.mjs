@@ -1,80 +1,51 @@
-// 2.mjs (增量:开关改小 / 修复切换闪烁 / 导航项点击后关闭)
+// 让编辑器左侧行号 / gutter 文本不可被鼠标选中。
+// 用法（在仓库根目录下）：
+//   预演（不写盘）：node fix-gutter-userselect.mjs
+//   实际写入：     node fix-gutter-userselect.mjs --write
+// 可逆：git diff 查看；git checkout -- <file> 撤销。
+
 import { readFileSync, writeFileSync } from 'node:fs';
 
-const FILE = 'src/components/business/ai/chat/AiPromptInput.vue';
-let s = readFileSync(FILE, 'utf8');
-console.log('换行符:', s.includes('\r\n') ? 'CRLF' : 'LF');
+const FILE = 'src/services/editor/codemirror-shiki-highlight.ts';
 
-function sliceBlock(src, marker) {
-  const a = src.indexOf(marker);
-  if (a < 0) return null;
-  const o = src.indexOf('{', a);
-  const c = src.indexOf('}', o);
-  if (o < 0 || c < 0) return null;
-  return { head: src.slice(0, o + 1), body: src.slice(o + 1, c), tail: src.slice(c) };
-}
-function editBlock(marker, label, fn) {
-  const b = sliceBlock(s, marker);
-  if (!b) throw new Error(`找不到块: ${label} (${marker})`);
-  s = b.head + fn(b.body) + b.tail;
-}
-function sub(body, re, to, label) {
-  if (re.test(body)) return body.replace(re, to);
-  if (body.includes(to)) { console.log('已是目标,跳过:', label); return body; }
-  throw new Error(`块内未匹配: ${label}\n—— 块内容(贴给我) ——\n${body}\n————`);
-}
-function ensureReplace(oldStr, newStr, label) {
-  if (s.includes(oldStr)) {
-    if (s.split(oldStr).length - 1 > 1) throw new Error(`不唯一: ${label}`);
-    s = s.replace(oldStr, newStr);
-    console.log('改:', label);
-  } else if (s.includes(newStr)) {
-    console.log('已是目标,跳过:', label);
-  } else {
-    throw new Error(`未找到: ${label}`);
-  }
+const ANCHOR = `    '.cm-gutters': {
+      backgroundColor: SHIKI_BACKGROUND,
+      color: '#6e7781',
+      border: 'none',
+    },`;
+
+const REPLACEMENT = `    '.cm-gutters': {
+      backgroundColor: SHIKI_BACKGROUND,
+      color: '#6e7781',
+      border: 'none',
+      // 行号 / gutter 文本禁止鼠标选中（macOS WKWebView 需 -webkit- 前缀，故双写）。
+      userSelect: 'none',
+      WebkitUserSelect: 'none',
+    },`;
+
+const write = process.argv.includes('--write');
+const src = readFileSync(FILE, 'utf8');
+
+if (src.includes("WebkitUserSelect: 'none'")) {
+  console.log('✅ 已包含 user-select 设置，无需修改。');
+  process.exit(0);
 }
 
-// 1) 开关尺寸
-editBlock('.ai-network-switch {', '.ai-network-switch', (b) => {
-  b = sub(b, /width:\s*36px;/, 'width: 30px;', 'switch width');
-  b = sub(b, /height:\s*20px;/, 'height: 18px;', 'switch height');
-  return b;
-});
-editBlock('.ai-network-switch__thumb {', '.ai-network-switch__thumb', (b) => {
-  b = sub(b, /width:\s*16px;/, 'width: 14px;', 'thumb width');
-  b = sub(b, /height:\s*16px;/, 'height: 14px;', 'thumb height');
-  return b;
-});
-editBlock(
-  '.ai-network-switch.is-on .ai-network-switch__thumb {',
-  '.ai-network-switch.is-on thumb',
-  (b) => sub(b, /translateX\(16px\)/, 'translateX(12px)', 'thumb travel'),
-);
-
-// 2) 切换闪烁:给两个开关按钮加 @pointerdown.prevent(阻止抢焦点)
-if ((s.match(/@pointerdown\.prevent/g) || []).length >= 2) {
-  console.log('已有 @pointerdown.prevent,跳过');
-} else {
-  const re = /(class="ai-network-switch")(\r?\n)([ \t]*)/g;
-  const n = (s.match(re) || []).length;
-  if (n !== 2) throw new Error(`ai-network-switch 按钮数=${n},期望2`);
-  s = s.replace(re, `$1$2$3@pointerdown.prevent$2$3`);
-  console.log('改: 两个开关按钮 +@pointerdown.prevent');
+const count = src.split(ANCHOR).length - 1;
+if (count !== 1) {
+  console.error(`❌ 预期精确匹配 1 处 .cm-gutters 锚点，实际 ${count} 处，已中止（文件可能已改动，请告知我重新对齐）。`);
+  process.exit(1);
 }
 
-// 3) 导航项点击后关闭弹窗:去掉 .prevent(开关项保留)
-ensureReplace(
-  '@select.prevent="handleOpenInformationSources"',
-  '@select="handleOpenInformationSources"',
-  '我的信息源 关闭',
-);
-ensureReplace('@select.prevent="openSkillsManager"', '@select="openSkillsManager"', '添加skill 关闭');
-ensureReplace(
-  '@select.prevent="handleOpenPersonalization"',
-  '@select="handleOpenPersonalization"',
-  '个性化 关闭',
-);
+const out = src.replace(ANCHOR, REPLACEMENT);
 
-writeFileSync(FILE, s, 'utf8');
-console.log('✅ 完成:开关 30×18 / 滑块 14·位移12 / 修复切换闪烁 / 三个导航项点击后关闭');
+if (!write) {
+  console.log("—— 预演（未写盘）。将在 '.cm-gutters' 块内新增： ——");
+  console.log("  userSelect: 'none',");
+  console.log("  WebkitUserSelect: 'none',");
+  console.log('确认无误后执行：node fix-gutter-userselect.mjs --write');
+  process.exit(0);
+}
+
+writeFileSync(FILE, out);
+console.log(`✅ 已写入 ${FILE}`);

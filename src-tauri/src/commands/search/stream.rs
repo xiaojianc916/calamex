@@ -158,6 +158,9 @@ mod tests {
             line_text: Some("x".to_string()),
             match_start: Some(0),
             match_end: Some(1),
+            window_start: None,
+            truncated_left: false,
+            truncated_right: false,
             score: 1,
         }
     }
