@@ -2,22 +2,17 @@
 import {
   ArrowUp,
   Bot,
-  Check,
   ChevronRight,
   Globe,
-  MessageCircle,
   Network,
   Paintbrush,
   Paperclip,
   Plus,
   Route,
   Settings2,
-  SlidersHorizontal,
   Square,
-  Workflow,
 } from '@lucide/vue';
-import { useTimeoutFn } from '@vueuse/core';
-import { computed, onBeforeUnmount, onMounted, ref, useAttrs, watch } from 'vue';
+import { computed, onMounted, ref, useAttrs, watch } from 'vue';
 import {
   Context,
   ContextContent,
@@ -60,12 +55,6 @@ import { skillsTauriService } from '@/services/tauri.skills';
 import type { IAiAttachedFile, IAiConfigPayload, TAiAgentNetworkPermission } from '@/types/ai';
 import { isAiAssistantMode, type TAiAssistantMode } from '@/types/ai/assistant-mode';
 import type { TAiExecutionMode } from '@/types/ai/execution-mode';
-import type {
-  IAcpSessionConfigOption,
-  IAcpSessionConfigOptionsState,
-  IAcpSessionMode,
-  IAcpSessionModesState,
-} from '@/types/ai/sidecar';
 import type { ISelectedSkill, ISkillSummary } from '@/types/ai/skill';
 import AiErrorNotice from './AiErrorNotice.vue';
 
@@ -90,11 +79,6 @@ interface ISlashAnchorRect {
   left: number;
   top: number;
   width: number;
-}
-
-interface IPoint {
-  x: number;
-  y: number;
 }
 
 /**
@@ -124,6 +108,9 @@ const selectedAgent = defineModel<TAiPromptAgentKind>('agentBackend', {
   default: 'kimi',
 });
 
+// Kimi Code 当前选中的内置模式（普通 / Plan / Auto / YOLO），与 builtin 的 activeMode 解耦。
+const kimiMode = defineModel<string>('kimiMode', { default: 'normal' });
+
 const props = defineProps<{
   disabled: boolean;
   stopVisible?: boolean;
@@ -143,10 +130,6 @@ const props = defineProps<{
   networkPermission: TAiAgentNetworkPermission;
   isNetworkPermissionSaving?: boolean;
   executionMode: TAiExecutionMode;
-  sessionConfigOptions?: IAcpSessionConfigOptionsState | null;
-  isSessionConfigOptionSwitching?: boolean;
-  sessionModes?: IAcpSessionModesState | null;
-  isSessionModeSwitching?: boolean;
   resolveAttachment: (file: File) => Promise<boolean>;
 }>();
 
@@ -157,8 +140,6 @@ const emit = defineEmits<{
   modelChange: [modelId: string];
   networkPermissionChange: [permission: TAiAgentNetworkPermission];
   executionModeChange: [mode: TAiExecutionMode];
-  sessionConfigOptionChange: [configId: string, valueId: string];
-  sessionModeChange: [modeId: string];
   informationSourcesOpen: [];
   personalizationOpen: [];
   prewarm: [];
@@ -169,9 +150,6 @@ const fileInputRef = ref<HTMLInputElement | null>(null);
 const surfaceRef = ref<HTMLFormElement | null>(null);
 const editorRef = ref<HTMLDivElement | null>(null);
 const isComposing = ref(false);
-const isModeSubmenuOpen = ref(false);
-const modeMenuItemElement = ref<HTMLElement | null>(null);
-const modeSubmenuRef = ref<HTMLElement | null>(null);
 const pendingAttachmentDrafts = ref<IAiAttachedFile[]>([]);
 
 // 编辑器内容程序化写入时为 true，避免输入事件回环。
@@ -185,12 +163,18 @@ const slashAnchorRect = ref<ISlashAnchorRect | null>(null);
 const skillsManagerOpen = ref(false);
 let skillsLoadPromise: Promise<void> | null = null;
 
-const MODE_SUBMENU_CLOSE_DELAY_MS = 180;
-
 const modeOptions: IAiPromptModeOption[] = [
   { key: 'chat', label: 'chat' },
   { key: 'agent', label: 'agent' },
   { key: 'plan', label: 'plan' },
+];
+
+// Kimi Code 官方内置模式（固定集合，非 ACP 动态公示）。
+const KIMI_MODES: { key: string; label: string }[] = [
+  { key: 'normal', label: '普通' },
+  { key: 'plan', label: 'Plan' },
+  { key: 'auto', label: 'Auto' },
+  { key: 'yolo', label: 'YOLO' },
 ];
 
 const emptyTokenContext: IAiTokenContextProps = {
@@ -314,58 +298,31 @@ const networkPermissionEnabled = computed(() => props.networkPermission === 'all
 // 默认 interactive = 逐步门控。对标 Cline Auto-approve / Cursor Auto-run。
 const executionAutonomous = computed(() => props.executionMode === 'autonomous');
 
-const activeModeOption = computed(
-  () => modeOptions.find((option) => option.key === activeMode.value) ?? modeOptions[0],
+// 模式选择器（统一实现）：按当前 Agent 决定可选模式集，单一 <Select> 渲染。
+// - builtin：执行模式 chat / agent / plan，绑定 activeMode（驱动既有发送路由）。
+// - kimi：Kimi 官方内置模式 普通 / Plan / Auto / YOLO，绑定 kimiMode（静态表，非 ACP 动态）。
+const modeSelectItems = computed<{ key: string; label: string }[]>(() =>
+  selectedAgent.value === 'kimi' ? KIMI_MODES : modeOptions,
 );
 
-// ACP 会话配置项选择器（config_options 全量迁移）：仅 Kimi ACP agent 且后端下发配置项时
-// 显示；每个 config option 渲染为独立下拉，VM 由父级经 useAcpSessionConfigOptions 下传，
-// 选择时回投 (configId, valueId) 原文。
-const sessionConfigOptionList = computed(() => props.sessionConfigOptions?.configOptions ?? []);
-
-const sessionConfigOptionsVisible = computed(
-  () => selectedAgent.value === 'kimi' && sessionConfigOptionList.value.length > 0,
+const modeSelectValue = computed(() =>
+  selectedAgent.value === 'kimi' ? kimiMode.value : activeMode.value,
 );
 
-const resolveSessionConfigOptionLabel = (option: IAcpSessionConfigOption): string => {
-  const current = option.options.find((item) => item.value === option.currentValue);
-  return current?.name ?? option.name;
-};
+const modeSelectLabel = computed(() => {
+  const current = modeSelectItems.value.find((item) => item.key === modeSelectValue.value);
+  return current?.label ?? modeSelectItems.value[0]?.label ?? '模式';
+});
 
-const handleSessionConfigOptionChange = (configId: string, value: unknown): void => {
+const handleModeSelect = (value: unknown): void => {
   if (typeof value !== 'string' || !value.trim()) {
     return;
   }
-  const option = sessionConfigOptionList.value.find((item) => item.id === configId);
-  if (!option || value === option.currentValue) {
+  if (selectedAgent.value === 'kimi') {
+    kimiMode.value = value;
     return;
   }
-  emit('sessionConfigOptionChange', configId, value);
-};
-
-// ACP 会话模式选择器（session/set_mode）：仅 Kimi ACP agent 且后端公示 availableModes 时显示，
-// 复用 Kimi 内置模式语义（绝不本地伪造 chat/agent/plan）。currentModeId 默认高亮 agent 公示值。
-const sessionModeList = computed<IAcpSessionMode[]>(() => props.sessionModes?.availableModes ?? []);
-
-const sessionModesVisible = computed(
-  () => selectedAgent.value === 'kimi' && sessionModeList.value.length > 0,
-);
-
-const sessionModeCurrentId = computed(() => props.sessionModes?.currentModeId ?? '');
-
-const resolveSessionModeLabel = (): string => {
-  const current = sessionModeList.value.find((mode) => mode.id === sessionModeCurrentId.value);
-  return current?.name ?? '模式';
-};
-
-const handleSessionModeChange = (value: unknown): void => {
-  if (typeof value !== 'string' || !value.trim()) {
-    return;
-  }
-  if (value === sessionModeCurrentId.value) {
-    return;
-  }
-  emit('sessionModeChange', value);
+  handleModeChange(value);
 };
 
 const networkPermissionLabel = computed(() => (networkPermissionEnabled.value ? '已允许' : '询问'));
@@ -424,139 +381,6 @@ const queueAttachmentFile = async (file: File): Promise<void> => {
       : attachment,
   );
 };
-
-// -------------------------------------------------------------------------
-// 二级菜单 hover intent：安全走廊算法
-// -------------------------------------------------------------------------
-// immediate: false —— 仅在 scheduleModeSubmenuClose 时手动 start；
-// openModeSubmenu / closeModeSubmenu / 进入意图区域时 stop 取消待关。
-const { start: startModeSubmenuCloseTimer, stop: clearModeSubmenuCloseTimer } = useTimeoutFn(
-  () => {
-    isModeSubmenuOpen.value = false;
-  },
-  MODE_SUBMENU_CLOSE_DELAY_MS,
-  { immediate: false },
-);
-
-const closeModeSubmenu = (): void => {
-  clearModeSubmenuCloseTimer();
-  isModeSubmenuOpen.value = false;
-};
-
-const openModeSubmenu = (): void => {
-  clearModeSubmenuCloseTimer();
-  isModeSubmenuOpen.value = true;
-};
-
-const scheduleModeSubmenuClose = (): void => {
-  clearModeSubmenuCloseTimer();
-  startModeSubmenuCloseTimer();
-};
-
-const isPointInsideRect = (point: IPoint, rect: DOMRect, padding = 0): boolean =>
-  point.x >= rect.left - padding &&
-  point.x <= rect.right + padding &&
-  point.y >= rect.top - padding &&
-  point.y <= rect.bottom + padding;
-
-const isPointInsideConvexPolygon = (point: IPoint, polygon: readonly IPoint[]): boolean => {
-  if (polygon.length < 3) {
-    return false;
-  }
-
-  let sign = 0;
-
-  for (let index = 0; index < polygon.length; index += 1) {
-    const current = polygon[index];
-    const next = polygon[(index + 1) % polygon.length];
-
-    if (!current || !next) {
-      return false;
-    }
-
-    const cross =
-      (next.x - current.x) * (point.y - current.y) - (next.y - current.y) * (point.x - current.x);
-
-    if (Math.abs(cross) < 0.01) {
-      continue;
-    }
-
-    const currentSign = cross > 0 ? 1 : -1;
-
-    if (sign === 0) {
-      sign = currentSign;
-    } else if (sign !== currentSign) {
-      return false;
-    }
-  }
-
-  return true;
-};
-
-const isPointerInModeSubmenuIntentArea = (event: PointerEvent): boolean => {
-  const trigger = modeMenuItemElement.value;
-  const submenu = modeSubmenuRef.value;
-
-  if (!trigger || !submenu) {
-    return false;
-  }
-
-  const point = { x: event.clientX, y: event.clientY };
-  const triggerRect = trigger.getBoundingClientRect();
-  const submenuRect = submenu.getBoundingClientRect();
-
-  if (isPointInsideRect(point, triggerRect, 8) || isPointInsideRect(point, submenuRect, 8)) {
-    return true;
-  }
-
-  const bridge: IPoint[] = [
-    { x: triggerRect.right - 2, y: triggerRect.top - 10 },
-    { x: submenuRect.left + 2, y: submenuRect.top - 14 },
-    { x: submenuRect.left + 2, y: submenuRect.bottom + 14 },
-    { x: triggerRect.right - 2, y: triggerRect.bottom + 10 },
-  ];
-
-  return isPointInsideConvexPolygon(point, bridge);
-};
-
-const handleModeSubmenuDocumentPointerMove = (event: PointerEvent): void => {
-  if (!isModeSubmenuOpen.value) {
-    return;
-  }
-
-  if (isPointerInModeSubmenuIntentArea(event)) {
-    clearModeSubmenuCloseTimer();
-    return;
-  }
-
-  scheduleModeSubmenuClose();
-};
-
-const handleModeMenuItemPointerEnter = (event: PointerEvent): void => {
-  modeMenuItemElement.value =
-    event.currentTarget instanceof HTMLElement ? event.currentTarget : null;
-  openModeSubmenu();
-};
-
-const selectModeOption = (value: TAiAssistantMode): void => {
-  handleModeChange(value);
-  closeModeSubmenu();
-};
-
-watch(isModeSubmenuOpen, (open) => {
-  if (typeof document === 'undefined') {
-    return;
-  }
-
-  if (open) {
-    document.addEventListener('pointermove', handleModeSubmenuDocumentPointerMove, {
-      passive: true,
-    });
-  } else {
-    document.removeEventListener('pointermove', handleModeSubmenuDocumentPointerMove);
-    clearModeSubmenuCloseTimer();
-  }
-});
 
 // -------------------------------------------------------------------------
 // 富文本输入：纯文本 + 内联技能胶囊
@@ -1003,12 +827,6 @@ watch(
 onMounted(() => {
   applyValueToEditor(modelValue.value ?? '', selectedSkills.value ?? []);
 });
-
-onBeforeUnmount(() => {
-  if (typeof document !== 'undefined') {
-    document.removeEventListener('pointermove', handleModeSubmenuDocumentPointerMove);
-  }
-});
 </script>
 
 <template>
@@ -1118,45 +936,9 @@ onBeforeUnmount(() => {
                   <Plus class="ai-settings-menu-icon" />
                   <span class="ai-settings-menu-label">添加skill</span>
                 </DropdownMenuItem>
+
                 <DropdownMenuItem
-                  v-if="!sessionModesVisible"
-                  class="ai-settings-menu-item is-mode"
-                  @pointerenter="handleModeMenuItemPointerEnter"
-                  @pointerleave="scheduleModeSubmenuClose"
-                  @select.prevent
-                  @click.stop="openModeSubmenu"
-                >
-                  <Route class="ai-settings-menu-icon" />
-                  <span class="ai-settings-menu-label">模式</span>
-                  <span class="ai-settings-menu-value" v-text="activeModeOption.label"></span>
-                  <ChevronRight class="ai-settings-menu-chevron" />
-                  <div
-                    v-if="isModeSubmenuOpen"
-                    ref="modeSubmenuRef"
-                    class="ai-mode-submenu"
-                    @pointerenter="openModeSubmenu"
-                    @pointerleave="scheduleModeSubmenuClose"
-                  >
-                    <button
-                      v-for="option in modeOptions"
-                      :key="option.key"
-                      type="button"
-                      class="ai-mode-submenu-item"
-                      :class="{ 'is-active': activeMode === option.key }"
-                      @click="selectModeOption(option.key)"
-                    >
-                      <MessageCircle class="ai-mode-submenu-icon" v-if="option.key === 'chat'" />
-                      <Workflow class="ai-mode-submenu-icon" v-else-if="option.key === 'plan'" />
-                      <SlidersHorizontal class="ai-mode-submenu-icon" v-else />
-                      <span class="ai-mode-submenu-copy">
-                        <span class="ai-mode-submenu-label" v-text="option.label"></span>
-                      </span>
-                      <Check class="ai-mode-submenu-check" v-if="activeMode === option.key" />
-                    </button>
-                  </div>
-                </DropdownMenuItem>
-                <DropdownMenuItem
-                  v-if="activeMode === 'plan'"
+                  v-if="selectedAgent === 'builtin' && activeMode === 'plan'"
                   class="ai-settings-menu-item"
                   :disabled="disabled"
                   @select.prevent="toggleExecutionMode"
@@ -1184,59 +966,28 @@ onBeforeUnmount(() => {
               </DropdownMenuContent>
             </DropdownMenu>
             <Select
-              v-if="sessionModesVisible"
-              :model-value="sessionModeCurrentId"
-              :disabled="disabled || isSessionModeSwitching"
-              @update:model-value="handleSessionModeChange"
+              :model-value="modeSelectValue"
+              :disabled="disabled"
+              @update:model-value="handleModeSelect"
             >
               <SelectTrigger aria-label="选择模式" class="ai-agent-trigger">
-                <SlidersHorizontal class="ai-agent-trigger__icon" :stroke-width="1.6" />
-                <span class="ai-agent-trigger__label" v-text="resolveSessionModeLabel()"></span>
+                <Route class="ai-agent-trigger__icon" :stroke-width="1.6" />
+                <span class="ai-agent-trigger__label" v-text="modeSelectLabel"></span>
               </SelectTrigger>
               <SelectContent side="top" align="start" :side-offset="8" class="ai-agent-content">
                 <SelectLabel class="ai-agent-section-label">模式</SelectLabel>
                 <SelectGroup>
                   <SelectItem
-                    v-for="mode in sessionModeList"
-                    :key="mode.id"
+                    v-for="mode in modeSelectItems"
+                    :key="mode.key"
                     class="ai-agent-item"
-                    :value="mode.id"
+                    :value="mode.key"
                   >
-                    <span class="ai-agent-item__label" v-text="mode.name"></span>
+                    <span class="ai-agent-item__label" v-text="mode.label"></span>
                   </SelectItem>
                 </SelectGroup>
               </SelectContent>
             </Select>
-            <template v-if="sessionConfigOptionsVisible">
-              <Select
-                v-for="configOption in sessionConfigOptionList"
-                :key="configOption.id"
-                :model-value="configOption.currentValue"
-                :disabled="disabled || isSessionConfigOptionSwitching"
-                @update:model-value="(value) => handleSessionConfigOptionChange(configOption.id, value)"
-              >
-                <SelectTrigger :aria-label="configOption.name" class="ai-agent-trigger">
-                  <SlidersHorizontal class="ai-agent-trigger__icon" :stroke-width="1.6" />
-                  <span
-                    class="ai-agent-trigger__label"
-                    v-text="resolveSessionConfigOptionLabel(configOption)"
-                  ></span>
-                </SelectTrigger>
-                <SelectContent side="top" align="start" :side-offset="8" class="ai-agent-content">
-                  <SelectLabel class="ai-agent-section-label" v-text="configOption.name"></SelectLabel>
-                  <SelectGroup>
-                    <SelectItem
-                      v-for="opt in configOption.options"
-                      :key="opt.value"
-                      class="ai-agent-item"
-                      :value="opt.value"
-                    >
-                      <span class="ai-agent-item__label" v-text="opt.name"></span>
-                    </SelectItem>
-                  </SelectGroup>
-                </SelectContent>
-              </Select>
-            </template>
           </div>
           <div class="ai-toolbar-spacer" aria-hidden="true"></div>
           <Select
@@ -1817,8 +1568,7 @@ onBeforeUnmount(() => {
 }
 
 .ai-settings-menu-item[data-highlighted],
-.ai-settings-menu-item[data-state='open'],
-.ai-settings-menu-item.is-mode:hover {
+.ai-settings-menu-item[data-state='open'] {
   background: var(--ai-menu-hover);
   color: var(--ai-menu-text);
 }
@@ -1836,12 +1586,6 @@ onBeforeUnmount(() => {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-}
-
-.ai-settings-menu-value {
-  color: var(--ai-menu-muted);
-  font-size: 13px;
-  text-transform: lowercase;
 }
 
 .ai-network-switch {
@@ -1873,71 +1617,6 @@ onBeforeUnmount(() => {
 
 .ai-network-switch.is-on .ai-network-switch__thumb {
   transform: translateX(16px);
-}
-
-.ai-mode-submenu {
-  position: absolute;
-  left: calc(100% + 6px);
-  top: auto;
-  bottom: 0;
-  z-index: 70;
-  display: grid;
-  width: min(200px, calc(100vw - 24px));
-  max-height: min(240px, calc(100vh - 32px));
-  overflow-y: auto;
-  gap: 2px;
-  border: 1px solid #eeedeb;
-  border-radius: 8px;
-  background: var(--ai-menu-bg);
-  padding: 5px;
-  box-shadow: var(--ai-menu-shadow);
-}
-
-.ai-mode-submenu::before {
-  position: absolute;
-  top: -8px;
-  bottom: -8px;
-  left: -12px;
-  width: 12px;
-  content: '';
-}
-
-.ai-mode-submenu-item {
-  display: grid;
-  grid-template-columns: 20px minmax(0, 1fr) 18px;
-  gap: 9px;
-  min-height: 34px;
-  align-items: center;
-  border: 0;
-  border-radius: 7px;
-  background: transparent;
-  color: var(--ai-menu-text);
-  padding: 6px 8px;
-  text-align: left;
-}
-
-.ai-mode-submenu-item:hover,
-.ai-mode-submenu-item.is-active {
-  background: var(--ai-menu-hover);
-}
-
-.ai-mode-submenu-icon,
-.ai-mode-submenu-check {
-  width: 18px;
-  height: 18px;
-  stroke-width: 1.8;
-}
-
-.ai-mode-submenu-copy {
-  display: grid;
-  min-width: 0;
-  gap: 4px;
-}
-
-.ai-mode-submenu-label {
-  color: var(--ai-menu-text);
-  font-size: 14px;
-  line-height: 1.2;
 }
 
 .ai-model-content {

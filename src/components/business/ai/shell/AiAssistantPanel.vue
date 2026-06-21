@@ -2,7 +2,7 @@
 import { useFrontendTool } from '@copilotkit/vue';
 import { Bot, SquarePen, Trash2 } from '@lucide/vue';
 import { AnimatePresence, Motion } from 'motion-v';
-import { computed, defineAsyncComponent, onMounted, ref, watch } from 'vue';
+import { computed, defineAsyncComponent, onMounted, ref } from 'vue';
 import { z } from 'zod';
 import QuestionPrompt from '@/components/ai-elements/question/QuestionPrompt.vue';
 import AiChatThread from '@/components/business/ai/chat/AiChatThread.vue';
@@ -731,88 +731,6 @@ const handleAgentBackendChange = (agent: unknown): void => {
 
   sessionAgentBackend.value = agent;
   assistant.error.value = '';
-
-  if (agent === 'kimi') {
-    const threadId = assistant.activeConversationId.value;
-
-    if (threadId) {
-      void assistant.acpSessionConfigOptions.loadConfigOptions(threadId).catch(() => undefined);
-      void assistant.acpSessionModes.loadModes(threadId).catch(() => undefined);
-    }
-  }
-};
-
-// Kimi 默认即为当前会话后端，但 loadModes 此前仅在「手动切到 kimi」时触发；
-// 这里补齐：挂载即 kimi、会话切换、以及每轮回复结束（此时 ACP 会话已建立）后
-// 重新拉取内置模式，确保 availableModes 非空、模式选择器能正常替换硬编码菜单。
-const refreshKimiSessionModes = (): void => {
-  if (sessionAgentBackend.value !== 'kimi') {
-    return;
-  }
-
-  const threadId = assistant.activeConversationId.value;
-
-  if (!threadId) {
-    return;
-  }
-
-  void assistant.acpSessionConfigOptions.loadConfigOptions(threadId).catch(() => undefined);
-  void assistant.acpSessionModes.loadModes(threadId).catch(() => undefined);
-};
-
-watch(
-  () =>
-    [
-      sessionAgentBackend.value,
-      assistant.activeConversationId.value,
-      assistant.isSending.value,
-    ] as const,
-  ([backend, threadId, isSending], previous) => {
-    if (backend !== 'kimi' || !threadId || isSending) {
-      return;
-    }
-
-    const backendChanged = !previous || previous[0] !== backend;
-    const threadChanged = !previous || previous[1] !== threadId;
-    const sendingJustFinished = Boolean(previous) && previous[2] === true;
-
-    if (backendChanged || threadChanged || sendingJustFinished) {
-      refreshKimiSessionModes();
-    }
-  },
-  { immediate: true },
-);
-
-// ACP 会话配置项切换（config_options 全量迁移发送侧）：选择器回投透传给
-// useAcpSessionConfigOptions.selectConfigOption（乐观更新 + setSessionConfigOption 回投，
-// 失败回滚并提示）。
-const handleSessionConfigOptionChange = async (
-  configId: string,
-  valueId: string,
-): Promise<void> => {
-  const threadId = assistant.activeConversationId.value;
-  if (!threadId) {
-    return;
-  }
-  try {
-    await assistant.acpSessionConfigOptions.selectConfigOption(threadId, configId, valueId);
-  } catch (error) {
-    assistant.error.value = toErrorMessage(error, '切换会话配置失败。');
-  }
-};
-
-// ACP 会话模式切换（session/set_mode）：选择器回投透传给 useAcpSessionModes.selectMode
-// （乐观更新 + setSessionMode 回投，失败回滚并提示）。复用 Kimi 内置模式语义。
-const handleSessionModeChange = async (modeId: string): Promise<void> => {
-  const threadId = assistant.activeConversationId.value;
-  if (!threadId) {
-    return;
-  }
-  try {
-    await assistant.acpSessionModes.selectMode(threadId, modeId);
-  } catch (error) {
-    assistant.error.value = toErrorMessage(error, '切换会话模式失败。');
-  }
 };
 
 const handleSubmitMessage = async (): Promise<void> => {
@@ -1342,10 +1260,6 @@ onMounted(() => {
           @cancel="handleCancelUserQuestion" />
         <AiPromptInput v-else v-model="assistant.draft.value" v-model:active-mode="assistant.activeMode.value"
           v-model:agent-backend="sessionAgentBackend"
-          :session-config-options="assistant.acpSessionConfigOptions.state.value"
-          :is-session-config-option-switching="assistant.acpSessionConfigOptions.isSwitching.value"
-          :session-modes="assistant.acpSessionModes.state.value"
-          :is-session-mode-switching="assistant.acpSessionModes.isSwitching.value"
           :disabled="composerDisabled" :stop-visible="assistant.isSending.value"
           :submit-label="submitLabel" :config="assistant.config.value"
           :is-model-saving="isPromptModelSaving" :selected-model-override="activeAgentModelId"
@@ -1357,9 +1271,6 @@ onMounted(() => {
           @remove-file="assistant.removeAttachedFile" @model-change="handlePromptModelChange"
           @network-permission-change="handlePromptNetworkPermissionChange"
           @execution-mode-change="handlePromptExecutionModeChange"
-
-          @session-config-option-change="handleSessionConfigOptionChange"
-          @session-mode-change="handleSessionModeChange"
           @information-sources-open="openPromptInformationSources" @personalization-open="openPromptPersonalization"
           @prewarm="handlePromptPrewarm" />
       </div>
@@ -1447,7 +1358,6 @@ onMounted(() => {
 .ai-agent-mark-content [data-slot='select-scroll-down-button'] {
   display: none;
 }
-
 
 .ai-agent-mark-item {
   display: flex;

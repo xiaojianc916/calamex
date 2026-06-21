@@ -9,7 +9,7 @@ use super::util::{byte_to_char_offset, count_to_u32, i64_to_i32, trim_line, u64_
 use ast_grep_language::{LanguageExt, SupportLang};
 use grep_matcher::Matcher as GrepMatcher;
 use grep_regex::RegexMatcherBuilder;
-use grep_searcher::{BinaryDetection, SearcherBuilder, sinks::Lossy};
+use grep_searcher::{BinaryDetection, SearcherBuilder, sinks::UTF8};
 use nucleo_matcher::{
     Config, Matcher as NucleoMatcher, Utf32Str,
     pattern::{CaseMatching, Normalization, Pattern as NucleoPattern},
@@ -301,7 +301,7 @@ pub(super) fn search_file_contents(
         .par_iter()
         .map(|file| {
             let mut local = Vec::new();
-            search_one_file_content(file, &matcher, limit, &mut local)?;
+            search_one_file_content(root, file, &matcher, limit, &mut local)?;
             // 流式推送：每个文件命中一旦产生即按发现顺序交给 sink（sink 内部按条数/时间节流，
             // 且对空切片为 no-op）。命令仍返回经全局排序的最终结果。
             if let Some(sink) = sink {
@@ -550,7 +550,7 @@ pub(super) fn search_symbols(
                     name: symbol.name.clone(),
                     kind: WorkspaceSearchResultKind::Symbol,
                     line_number: Some(symbol.line_number),
-                    line_text: Some(format!("函数 {}", symbol.name)),
+                    line_text: Some(symbol.line_text.clone()),
                     match_start: None,
                     match_end: None,
                     score: i64_to_i32(-(score as i64) + symbol.line_number as i64, "搜索评分")?,
@@ -565,11 +565,24 @@ pub(super) fn search_symbols(
 }
 
 fn search_one_file_content(
+    root: &Path,
     file: &ScannedFile,
     matcher: &grep_regex::RegexMatcher,
     limit: usize,
     results: &mut Vec<WorkspaceSearchResult>,
 ) -> Result<(), String> {
+    // 复用与编辑器 / 模糊 / 结构化搜索一致的解码路径：先按探测到的编码（UTF-8 / GBK /
+    // GB18030 / 带 BOM 的 UTF-16）把文件解码为文本，再在解码后的文本上做正则匹配。
+    // 不再用 ripgrep 的 Lossy sink 直接对原始字节做 UTF-8 有损解码——那会把 GBK 等非
+    // UTF-8 文件里的中文整体替换成 U+FFFD，造成搜索结果面板乱码，而同一文件在编辑器里
+    // （走 decode_script_bytes 编码探测）却能正常显示。content_cache 已按 (len, mtime)
+    // 缓存解码结果，这里顺带复用，避免重复读盘 + 转码。
+    let Some(content) =
+        super::content_cache::workspace_file_text(root, &file.relative_path, &file.path)
+    else {
+        return Ok(());
+    };
+
     let mut matched_in_file = 0usize;
     let mut conversion_error: Option<String> = None;
     // 路径字符串每文件只转换一次：单个文件可能产生大量命中，避免对每条命中重复执行
@@ -581,10 +594,10 @@ fn search_one_file_content(
         .build();
 
     searcher
-        .search_path(
+        .search_slice(
             matcher,
-            &file.path,
-            Lossy(|line_number, line| {
+            content.as_bytes(),
+            UTF8(|line_number, line| {
                 let line_text = trim_line(line);
                 let mut keep_going = true;
                 matcher

@@ -85,6 +85,9 @@ pub(super) struct SymbolEntry {
     pub(super) search_text: String,
     pub(super) name: String,
     pub(super) line_number: u32,
+    // 命中所在的真实源码行（已去掉行尾换行）：搜索结果直接展示该行内容，
+    // 而不是合成的「函数 X」标签。
+    pub(super) line_text: String,
 }
 
 #[derive(Clone, PartialEq, Eq)]
@@ -708,6 +711,25 @@ fn parse_symbols_from_file_bytes(
     Ok(symbols)
 }
 
+/// 提取 byte_offset 所在的源码行文本（不含行尾换行）。换行符为 ASCII，按字节定位
+/// 行边界不会切断多字节 UTF-8 字符；非法字节用 from_utf8_lossy 兜底，保证始终返回可显示文本。
+fn line_text_at_byte(source: &[u8], byte_offset: usize) -> String {
+    let offset = byte_offset.min(source.len());
+    let start = source[..offset]
+        .iter()
+        .rposition(|&byte| byte == b'\n')
+        .map(|index| index + 1)
+        .unwrap_or(0);
+    let end = source[offset..]
+        .iter()
+        .position(|&byte| byte == b'\n')
+        .map(|index| offset + index)
+        .unwrap_or(source.len());
+    String::from_utf8_lossy(&source[start..end])
+        .trim_end_matches(|ch| ch == '\r' || ch == '\n')
+        .to_string()
+}
+
 fn collect_symbols_from_node(
     node: Node<'_>,
     source: &[u8],
@@ -725,6 +747,8 @@ fn collect_symbols_from_node(
             search_text: format!("{} {}", name, file.relative_path),
             name: name.to_string(),
             line_number,
+            // 取函数定义所在的真实源码行文本，供搜索结果按真实内容展示。
+            line_text: line_text_at_byte(source, node.start_byte()),
         });
     }
 
@@ -980,6 +1004,7 @@ mod tests {
             search_text: format!("{name} {relative_path}"),
             name: name.to_string(),
             line_number,
+            line_text: String::new(),
         }
     }
 }
