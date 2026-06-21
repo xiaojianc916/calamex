@@ -9,6 +9,7 @@ import {
   Paintbrush,
   Paperclip,
   Plus,
+  Route,
   Settings2,
   Square,
 } from '@lucide/vue';
@@ -34,6 +35,9 @@ import { AiSlashCommandMenu, SkillManagerDialog } from '@/components/business/ai
 import DropdownMenu from '@/components/ui/dropdown-menu/DropdownMenu.vue';
 import DropdownMenuContent from '@/components/ui/dropdown-menu/DropdownMenuContent.vue';
 import DropdownMenuItem from '@/components/ui/dropdown-menu/DropdownMenuItem.vue';
+import DropdownMenuSub from '@/components/ui/dropdown-menu/DropdownMenuSub.vue';
+import DropdownMenuSubContent from '@/components/ui/dropdown-menu/DropdownMenuSubContent.vue';
+import DropdownMenuSubTrigger from '@/components/ui/dropdown-menu/DropdownMenuSubTrigger.vue';
 import DropdownMenuTrigger from '@/components/ui/dropdown-menu/DropdownMenuTrigger.vue';
 import { InputGroup, InputGroupAddon, InputGroupButton } from '@/components/ui/input-group';
 import {
@@ -298,7 +302,7 @@ const networkPermissionEnabled = computed(() => props.networkPermission === 'all
 // 默认 interactive = 逐步门控。对标 Cline Auto-approve / Cursor Auto-run。
 const executionAutonomous = computed(() => props.executionMode === 'autonomous');
 
-// 模式选择器（统一实现）：按当前 Agent 决定可选模式集，单一 <Select> 渲染。
+// 模式选择器（统一实现）：按当前 Agent 决定可选模式集。
 // - builtin：执行模式 chat / agent / plan，绑定 activeMode（驱动既有发送路由）。
 // - kimi：Kimi 官方内置模式 普通 / Plan / Auto / YOLO，绑定 kimiMode（静态表，非 ACP 动态）。
 const modeSelectItems = computed<{ key: string; label: string }[]>(() =>
@@ -319,6 +323,12 @@ const handleModeSelect = (value: unknown): void => {
   }
   handleModeChange(value);
 };
+
+// 二级菜单入口右侧展示的当前模式文案。
+const modeSelectValueLabel = computed(() => {
+  const current = modeSelectItems.value.find((mode) => mode.key === modeSelectValue.value);
+  return current?.label ?? '';
+});
 
 const networkPermissionLabel = computed(() => (networkPermissionEnabled.value ? '已允许' : '询问'));
 
@@ -898,17 +908,29 @@ onMounted(() => {
                 :side-offset="8"
                 class="ai-settings-menu"
               >
-                <div class="ai-settings-menu-section">模式</div>
-                <DropdownMenuItem
-                  v-for="mode in modeSelectItems"
-                  :key="mode.key"
-                  class="ai-settings-menu-item ai-settings-mode-item"
-                  :data-active="modeSelectValue === mode.key ? '' : undefined"
-                  @select.prevent="handleModeSelect(mode.key)"
-                >
-                  <span class="ai-settings-menu-label" v-text="mode.label"></span>
-                  <Check v-if="modeSelectValue === mode.key" class="ai-settings-menu-check" />
-                </DropdownMenuItem>
+                <DropdownMenuSub>
+                  <DropdownMenuSubTrigger class="ai-settings-menu-item ai-settings-submenu-trigger">
+                    <Route class="ai-settings-menu-icon" />
+                    <span class="ai-settings-menu-label">模式</span>
+                    <span class="ai-settings-menu-value" v-text="modeSelectValueLabel"></span>
+                    <ChevronRight class="ai-settings-menu-chevron" />
+                  </DropdownMenuSubTrigger>
+                  <DropdownMenuSubContent
+                    :side-offset="4"
+                    class="ai-settings-submenu"
+                  >
+                    <DropdownMenuItem
+                      v-for="mode in modeSelectItems"
+                      :key="mode.key"
+                      class="ai-settings-menu-item ai-settings-mode-item"
+                      :data-active="modeSelectValue === mode.key ? '' : undefined"
+                      @select.prevent="handleModeSelect(mode.key)"
+                    >
+                      <span class="ai-settings-menu-label" v-text="mode.label"></span>
+                      <Check v-if="modeSelectValue === mode.key" class="ai-settings-menu-check" />
+                    </DropdownMenuItem>
+                  </DropdownMenuSubContent>
+                </DropdownMenuSub>
                 <div class="ai-settings-menu-separator" aria-hidden="true"></div>
                 <DropdownMenuItem
                   class="ai-settings-menu-item"
@@ -1513,6 +1535,7 @@ onMounted(() => {
 
 <style>
 .ai-settings-menu,
+.ai-settings-submenu,
 .ai-model-content,
 .ai-agent-content,
 .ai-token-content {
@@ -1574,11 +1597,17 @@ onMounted(() => {
   white-space: nowrap;
 }
 
-.ai-settings-menu-section {
-  padding: 7px 8px 4px;
+.ai-settings-menu-value {
   color: var(--ai-menu-muted);
-  font-size: 12px;
+  font-size: 13px;
   line-height: 1.2;
+  white-space: nowrap;
+}
+
+.ai-settings-submenu {
+  width: min(180px, calc(100vw - 24px));
+  padding: 5px;
+  border-radius: 8px;
 }
 
 .ai-settings-mode-item {
