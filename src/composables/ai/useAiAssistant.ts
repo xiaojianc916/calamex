@@ -2043,4 +2043,525 @@ export const useAiAssistant = (options: IUseAiAssistantOptions) => {
       activeStreamId.value = null;
       activeAbortController.value = null;
       activeAgentMessageId.value = null;
-      commitDisplayMessag
+      commitDisplayMessagesToStore(targetThreadId);
+      clearActiveBufferedThread(targetThreadId);
+      isSending.value = false;
+      syncDisplayMessagesFromActiveThread();
+    }
+  };
+
+  // -----------------------------------------------------------------------
+  // sendMessage / planAgentTask
+  // -----------------------------------------------------------------------
+
+  const restoreConversationCheckpoint = async (checkpointId: string): Promise<void> => {
+    if (isSending.value || restoringCheckpointId.value) {
+      return;
+    }
+
+    const checkpoint = conversationCheckpoints.value.find((item) => item.id === checkpointId);
+
+    if (!checkpoint) {
+      errorMessage.value = '未找到可恢复的 checkpoint。';
+      return;
+    }
+
+    const targetMessageIndex = findMessageIndexById(messages.value, checkpoint.messageId);
+
+    if (targetMessageIndex < 0) {
+      errorMessage.value = '未找到 checkpoint 对应的对话消息。';
+      return;
+    }
+
+    restoringCheckpointId.value = checkpointId;
+    errorMessage.value = '';
+
+    try {
+      // 对话 checkpoint 只负责回到历史消息边界；文件改动回滚继续走 AED 操作入口。
+      const nextMessages = messages.value.slice(0, targetMessageIndex + 1);
+      messages.value = nextMessages;
+      runtimeTimelineEvents.value = collectConversationRuntimeEvents(nextMessages);
+      fileRollbackPrompt.value = null;
+      agentSteps.value = [];
+      clearSidecarToolConfirmation();
+      clearSidecarUserQuestion();
+      activeAgentMessageId.value = null;
+      agentPlan.resetPlan();
+      errorMessage.value = '';
+    } catch (error) {
+      errorMessage.value = toErrorMessage(error, '恢复回滚检查点失败');
+    } finally {
+      commitDisplayMessagesToStore();
+      restoringCheckpointId.value = null;
+    }
+  };
+
+  const sendMessage = async (sendOptions?: { agentBackend?: TAgentBackendKind }): Promise<void> => {
+    const content = draft.value.trim();
+
+    if ((!content && attachedFiles.value.length === 0) || isSending.value) {
+      return;
+    }
+
+    if (!config.value.chatEnabled) {
+      errorMessage.value = '请先启用 AI Chat。';
+      isSettingsOpen.value = true;
+      return;
+    }
+
+    if (!config.value.isConfigured) {
+      errorMessage.value = 'AI Provider 还没配置完整，请先保存当前厂商配置和 API Key。';
+      isSettingsOpen.value = true;
+      return;
+    }
+
+    const messageContent = content || '请分析我添加的附件内容。';
+    const titleThreadId = activeConversationId.value;
+    const userMessage: IAiChatMessage = {
+      id: createMessageId('user'),
+      role: 'user',
+      content: messageContent,
+      createdAt: new Date().toISOString(),
+      references: [],
+    };
+
+    const visibleMessages = [...messages.value, userMessage];
+
+    messages.value = visibleMessages;
+    draft.value = '';
+    errorMessage.value = '';
+    isSending.value = true;
+    activeBufferedThreadId.value = titleThreadId;
+
+    let references: IAiContextReference[];
+
+    try {
+      references = await buildReferences();
+    } catch (error) {
+      const message = toErrorMessage(error, MSG_CALL_FAILED);
+      errorMessage.value = message;
+      messages.value = [
+        ...visibleMessages,
+        {
+          id: createMessageId('assistant'),
+          role: 'assistant',
+          content: `AI 上下文收集失败：${message}`,
+          createdAt: new Date().toISOString(),
+          references: [],
+        },
+      ];
+      commitDisplayMessagesToStore(titleThreadId);
+      clearActiveBufferedThread(titleThreadId);
+      isSending.value = false;
+      syncDisplayMessagesFromActiveThread();
+      return;
+    }
+
+    currentReferences.value = references;
+
+    const nextMessages = visibleMessages.map((message) =>
+      message.id === userMessage.id
+        ? {
+            ...message,
+            references,
+          }
+        : message,
+    );
+
+    messages.value = nextMessages;
+    clearAttachedFiles({ revokePreviews: false });
+
+    // 外部 ACP 编码 agent（Kimi / Codex）走独立发送链路，与 activeMode（chat/agent/plan）无关：
+    // 外部 agent 自管会话与运行循环，不复用自研边车的 mode 分流。
+    const externalBackend = sendOptions?.agentBackend;
+    if (externalBackend && externalBackend !== 'builtin') {
+      await executeExternalAgentRequest(
+        externalBackend,
+        nextMessages,
+        messageContent,
+        titleThreadId,
+      );
+
+      if (!errorMessage.value) {
+        void maybeGenerateConversationTitle(titleThreadId);
+      }
+
+      return;
+    }
+
+    if (activeMode.value === 'agent') {
+      await executeSidecarAgentRequest(
+        nextMessages,
+        messageContent,
+        references,
+        userMessage.id,
+        titleThreadId,
+      );
+
+      if (!errorMessage.value) {
+        void maybeGenerateConversationTitle(titleThreadId);
+      }
+
+      return;
+    }
+
+    if (activeMode.value === 'plan') {
+      agentSteps.value = [];
+      let planSucceeded = false;
+
+      try {
+        const planResult = await agentPlan.createPlan(
+          messageContent,
+          buildSidecarContextReferences(references),
+          options.workspaceRootPath.value,
+          titleThreadId ? { threadId: titleThreadId } : {},
+        );
+
+        agentSteps.value = planResult.steps.map((step) => ({
+          id: step.id,
+          title: step.title,
+          status: step.status,
+        }));
+
+        messages.value = nextMessages;
+        clearAttachedFiles({ revokePreviews: false });
+        planSucceeded = true;
+      } catch (error) {
+        const message = toErrorMessage(error, '生成计划失败。');
+        errorMessage.value = message;
+        agentSteps.value = [];
+        messages.value = [
+          ...nextMessages,
+          {
+            id: createMessageId('assistant'),
+            role: 'assistant',
+            content: `计划生成失败：${message}`,
+            createdAt: new Date().toISOString(),
+            references: [],
+          },
+        ];
+      } finally {
+        commitDisplayMessagesToStore(titleThreadId);
+        clearActiveBufferedThread(titleThreadId);
+        isSending.value = false;
+        syncDisplayMessagesFromActiveThread();
+        if (planSucceeded) {
+          void maybeGenerateConversationTitle(titleThreadId);
+        }
+      }
+
+      return;
+    }
+    if (activeMode.value === 'chat') {
+      try {
+        await executeAiRequest(nextMessages, nextMessages, references, titleThreadId);
+        if (!errorMessage.value) {
+          void maybeGenerateConversationTitle(titleThreadId);
+        }
+      } catch (error) {
+        errorMessage.value = toErrorMessage(error, MSG_CALL_FAILED);
+      }
+      return;
+    }
+
+    const exhaustiveModeCheck: never = activeMode.value;
+    throw new Error(`未处理的 AI 助手模式：${String(exhaustiveModeCheck)}`);
+  };
+
+  // -----------------------------------------------------------------------
+  // Conversation / patch
+  // -----------------------------------------------------------------------
+
+  const resetConversationUiState = (): void => {
+    draft.value = '';
+    currentReferences.value = [];
+    agentSteps.value = [];
+    fileRollbackPrompt.value = null;
+    revertingChangedFilesSummaryId.value = null;
+    runtimeTimelineEvents.value = [];
+
+    clearAttachedFiles();
+    errorMessage.value = '';
+    activeAssistantMessage.value = null;
+    activeAssistantBaseMessages.value = [];
+    activeAgentMessageId.value = null;
+    acpAvailableCommands.reset();
+    acpUsage.reset();
+    acpSessionConfigOptions.reset();
+    isClearDialogOpen.value = false;
+  };
+
+  const clearConversation = (): void => {
+    clearSidecarToolConfirmationForThread(unref(conversationStore.activeThreadId));
+    clearSidecarUserQuestionForThread(unref(conversationStore.activeThreadId));
+    conversationStore.clearActiveThread();
+    resetConversationUiState();
+    agentPlan.resetPlan();
+  };
+
+  const deleteConversation = (threadId: string): boolean => {
+    const wasActiveThread = unref(conversationStore.activeThreadId) === threadId;
+    const deleted = conversationStore.deleteThread(threadId);
+
+    if (!deleted) {
+      return false;
+    }
+
+    clearSidecarToolConfirmationForThread(threadId);
+    clearSidecarUserQuestionForThread(threadId);
+
+    if (wasActiveThread) {
+      resetConversationUiState();
+      agentPlan.resetPlan();
+    } else {
+      syncDisplayMessagesFromActiveThread();
+    }
+
+    return true;
+  };
+
+  const startNewConversation = (): void => {
+    conversationStore.startNewThread();
+    resetConversationUiState();
+    agentPlan.resetPlan();
+  };
+
+  const switchConversation = (threadId: string): void => {
+    conversationStore.switchThread(threadId);
+    resetConversationUiState();
+  };
+
+  const updateConversationScrollState = (scrollState: IAiConversationScrollState): void => {
+    const threadId = activeConversationId.value;
+
+    if (!threadId) {
+      return;
+    }
+
+    conversationStore.updateThreadScrollState(threadId, scrollState);
+  };
+
+  const rollbackLatestFileChange = async (): Promise<void> => {
+    const prompt = fileRollbackPrompt.value;
+
+    if (prompt?.status !== 'ready') {
+      return;
+    }
+
+    fileRollbackPrompt.value = {
+      ...prompt,
+      status: 'reverting',
+      updatedAt: new Date().toISOString(),
+    };
+
+    try {
+      const result = await aiEditService.undoOperation({
+        operationId: prompt.operationId,
+      });
+
+      await refreshChangedDocumentsAfterSidecarRun(
+        result.restoredFiles,
+        result.restoredFiles.length > 0,
+      );
+
+      fileRollbackPrompt.value = {
+        ...prompt,
+        status: 'reverted',
+        restoredFileCount: result.restoredFiles.length,
+        updatedAt: new Date().toISOString(),
+      };
+      errorMessage.value = '';
+    } catch (error) {
+      fileRollbackPrompt.value = {
+        ...prompt,
+        status: 'ready',
+        updatedAt: new Date().toISOString(),
+      };
+      errorMessage.value = toErrorMessage(error, '回滚 AI 文件修改失败');
+    }
+  };
+
+  const rollbackChangedFilesSummary = async (
+    messageId: string,
+    summaryId: string,
+  ): Promise<void> => {
+    if (isSending.value || revertingChangedFilesSummaryId.value) {
+      return;
+    }
+
+    const message = findMessageById(messageId);
+    const summary = message?.changedFilesSummary;
+
+    if (!message || !summary || summary.id !== summaryId) {
+      errorMessage.value = '未找到可回滚的文件变更。';
+      return;
+    }
+
+    if (summary.revertedAt) {
+      return;
+    }
+
+    revertingChangedFilesSummaryId.value = summaryId;
+    errorMessage.value = '';
+
+    const restoredFilePaths: string[] = [];
+
+    try {
+      const checkpointEvent = getLatestCheckpointEvent(message);
+
+      if (checkpointEvent) {
+        try {
+          const restorePayload = await aiService.sidecarRestoreCheckpoint({
+            sessionId: createScopedId('mastra-rollback'),
+            runId: checkpointEvent.runId,
+            snapshotId: checkpointEvent.snapshotId?.trim() || checkpointEvent.runId,
+          });
+          const restoreRuntimeEvents = compactRuntimeEvents(
+            extractVisibleAgentRuntimeEvents(restorePayload.events),
+          );
+
+          if (restoreRuntimeEvents.length > 0) {
+            appendVisibleRuntimeTimelineEvents(restoreRuntimeEvents);
+            messages.value = messages.value.map((item) =>
+              item.id === messageId
+                ? {
+                    ...item,
+                    stream: {
+                      ...(item.stream ?? { status: 'completed' }),
+                      runtimeEvents: mergeRuntimeEvents(
+                        item.stream?.runtimeEvents,
+                        restoreRuntimeEvents,
+                      ),
+                    },
+                  }
+                : item,
+            );
+          }
+        } catch (error) {
+          logger.warn({
+            event: 'ai.changed_files_summary.mastra_rollback_failed',
+            summaryId,
+            err: error,
+          });
+        }
+      }
+
+      const taskId = parseAiAedPatchRef(summary.patchRef);
+
+      if (taskId) {
+        try {
+          const revertResult = await aiEditService.revertTask({ taskId });
+
+          restoredFilePaths.push(...revertResult.restoredFiles);
+        } catch (error) {
+          logger.warn({
+            event: 'ai.changed_files_summary.aed_revert_task_failed',
+            summaryId,
+            taskId,
+            err: error,
+          });
+        }
+      }
+
+      if (restoredFilePaths.length === 0) {
+        const reversePatch = buildReversePatchSet(message.patches, summary);
+
+        if (!reversePatch) {
+          throw new Error('没有可用于回滚的 AED task 或反向 patch。');
+        }
+
+        const reverseResult = await aiService.applyPatch({
+          patch: reversePatch,
+          metadata: {
+            taskId: activeConversationId.value,
+            turnId: messageId,
+            reason: reversePatch.summary,
+            toolCallId: 'rollback_changed_files_summary',
+            confirmedByUser: true,
+            workspaceRootPath: options.workspaceRootPath.value,
+            agentRunId: null,
+            agentStepId: null,
+          },
+        });
+
+        restoredFilePaths.push(...reverseResult.appliedFiles.map((file) => file.path));
+      }
+
+      await refreshChangedDocumentsAfterSidecarRun(restoredFilePaths, restoredFilePaths.length > 0);
+
+      const revertedAt = new Date().toISOString();
+
+      messages.value = messages.value.map((item) =>
+        item.id === messageId && item.changedFilesSummary?.id === summaryId
+          ? {
+              ...item,
+              changedFilesSummary: {
+                ...item.changedFilesSummary,
+                revertedAt,
+              },
+            }
+          : item,
+      );
+      fileRollbackPrompt.value = null;
+      commitDisplayMessagesToStore();
+    } catch (error) {
+      errorMessage.value = toErrorMessage(error, '回滚文件变更失败');
+    } finally {
+      revertingChangedFilesSummaryId.value = null;
+    }
+  };
+
+  const setChangedFilesSummaryPin = async (
+    messageId: string,
+    summaryId: string,
+    pinned: boolean,
+  ): Promise<void> => {
+    if (pinningChangedFilesSummaryId.value) {
+      return;
+    }
+
+    const message = findMessageById(messageId);
+    const summary = message?.changedFilesSummary;
+
+    if (!message || !summary || summary.id !== summaryId) {
+      errorMessage.value = '未找到可钉住的文件变更。';
+      return;
+    }
+
+    const taskId = parseAiAedPatchRef(summary.patchRef);
+    if (!taskId) {
+      errorMessage.value = '当前变更没有可钉住的 AED 任务。';
+      return;
+    }
+
+    pinningChangedFilesSummaryId.value = summaryId;
+    errorMessage.value = '';
+
+    try {
+      await aiEditService.setPin({
+        targetType: 'task',
+        targetId: taskId,
+        pinned,
+      });
+
+      messages.value = messages.value.map((item) =>
+        item.id === messageId && item.changedFilesSummary?.id === summaryId
+          ? {
+              ...item,
+              changedFilesSummary: {
+                ...item.changedFilesSummary,
+                pinned,
+              },
+            }
+          : item,
+      );
+      commitDisplayMessagesToStore();
+    } catch (error) {
+      errorMessage.value = toErrorMessage(error, '更新 AED Pin 状态失败');
+    } finally {
+      pinningChangedFilesSummaryId.value = null;
+    }
+  };
+
+  const stopCurrentRequest = (): void => {
+    const targetThreadId
