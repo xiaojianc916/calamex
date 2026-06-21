@@ -1221,7 +1221,7 @@ const createSearchPanel = (view: EditorView): Panel => {
 // ──────────────────────────────
 // Floating goto-line popup (custom panel)
 // CM 内置 gotoLine 不支持 createPanel,改用 showPanel + Compartment 动态挂载自绘面板。
-// 与查找弹窗同款:恒浅色、图标化、可拖拽、智能定位。
+// 与查找弹窗同款:恒浅色、图标化、可拖拽、智能定位。行、列分两个输入框。
 // ──────────────────────────────
 const GOTO_ICON_TARGET =
   '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M12 3v3"/><path d="M12 18v3"/><path d="M3 12h3"/><path d="M18 12h3"/></svg>';
@@ -1238,12 +1238,26 @@ const createGotoLinePanel = (view: EditorView): Panel => {
   grip.setAttribute('aria-hidden', 'true');
   grip.innerHTML = GOTO_ICON_TARGET;
 
-  const input = document.createElement('input');
-  input.className = 'cm-floating-search__input';
-  input.type = 'text';
-  input.placeholder = '行 或 行:列';
-  input.setAttribute('aria-label', '转到行 / 列');
-  input.spellcheck = false;
+  const lineInput = document.createElement('input');
+  lineInput.className = 'cm-floating-search__input cm-floating-search__input--num';
+  lineInput.type = 'text';
+  lineInput.inputMode = 'numeric';
+  lineInput.placeholder = '行';
+  lineInput.setAttribute('aria-label', '行号');
+  lineInput.spellcheck = false;
+
+  const separator = document.createElement('span');
+  separator.className = 'cm-floating-search__sep';
+  separator.setAttribute('aria-hidden', 'true');
+  separator.textContent = ':';
+
+  const columnInput = document.createElement('input');
+  columnInput.className = 'cm-floating-search__input cm-floating-search__input--num';
+  columnInput.type = 'text';
+  columnInput.inputMode = 'numeric';
+  columnInput.placeholder = '列';
+  columnInput.setAttribute('aria-label', '列号(可选)');
+  columnInput.spellcheck = false;
 
   const goButton = document.createElement('button');
   goButton.type = 'button';
@@ -1259,15 +1273,16 @@ const createGotoLinePanel = (view: EditorView): Panel => {
   closeButton.setAttribute('aria-label', '关闭');
   closeButton.innerHTML = SEARCH_ICON_CLOSE;
 
-  dom.append(grip, input, goButton, closeButton);
+  dom.append(grip, lineInput, separator, columnInput, goButton, closeButton);
 
   const submit = (): void => {
-    const raw = input.value.trim();
-    if (!raw) return;
-    const [linePart, columnPart] = raw.split(/[:,]/);
-    const line = Number.parseInt(linePart, 10);
+    const lineRaw = lineInput.value.trim();
+    if (!lineRaw) return;
+    const line = Number.parseInt(lineRaw, 10);
     if (!Number.isFinite(line) || line <= 0) return;
-    const column = columnPart ? Math.max(1, Number.parseInt(columnPart, 10) || 1) : 1;
+    const columnRaw = columnInput.value.trim();
+    const parsedColumn = Number.parseInt(columnRaw, 10);
+    const column = columnRaw && Number.isFinite(parsedColumn) ? Math.max(1, parsedColumn) : 1;
     const lineInfo = view.state.doc.line(Math.min(line, view.state.doc.lines));
     const position = Math.min(lineInfo.to, lineInfo.from + (column - 1));
     view.dispatch({
@@ -1278,7 +1293,7 @@ const createGotoLinePanel = (view: EditorView): Panel => {
     view.focus();
   };
 
-  input.addEventListener('keydown', (event) => {
+  const onKeydown = (event: KeyboardEvent): void => {
     if (event.key === 'Enter') {
       event.preventDefault();
       submit();
@@ -1287,7 +1302,9 @@ const createGotoLinePanel = (view: EditorView): Panel => {
       closeGotoLinePanel(view);
       view.focus();
     }
-  });
+  };
+  lineInput.addEventListener('keydown', onKeydown);
+  columnInput.addEventListener('keydown', onKeydown);
   goButton.addEventListener('click', submit);
   closeButton.addEventListener('click', () => {
     closeGotoLinePanel(view);
@@ -1353,8 +1370,8 @@ const createGotoLinePanel = (view: EditorView): Panel => {
         }
       }
       requestAnimationFrame(() => {
-        input.focus();
-        input.select();
+        lineInput.focus();
+        lineInput.select();
       });
     },
     destroy() {
@@ -2004,7 +2021,18 @@ defineExpose<IEditorExpose>({
 
 
 .cm-floating-search--goto {
-  width: 300px;
+  width: auto;
+}
+.cm-floating-search__input--num {
+  width: 56px;
+  flex: 0 0 auto;
+  text-align: center;
+}
+.cm-floating-search__sep {
+  color: #9aa0a6;
+  font-size: 13px;
+  line-height: 1;
+  user-select: none;
 }
 
 </style>

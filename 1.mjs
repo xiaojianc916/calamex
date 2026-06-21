@@ -1,6 +1,6 @@
-// scripts/codemods/floating-goto-two-fields.mjs
+// floating-goto-two-fields.mjs
 // 将已应用的单框「转到行」弹窗升级为「行 / 列」两个独立输入框。
-// 用法:node scripts/codemods/floating-goto-two-fields.mjs [仓库根目录]
+// 用法:node floating-goto-two-fields.mjs [仓库根目录]
 import { readFileSync, writeFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 
@@ -23,6 +23,13 @@ const replaceOnce = (haystack, find, replacement, label) => {
   if (haystack.indexOf(find, first + find.length) !== -1)
     throw new Error(`锚点不唯一:${label}`);
   return haystack.slice(0, first) + replacement + haystack.slice(first + find.length);
+};
+
+// 替换“最后一处”——用于查找/转到行两个面板里完全相同的代码块
+const replaceLast = (haystack, find, replacement, label) => {
+  const last = haystack.lastIndexOf(find);
+  if (last === -1) throw new Error(`锚点未找到:${label}`);
+  return haystack.slice(0, last) + replacement + haystack.slice(last + find.length);
 };
 
 // 1) 单输入框 → 行框 + 分隔符 + 列框
@@ -115,8 +122,8 @@ src = replaceOnce(
   'keydown',
 );
 
-// 5) mount 聚焦行框
-src = replaceOnce(
+// 5) mount 聚焦行框(查找/转到行面板该段相同,取最后一处=转到行面板)
+src = replaceLast(
   src,
   `      requestAnimationFrame(() => {
         input.focus();
@@ -152,7 +159,6 @@ src = replaceOnce(
   'css',
 );
 
-// 注释微调(非关键,缺失则忽略)
 src = src.replace(
   '// 与查找弹窗同款:恒浅色、图标化、可拖拽、智能定位。',
   '// 与查找弹窗同款:恒浅色、图标化、可拖拽、智能定位。行、列分两个输入框。',
