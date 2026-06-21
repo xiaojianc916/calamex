@@ -220,7 +220,7 @@
 }
 
 .search-panel-option-btn:hover {
-  background: var(--search-bg-hover);
+  background: #e7e9eb;
   color: var(--search-icon-hover);
 }
 
