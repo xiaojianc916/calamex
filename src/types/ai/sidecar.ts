@@ -157,7 +157,7 @@ export interface IDiffFile {
  *   acp/approval-bridge.ts 的 allow-once / reject-once 同源。
  *
  * 组件层 `@/components/ai-elements/question/types.ts` 从本文件 re-export 这些类型,
- * 不再重复定义(避免双 SoT / 新旧杂糅)。
+ * 不再重复定义(避免双 SoT / 新旧杂糟)。
  * ========================================================================== */
 
 /** Gemini ask_user 的问题类型(QuestionType)。 */
@@ -350,7 +350,7 @@ export interface IAgentToolProgressEvent extends IAgentRuntimeEventBase {
   type: 'agent.tool.progress';
   toolUseId?: string;
   toolName?: string;
-  /** Mastra 进度事件可能只是心跳；无 data 时该字段缺省。 */
+  /** Mastra 进度事件可能只是心跳;无 data 时该字段缺省。 */
   dataPreview?: string;
 }
 
@@ -713,6 +713,30 @@ export type TAgentUiEventConfigOptionUpdate = {
   /** ACP config_option_update 的原始 configOptions 数组（完整快照），逐字透传，前端 ACL 归一。 */
   configOptions: TJsonValue[];
 };
+
+/* ----------------------------------------------------------------------------
+ * ACP 会话模式选择器 VM（session/set_mode 协议）
+ *
+ * 投影 ACP session/new|load 的 modes（SessionModeState = currentModeId + availableModes[]）。
+ * 前端 ACL（components/business/ai/thread/projection/from-acp-session-modes）从
+ * ai_get_session_modes 的原始 modes 解析。VM 与 ACP wire 解耦：UI 只消费此结构，不直接
+ * 触碰原始负载。当 Agent 为 Kimi 时，模式选择器直接驱动 ai_set_session_mode（复用 Kimi
+ * 自身的模式切换语义，绝不本地伪造），默认高亮 agent 公示的 currentModeId（如 Auto）。
+ *
+ * 形状对齐 agent-client-protocol 序列化 wire（camelCase）：
+ *   SessionMode      = { id, name, description? }
+ *   SessionModeState = { currentModeId, availableModes: SessionMode[] }
+ * -------------------------------------------------------------------------- */
+export interface IAcpSessionMode {
+  id: string;
+  name: string;
+  description?: string;
+}
+
+export interface IAcpSessionModesState {
+  currentModeId: string | null;
+  availableModes: IAcpSessionMode[];
+}
 
 export type TAgentUiEvent =
   | { type: 'message_delta'; text: string; phase?: 'stage' | 'final' }
