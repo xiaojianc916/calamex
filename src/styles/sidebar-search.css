@@ -182,7 +182,7 @@
 }
 
 .search-panel-chip:hover {
-  background: var(--search-bg-hover);
+  background: #e7e9eb;
   color: var(--search-text);
 }
 
