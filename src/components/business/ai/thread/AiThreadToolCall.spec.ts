@@ -72,6 +72,15 @@ describe('AiThreadToolCall', () => {
     );
   });
 
+  it('在工具行 header 渲染 kind 标签桶', () => {
+    const wrapper = mount(AiThreadToolCall, {
+      props: { entry: makeEntry(makeToolCall({ kind: 'search' })), open: false },
+      global: { stubs },
+    });
+
+    expect(wrapper.find('.ai-thread-tool-call__kind').text()).toBe('search');
+  });
+
   it('渲染 Raw Input / Output 展开块', () => {
     const wrapper = mount(AiThreadToolCall, {
       props: {

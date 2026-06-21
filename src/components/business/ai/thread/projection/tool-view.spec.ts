@@ -20,6 +20,7 @@ describe('toAiThreadToolView', () => {
     const view = toAiThreadToolView(
       baseToolCall({ kind: 'edit', title: 'Edit file', status: 'in_progress' }),
     );
+    expect(view.kind).toBe('edit');
     expect(view.icon).toBe('patch');
     expect(view.title).toBe('Edit file');
     expect(view.status).toBe('running');
@@ -33,8 +34,10 @@ describe('toAiThreadToolView', () => {
     expect(toAiThreadToolView(baseToolCall({ status: 'canceled' })).status).toBe('canceled');
   });
 
-  it('未知 kind 兑底为 system 图标', () => {
-    expect(toAiThreadToolView(baseToolCall({ kind: 'other' })).icon).toBe('system');
+  it('未知 kind 兑底为 system 图标,kind 透传 other', () => {
+    const view = toAiThreadToolView(baseToolCall({ kind: 'other' }));
+    expect(view.icon).toBe('system');
+    expect(view.kind).toBe('other');
   });
 
   it('审批队列派生 awaiting-confirmation,仅覆盖未完成态', () => {

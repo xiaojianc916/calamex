@@ -78,6 +78,12 @@ export type TAiThreadToolViewContent =
 /** 工具调用渲染视图:`AiThreadToolCall.vue` 的唯一输入模型。 */
 export interface IAiThreadToolView {
   id: string;
+  /**
+   * Zed `ToolKind` 派生的渲染种类(协议 `toolCall.kind` 透传)。图标由它决定,
+   * 同时供渲染层标注 kind 标签桶;读取此字段而非裸协议 VM,保持「view 为唯一
+   * 渲染输入模型」的契约。
+   */
+  kind: TAiThreadToolKind;
   icon: TTaskIcon;
   title: string;
   status: TAiThreadToolViewStatus;
@@ -271,6 +277,7 @@ export const toAiThreadToolView = (
   deps: IAiThreadToolViewDeps = {},
 ): IAiThreadToolView => ({
   id: toolCall.id,
+  kind: toolCall.kind,
   icon: TOOL_KIND_ICON[toolCall.kind],
   title: toolCall.title,
   status: toViewStatus(toolCall, deps),

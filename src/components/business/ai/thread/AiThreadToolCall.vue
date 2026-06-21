@@ -78,6 +78,7 @@ const rawLanguage = (code: string): string => {
         <span class="ai-thread-tool-call__action" v-text="view.title" />
       </span>
       <span class="ai-thread-tool-call__meta">
+        <span class="ai-thread-tool-call__kind" :title="`kind: ${view.kind}`" v-text="view.kind" />
         <ThreadToolStatusIcon class="ai-thread-tool-call__status" :status="view.status" />
       </span>
       <ChevronDown class="ai-thread-tool-call__chevron size-4" v-if="hasContent" aria-hidden="true" />
@@ -222,6 +223,18 @@ const rawLanguage = (code: string): string => {
   flex: 0 0 auto;
   align-items: center;
   gap: 6px;
+}
+
+.ai-thread-tool-call__kind {
+  flex: 0 0 auto;
+  border: 1px solid color-mix(in srgb, var(--shell-divider) 80%, transparent);
+  border-radius: 5px;
+  padding: 0 5px;
+  color: var(--text-tertiary, #6b7280);
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  line-height: 16px;
+  text-transform: lowercase;
 }
 
 .ai-thread-tool-call__status {
