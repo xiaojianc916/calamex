@@ -11,7 +11,7 @@
  *     （ACP 语义）。
  *  ② content 判别联合：ACP `ToolCallContent`（content | terminal | diff）→ VM
  *     `{ type: 'content' | 'diff' | 'terminal' }`；ACP `ContentBlock` → VM 富块，
- *     audio / 未知块无对应 VM 形态时安全丢弃（绝不伪造）。
+ *     http(s) 链接归一为 source、audio 退化为 resource_link、未知块安全丢弃（绝不伪造）。
  *  ③ kind 驱动开放目录：以 `AI_TOOL_KINDS` 为单一真源校验，未知种类兑底 `other`，
  *     不阻断渲染。
  *
@@ -83,6 +83,22 @@ interface IAcpContentBlockView {
   resource?: unknown;
 }
 
+/**
+ * 链接型内容块统一产出口径：http(s) 链接归一为 `source` 富块（带域名 / favicon
+ * chips，对应 FetchURL 等联网引用，`contentBlockToMarkdown` 已支持渲染）；其余
+ * scheme（file:// 等）保持 `resource_link`。供 resource_link 与内嵌 resource 复用。
+ */
+const isWebUrl = (uri: string): boolean => /^https?:\/\//i.test(uri);
+
+const linkBlock = (uri: string, title: string | undefined): IAiThreadContentBlock => {
+  if (isWebUrl(uri)) {
+    return title === undefined ? { type: 'source', url: uri } : { type: 'source', url: uri, title };
+  }
+  return title === undefined
+    ? { type: 'resource_link', uri }
+    : { type: 'resource_link', uri, title };
+};
+
 /** ACP `ContentBlock` → VM `IAiThreadContentBlock`；无对应 VM 形态时返回 null。 */
 const mapContentBlock = (block: unknown): IAiThreadContentBlock | null => {
   if (block === null || typeof block !== 'object') return null;
@@ -104,10 +120,7 @@ const mapContentBlock = (block: unknown): IAiThreadContentBlock | null => {
     case 'resource_link': {
       const uri = asString(view.uri);
       if (uri === undefined) return null;
-      const title = asString(view.title) ?? asString(view.name);
-      return title === undefined
-        ? { type: 'resource_link', uri }
-        : { type: 'resource_link', uri, title };
+      return linkBlock(uri, asString(view.title) ?? asString(view.name));
     }
     case 'resource': {
       // 嵌入式资源：优先取 uri 当链接，其次取内嵌文本当普通文本块。
@@ -117,16 +130,27 @@ const mapContentBlock = (block: unknown): IAiThreadContentBlock | null => {
           : {};
       const uri = asString(resource.uri);
       if (uri !== undefined) {
-        const title = asString(view.title) ?? asString(view.name);
-        return title === undefined
-          ? { type: 'resource_link', uri }
-          : { type: 'resource_link', uri, title };
+        return linkBlock(uri, asString(view.title) ?? asString(view.name));
       }
       const text = asString(resource.text);
       return text === undefined ? null : { type: 'text', text };
     }
+    case 'audio': {
+      // ACP audio：base64 `data`(+mimeType) 或 `uri`。无专属 VM 富块，退化为
+      // resource_link（不再静默丢弃）；data 包装为 data: URI，缺省标题 'Audio' 避免裸 URI。
+      const uri = asString(view.uri);
+      const data = asString(view.data);
+      const mimeType = asString(view.mimeType) ?? 'audio/mpeg';
+      const src = uri ?? (data !== undefined ? `data:${mimeType};base64,${data}` : undefined);
+      if (src === undefined) return null;
+      return {
+        type: 'resource_link',
+        uri: src,
+        title: asString(view.title) ?? asString(view.name) ?? 'Audio',
+      };
+    }
     default:
-      // audio 及未来未知块：无对应 VM 富块，安全丢弃（不伪造）。
+      // 未来未知块：无对应 VM 富块，安全丢弃（不伪造）。
       return null;
   }
 };

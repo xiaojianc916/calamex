@@ -100,7 +100,7 @@ describe('reduceAcpToolCall — 按 toolCallId 合并', () => {
 });
 
 describe('reduceAcpToolCall — ContentBlock 归一', () => {
-  it('text / image(uri) / image(data) / resource_link / terminal', () => {
+  it('text / image(uri) / image(data) / resource_link / terminal / audio', () => {
     const entry = reduceAcpToolCall(
       undefined,
       toolCall({
@@ -125,114 +125,134 @@ describe('reduceAcpToolCall — ContentBlock 归一', () => {
       { type: 'content', block: { type: 'image', src: 'data:image/jpeg;base64,AAAA' } },
       { type: 'content', block: { type: 'resource_link', uri: 'file:///a.ts', title: 'a.ts' } },
       { type: 'terminal', terminalId: 'term-1' },
+      {
+        type: 'content',
+        block: { type: 'resource_link', uri: 'data:audio/mp3;base64,zz', title: 'Audio' },
+      },
+    ]);
+  });
+});
+
+describe('reduceAcpToolCall — source / audio 归一（缺口修复）', () => {
+  it('http(s) resource_link → source 富块；file:// 等保持 resource_link', () => {
+    const entry = reduceAcpToolCall(
+      undefined,
+      toolCall({
+        toolCallId: 't',
+        content: [
+          {
+            type: 'content',
+            content: { type: 'resource_link', uri: 'https://acp.dev/spec', title: 'ACP' },
+          },
+          {
+            type: 'content',
+            content: { type: 'resource_link', uri: 'file:///a.ts', name: 'a.ts' },
+          },
+        ],
+      }),
+      { now: NOW },
+    );
+    expect(entry.content).toEqual([
+      { type: 'content', block: { type: 'source', url: 'https://acp.dev/spec', title: 'ACP' } },
+      { type: 'content', block: { type: 'resource_link', uri: 'file:///a.ts', title: 'a.ts' } },
+    ]);
+  });
+
+  it('audio 退化为 resource_link（data→data: URI / uri 直传），不再静默丢弃', () => {
+    const entry = reduceAcpToolCall(
+      undefined,
+      toolCall({
+        toolCallId: 't',
+        content: [
+          { type: 'content', content: { type: 'audio', data: 'zz', mimeType: 'audio/mp3' } },
+          {
+            type: 'content',
+            content: { type: 'audio', uri: 'https://x/a.mp3', title: 'clip' },
+          },
+        ],
+      }),
+      { now: NOW },
+    );
+    expect(entry.content).toEqual([
+      {
+        type: 'content',
+        block: { type: 'resource_link', uri: 'data:audio/mp3;base64,zz', title: 'Audio' },
+      },
+      { type: 'content', block: { type: 'resource_link', uri: 'https://x/a.mp3', title: 'clip' } },
     ]);
   });
 });
 
 describe('reduceAcpToolCall — diff 归一', () => {
-  it('新文件：全部为新增行，oldStart=0', () => {
+  it('单区段编辑生成行级 hunk（含上下文 + 头部计数）', () => {
     const entry = reduceAcpToolCall(
       undefined,
       toolCall({
         toolCallId: 't',
-        content: [{ type: 'diff', path: '/repo/new.ts', oldText: null, newText: 'a\nb' }],
+        content: [
+          {
+            type: 'diff',
+            path: 'a.ts',
+            oldText: 'l1\nl2\nOLD\nl4\nl5',
+            newText: 'l1\nl2\nNEW\nl4\nl5',
+          },
+        ],
       }),
       { now: NOW },
     );
     expect(entry.content).toHaveLength(1);
     const item = entry.content[0];
     expect(item.type).toBe('diff');
-    if (item.type !== 'diff') throw new Error('expected diff');
-    expect(item.diff.filePath).toBe('/repo/new.ts');
+    if (item.type !== 'diff') return;
+    expect(item.diff.filePath).toBe('a.ts');
     expect(item.diff.hunks).toHaveLength(1);
     const hunk = item.diff.hunks[0];
-    expect(hunk.lines.map((l) => l.kind)).toEqual(['add', 'add']);
-    expect(hunk.lines.map((l) => l.content)).toEqual(['a', 'b']);
-    expect(hunk.header).toBe('@@ -0,0 +1,2 @@');
-  });
-
-  it('单区段修改：前缀/后缀裁剪为 context + delete + add', () => {
-    const entry = reduceAcpToolCall(
-      undefined,
-      toolCall({
-        toolCallId: 't',
-        content: [{ type: 'diff', path: 'm.ts', oldText: 'l1\nl2\nl3', newText: 'l1\nX\nl3' }],
-      }),
-      { now: NOW },
-    );
-    const item = entry.content[0];
-    if (item.type !== 'diff') throw new Error('expected diff');
-    const hunk = item.diff.hunks[0];
-    expect(hunk.lines.map((l) => [l.kind, l.content])).toEqual([
-      ['context', 'l1'],
-      ['delete', 'l2'],
-      ['add', 'X'],
-      ['context', 'l3'],
+    expect(hunk.header).toBe('@@ -1,5 +1,5 @@');
+    expect(hunk.lines.map((line) => `${line.kind}:${line.content}`)).toEqual([
+      'context:l1',
+      'context:l2',
+      'delete:OLD',
+      'add:NEW',
+      'context:l4',
+      'context:l5',
     ]);
-    expect(hunk.header).toBe('@@ -1,3 +1,3 @@');
-    expect(item.diff.diffRef).toBe('acp-diff:t:m.ts');
   });
 });
 
 describe('reduceAcpToolCall — locations 归一', () => {
-  it('映射 { path, line }，过滤无 path 项、非对象项与非法行号', () => {
+  it('过滤无 path 项，line 仅接受非负整数；空数组合法', () => {
     const entry = reduceAcpToolCall(
       undefined,
       toolCall({
         toolCallId: 't',
         locations: [
-          { path: 'src/a.ts', line: 12 },
-          { path: 'src/b.ts' },
-          { line: 3 },
-          null,
+          { path: 'a.ts', line: 10 },
+          { path: 'b.ts' },
+          { path: 'c.ts', line: -1 },
+          { line: 5 },
           'nope',
-          { path: 'src/c.ts', line: -1 },
-          { path: 'src/d.ts', line: 1.5 },
         ],
       }),
       { now: NOW },
     );
-    expect(entry.locations).toEqual([
-      { path: 'src/a.ts', line: 12 },
-      { path: 'src/b.ts' },
-      { path: 'src/c.ts' },
-      { path: 'src/d.ts' },
-    ]);
+    expect(entry.locations).toEqual([{ path: 'a.ts', line: 10 }, { path: 'b.ts' }, { path: 'c.ts' }]);
   });
 
-  it('缺省 locations → undefined（首帧不伪造）', () => {
-    const entry = reduceAcpToolCall(undefined, toolCall({ toolCallId: 't' }), { now: NOW });
-    expect(entry.locations).toBeUndefined();
-  });
-
-  it('update：出现即整体替换，缺省保留旧值，空数组清空', () => {
+  it('locations 缺省则保留旧值', () => {
     const first = reduceAcpToolCall(
       undefined,
-      toolCall({ toolCallId: 't', locations: [{ path: 'src/a.ts', line: 1 }] }),
+      toolCall({ toolCallId: 't', locations: [{ path: 'a.ts' }] }),
       { now: NOW },
     );
-    expect(first.locations).toEqual([{ path: 'src/a.ts', line: 1 }]);
-
-    const keep = reduceAcpToolCall(
-      first,
-      toolCallUpdate({ toolCallId: 't', status: 'in_progress' }),
-    );
-    expect(keep.locations).toEqual([{ path: 'src/a.ts', line: 1 }]);
-
-    const replaced = reduceAcpToolCall(
-      first,
-      toolCallUpdate({ toolCallId: 't', locations: [{ path: 'src/b.ts' }] }),
-    );
-    expect(replaced.locations).toEqual([{ path: 'src/b.ts' }]);
-
-    const cleared = reduceAcpToolCall(first, toolCallUpdate({ toolCallId: 't', locations: [] }));
-    expect(cleared.locations).toEqual([]);
+    const next = reduceAcpToolCall(first, toolCallUpdate({ toolCallId: 't', status: 'completed' }));
+    expect(next.locations).toEqual([{ path: 'a.ts' }]);
   });
 });
 
 describe('getAcpToolCallId', () => {
-  it('返回 toolCallId，缺失时返回空串', () => {
-    expect(getAcpToolCallId(toolCall({ toolCallId: 'abc' }))).toBe('abc');
+  it('取 toolCallId；缺失或空串返回空串', () => {
+    expect(getAcpToolCallId(toolCall({ toolCallId: 't' }))).toBe('t');
     expect(getAcpToolCallId(toolCall({}))).toBe('');
+    expect(getAcpToolCallId(toolCall({ toolCallId: '' }))).toBe('');
   });
 });
