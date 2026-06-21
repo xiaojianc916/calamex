@@ -2,13 +2,13 @@
 import {
   ArrowUp,
   Bot,
+  Check,
   ChevronRight,
   Globe,
   Network,
   Paintbrush,
   Paperclip,
   Plus,
-  Route,
   Settings2,
   Square,
 } from '@lucide/vue';
@@ -308,11 +308,6 @@ const modeSelectItems = computed<{ key: string; label: string }[]>(() =>
 const modeSelectValue = computed(() =>
   selectedAgent.value === 'kimi' ? kimiMode.value : activeMode.value,
 );
-
-const modeSelectLabel = computed(() => {
-  const current = modeSelectItems.value.find((item) => item.key === modeSelectValue.value);
-  return current?.label ?? modeSelectItems.value[0]?.label ?? '模式';
-});
 
 const handleModeSelect = (value: unknown): void => {
   if (typeof value !== 'string' || !value.trim()) {
@@ -903,6 +898,18 @@ onMounted(() => {
                 :side-offset="8"
                 class="ai-settings-menu"
               >
+                <div class="ai-settings-menu-section">模式</div>
+                <DropdownMenuItem
+                  v-for="mode in modeSelectItems"
+                  :key="mode.key"
+                  class="ai-settings-menu-item ai-settings-mode-item"
+                  :data-active="modeSelectValue === mode.key ? '' : undefined"
+                  @select.prevent="handleModeSelect(mode.key)"
+                >
+                  <span class="ai-settings-menu-label" v-text="mode.label"></span>
+                  <Check v-if="modeSelectValue === mode.key" class="ai-settings-menu-check" />
+                </DropdownMenuItem>
+                <div class="ai-settings-menu-separator" aria-hidden="true"></div>
                 <DropdownMenuItem
                   class="ai-settings-menu-item"
                   :disabled="disabled"
@@ -967,29 +974,6 @@ onMounted(() => {
                 </DropdownMenuItem>
               </DropdownMenuContent>
             </DropdownMenu>
-            <Select
-              :model-value="modeSelectValue"
-              :disabled="disabled"
-              @update:model-value="handleModeSelect"
-            >
-              <SelectTrigger aria-label="选择模式" class="ai-agent-trigger">
-                <Route class="ai-agent-trigger__icon" :stroke-width="1.6" />
-                <span class="ai-agent-trigger__label" v-text="modeSelectLabel"></span>
-              </SelectTrigger>
-              <SelectContent side="top" align="start" :side-offset="8" class="ai-agent-content">
-                <SelectLabel class="ai-agent-section-label">模式</SelectLabel>
-                <SelectGroup>
-                  <SelectItem
-                    v-for="mode in modeSelectItems"
-                    :key="mode.key"
-                    class="ai-agent-item"
-                    :value="mode.key"
-                  >
-                    <span class="ai-agent-item__label" v-text="mode.label"></span>
-                  </SelectItem>
-                </SelectGroup>
-              </SelectContent>
-            </Select>
           </div>
           <div class="ai-toolbar-spacer" aria-hidden="true"></div>
           <Select
@@ -1588,6 +1572,35 @@ onMounted(() => {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.ai-settings-menu-section {
+  padding: 7px 8px 4px;
+  color: var(--ai-menu-muted);
+  font-size: 12px;
+  line-height: 1.2;
+}
+
+.ai-settings-mode-item {
+  grid-template-columns: minmax(0, 1fr) auto;
+  padding-left: 8px;
+}
+
+.ai-settings-mode-item[data-active] .ai-settings-menu-label {
+  font-weight: 600;
+}
+
+.ai-settings-menu-check {
+  width: 16px;
+  height: 16px;
+  color: #2783de;
+  stroke-width: 2;
+}
+
+.ai-settings-menu-separator {
+  height: 1px;
+  margin: 5px 4px;
+  background: var(--ai-menu-border);
 }
 
 .ai-network-switch {
