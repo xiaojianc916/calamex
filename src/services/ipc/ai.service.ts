@@ -1,4 +1,3 @@
-import dotenv from 'dotenv';
 import type {
   AiAgentClassifyTaskPayload,
   AiAgentNetworkPermissionPayload,
@@ -200,6 +199,7 @@ export const aiService = {
 
     await tauriService.saveScript({
       path: sidecarDotenvPath,
+      workspaceRootPath,
       content: updateDotenvAssignment(script?.content ?? '', TAVILY_API_KEY_ENV, nextValue || null),
       encoding: script?.encoding ?? 'utf-8',
     });

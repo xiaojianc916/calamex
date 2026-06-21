@@ -60,6 +60,7 @@ import type {
   IAgentExternalChatRequest,
   IAgentExternalChatResultPayload,
   IAgentSidecarApprovalResolveRequest,
+  IAgentSidecarAskUserResumeRequest,
   IAgentSidecarChatRequest,
   IAgentSidecarCheckpointRestoreRequest,
   IAgentSidecarHealthPayload,
@@ -294,6 +295,9 @@ export interface ITauriService {
   ): Promise<IAgentExternalChatResultPayload>;
   agentSidecarResolveApproval(
     payload: IAgentSidecarApprovalResolveRequest,
+  ): Promise<IAgentSidecarResponsePayload>;
+  agentSidecarResolveAskUser(
+    payload: IAgentSidecarAskUserResumeRequest,
   ): Promise<IAgentSidecarResponsePayload>;
   agentSidecarRestoreCheckpoint(
     payload: IAgentSidecarCheckpointRestoreRequest,

@@ -1,6 +1,7 @@
 import {
   type AgentExternalChatRequest_Deserialize,
   type AgentSidecarApprovalResolveRequest_Deserialize,
+  type AgentSidecarAskUserResumeRequest_Deserialize,
   type AgentSidecarChatRequest_Deserialize,
   type AgentSidecarCheckpointRestoreRequest_Deserialize,
   type AgentSidecarOrchestrateRequest_Deserialize,
@@ -79,6 +80,12 @@ const SIDECAR_COMMAND_META = {
     audit: 'sensitive',
     timeoutMs: AGENT_SIDECAR_TASK_TIMEOUT_MS,
   },
+  agentSidecarResolveAskUser: {
+    command: 'agent_sidecar_resolve_ask_user',
+    guardHint: '处理 Agent sidecar 询问用户回合恢复',
+    audit: 'sensitive',
+    timeoutMs: AGENT_SIDECAR_TASK_TIMEOUT_MS,
+  },
   agentSidecarRestoreCheckpoint: {
     command: 'agent_sidecar_restore_checkpoint',
     guardHint: '通过 Node sidecar 恢复 Agent 回滚检查点',
@@ -108,6 +115,7 @@ type TSidecarTauriService = Pick<
   | 'agentSidecarChat'
   | 'agentSidecarExternalChat'
   | 'agentSidecarResolveApproval'
+  | 'agentSidecarResolveAskUser'
   | 'agentSidecarRestoreCheckpoint'
   | 'agentSidecarOrchestrate'
   | 'agentSidecarOrchestrateResume'
@@ -159,6 +167,14 @@ export const sidecarTauriService: TSidecarTauriService = {
     return runCommand(SIDECAR_COMMAND_META.agentSidecarResolveApproval, payload, options, () =>
       commands.agentSidecarResolveApproval(
         payload as unknown as AgentSidecarApprovalResolveRequest_Deserialize,
+      ),
+    ) as Promise<IAgentSidecarResponsePayload>;
+  },
+
+  agentSidecarResolveAskUser(payload, options?: IIpcCallOptions) {
+    return runCommand(SIDECAR_COMMAND_META.agentSidecarResolveAskUser, payload, options, () =>
+      commands.agentSidecarResolveAskUser(
+        payload as unknown as AgentSidecarAskUserResumeRequest_Deserialize,
       ),
     ) as Promise<IAgentSidecarResponsePayload>;
   },
