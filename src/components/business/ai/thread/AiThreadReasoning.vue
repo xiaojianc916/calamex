@@ -139,7 +139,16 @@ const showElapsed = computed(() => sawStreaming.value && elapsedSeconds.value > 
   font-variant-numeric: tabular-nums;
 }
 
+/* 思考正文整体调小:AiMarkdown 内部节点(paragraph/list/quote/code)以
+   var(--ai-chat-font-size-body) 等变量取值并直接设在子节点上,故仅在根
+   节点设 font-size 不生效;这里覆写这些变量(随继承下发到各节点)才能真正变小。 */
 .ai-thread-reasoning__text {
+  --ai-chat-font-size-body: 12px;
+  --ai-chat-line-height-body: 18px;
+  --ai-chat-line-height-body-ratio: 1.5;
+  --ai-chat-font-size-code: 12px;
+  --ai-chat-line-height-code: 18px;
+  --ai-chat-line-height-code-ratio: 1.5;
   color: #a3a4a5;
   font-size: 12px;
   line-height: 18px;
