@@ -1,102 +1,162 @@
-#!/usr/bin/env node
-// optimize-calamex-r3.mjs
-// 第三批：useDocumentNavigationHistory.ts 死代码清理 + 类型标注修正（F10/F11）。
-// 安全设计同前：纯锚点替换；幂等；--dry-run 预演；--revert 回滚；锚点缺失/歧义即非零退出。
-// 用法：node optimize-calamex-r3.mjs [--dry-run] [--revert]
+// step5a-render-authority.mjs
+// Step 5a（双轨拆除·渲染权威）：selectRenderThread 恒以 authoritative 为渲染真源，
+// 退役 legacy 投影回退分支（生产中已恒为空、不再被消费）。
+// 用法：
+//   node step5a-render-authority.mjs           # 预演（dry-run，不写盘）
+//   node step5a-render-authority.mjs --apply   # 实际写盘（保留各文件原始 EOL）
+import { readFileSync, writeFileSync } from 'node:fs';
 
-import { readFileSync, writeFileSync, existsSync } from 'node:fs';
-import { resolve } from 'node:path';
+const APPLY = process.argv.includes('--apply');
 
-const DRY_RUN = process.argv.includes('--dry-run');
-const REVERT = process.argv.includes('--revert');
-const b = (...lines) => lines.join('\n');
-
-const TARGETS = [
+const edits = [
   {
-    file: 'src/composables/useDocumentNavigationHistory.ts',
-    edits: [
+    file: 'src/store/aiThread/render-authority.ts',
+    replacements: [
       {
-        label: 'F11 补充 type Ref 导入',
-        from: "import { ref } from 'vue';",
-        to: "import { ref, type Ref } from 'vue';",
+        find: ` * 切换语义（strangler）：authoritative 持有 entries 时以其为准，否则回退 legacy。
+ * 写路径接管（砖3②起）前 authoritative 恒为空线程 → 始终回退 legacy → 逐线程
+ * 零行为变化；写路径接管后 authoritative 自然胜出，无需二次改读侧。`,
+        to: ` * 双轨拆除（Step 5）：写路径已全面接管 authoritative，故渲染权威恒等于
+ * authoritative；legacy 投影回退链路在生产中恒为空、不再被消费，回退分支退役。`,
       },
       {
-        label: 'F11 修正 pickNavigableFromStack 的 stack 类型标注',
-        from: '    stack: ReturnType<typeof backStack>,',
-        to: '    stack: Ref<string[]>,',
+        find: `/**
+ * 渲染线程真源选择：authoritative 含 entries 时优先，否则回退 fallback。
+ * @param authoritative entries 权威活动线程（砖2b store）
+ * @param fallback 既有渲染链路（liveThread ?? 投影 ?? 持久化）
+ */
+export function selectRenderThread(
+  authoritative: IAiThread | null,
+  fallback: IAiThread | null,
+): IAiThread | null {
+  return authoritative && authoritative.entries.length > 0 ? authoritative : fallback;
+}`,
+        to: `/**
+ * 渲染线程真源选择：恒以 entries 权威活动线程为准（含空 entries 的空线程）。
+ * @param authoritative entries 权威活动线程（砖2b store）
+ */
+export function selectRenderThread(authoritative: IAiThread | null): IAiThread | null {
+  return authoritative;
+}`,
       },
+    ],
+  },
+  {
+    file: 'src/store/aiThread/render-authority.spec.ts',
+    replacements: [
       {
-        label: 'F10 删除未使用的 getBackStack / getForwardStack 死代码',
-        from: b(
-          '  const canGoForward = (): boolean => forwardStack.value.length > 0;',
-          '',
-          '  const getBackStack = () => backStack;',
-          '  const getForwardStack = () => forwardStack;',
-          '',
-          '  /** 检查导航栈中是否有可用的目标（跳过已关闭的文档）。 */',
-        ),
-        to: b(
-          '  const canGoForward = (): boolean => forwardStack.value.length > 0;',
-          '',
-          '  /** 检查导航栈中是否有可用的目标（跳过已关闭的文档）。 */',
-        ),
+        find: `describe('selectRenderThread', () => {
+  it('authoritative 持有 entries 时以其为渲染真源', () => {
+    const authoritative = makeThread('a', [entry]);
+    const fallback = makeThread('legacy', [entry, entry]);
+    expect(selectRenderThread(authoritative, fallback)).toBe(authoritative);
+  });
+
+  it('authoritative 为空 entries 时回退 legacy', () => {
+    const authoritative = makeThread('a', []);
+    const fallback = makeThread('legacy', [entry]);
+    expect(selectRenderThread(authoritative, fallback)).toBe(fallback);
+  });
+
+  it('authoritative 为 null 时回退 legacy', () => {
+    const fallback = makeThread('legacy', [entry]);
+    expect(selectRenderThread(null, fallback)).toBe(fallback);
+  });
+
+  it('authoritative 空 entries 且 fallback 为 null 时返回 null', () => {
+    expect(selectRenderThread(makeThread('a', []), null)).toBeNull();
+  });
+
+  it('authoritative 与 fallback 皆 null 时返回 null', () => {
+    expect(selectRenderThread(null, null)).toBeNull();
+  });
+});`,
+        to: `describe('selectRenderThread', () => {
+  it('始终以 authoritative 为渲染真源（含空 entries）', () => {
+    const authoritative = makeThread('a', []);
+    expect(selectRenderThread(authoritative)).toBe(authoritative);
+  });
+
+  it('authoritative 持有 entries 时返回该线程', () => {
+    const authoritative = makeThread('a', [entry]);
+    expect(selectRenderThread(authoritative)).toBe(authoritative);
+  });
+
+  it('authoritative 为 null 时返回 null', () => {
+    expect(selectRenderThread(null)).toBeNull();
+  });
+});`,
+      },
+    ],
+  },
+  {
+    file: 'src/store/aiThread/index.ts',
+    replacements: [
+      {
+        find: `  /* ----- Step 8 砟3①：渲染权威（authoritative 优先，legacy 投影回退，未接线）-----
+   * 渲染层当前仍读 activeThread / activeEntries；砟3② 才把 Panel 渲染来源切到此。
+   * authoritative 持有 entries 时以其为渲染真源，否则回退既有 liveThread ?? 投影
+   * ?? 持久化 链路，保证写路径接管前逐线程零行为变化。
+   */
+  const renderActiveThread = computed<IAiThread | null>(() =>
+    selectRenderThread(authoritativeActiveThread.value, activeThread.value),
+  );`,
+        to: `  /* ----- Step 8 砟3① / Step 5 双轨拆除：渲染权威 = authoritative -----
+   * Panel 已切到 renderActiveThread / renderActiveEntries 作为唯一渲染来源；写路径
+   * 全面接管后 authoritative 即渲染真源，legacy 投影回退链路（activeThread）退役。
+   */
+  const renderActiveThread = computed<IAiThread | null>(() =>
+    selectRenderThread(authoritativeActiveThread.value),
+  );`,
       },
     ],
   },
 ];
 
-const tally = { applied: [], skipped: [], missing: [], ambiguous: [] };
+const results = [];
+const outputs = [];
+let hadError = false;
 
-function applyEdit(content, from, to, label) {
-  const toInFrom = from.includes(to);
-  const alreadyApplied = toInFrom ? !content.includes(from) : content.includes(to);
-  if (alreadyApplied) {
-    tally.skipped.push(label);
-    return content;
-  }
-  const first = content.indexOf(from);
-  if (first === -1) {
-    tally.missing.push(label);
-    return content;
-  }
-  if (content.indexOf(from, first + from.length) !== -1) {
-    tally.ambiguous.push(label);
-    return content;
-  }
-  tally.applied.push(label);
-  return content.slice(0, first) + to + content.slice(first + from.length);
-}
-
-for (const target of TARGETS) {
-  const abs = resolve(process.cwd(), target.file);
-  if (!existsSync(abs)) {
-    tally.missing.push(`${target.file}（文件不存在，请在仓库根目录运行）`);
+for (const { file, replacements } of edits) {
+  let raw;
+  try {
+    raw = readFileSync(file, 'utf8');
+  } catch (e) {
+    hadError = true;
+    results.push(`✗ ${file}: 读取失败 (${e.message})`);
     continue;
   }
-  const original = readFileSync(abs, 'utf8');
-  let content = original;
-  for (const edit of target.edits) {
-    const from = REVERT ? edit.to : edit.from;
-    const to = REVERT ? edit.from : edit.to;
-    content = applyEdit(content, from, to, `${target.file} :: ${edit.label}`);
+  const crlf = raw.includes('\r\n');
+  let text = crlf ? raw.replace(/\r\n/g, '\n') : raw;
+  let fileOk = true;
+  for (let i = 0; i < replacements.length; i += 1) {
+    const { find, to } = replacements[i];
+    const count = text.split(find).length - 1;
+    if (count !== 1) {
+      hadError = true;
+      fileOk = false;
+      results.push(`✗ ${file} [替换#${i + 1}]: 期望命中 1 次，实际 ${count} 次`);
+      continue;
+    }
+    text = text.replace(find, () => to);
   }
-  if (content !== original && !DRY_RUN) {
-    writeFileSync(abs, content, 'utf8');
-  }
+  if (!fileOk) continue;
+  outputs.push({ file, out: crlf ? text.replace(/\n/g, '\r\n') : text, n: replacements.length });
+  results.push(`• ${file}: 校验通过 (${replacements.length} 处)`);
 }
 
-const mode = `${REVERT ? '回滚' : '应用'}${DRY_RUN ? '（预演 dry-run，未写盘）' : ''}`;
-console.log(`\n=== calamex 第三批优化 ${mode} ===`);
-const line = (emoji, title, arr) => {
-  if (arr.length === 0) return;
-  console.log(`\n${emoji} ${title}（${arr.length}）`);
-  for (const x of arr) console.log(`   - ${x}`);
-};
-line('✅', REVERT ? '已回滚' : '已应用', tally.applied);
-line('⏭️', '已是目标状态，跳过', tally.skipped);
-line('⚠️', '锚点缺失（可能版本已变）', tally.missing);
-line('⛔', '锚点不唯一，已拒绝替换', tally.ambiguous);
-console.log(
-  `\n小计：应用 ${tally.applied.length}｜跳过 ${tally.skipped.length}｜缺失 ${tally.missing.length}｜歧义 ${tally.ambiguous.length}\n`,
-);
-process.exit(tally.missing.length + tally.ambiguous.length > 0 ? 1 : 0);
+console.log(results.join('\n'));
+
+if (hadError) {
+  console.error('\n存在未命中，已全部中止（未写盘）。请核对源文件是否已被改动。');
+  process.exit(1);
+}
+if (!APPLY) {
+  console.log('\n预演通过（dry-run）。加 --apply 实际写盘。');
+  process.exit(0);
+}
+for (const { file, out, n } of outputs) {
+  writeFileSync(file, out, 'utf8');
+  console.log(`✓ 已写入 ${file} (${n} 处)`);
+}
+console.log('\n完成。请运行 pnpm vitest run 与 pnpm -s vue-tsc --noEmit 验证。');

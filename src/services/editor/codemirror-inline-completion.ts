@@ -9,6 +9,7 @@ import {
 } from '@codemirror/view';
 import { aiService } from '@/services/ipc/ai.service';
 import type { IAiInlineCompletionResult } from '@/types/ai';
+import { logger } from '@/utils/platform/logger';
 
 const INLINE_COMPLETION_CONTEXT_LIMIT = 8_000;
 const INLINE_COMPLETION_CONTEXT_CODE_UNIT_WINDOW = INLINE_COMPLETION_CONTEXT_LIMIT * 2;
@@ -256,7 +257,11 @@ export const createCodeMirrorInlineCompletionController = (
     const nextRequestId = requestId;
     timerId = window.setTimeout(() => {
       timerId = null;
-      void requestInlineCompletion(nextRequestId, cursorOffset);
+      // 行内补全是尽力而为的后台能力：请求失败(网络/Provider/IPC)静默降级，
+      // 仅在 debug 级别留痕，避免未捕获的 promise rejection 噪声。
+      void requestInlineCompletion(nextRequestId, cursorOffset).catch((error: unknown) => {
+        logger.debug({ event: 'codemirror.inline_completion.request_failed', err: error });
+      });
     }, INLINE_COMPLETION_DELAY_MS);
   };
 

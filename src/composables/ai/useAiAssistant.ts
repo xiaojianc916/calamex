@@ -2564,4 +2564,173 @@ export const useAiAssistant = (options: IUseAiAssistantOptions) => {
   };
 
   const stopCurrentRequest = (): void => {
-    const targetThreadId
+    const targetThreadId =
+      activeSidecarAgentSession.value?.threadId ??
+      activeBufferedThreadId.value ??
+      unref(conversationStore.activeThreadId);
+    const streamId = activeStreamId.value;
+
+    if (streamId) {
+      void aiService.cancel({ streamId, threadId: targetThreadId ?? null });
+    }
+
+    activeAbortController.value?.abort();
+    activeAbortController.value = null;
+
+    activeStreamId.value = null;
+    activeStreamResolve.value?.();
+    activeStreamResolve.value = null;
+
+    aiStream.stop();
+
+    if (activeAssistantMessage.value) {
+      activeAssistantMessage.value.stream = {
+        ...activeAssistantMessage.value.stream,
+        status: 'cancelled',
+      };
+      activeAssistantMessage.value.content = aiStream.content.value;
+
+      messages.value = [...activeAssistantBaseMessages.value, { ...activeAssistantMessage.value }];
+    }
+
+    if (activeAgentMessageId.value) {
+      const activeMessageId = activeAgentMessageId.value;
+      const currentMessage = findMessageById(activeMessageId);
+      const isChatStreamCancellation = Boolean(streamId);
+
+      updateAgentExecutionMessage({
+        messageId: activeMessageId,
+        content: isChatStreamCancellation ? (currentMessage?.content ?? '') : 'Agent 执行已取消。',
+        toolCalls: isChatStreamCancellation ? (currentMessage?.toolCalls ?? []) : [],
+        streamStatus: 'cancelled',
+      });
+      activeAgentMessageId.value = null;
+    }
+
+    clearSidecarToolConfirmation();
+    clearSidecarUserQuestion();
+    commitDisplayMessagesToStore(targetThreadId);
+    clearActiveBufferedThread(targetThreadId);
+    isSending.value = false;
+    syncDisplayMessagesFromActiveThread();
+    errorMessage.value = '';
+  };
+
+  // -----------------------------------------------------------------------
+  // Built-in browser selection inbox
+  // -----------------------------------------------------------------------
+
+  const webSelectionInbox = useAiWebSelectionInbox();
+
+  const MAX_WEB_SELECTION_HTML_CHARS = 2_000;
+
+  const buildWebSelectionMessage = (selection: IAiWebSelectionContext): string => {
+    const htmlSnippet =
+      selection.outerHtml.length > MAX_WEB_SELECTION_HTML_CHARS
+        ? `${selection.outerHtml.slice(0, MAX_WEB_SELECTION_HTML_CHARS)}…`
+        : selection.outerHtml;
+    const lines = [
+      '我从内置浏览器选中了一个页面元素作为上下文：',
+      `- 元素：${selection.label}`,
+      `- 页面：${selection.url}`,
+    ];
+
+    const comment = selection.comment.trim();
+
+    if (comment) {
+      lines.push(`- 备注：${comment}`);
+    }
+
+    lines.push('', '元素 HTML：', '```html', htmlSnippet, '```');
+
+    return lines.join('\n');
+  };
+
+  const appendWebSelectionToDraft = (message: string): void => {
+    draft.value = draft.value.trim() ? `${draft.value.trimEnd()}\n\n${message}` : message;
+  };
+
+  watch(
+    () => webSelectionInbox.pendingSelection.value,
+    (selection) => {
+      if (!selection) {
+        return;
+      }
+
+      webSelectionInbox.consumeSelection();
+
+      const message = buildWebSelectionMessage(selection);
+
+      if (isSending.value) {
+        appendWebSelectionToDraft(message);
+        return;
+      }
+
+      draft.value = message;
+      void sendMessage();
+    },
+  );
+
+  // -----------------------------------------------------------------------
+  // Public surface
+  // -----------------------------------------------------------------------
+
+  return {
+    agentPlan,
+    acpAvailableCommands,
+    acpUsage,
+    acpSessionConfigOptions,
+    config,
+    messages,
+    historyThreads,
+    activeConversationId,
+    activeConversationScrollState,
+    draft,
+    isSending,
+    error: errorMessage,
+    errorMessage,
+    providerLabel,
+    isSettingsOpen,
+    isClearDialogOpen,
+    currentReferences,
+    conversationCheckpoints,
+    fileRollbackPrompt,
+    revertingChangedFilesSummaryId,
+    pinningChangedFilesSummaryId,
+    runtimeTimelineEvents,
+    activeMode,
+    agentSteps,
+    attachedFiles,
+    restoringCheckpointId,
+    activeAgentMessageId,
+    sendButtonLabel,
+    // provider config actions
+    loadConfig,
+    saveConfig,
+    saveCredentials,
+    loadTavilyApiKey,
+    saveTavilyApiKey,
+    testProviderConfig,
+    connectProvider,
+    testProvider,
+    // quick actions / attachments
+    applyQuickAction,
+    attachFile,
+    removeAttachedFile,
+    // conversation lifecycle
+    sendMessage,
+    restoreConversationCheckpoint,
+    resolveSidecarToolConfirmation,
+    resolveSidecarUserQuestion,
+    clearConversation,
+    deleteConversation,
+    startNewConversation,
+    switchConversation,
+    updateConversationScrollState,
+    // file rollback / patch summary
+    rollbackLatestFileChange,
+    rollbackChangedFilesSummary,
+    setChangedFilesSummaryPin,
+    stopCurrentRequest,
+  };
+};

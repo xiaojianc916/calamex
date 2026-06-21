@@ -179,13 +179,12 @@ export const useAiThreadStore = defineStore('ai-thread', () => {
     () => authoritativeActiveEntries.value.length > 0,
   );
 
-  /* ----- Step 8 砟3①：渲染权威（authoritative 优先，legacy 投影回退，未接线）-----
-   * 渲染层当前仍读 activeThread / activeEntries；砟3② 才把 Panel 渲染来源切到此。
-   * authoritative 持有 entries 时以其为渲染真源，否则回退既有 liveThread ?? 投影
-   * ?? 持久化 链路，保证写路径接管前逐线程零行为变化。
+  /* ----- Step 8 砟3① / Step 5 双轨拆除：渲染权威 = authoritative -----
+   * Panel 已切到 renderActiveThread / renderActiveEntries 作为唯一渲染来源；写路径
+   * 全面接管后 authoritative 即渲染真源，legacy 投影回退链路（activeThread）退役。
    */
   const renderActiveThread = computed<IAiThread | null>(() =>
-    selectRenderThread(authoritativeActiveThread.value, activeThread.value),
+    selectRenderThread(authoritativeActiveThread.value),
   );
   const renderActiveEntries = computed<IAiThreadEntry[]>(
     () => renderActiveThread.value?.entries ?? [],
