@@ -295,7 +295,7 @@ const canSubmit = computed(
 );
 
 const isEditorEmpty = computed(
-  () => (modelValue.value?.length ?? 0) === 0 && (selectedSkills.value?.length ?? 0) === 0,
+  () => (modelValue.value?.trim().length ?? 0) === 0 && (selectedSkills.value?.length ?? 0) === 0,
 );
 
 const modelSelectDisabled = computed(() => props.disabled || props.isModelSaving);
