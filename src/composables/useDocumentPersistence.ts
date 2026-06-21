@@ -49,6 +49,16 @@ interface IPersistTextDocumentOptions {
   workspaceRootPath?: string | null;
 }
 
+const NON_FORMATTABLE_TARGET_MESSAGE = '当前目标不是可格式化的文本文件。';
+
+// 用专门的错误类型表达「目标不可格式化」，取代散落的字符串字面量比较（stringly-typed control flow）。
+class NonFormattableTargetError extends Error {
+  constructor() {
+    super(NON_FORMATTABLE_TARGET_MESSAGE);
+    this.name = 'NonFormattableTargetError';
+  }
+}
+
 const isTextDocument = (document: IEditorDocument): boolean => document.kind === 'text';
 
 const isLoadedTextDocument = (document: IEditorDocument): boolean =>
@@ -172,7 +182,7 @@ export const useDocumentPersistence = ({
     const existingDocument = editorStore.findDocumentByPath(path);
     if (existingDocument) {
       if (!isTextDocument(existingDocument)) {
-        throw new Error('当前目标不是可格式化的文本文件。');
+        throw new NonFormattableTargetError();
       }
 
       if (existingDocument.bufferLoaded === false) {
@@ -441,7 +451,7 @@ export const useDocumentPersistence = ({
         fallbackFailureMessage: '工作区文件格式化失败',
       });
     } catch (error) {
-      if (error instanceof Error && error.message === '当前目标不是可格式化的文本文件。') {
+      if (error instanceof NonFormattableTargetError) {
         return warnAndReturnFalse(error.message);
       }
 

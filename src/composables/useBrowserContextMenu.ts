@@ -723,7 +723,7 @@ export const useBrowserContextMenu = () => {
         await handlePaste(target);
         return;
       case 'select-all':
-        handleSelectAll(target);
+        await handleSelectAll(target);
         return;
       case 'open-link':
         if (target.linkHref) {

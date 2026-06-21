@@ -4,7 +4,6 @@ import { useGitRepositoryStatusBootstrap } from '@/composables/useGitRepositoryS
 import { useShellWorkbenchAiBridge } from '@/composables/useShellWorkbenchAiBridge';
 import { useShellWorkbenchViewportState } from '@/composables/useShellWorkbenchViewportState';
 import { useWorkbench } from '@/composables/useWorkbench';
-import { DEFAULT_TERMINAL_PANEL_HEIGHT } from '@/store/app';
 import { useGitStore } from '@/store/git';
 import type { TWorkbenchPrimaryMode, TWorkbenchSidebarView } from '@/types/app';
 import type {
@@ -390,7 +389,7 @@ export const useShellWorkbenchView = (onReady: () => void) => {
     { immediate: true },
   );
 
-  const openDiagnosticsPanel = async (): Promise<void> => {
+  const openDiagnosticsPanel = (): void => {
     if (!canToggleDiagnosticsPanel.value || isDiagnosticsPanelVisible.value) {
       return;
     }
@@ -399,7 +398,7 @@ export const useShellWorkbenchView = (onReady: () => void) => {
     isDiagnosticsPanelVisible.value = true;
   };
 
-  const openTerminal = async (): Promise<void> => {
+  const openTerminal = (): void => {
     if (activePrimaryMode.value !== 'editor') {
       return;
     }
@@ -517,7 +516,7 @@ export const useShellWorkbenchView = (onReady: () => void) => {
       return;
     }
 
-    await openDiagnosticsPanel();
+    openDiagnosticsPanel();
   };
 
   const showSidebarView = (view: TWorkbenchSidebarView): void => {
@@ -527,7 +526,7 @@ export const useShellWorkbenchView = (onReady: () => void) => {
     scheduleEditorLayoutAfterSidebarChange();
   };
 
-  const handleSelectSidebarView = async (view: TWorkbenchSidebarView): Promise<void> => {
+  const handleSelectSidebarView = (view: TWorkbenchSidebarView): void => {
     if (view === 'ai') {
       openAiMode();
       return;

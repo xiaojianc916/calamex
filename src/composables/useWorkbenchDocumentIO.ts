@@ -95,9 +95,6 @@ const TOAST_TEMPLATE_TABLE: Record<
 
 const buildLogDetail = (title: string, detail: string): string => `${title}：${detail}`;
 
-const isRestoredSessionTab = (value: TRestoredSessionTab | null): value is TRestoredSessionTab =>
-  value !== null;
-
 const isSameGitDiffPreview = (
   left: IGitDiffPreviewPayload,
   right: IGitDiffPreviewPayload,
@@ -344,24 +341,19 @@ export const useWorkbenchDocumentIO = ({
     return true;
   };
 
-  const restoreOpenTabs = async (
+  const restoreOpenTabs = (
     openTabs: TRestorableSessionSnapshot['openTabs'],
-  ): Promise<TRestoredSessionTab[]> => {
-    const restoredTabs = openTabs
-      .map((tab): TRestoredSessionTab | null => {
-        const kind = resolveSessionTabKind(tab);
-        return {
-          kind,
+  ): TRestoredSessionTab[] =>
+    openTabs
+      .map(
+        (tab): TRestoredSessionTab => ({
+          kind: resolveSessionTabKind(tab),
           path: tab.path,
           name: getPathBaseName(tab.path),
           order: tab.order,
-        };
-      })
-      .filter(isRestoredSessionTab)
+        }),
+      )
       .sort((left, right) => left.order - right.order);
-
-    return restoredTabs;
-  };
 
   /**
    * 把单个还原后的 tab 派发回 editorStore。
@@ -445,7 +437,7 @@ export const useWorkbenchDocumentIO = ({
     if (!isDocumentIoLifecycleCurrent(lifecycle)) return;
     editorStore.clearDocuments();
 
-    const aliveTabs = await restoreOpenTabs(snapshot.openTabs);
+    const aliveTabs = restoreOpenTabs(snapshot.openTabs);
     if (!isDocumentIoLifecycleCurrent(lifecycle)) return;
 
     aliveTabs.forEach(applyRestoredTab);

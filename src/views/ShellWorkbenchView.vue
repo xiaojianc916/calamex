@@ -437,9 +437,9 @@ const handleEditorExpand = (): void => {
   isEditorCollapsed.value = false;
 };
 
-const handleOpenTerminal = async (): Promise<void> => {
+const handleOpenTerminal = (): void => {
   isEditorCollapsed.value = false;
-  await openTerminal();
+  openTerminal();
 };
 
 const handleHideTerminal = (): void => {
