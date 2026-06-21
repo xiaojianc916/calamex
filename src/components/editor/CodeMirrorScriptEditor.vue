@@ -43,7 +43,6 @@ import {
   findNext,
   findPrevious,
   getSearchQuery,
-  gotoLine,
   highlightSelectionMatches,
   openSearchPanel,
   SearchQuery,
@@ -68,6 +67,7 @@ import {
   keymap,
   type Panel,
   rectangularSelection,
+  showPanel,
   type ViewUpdate,
 } from '@codemirror/view';
 import { useEventListener, useResizeObserver } from '@vueuse/core';
@@ -228,13 +228,14 @@ let lastDocumentMetrics: IDocumentMetrics = computeDocumentMetrics(props.modelVa
 let pendingModelValueEmit = false;
 let pendingModelValueMetrics: IDocumentMetrics | null = null;
 let previousContainerSize = { width: 0, height: 0 };
-// 记录最近一次右键触发点(视口坐标),供浮动查找弹窗智能定位;消费后置空。
-let lastSearchTriggerPoint: { x: number; y: number } | null = null;
+// 记录最近一次右键触发点(视口坐标),供浮动查找/转到行弹窗智能定位;消费后置空。
+let lastPanelTriggerPoint: { x: number; y: number } | null = null;
 
 const languageCompartment = new Compartment();
 const settingsCompartment = new Compartment();
 const completionCompartment = new Compartment();
 const lspCompartment = new Compartment();
+const gotoLinePanelCompartment = new Compartment();
 
 const inlineCompletionController = createCodeMirrorInlineCompletionController({
   getFilePath: () => props.documentPath,
@@ -800,7 +801,7 @@ const buildMenuGroups = (): Array<{ key: string; items: IEditorContextMenuItem[]
 
 const openContextMenu = (event: MouseEvent): void => {
   if (!editorView) return;
-  lastSearchTriggerPoint = { x: event.clientX, y: event.clientY };
+  lastPanelTriggerPoint = { x: event.clientX, y: event.clientY };
   const nextPosition = clampMenuPosition(event.clientX, event.clientY);
   contextMenuGroups.value = buildMenuGroups();
   contextMenuState.value = {
@@ -896,7 +897,7 @@ const handleContextMenuItemSelect = async (item: IEditorContextMenuItem): Promis
       openSearchPanel(view);
       return;
     case 'goto-line':
-      gotoLine(view);
+      openGotoLinePanel(view);
       return;
     case 'fold-all':
       foldAll(view);
@@ -1180,8 +1181,8 @@ const createSearchPanel = (view: EditorView): Panel => {
     mount() {
       const query = getSearchQuery(view.state);
       if (query.search) input.value = query.search;
-      const trigger = lastSearchTriggerPoint;
-      lastSearchTriggerPoint = null;
+      const trigger = lastPanelTriggerPoint;
+      lastPanelTriggerPoint = null;
       if (trigger) {
         positionAt(trigger.x, trigger.y);
       } else {
@@ -1217,6 +1218,162 @@ const createSearchPanel = (view: EditorView): Panel => {
   };
 };
 
+// ──────────────────────────────
+// Floating goto-line popup (custom panel)
+// CM 内置 gotoLine 不支持 createPanel,改用 showPanel + Compartment 动态挂载自绘面板。
+// 与查找弹窗同款:恒浅色、图标化、可拖拽、智能定位。
+// ──────────────────────────────
+const GOTO_ICON_TARGET =
+  '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M12 3v3"/><path d="M12 18v3"/><path d="M3 12h3"/><path d="M18 12h3"/></svg>';
+const GOTO_ICON_GO =
+  '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 10 4 15 9 20"/><path d="M20 4v7a4 4 0 0 1-4 4H4"/></svg>';
+
+const createGotoLinePanel = (view: EditorView): Panel => {
+  const dom = document.createElement('div');
+  dom.className = 'cm-floating-search cm-floating-search--goto';
+  dom.setAttribute('role', 'dialog');
+
+  const grip = document.createElement('span');
+  grip.className = 'cm-floating-search__grip';
+  grip.setAttribute('aria-hidden', 'true');
+  grip.innerHTML = GOTO_ICON_TARGET;
+
+  const input = document.createElement('input');
+  input.className = 'cm-floating-search__input';
+  input.type = 'text';
+  input.placeholder = '行 或 行:列';
+  input.setAttribute('aria-label', '转到行 / 列');
+  input.spellcheck = false;
+
+  const goButton = document.createElement('button');
+  goButton.type = 'button';
+  goButton.className = 'cm-floating-search__btn';
+  goButton.title = '转到';
+  goButton.setAttribute('aria-label', '转到');
+  goButton.innerHTML = GOTO_ICON_GO;
+
+  const closeButton = document.createElement('button');
+  closeButton.type = 'button';
+  closeButton.className = 'cm-floating-search__btn cm-floating-search__btn--close';
+  closeButton.title = '关闭';
+  closeButton.setAttribute('aria-label', '关闭');
+  closeButton.innerHTML = SEARCH_ICON_CLOSE;
+
+  dom.append(grip, input, goButton, closeButton);
+
+  const submit = (): void => {
+    const raw = input.value.trim();
+    if (!raw) return;
+    const [linePart, columnPart] = raw.split(/[:,]/);
+    const line = Number.parseInt(linePart, 10);
+    if (!Number.isFinite(line) || line <= 0) return;
+    const column = columnPart ? Math.max(1, Number.parseInt(columnPart, 10) || 1) : 1;
+    const lineInfo = view.state.doc.line(Math.min(line, view.state.doc.lines));
+    const position = Math.min(lineInfo.to, lineInfo.from + (column - 1));
+    view.dispatch({
+      selection: EditorSelection.cursor(position),
+      effects: EditorView.scrollIntoView(position, { y: 'center' }),
+    });
+    closeGotoLinePanel(view);
+    view.focus();
+  };
+
+  input.addEventListener('keydown', (event) => {
+    if (event.key === 'Enter') {
+      event.preventDefault();
+      submit();
+    } else if (event.key === 'Escape') {
+      event.preventDefault();
+      closeGotoLinePanel(view);
+      view.focus();
+    }
+  });
+  goButton.addEventListener('click', submit);
+  closeButton.addEventListener('click', () => {
+    closeGotoLinePanel(view);
+    view.focus();
+  });
+
+  const positionAt = (clientX: number, clientY: number): void => {
+    const width = dom.offsetWidth || SEARCH_POPUP_WIDTH;
+    const height = dom.offsetHeight || SEARCH_POPUP_ESTIMATED_HEIGHT;
+    const x = Math.min(
+      Math.max(SEARCH_POPUP_MARGIN, clientX),
+      window.innerWidth - width - SEARCH_POPUP_MARGIN,
+    );
+    const y = Math.min(
+      Math.max(SEARCH_POPUP_MARGIN, clientY),
+      window.innerHeight - height - SEARCH_POPUP_MARGIN,
+    );
+    dom.style.left = `${x}px`;
+    dom.style.top = `${y}px`;
+    const rect = dom.getBoundingClientRect();
+    dom.style.left = `${x + (x - rect.left)}px`;
+    dom.style.top = `${y + (y - rect.top)}px`;
+  };
+
+  let dragPointerId: number | null = null;
+  let dragOffsetX = 0;
+  let dragOffsetY = 0;
+  const onDragMove = (event: PointerEvent): void => {
+    if (dragPointerId === null) return;
+    positionAt(event.clientX - dragOffsetX, event.clientY - dragOffsetY);
+  };
+  const onDragEnd = (): void => {
+    if (dragPointerId === null) return;
+    dragPointerId = null;
+    window.removeEventListener('pointermove', onDragMove);
+    window.removeEventListener('pointerup', onDragEnd);
+  };
+  grip.addEventListener('pointerdown', (event) => {
+    dragPointerId = event.pointerId;
+    const rect = dom.getBoundingClientRect();
+    dragOffsetX = event.clientX - rect.left;
+    dragOffsetY = event.clientY - rect.top;
+    window.addEventListener('pointermove', onDragMove);
+    window.addEventListener('pointerup', onDragEnd);
+    event.preventDefault();
+  });
+
+  return {
+    dom,
+    top: true,
+    mount() {
+      const trigger = lastPanelTriggerPoint;
+      lastPanelTriggerPoint = null;
+      if (trigger) {
+        positionAt(trigger.x, trigger.y);
+      } else {
+        const caret = view.coordsAtPos(view.state.selection.main.head);
+        if (caret) {
+          positionAt(caret.left, caret.bottom + 8);
+        } else {
+          const editorRect = view.dom.getBoundingClientRect();
+          positionAt(editorRect.left + 24, editorRect.top + 16);
+        }
+      }
+      requestAnimationFrame(() => {
+        input.focus();
+        input.select();
+      });
+    },
+    destroy() {
+      window.removeEventListener('pointermove', onDragMove);
+      window.removeEventListener('pointerup', onDragEnd);
+    },
+  };
+};
+
+const closeGotoLinePanel = (view: EditorView): void => {
+  view.dispatch({ effects: gotoLinePanelCompartment.reconfigure([]) });
+};
+
+const openGotoLinePanel = (view: EditorView): void => {
+  view.dispatch({
+    effects: gotoLinePanelCompartment.reconfigure(showPanel.of(createGotoLinePanel)),
+  });
+};
+
 const createBaseExtensions = (language: string): Extension[] => [
   lspCompletionTheme,
   highlightSpecialChars(),
@@ -1232,6 +1389,7 @@ const createBaseExtensions = (language: string): Extension[] => [
   crosshairCursor(),
   highlightSelectionMatches(),
   search({ top: true, createPanel: createSearchPanel }),
+  gotoLinePanelCompartment.of([]),
   lintGutter(),
   editorBottomPaddingTheme,
   ...inlineCompletionController.extensions,
@@ -1258,6 +1416,13 @@ const createBaseExtensions = (language: string): Extension[] => [
     { key: 'Shift-Mod-i', run: shrinkStructuralSelection, preventDefault: true },
     ...defaultKeymap.filter((binding) => binding.run !== selectParentSyntax),
     ...historyKeymap,
+    {
+      key: 'Mod-Alt-g',
+      run: (view) => {
+        openGotoLinePanel(view);
+        return true;
+      },
+    },
     ...searchKeymap,
     ...foldKeymap,
   ]),
@@ -1835,6 +2000,11 @@ defineExpose<IEditorExpose>({
 .cm-floating-search__btn--close:hover {
   background: #fde8e8;
   color: #d92d20;
+}
+
+
+.cm-floating-search--goto {
+  width: 300px;
 }
 
 </style>
