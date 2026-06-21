@@ -1,295 +1,416 @@
-#!/usr/bin/env node
-// apply-phase1.mjs
-// Phase 1:把外部(Kimi)流式回合的收尾从 legacy displayMessages round-trip 切到 entries 真源
-//          (保留 thought,修「推理完成后消失」)+ 正文开始后推理停止流式(修「思考与正文一起流」)。
-// 用法:
-//   node apply-phase1.mjs                       # 在仓库根目录运行
-//   node apply-phase1.mjs D:\com.xiaojianc\my_desktop_app
-//   node apply-phase1.mjs --dry                 # 只校验匹配,不写盘
-import { readFileSync, writeFileSync } from "node:fs";
-import { join, resolve } from "node:path";
+// scripts/codemods/floating-search-panel.mjs
+// 把 CodeMirror 内置搜索面板换成「现代浅色 + 图标 + 可拖拽 + 跟随右键位置」的浮动小弹窗(仅查找)。
+// 用法:在仓库根目录执行  node scripts/codemods/floating-search-panel.mjs
+// 可选:node scripts/codemods/floating-search-panel.mjs <仓库根目录>
+import { readFileSync, writeFileSync } from 'node:fs';
+import { resolve } from 'node:path';
 
-const argv = process.argv.slice(2);
-const dry = argv.includes("--dry");
-const root = resolve(argv.find((a) => !a.startsWith("--")) ?? process.cwd());
-const j = (...lines) => lines.join("\n");
+const root = process.argv[2] ?? '.';
+const file = resolve(root, 'src/components/editor/CodeMirrorScriptEditor.vue');
 
-const F_ASSIST = "src/composables/ai/useAiAssistant.ts";
-const F_TIMELINE = "src/components/business/ai/thread/projection/thread-entries-to-timeline.ts";
-const F_SPEC = "src/components/business/ai/thread/projection/thread-entries-to-timeline.spec.ts";
+let src = readFileSync(file, 'utf8');
 
-const edits = [
-  // ── useAiAssistant.ts ① 声明本回合事件快照(executeExternalAgentRequest 内,initialActivityText 锚定唯一) ──
-  {
-    file: F_ASSIST,
-    label: "useAiAssistant: 声明 finalEvents 快照",
-    marker: "    let finalEvents: readonly TAgentUiEvent[] = [];",
-    old: j(
-      "      applySidecarLiveEventsToAgentMessage(",
-      "        assistantMessageId,",
-      "        targetThreadId,",
-      "        initialActivityText,",
-      "        events,",
-      "      );",
-      "      updateLiveThreadFromSidecarEvents(assistantMessageId, targetThreadId, events);",
-      "    });",
-      "    let unlistenSidecarStream: (() => void) | null = null;",
-    ),
-    new: j(
-      "      applySidecarLiveEventsToAgentMessage(",
-      "        assistantMessageId,",
-      "        targetThreadId,",
-      "        initialActivityText,",
-      "        events,",
-      "      );",
-      "      updateLiveThreadFromSidecarEvents(assistantMessageId, targetThreadId, events);",
-      "    });",
-      "    let unlistenSidecarStream: (() => void) | null = null;",
-      "    let finalEvents: readonly TAgentUiEvent[] = [];",
-    ),
-  },
-
-  // ── useAiAssistant.ts ② flush 后快照事件 + 去掉 completed 分支的 legacy 收口 ──
-  {
-    file: F_ASSIST,
-    label: "useAiAssistant: 快照事件并撤掉 completed 分支的 commit",
-    marker: "      finalEvents = liveEventBuffer.events.slice();",
-    old: j(
-      "      liveEventBuffer.flush();",
-      "      unlistenSidecarStream?.();",
-      "      unlistenSidecarStream = null;",
-      "",
-      "      if (!requestAbortController.signal.aborted) {",
-      "        const currentMessage = findMessageById(assistantMessageId);",
-      "        updateAgentExecutionMessage({",
-      "          messageId: assistantMessageId,",
-      "          content: currentMessage?.content ?? '',",
-      "          toolCalls: currentMessage?.toolCalls ?? [],",
-      "          streamStatus: 'completed',",
-      "          finalAnswerStarted: hasMeaningfulAssistantText(currentMessage?.content),",
-      "        });",
-      "        commitDisplayMessagesToStore(targetThreadId);",
-      "      }",
-    ),
-    new: j(
-      "      liveEventBuffer.flush();",
-      "      finalEvents = liveEventBuffer.events.slice();",
-      "      unlistenSidecarStream?.();",
-      "      unlistenSidecarStream = null;",
-      "",
-      "      if (!requestAbortController.signal.aborted) {",
-      "        const currentMessage = findMessageById(assistantMessageId);",
-      "        updateAgentExecutionMessage({",
-      "          messageId: assistantMessageId,",
-      "          content: currentMessage?.content ?? '',",
-      "          toolCalls: currentMessage?.toolCalls ?? [],",
-      "          streamStatus: 'completed',",
-      "          finalAnswerStarted: hasMeaningfulAssistantText(currentMessage?.content),",
-      "        });",
-      "        // 收尾落库交给 finally 的 entries 覆盖,不再走会抹掉推理 entry 的 legacy round-trip。",
-      "      }",
-    ),
-  },
-
-  // ── useAiAssistant.ts ③ finally 收口改为 entries 覆盖(catch+finally 组合体全局唯一) ──
-  {
-    file: F_ASSIST,
-    label: "useAiAssistant: finally 以 entries 真源收尾",
-    marker: "      if (!requestAbortController.signal.aborted && finalEvents.length > 0) {",
-    old: j(
-      "    } catch (error) {",
-      "      if (requestAbortController.signal.aborted) {",
-      "        disposeSidecarAnswerStream(assistantMessageId);",
-      "      } else {",
-      "        failSidecarAgentMessage(assistantMessageId, toErrorMessage(error, MSG_CALL_FAILED));",
-      "      }",
-      "    } finally {",
-      "      liveEventBuffer.dispose();",
-      "      unlistenSidecarStream?.();",
-      "      activeAbortController.value = null;",
-      "      activeAgentMessageId.value = null;",
-      "      commitDisplayMessagesToStore(targetThreadId);",
-      "      clearActiveBufferedThread(targetThreadId);",
-      "      isSending.value = false;",
-      "      syncDisplayMessagesFromActiveThread();",
-      "    }",
-    ),
-    new: j(
-      "    } catch (error) {",
-      "      if (requestAbortController.signal.aborted) {",
-      "        disposeSidecarAnswerStream(assistantMessageId);",
-      "      } else {",
-      "        failSidecarAgentMessage(assistantMessageId, toErrorMessage(error, MSG_CALL_FAILED));",
-      "      }",
-      "    } finally {",
-      "      liveEventBuffer.dispose();",
-      "      unlistenSidecarStream?.();",
-      "      activeAbortController.value = null;",
-      "      activeAgentMessageId.value = null;",
-      "      // 正常收尾:以 reduce 真源(保留 thought)覆盖权威活动线程,取代会抹掉推理 entry 的",
-      "      // legacy displayMessages round-trip。取消/异常(无事件)仍走 legacy 收尾。",
-      "      if (!requestAbortController.signal.aborted && finalEvents.length > 0) {",
-      "        updateLiveThreadFromSidecarEvents(assistantMessageId, targetThreadId, finalEvents);",
-      "      } else {",
-      "        commitDisplayMessagesToStore(targetThreadId);",
-      "      }",
-      "      clearActiveBufferedThread(targetThreadId);",
-      "      isSending.value = false;",
-      "      syncDisplayMessagesFromActiveThread();",
-      "    }",
-    ),
-  },
-
-  // ── thread-entries-to-timeline.ts ④ 正文开始后推理停止流式 ──
-  {
-    file: F_TIMELINE,
-    label: "timeline: 正文开始后 reasoning 停止流式",
-    marker: "  const finalAnswerStarted = messageTexts.length > 0;",
-    old: j(
-      "  const projected: TAiThreadEntry[] = [];",
-      "  if (thoughtSegments.length > 0) {",
-      "    const reasoning: IAiThreadReasoningEntry = {",
-      "      kind: 'reasoning',",
-      "      id: `${entry.id}:reasoning`,",
-      "      messageId: entry.id,",
-      "      segments: thoughtSegments,",
-      "      // 与 runtime 时间线对齐:多段(>1)才视为长推理,渲染层默认折叠。",
-      "      isLong: thoughtSegments.length > 1,",
-      "      streaming,",
-      "    };",
-      "    projected.push(reasoning);",
-      "  }",
-    ),
-    new: j(
-      "  // 正文一旦开始,推理即结束流式(随后由 useThreadEntryExpansion 自动折叠);",
-      "  // 正文条目仍保留自身 streaming。修复「思考与正文一起流式输出」。",
-      "  const finalAnswerStarted = messageTexts.length > 0;",
-      "  const projected: TAiThreadEntry[] = [];",
-      "  if (thoughtSegments.length > 0) {",
-      "    const reasoning: IAiThreadReasoningEntry = {",
-      "      kind: 'reasoning',",
-      "      id: `${entry.id}:reasoning`,",
-      "      messageId: entry.id,",
-      "      segments: thoughtSegments,",
-      "      // 与 runtime 时间线对齐:多段(>1)才视为长推理,渲染层默认折叠。",
-      "      isLong: thoughtSegments.length > 1,",
-      "      streaming: streaming && !finalAnswerStarted,",
-      "    };",
-      "    projected.push(reasoning);",
-      "  }",
-    ),
-  },
-
-  // ── thread-entries-to-timeline.spec.ts ⑤ 追加断言用例 ──
-  {
-    file: F_SPEC,
-    label: "timeline.spec: 新增「正文开始后推理停止流式」用例",
-    marker: "  it('正文开始后推理停止流式(仅正文保持 streaming)', () => {",
-    old: j(
-      "    expect(timeline.map((e) => e.kind)).toEqual(['user-message', 'assistant-text']);",
-      "  });",
-      "});",
-    ),
-    new: j(
-      "    expect(timeline.map((e) => e.kind)).toEqual(['user-message', 'assistant-text']);",
-      "  });",
-      "",
-      "  it('正文开始后推理停止流式(仅正文保持 streaming)', () => {",
-      "    const entries: IAiThreadEntry[] = [",
-      "      {",
-      "        type: 'assistant_message',",
-      "        id: 'a3',",
-      "        createdAt: ISO,",
-      "        chunks: [",
-      "          { type: 'thought', block: { type: 'text', text: 'thinking' } },",
-      "          { type: 'message', block: { type: 'text', text: 'answer' } },",
-      "        ],",
-      "      },",
-      "    ];",
-      "    const timeline = threadEntriesToTimeline(entries, { streamingMessageId: 'a3' });",
-      "    expect(timeline.map((e) => e.kind)).toEqual(['reasoning', 'assistant-text']);",
-      "    const reasoning = timeline[0];",
-      "    const text = timeline[1];",
-      "    if (reasoning.kind === 'reasoning') {",
-      "      expect(reasoning.streaming).toBe(false);",
-      "    }",
-      "    if (text.kind === 'assistant-text') {",
-      "      expect(text.streaming).toBe(true);",
-      "    }",
-      "  });",
-      "});",
-    ),
-  },
-];
-
-// ── 执行 ──
-const byFile = new Map();
-for (const e of edits) {
-  if (!byFile.has(e.file)) byFile.set(e.file, []);
-  byFile.get(e.file).push(e);
+if (src.includes('cm-floating-search') || src.includes('createSearchPanel')) {
+  console.log('⏭  已包含浮动查找弹窗,跳过(幂等)。');
+  process.exit(0);
 }
 
-let hadError = false;
-const log = [];
+const replaceOnce = (haystack, find, replacement, label) => {
+  const first = haystack.indexOf(find);
+  if (first === -1) throw new Error(`锚点未找到:${label}`);
+  if (haystack.indexOf(find, first + find.length) !== -1)
+    throw new Error(`锚点不唯一:${label}`);
+  return haystack.slice(0, first) + replacement + haystack.slice(first + find.length);
+};
 
-for (const [rel, list] of byFile) {
-  const abs = join(root, rel);
-  let content;
-  try {
-    content = readFileSync(abs, "utf8");
-  } catch (err) {
-    hadError = true;
-    log.push(`✗ 读取失败 ${rel}: ${err.message}`);
-    continue;
-  }
-  const original = content;
-  let fileError = false;
+// 1) 扩充 @codemirror/search 导入
+const SEARCH_IMPORT = `import {
+  gotoLine,
+  highlightSelectionMatches,
+  openSearchPanel,
+  search,
+  searchKeymap,
+} from '@codemirror/search';`;
+const SEARCH_IMPORT_NEW = `import {
+  closeSearchPanel,
+  findNext,
+  findPrevious,
+  getSearchQuery,
+  gotoLine,
+  highlightSelectionMatches,
+  openSearchPanel,
+  search,
+  SearchQuery,
+  searchKeymap,
+  setSearchQuery,
+} from '@codemirror/search';`;
+src = replaceOnce(src, SEARCH_IMPORT, SEARCH_IMPORT_NEW, '@codemirror/search import');
 
-  for (const e of list) {
-    if (content.includes(e.marker)) {
-      log.push(`•  跳过(已应用) ${e.label}`);
-      continue;
-    }
-    const count = content.split(e.old).length - 1;
-    if (count === 0) {
-      hadError = true;
-      fileError = true;
-      log.push(`✗ 未匹配 ${e.label} — 源码可能已变更,请人工核对`);
-      continue;
-    }
-    if (count > 1) {
-      hadError = true;
-      fileError = true;
-      log.push(`✗ 命中 ${count} 处(预期 1) ${e.label} — 已跳过以免误改`);
-      continue;
-    }
-    content = content.replace(e.old, () => e.new); // 函数替换:避免 $ 被特殊解释
-    log.push(`✓ 应用 ${e.label}`);
-  }
+// 2) @codemirror/view 增加 Panel 类型
+const VIEW_IMPORT = `  keymap,
+  rectangularSelection,
+  type ViewUpdate,
+} from '@codemirror/view';`;
+const VIEW_IMPORT_NEW = `  keymap,
+  type Panel,
+  rectangularSelection,
+  type ViewUpdate,
+} from '@codemirror/view';`;
+src = replaceOnce(src, VIEW_IMPORT, VIEW_IMPORT_NEW, '@codemirror/view import');
 
-  if (fileError) {
-    log.push(`✗ ${rel} 有未应用的修改,本文件不写盘`);
-    continue;
-  }
-  if (content !== original) {
-    if (dry) {
-      log.push(`(dry) 将写入 ${rel}`);
-    } else {
-      writeFileSync(abs, content, "utf8");
-      log.push(`💾 写入 ${rel}`);
-    }
-  } else {
-    log.push(`=  ${rel} 无变化`);
-  }
-}
-
-console.log(`仓库根目录: ${root}\n`);
-console.log(log.join("\n"));
-console.log(
-  hadError
-    ? "\n完成,但存在错误(见上),请人工核对未匹配项。"
-    : dry
-      ? "\n校验通过(dry,未写盘)。"
-      : "\n全部应用完成。",
+// 3) 记录右键触发点的变量
+const PREV_SIZE = `let previousContainerSize = { width: 0, height: 0 };`;
+src = replaceOnce(
+  src,
+  PREV_SIZE,
+  `${PREV_SIZE}\n// 记录最近一次右键触发点(视口坐标),供浮动查找弹窗智能定位;消费后置空。\nlet lastSearchTriggerPoint: { x: number; y: number } | null = null;`,
+  'previousContainerSize decl',
 );
-process.exit(hadError ? 1 : 0);
+
+// 4) openContextMenu 里捕获触发点
+const OPEN_MENU = `const openContextMenu = (event: MouseEvent): void => {
+  if (!editorView) return;
+  const nextPosition = clampMenuPosition(event.clientX, event.clientY);`;
+const OPEN_MENU_NEW = `const openContextMenu = (event: MouseEvent): void => {
+  if (!editorView) return;
+  lastSearchTriggerPoint = { x: event.clientX, y: event.clientY };
+  const nextPosition = clampMenuPosition(event.clientX, event.clientY);`;
+src = replaceOnce(src, OPEN_MENU, OPEN_MENU_NEW, 'openContextMenu');
+
+// 5) 在 createBaseExtensions 之前插入自定义面板工厂
+const CBE = `const createBaseExtensions = (language: string): Extension[] => [`;
+const INSERT_PANEL = `// ──────────────────────────────
+// Floating search popup (custom search panel)
+// 自定义浮动查找弹窗:替代 CM 内置 search 面板。恒浅色、图标化、可拖拽,
+// 出现位置智能匹配右键触发点(无触发点时回退到光标 / 编辑器顶部)。
+// ──────────────────────────────
+const SEARCH_POPUP_MARGIN = 12;
+const SEARCH_POPUP_WIDTH = 320;
+const SEARCH_POPUP_ESTIMATED_HEIGHT = 48;
+
+const SEARCH_ICON_FIND =
+  '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="7"/><path d="m21 21-4.3-4.3"/></svg>';
+const SEARCH_ICON_PREV =
+  '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m18 15-6-6-6 6"/></svg>';
+const SEARCH_ICON_NEXT =
+  '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m6 9 6 6 6-6"/></svg>';
+const SEARCH_ICON_CLOSE =
+  '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg>';
+
+const countSearchMatches = (
+  view: EditorView,
+  query: SearchQuery,
+): { total: number; current: number } => {
+  if (!query.valid) return { total: 0, current: 0 };
+  const main = view.state.selection.main;
+  let total = 0;
+  let current = 0;
+  const cursor = query.getCursor(view.state);
+  while (!cursor.next().done) {
+    total += 1;
+    if (cursor.value.from === main.from && cursor.value.to === main.to) current = total;
+  }
+  return { total, current };
+};
+
+const createSearchPanel = (view: EditorView): Panel => {
+  const dom = document.createElement('div');
+  dom.className = 'cm-floating-search';
+  dom.setAttribute('role', 'search');
+
+  const grip = document.createElement('span');
+  grip.className = 'cm-floating-search__grip';
+  grip.setAttribute('aria-hidden', 'true');
+  grip.innerHTML = SEARCH_ICON_FIND;
+
+  const input = document.createElement('input');
+  input.className = 'cm-floating-search__input';
+  input.type = 'text';
+  input.placeholder = '查找';
+  input.setAttribute('aria-label', '查找');
+  input.spellcheck = false;
+
+  const count = document.createElement('span');
+  count.className = 'cm-floating-search__count';
+
+  const createIconButton = (label: string, icon: string): HTMLButtonElement => {
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.className = 'cm-floating-search__btn';
+    button.title = label;
+    button.setAttribute('aria-label', label);
+    button.innerHTML = icon;
+    return button;
+  };
+
+  const prevButton = createIconButton('上一个', SEARCH_ICON_PREV);
+  const nextButton = createIconButton('下一个', SEARCH_ICON_NEXT);
+  const closeButton = createIconButton('关闭', SEARCH_ICON_CLOSE);
+  closeButton.classList.add('cm-floating-search__btn--close');
+
+  dom.append(grip, input, count, prevButton, nextButton, closeButton);
+
+  const refreshCount = (): void => {
+    const query = getSearchQuery(view.state);
+    if (!query.search) {
+      count.textContent = '';
+      return;
+    }
+    const { total, current } = countSearchMatches(view, query);
+    count.textContent = total === 0 ? '无结果' : \`\${current || '–'}/\${total}\`;
+  };
+
+  const runQuery = (value: string): void => {
+    const previous = getSearchQuery(view.state);
+    view.dispatch({
+      effects: setSearchQuery.of(
+        new SearchQuery({
+          search: value,
+          caseSensitive: previous.caseSensitive,
+          regexp: previous.regexp,
+          wholeWord: previous.wholeWord,
+          literal: previous.literal,
+        }),
+      ),
+    });
+    refreshCount();
+  };
+
+  input.addEventListener('input', () => runQuery(input.value));
+  input.addEventListener('keydown', (event) => {
+    if (event.key === 'Enter') {
+      event.preventDefault();
+      if (event.shiftKey) findPrevious(view);
+      else findNext(view);
+      refreshCount();
+    } else if (event.key === 'Escape') {
+      event.preventDefault();
+      closeSearchPanel(view);
+    }
+  });
+  prevButton.addEventListener('click', () => {
+    findPrevious(view);
+    refreshCount();
+    input.focus();
+  });
+  nextButton.addEventListener('click', () => {
+    findNext(view);
+    refreshCount();
+    input.focus();
+  });
+  closeButton.addEventListener('click', () => closeSearchPanel(view));
+
+  // 把视口坐标换算到弹窗定位坐标系,兼容存在 transform 的祖先容器。
+  const positionAt = (clientX: number, clientY: number): void => {
+    const width = dom.offsetWidth || SEARCH_POPUP_WIDTH;
+    const height = dom.offsetHeight || SEARCH_POPUP_ESTIMATED_HEIGHT;
+    const x = Math.min(
+      Math.max(SEARCH_POPUP_MARGIN, clientX),
+      window.innerWidth - width - SEARCH_POPUP_MARGIN,
+    );
+    const y = Math.min(
+      Math.max(SEARCH_POPUP_MARGIN, clientY),
+      window.innerHeight - height - SEARCH_POPUP_MARGIN,
+    );
+    dom.style.left = \`\${x}px\`;
+    dom.style.top = \`\${y}px\`;
+    const rect = dom.getBoundingClientRect();
+    dom.style.left = \`\${x + (x - rect.left)}px\`;
+    dom.style.top = \`\${y + (y - rect.top)}px\`;
+  };
+
+  let dragPointerId: number | null = null;
+  let dragOffsetX = 0;
+  let dragOffsetY = 0;
+  const onDragMove = (event: PointerEvent): void => {
+    if (dragPointerId === null) return;
+    positionAt(event.clientX - dragOffsetX, event.clientY - dragOffsetY);
+  };
+  const onDragEnd = (): void => {
+    if (dragPointerId === null) return;
+    dragPointerId = null;
+    window.removeEventListener('pointermove', onDragMove);
+    window.removeEventListener('pointerup', onDragEnd);
+  };
+  grip.addEventListener('pointerdown', (event) => {
+    dragPointerId = event.pointerId;
+    const rect = dom.getBoundingClientRect();
+    dragOffsetX = event.clientX - rect.left;
+    dragOffsetY = event.clientY - rect.top;
+    window.addEventListener('pointermove', onDragMove);
+    window.addEventListener('pointerup', onDragEnd);
+    event.preventDefault();
+  });
+
+  return {
+    dom,
+    top: true,
+    mount() {
+      const query = getSearchQuery(view.state);
+      if (query.search) input.value = query.search;
+      const trigger = lastSearchTriggerPoint;
+      lastSearchTriggerPoint = null;
+      if (trigger) {
+        positionAt(trigger.x, trigger.y);
+      } else {
+        const caret = view.coordsAtPos(view.state.selection.main.head);
+        if (caret) {
+          positionAt(caret.left, caret.bottom + 8);
+        } else {
+          const editorRect = view.dom.getBoundingClientRect();
+          positionAt(editorRect.left + 24, editorRect.top + 16);
+        }
+      }
+      refreshCount();
+      requestAnimationFrame(() => {
+        input.focus();
+        input.select();
+      });
+    },
+    update(update: ViewUpdate) {
+      const queryChanged = update.transactions.some((transaction) =>
+        transaction.effects.some((effect) => effect.is(setSearchQuery)),
+      );
+      if (!update.docChanged && !update.selectionSet && !queryChanged) return;
+      if (document.activeElement !== input) {
+        const query = getSearchQuery(view.state);
+        if (query.search !== input.value) input.value = query.search;
+      }
+      refreshCount();
+    },
+    destroy() {
+      window.removeEventListener('pointermove', onDragMove);
+      window.removeEventListener('pointerup', onDragEnd);
+    },
+  };
+};
+
+`;
+src = replaceOnce(src, CBE, INSERT_PANEL + CBE, 'createBaseExtensions');
+
+// 6) 接上 createPanel
+src = replaceOnce(
+  src,
+  `  search({ top: true }),`,
+  `  search({ top: true, createPanel: createSearchPanel }),`,
+  'search() call',
+);
+
+// 7) 注入全局样式(插到最后一个 </style> 之前)
+const INSERT_CSS = `
+/* 浮动查找弹窗:恒为浅色,沿用补全/hover 卡片同一套表面/描边/阴影语言 */
+.cm-panels.cm-panels-top:has(.cm-floating-search) {
+  border-bottom: none;
+  background: transparent;
+}
+
+.cm-floating-search {
+  position: fixed;
+  z-index: 30;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  width: 320px;
+  max-width: calc(100vw - 24px);
+  padding: 5px 6px 5px 10px;
+  background: #ffffff;
+  border: 1px solid #e6e8eb;
+  border-radius: 12px;
+  box-shadow: 0 10px 30px rgba(15, 23, 42, 0.12), 0 0 0 0.5px rgba(15, 23, 42, 0.04);
+  font-family: var(--font-mono);
+  color: #1f2937;
+}
+
+.cm-floating-search__grip {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  flex-shrink: 0;
+  color: #98a2b3;
+  cursor: grab;
+  touch-action: none;
+}
+
+.cm-floating-search__grip:active {
+  cursor: grabbing;
+}
+
+.cm-floating-search__grip svg {
+  width: 15px;
+  height: 15px;
+}
+
+.cm-floating-search__input {
+  flex: 1 1 auto;
+  min-width: 0;
+  height: 26px;
+  padding: 0 6px;
+  border: none;
+  outline: none;
+  background: transparent;
+  font-family: inherit;
+  font-size: 13px;
+  color: #111827;
+}
+
+.cm-floating-search__input::placeholder {
+  color: #98a2b3;
+}
+
+.cm-floating-search__count {
+  flex-shrink: 0;
+  min-width: 34px;
+  padding: 0 4px;
+  text-align: right;
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  color: #98a2b3;
+}
+
+.cm-floating-search__btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 26px;
+  flex-shrink: 0;
+  padding: 0;
+  border: none;
+  border-radius: 7px;
+  background: transparent;
+  color: #475467;
+  cursor: pointer;
+  transition: background-color 0.12s ease, color 0.12s ease;
+}
+
+.cm-floating-search__btn:hover {
+  background: #f1f5f9;
+  color: #111827;
+}
+
+.cm-floating-search__btn:active {
+  background: #e7ebf0;
+}
+
+.cm-floating-search__btn svg {
+  width: 16px;
+  height: 16px;
+}
+
+.cm-floating-search__btn--close {
+  color: #98a2b3;
+}
+
+.cm-floating-search__btn--close:hover {
+  background: #fde8e8;
+  color: #d92d20;
+}
+`;
+const lastStyle = src.lastIndexOf('</style>');
+if (lastStyle === -1) throw new Error('锚点未找到:</style>');
+src = src.slice(0, lastStyle) + INSERT_CSS + '\n' + src.slice(lastStyle);
+
+writeFileSync(file, src, 'utf8');
+console.log('✓ 已改写 CodeMirrorScriptEditor.vue(浮动查找弹窗)');

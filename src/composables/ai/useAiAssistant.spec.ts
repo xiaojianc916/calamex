@@ -3562,4 +3562,49 @@ describe('useAiAssistant streaming integration', () => {
     expect(assistant.messages.value[1]?.stream?.status).toBe('completed');
     expect(assistant.messages.value[1]?.content).toContain('第二段实时到达');
   });
+
+  it('外部 Kimi agent 回合在 finalize 后保留最终答案(推理不再吞掉正文)', async () => {
+    const { assistant } = createAssistantHarnessContext();
+    const promptGate = createDeferred<IAgentExternalChatResultPayload>();
+
+    aiServiceMock.sidecarExternalChat.mockImplementationOnce(async (payload) => {
+      const sessionId = payload.sessionId ?? 'sidecar-external-finalize-session';
+
+      aiServiceMock.emitSidecar({
+        sessionId,
+        seq: 0,
+        event: { type: 'message_delta', text: '正在分析需求…', phase: 'stage' },
+      });
+      aiServiceMock.emitSidecar({
+        sessionId,
+        seq: 1,
+        event: { type: 'message_delta', text: '这是最终答案的正文。', phase: 'final' },
+      });
+
+      await promptGate.promise;
+
+      return { sessionId, stopReason: 'EndTurn' };
+    });
+
+    assistant.draft.value = '用 Kimi 跑一轮并保留正文';
+    const sendPromise = assistant.sendMessage({ agentBackend: 'kimi' });
+
+    await flushMicrotasks();
+
+    const assistantMessageId = assistant.messages.value[1]?.id;
+    expect(assistantMessageId).toBeTruthy();
+    expect(assistant.messages.value[1]?.content).toContain('这是最终答案的正文。');
+    expect(assistant.messages.value[1]?.stream?.status).toBe('streaming');
+
+    promptGate.resolve({
+      sessionId: `sidecar:${assistantMessageId}`,
+      stopReason: 'EndTurn',
+    });
+    await sendPromise;
+
+    // 回归 turn-8：finalize 不得清空正文（旧实现末尾 commitDisplayMessagesToStore 会丢正文）。
+    expect(assistant.messages.value[1]?.content).not.toBe('');
+    expect(assistant.messages.value[1]?.content).toContain('这是最终答案的正文。');
+    expect(assistant.messages.value[1]?.stream?.status).toBe('completed');
+  });
 });

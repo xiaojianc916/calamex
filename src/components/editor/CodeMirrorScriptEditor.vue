@@ -39,11 +39,17 @@ import {
 } from '@codemirror/language';
 import { type Diagnostic, lintGutter, setDiagnostics } from '@codemirror/lint';
 import {
+  closeSearchPanel,
+  findNext,
+  findPrevious,
+  getSearchQuery,
   gotoLine,
   highlightSelectionMatches,
   openSearchPanel,
+  SearchQuery,
   search,
   searchKeymap,
+  setSearchQuery,
 } from '@codemirror/search';
 import {
   Compartment,
@@ -60,6 +66,7 @@ import {
   EditorView,
   highlightSpecialChars,
   keymap,
+  type Panel,
   rectangularSelection,
   type ViewUpdate,
 } from '@codemirror/view';
@@ -221,6 +228,8 @@ let lastDocumentMetrics: IDocumentMetrics = computeDocumentMetrics(props.modelVa
 let pendingModelValueEmit = false;
 let pendingModelValueMetrics: IDocumentMetrics | null = null;
 let previousContainerSize = { width: 0, height: 0 };
+// 记录最近一次右键触发点(视口坐标),供浮动查找弹窗智能定位;消费后置空。
+let lastSearchTriggerPoint: { x: number; y: number } | null = null;
 
 const languageCompartment = new Compartment();
 const settingsCompartment = new Compartment();
@@ -791,6 +800,7 @@ const buildMenuGroups = (): Array<{ key: string; items: IEditorContextMenuItem[]
 
 const openContextMenu = (event: MouseEvent): void => {
   if (!editorView) return;
+  lastSearchTriggerPoint = { x: event.clientX, y: event.clientY };
   const nextPosition = clampMenuPosition(event.clientX, event.clientY);
   contextMenuGroups.value = buildMenuGroups();
   contextMenuState.value = {
@@ -1001,6 +1011,212 @@ const nativeSelectionWithDrawnCursorTheme = Prec.highest(
   }),
 );
 
+// ──────────────────────────────
+// Floating search popup (custom search panel)
+// 自定义浮动查找弹窗:替代 CM 内置 search 面板。恒浅色、图标化、可拖拽,
+// 出现位置智能匹配右键触发点(无触发点时回退到光标 / 编辑器顶部)。
+// ──────────────────────────────
+const SEARCH_POPUP_MARGIN = 12;
+const SEARCH_POPUP_WIDTH = 320;
+const SEARCH_POPUP_ESTIMATED_HEIGHT = 48;
+
+const SEARCH_ICON_FIND =
+  '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="7"/><path d="m21 21-4.3-4.3"/></svg>';
+const SEARCH_ICON_PREV =
+  '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m18 15-6-6-6 6"/></svg>';
+const SEARCH_ICON_NEXT =
+  '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m6 9 6 6 6-6"/></svg>';
+const SEARCH_ICON_CLOSE =
+  '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg>';
+
+const countSearchMatches = (
+  view: EditorView,
+  query: SearchQuery,
+): { total: number; current: number } => {
+  if (!query.valid) return { total: 0, current: 0 };
+  const main = view.state.selection.main;
+  let total = 0;
+  let current = 0;
+  const cursor = query.getCursor(view.state);
+  while (!cursor.next().done) {
+    total += 1;
+    if (cursor.value.from === main.from && cursor.value.to === main.to) current = total;
+  }
+  return { total, current };
+};
+
+const createSearchPanel = (view: EditorView): Panel => {
+  const dom = document.createElement('div');
+  dom.className = 'cm-floating-search';
+  dom.setAttribute('role', 'search');
+
+  const grip = document.createElement('span');
+  grip.className = 'cm-floating-search__grip';
+  grip.setAttribute('aria-hidden', 'true');
+  grip.innerHTML = SEARCH_ICON_FIND;
+
+  const input = document.createElement('input');
+  input.className = 'cm-floating-search__input';
+  input.type = 'text';
+  input.placeholder = '查找';
+  input.setAttribute('aria-label', '查找');
+  input.spellcheck = false;
+
+  const count = document.createElement('span');
+  count.className = 'cm-floating-search__count';
+
+  const createIconButton = (label: string, icon: string): HTMLButtonElement => {
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.className = 'cm-floating-search__btn';
+    button.title = label;
+    button.setAttribute('aria-label', label);
+    button.innerHTML = icon;
+    return button;
+  };
+
+  const prevButton = createIconButton('上一个', SEARCH_ICON_PREV);
+  const nextButton = createIconButton('下一个', SEARCH_ICON_NEXT);
+  const closeButton = createIconButton('关闭', SEARCH_ICON_CLOSE);
+  closeButton.classList.add('cm-floating-search__btn--close');
+
+  dom.append(grip, input, count, prevButton, nextButton, closeButton);
+
+  const refreshCount = (): void => {
+    const query = getSearchQuery(view.state);
+    if (!query.search) {
+      count.textContent = '';
+      return;
+    }
+    const { total, current } = countSearchMatches(view, query);
+    count.textContent = total === 0 ? '无结果' : `${current || '–'}/${total}`;
+  };
+
+  const runQuery = (value: string): void => {
+    const previous = getSearchQuery(view.state);
+    view.dispatch({
+      effects: setSearchQuery.of(
+        new SearchQuery({
+          search: value,
+          caseSensitive: previous.caseSensitive,
+          regexp: previous.regexp,
+          wholeWord: previous.wholeWord,
+          literal: previous.literal,
+        }),
+      ),
+    });
+    refreshCount();
+  };
+
+  input.addEventListener('input', () => runQuery(input.value));
+  input.addEventListener('keydown', (event) => {
+    if (event.key === 'Enter') {
+      event.preventDefault();
+      if (event.shiftKey) findPrevious(view);
+      else findNext(view);
+      refreshCount();
+    } else if (event.key === 'Escape') {
+      event.preventDefault();
+      closeSearchPanel(view);
+    }
+  });
+  prevButton.addEventListener('click', () => {
+    findPrevious(view);
+    refreshCount();
+    input.focus();
+  });
+  nextButton.addEventListener('click', () => {
+    findNext(view);
+    refreshCount();
+    input.focus();
+  });
+  closeButton.addEventListener('click', () => closeSearchPanel(view));
+
+  // 把视口坐标换算到弹窗定位坐标系,兼容存在 transform 的祖先容器。
+  const positionAt = (clientX: number, clientY: number): void => {
+    const width = dom.offsetWidth || SEARCH_POPUP_WIDTH;
+    const height = dom.offsetHeight || SEARCH_POPUP_ESTIMATED_HEIGHT;
+    const x = Math.min(
+      Math.max(SEARCH_POPUP_MARGIN, clientX),
+      window.innerWidth - width - SEARCH_POPUP_MARGIN,
+    );
+    const y = Math.min(
+      Math.max(SEARCH_POPUP_MARGIN, clientY),
+      window.innerHeight - height - SEARCH_POPUP_MARGIN,
+    );
+    dom.style.left = `${x}px`;
+    dom.style.top = `${y}px`;
+    const rect = dom.getBoundingClientRect();
+    dom.style.left = `${x + (x - rect.left)}px`;
+    dom.style.top = `${y + (y - rect.top)}px`;
+  };
+
+  let dragPointerId: number | null = null;
+  let dragOffsetX = 0;
+  let dragOffsetY = 0;
+  const onDragMove = (event: PointerEvent): void => {
+    if (dragPointerId === null) return;
+    positionAt(event.clientX - dragOffsetX, event.clientY - dragOffsetY);
+  };
+  const onDragEnd = (): void => {
+    if (dragPointerId === null) return;
+    dragPointerId = null;
+    window.removeEventListener('pointermove', onDragMove);
+    window.removeEventListener('pointerup', onDragEnd);
+  };
+  grip.addEventListener('pointerdown', (event) => {
+    dragPointerId = event.pointerId;
+    const rect = dom.getBoundingClientRect();
+    dragOffsetX = event.clientX - rect.left;
+    dragOffsetY = event.clientY - rect.top;
+    window.addEventListener('pointermove', onDragMove);
+    window.addEventListener('pointerup', onDragEnd);
+    event.preventDefault();
+  });
+
+  return {
+    dom,
+    top: true,
+    mount() {
+      const query = getSearchQuery(view.state);
+      if (query.search) input.value = query.search;
+      const trigger = lastSearchTriggerPoint;
+      lastSearchTriggerPoint = null;
+      if (trigger) {
+        positionAt(trigger.x, trigger.y);
+      } else {
+        const caret = view.coordsAtPos(view.state.selection.main.head);
+        if (caret) {
+          positionAt(caret.left, caret.bottom + 8);
+        } else {
+          const editorRect = view.dom.getBoundingClientRect();
+          positionAt(editorRect.left + 24, editorRect.top + 16);
+        }
+      }
+      refreshCount();
+      requestAnimationFrame(() => {
+        input.focus();
+        input.select();
+      });
+    },
+    update(update: ViewUpdate) {
+      const queryChanged = update.transactions.some((transaction) =>
+        transaction.effects.some((effect) => effect.is(setSearchQuery)),
+      );
+      if (!update.docChanged && !update.selectionSet && !queryChanged) return;
+      if (document.activeElement !== input) {
+        const query = getSearchQuery(view.state);
+        if (query.search !== input.value) input.value = query.search;
+      }
+      refreshCount();
+    },
+    destroy() {
+      window.removeEventListener('pointermove', onDragMove);
+      window.removeEventListener('pointerup', onDragEnd);
+    },
+  };
+};
+
 const createBaseExtensions = (language: string): Extension[] => [
   lspCompletionTheme,
   highlightSpecialChars(),
@@ -1015,7 +1231,7 @@ const createBaseExtensions = (language: string): Extension[] => [
   rectangularSelection(),
   crosshairCursor(),
   highlightSelectionMatches(),
-  search({ top: true }),
+  search({ top: true, createPanel: createSearchPanel }),
   lintGutter(),
   editorBottomPaddingTheme,
   ...inlineCompletionController.extensions,
@@ -1510,4 +1726,115 @@ defineExpose<IEditorExpose>({
   font-size: 11.5px;
   line-height: 1.45;
 }
+
+/* 浮动查找弹窗:恒为浅色,沿用补全/hover 卡片同一套表面/描边/阴影语言 */
+.cm-panels.cm-panels-top:has(.cm-floating-search) {
+  border-bottom: none;
+  background: transparent;
+}
+
+.cm-floating-search {
+  position: fixed;
+  z-index: 30;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  width: 320px;
+  max-width: calc(100vw - 24px);
+  padding: 5px 6px 5px 10px;
+  background: #ffffff;
+  border: 1px solid #e6e8eb;
+  border-radius: 12px;
+  box-shadow: 0 10px 30px rgba(15, 23, 42, 0.12), 0 0 0 0.5px rgba(15, 23, 42, 0.04);
+  font-family: var(--font-mono);
+  color: #1f2937;
+}
+
+.cm-floating-search__grip {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  flex-shrink: 0;
+  color: #98a2b3;
+  cursor: grab;
+  touch-action: none;
+}
+
+.cm-floating-search__grip:active {
+  cursor: grabbing;
+}
+
+.cm-floating-search__grip svg {
+  width: 15px;
+  height: 15px;
+}
+
+.cm-floating-search__input {
+  flex: 1 1 auto;
+  min-width: 0;
+  height: 26px;
+  padding: 0 6px;
+  border: none;
+  outline: none;
+  background: transparent;
+  font-family: inherit;
+  font-size: 13px;
+  color: #111827;
+}
+
+.cm-floating-search__input::placeholder {
+  color: #98a2b3;
+}
+
+.cm-floating-search__count {
+  flex-shrink: 0;
+  min-width: 34px;
+  padding: 0 4px;
+  text-align: right;
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  color: #98a2b3;
+}
+
+.cm-floating-search__btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 26px;
+  flex-shrink: 0;
+  padding: 0;
+  border: none;
+  border-radius: 7px;
+  background: transparent;
+  color: #475467;
+  cursor: pointer;
+  transition: background-color 0.12s ease, color 0.12s ease;
+}
+
+.cm-floating-search__btn:hover {
+  background: #f1f5f9;
+  color: #111827;
+}
+
+.cm-floating-search__btn:active {
+  background: #e7ebf0;
+}
+
+.cm-floating-search__btn svg {
+  width: 16px;
+  height: 16px;
+}
+
+.cm-floating-search__btn--close {
+  color: #98a2b3;
+}
+
+.cm-floating-search__btn--close:hover {
+  background: #fde8e8;
+  color: #d92d20;
+}
+
 </style>
