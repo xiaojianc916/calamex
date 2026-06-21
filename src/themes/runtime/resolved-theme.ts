@@ -112,7 +112,7 @@ function buildAccentCssVars(accentColor: TAccentColor): Record<string, string> {
  * 给定用户完整的外观偏好，返回所有需要覆盖的 CSS 变量 key-value 对。
  * 纯函数：无副作用，不写 DOM。
  */
-function buildUserOverrideCssVars(opts: {
+export function buildUserOverrideCssVars(opts: {
   accentColor: TAccentColor;
   radiusPreset: TRadiusPreset;
   uiDensity: TUiDensity;

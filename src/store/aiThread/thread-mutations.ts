@@ -14,7 +14,7 @@
 import type { TAiThreadReduceEvent } from '@/store/aiThread/events';
 import { reduceThread } from '@/store/aiThread/reduce';
 import type { IAiThread, IAiThreadContentBlock, IAiThreadEntry } from '@/types/ai/thread';
-import { createUniqueId } from '@/utils/core/id';
+import { createPrefixedId } from '@/utils/core/id';
 
 export const AI_THREAD_HISTORY_LIMIT = 200;
 const TEMPORARY_TITLE_MAX_CHARS = 24;
@@ -35,7 +35,7 @@ export interface IAiThreadFirstRound {
   assistantMessage: string;
 }
 
-const createThreadId = (): string => createUniqueId('ai-thread');
+const createThreadId = (): string => createPrefixedId('ai-thread');
 
 /* ----- text extraction --------------------------------------------------- */
 const blocksText = (blocks: IAiThreadContentBlock[]): string =>

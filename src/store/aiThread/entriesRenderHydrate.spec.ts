@@ -20,7 +20,7 @@ function makeThread(id: string): IAiThread {
 
 describe('hydrateAiThreadEntriesForRender', () => {
   it('解析原始快照 JSON 并把 legacy 入参透传给 resolver', async () => {
-    let received: IResolvePersistedThreadsInput | null = null;
+    const receivedInputs: IResolvePersistedThreadsInput[] = [];
     const legacyThreads: IAiConversationThread[] = [];
     const resolved: IResolvedPersistedThreads = {
       source: 'entries',
@@ -33,14 +33,15 @@ describe('hydrateAiThreadEntriesForRender', () => {
       {
         loadSnapshot: async () => ({ status: 'loaded', raw: JSON.stringify({ hello: 'world' }) }),
         resolve: (input) => {
-          received = input;
+          receivedInputs.push(input);
           return resolved;
         },
         restorePointers: async (value: IAiThread) => ({ changed: false, value }),
       },
     );
 
-    expect(received).not.toBeNull();
+    const received = receivedInputs[0];
+    expect(received).toBeDefined();
     expect(received?.rawEntriesSnapshot).toEqual({ hello: 'world' });
     expect(received?.legacyActiveThreadId).toBe('legacy-1');
     expect(received?.legacyThreads).toBe(legacyThreads);
@@ -48,7 +49,7 @@ describe('hydrateAiThreadEntriesForRender', () => {
   });
 
   it('坏 JSON 容错为 null（交由 resolver 回退 legacy）', async () => {
-    let received: IResolvePersistedThreadsInput | null = null;
+    const receivedInputs: IResolvePersistedThreadsInput[] = [];
     const resolved: IResolvedPersistedThreads = {
       source: 'legacy',
       activeThreadId: null,
@@ -60,14 +61,14 @@ describe('hydrateAiThreadEntriesForRender', () => {
       {
         loadSnapshot: async () => ({ status: 'loaded', raw: '{ not valid json' }),
         resolve: (input) => {
-          received = input;
+          receivedInputs.push(input);
           return resolved;
         },
         restorePointers: async (value: IAiThread) => ({ changed: false, value }),
       },
     );
 
-    expect(received?.rawEntriesSnapshot).toBeNull();
+    expect(receivedInputs[0]?.rawEntriesSnapshot).toBeNull();
   });
 
   it('仅对活动线程即时恢复指针，且不可变替换', async () => {
