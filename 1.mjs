@@ -1,79 +1,102 @@
-// step4-unify-reasoning-ui.mjs
-// SOP 第4步「统一 UI」：删除孤儿组件 AiReasoningCodeBlock.vue 及其桶导出。
-// 行为等价：该组件已无任何 import（推理渲染走 AiThreadReasoning→AiMarkdown）。
-// 用法：
-//   node step4-unify-reasoning-ui.mjs           # dry-run（默认，不写盘）
-//   node step4-unify-reasoning-ui.mjs --apply   # 实际改写 + 删除
-import { readFileSync, writeFileSync, existsSync, unlinkSync } from 'node:fs';
+#!/usr/bin/env node
+// optimize-calamex-r3.mjs
+// 第三批：useDocumentNavigationHistory.ts 死代码清理 + 类型标注修正（F10/F11）。
+// 安全设计同前：纯锚点替换；幂等；--dry-run 预演；--revert 回滚；锚点缺失/歧义即非零退出。
+// 用法：node optimize-calamex-r3.mjs [--dry-run] [--revert]
 
-const APPLY = process.argv.includes('--apply');
+import { readFileSync, writeFileSync, existsSync } from 'node:fs';
+import { resolve } from 'node:path';
 
-/** 字符串替换：每条 find 必须在文件中恰好命中 1 次，否则整批中止。 */
-const edits = [
+const DRY_RUN = process.argv.includes('--dry-run');
+const REVERT = process.argv.includes('--revert');
+const b = (...lines) => lines.join('\n');
+
+const TARGETS = [
   {
-    file: 'src/components/business/ai/chat/index.ts',
-    replacements: [
+    file: 'src/composables/useDocumentNavigationHistory.ts',
+    edits: [
       {
-        find:
-          "export { default as AiPromptInput } from './AiPromptInput.vue';\n" +
-          "export { default as AiReasoningCodeBlock } from './AiReasoningCodeBlock.vue';\n",
-        to: "export { default as AiPromptInput } from './AiPromptInput.vue';\n",
+        label: 'F11 补充 type Ref 导入',
+        from: "import { ref } from 'vue';",
+        to: "import { ref, type Ref } from 'vue';",
+      },
+      {
+        label: 'F11 修正 pickNavigableFromStack 的 stack 类型标注',
+        from: '    stack: ReturnType<typeof backStack>,',
+        to: '    stack: Ref<string[]>,',
+      },
+      {
+        label: 'F10 删除未使用的 getBackStack / getForwardStack 死代码',
+        from: b(
+          '  const canGoForward = (): boolean => forwardStack.value.length > 0;',
+          '',
+          '  const getBackStack = () => backStack;',
+          '  const getForwardStack = () => forwardStack;',
+          '',
+          '  /** 检查导航栈中是否有可用的目标（跳过已关闭的文档）。 */',
+        ),
+        to: b(
+          '  const canGoForward = (): boolean => forwardStack.value.length > 0;',
+          '',
+          '  /** 检查导航栈中是否有可用的目标（跳过已关闭的文档）。 */',
+        ),
       },
     ],
   },
 ];
 
-/** 待删除文件（确认无引用后移除）。 */
-const deletes = ['src/components/business/ai/chat/AiReasoningCodeBlock.vue'];
+const tally = { applied: [], skipped: [], missing: [], ambiguous: [] };
 
-let failed = false;
-const planned = [];
+function applyEdit(content, from, to, label) {
+  const toInFrom = from.includes(to);
+  const alreadyApplied = toInFrom ? !content.includes(from) : content.includes(to);
+  if (alreadyApplied) {
+    tally.skipped.push(label);
+    return content;
+  }
+  const first = content.indexOf(from);
+  if (first === -1) {
+    tally.missing.push(label);
+    return content;
+  }
+  if (content.indexOf(from, first + from.length) !== -1) {
+    tally.ambiguous.push(label);
+    return content;
+  }
+  tally.applied.push(label);
+  return content.slice(0, first) + to + content.slice(first + from.length);
+}
 
-// ── 1) 校验所有字符串替换（不写盘）──
-for (const { file, replacements } of edits) {
-  if (!existsSync(file)) {
-    console.error(`✗ 缺少文件: ${file}`);
-    failed = true;
+for (const target of TARGETS) {
+  const abs = resolve(process.cwd(), target.file);
+  if (!existsSync(abs)) {
+    tally.missing.push(`${target.file}（文件不存在，请在仓库根目录运行）`);
     continue;
   }
-  const raw = readFileSync(file, 'utf8');
-  const crlf = raw.includes('\r\n');
-  let text = raw.replace(/\r\n/g, '\n');
-
-  for (const { find, to } of replacements) {
-    const count = text.split(find).length - 1;
-    if (count !== 1) {
-      console.error(`✗ ${file}: 期望命中 1 次，实际 ${count} 次\n--- find ---\n${find}\n------------`);
-      failed = true;
-      continue;
-    }
-    text = text.replace(find, to);
+  const original = readFileSync(abs, 'utf8');
+  let content = original;
+  for (const edit of target.edits) {
+    const from = REVERT ? edit.to : edit.from;
+    const to = REVERT ? edit.from : edit.to;
+    content = applyEdit(content, from, to, `${target.file} :: ${edit.label}`);
   }
-  planned.push({ file, out: crlf ? text.replace(/\n/g, '\r\n') : text, changed: text !== raw.replace(/\r\n/g, '\n') });
-}
-
-// ── 2) 校验删除目标 ──
-for (const file of deletes) {
-  if (!existsSync(file)) {
-    console.error(`✗ 待删除文件不存在: ${file}`);
-    failed = true;
+  if (content !== original && !DRY_RUN) {
+    writeFileSync(abs, content, 'utf8');
   }
 }
 
-if (failed) {
-  console.error('\n⛔ 校验失败，未写入任何改动（原子中止）。');
-  process.exit(1);
-}
-
-// ── 3) 应用 ──
-if (!APPLY) {
-  console.log('🔍 dry-run 通过：');
-  for (const { file, changed } of planned) console.log(`  • 改写 ${file}${changed ? '' : '（无变化）'}`);
-  for (const file of deletes) console.log(`  • 删除 ${file}`);
-  console.log('\n加 --apply 实际执行。');
-  process.exit(0);
-}
-
-for (const { file, out } of planned) writeFileSync(file, out);
-for (const file of deletes) unlinkSync(file);
-console.log('✅ 已应用：桶导出已移除，孤儿组件已删除。');
+const mode = `${REVERT ? '回滚' : '应用'}${DRY_RUN ? '（预演 dry-run，未写盘）' : ''}`;
+console.log(`\n=== calamex 第三批优化 ${mode} ===`);
+const line = (emoji, title, arr) => {
+  if (arr.length === 0) return;
+  console.log(`\n${emoji} ${title}（${arr.length}）`);
+  for (const x of arr) console.log(`   - ${x}`);
+};
+line('✅', REVERT ? '已回滚' : '已应用', tally.applied);
+line('⏭️', '已是目标状态，跳过', tally.skipped);
+line('⚠️', '锚点缺失（可能版本已变）', tally.missing);
+line('⛔', '锚点不唯一，已拒绝替换', tally.ambiguous);
+console.log(
+  `\n小计：应用 ${tally.applied.length}｜跳过 ${tally.skipped.length}｜缺失 ${tally.missing.length}｜歧义 ${tally.ambiguous.length}\n`,
+);
+process.exit(tally.missing.length + tally.ambiguous.length > 0 ? 1 : 0);

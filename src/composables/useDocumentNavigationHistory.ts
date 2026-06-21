@@ -1,4 +1,4 @@
-import { ref } from 'vue';
+import { type Ref, ref } from 'vue';
 
 /**
  * 文档导航历史（后退/前进栈）。
@@ -25,12 +25,9 @@ export const useDocumentNavigationHistory = () => {
   const canGoBack = (): boolean => backStack.value.length > 0;
   const canGoForward = (): boolean => forwardStack.value.length > 0;
 
-  const getBackStack = () => backStack;
-  const getForwardStack = () => forwardStack;
-
   /** 检查导航栈中是否有可用的目标（跳过已关闭的文档）。 */
   const pickNavigableFromStack = (
-    stack: ReturnType<typeof backStack>,
+    stack: Ref<string[]>,
     checkExists: (id: string) => boolean,
     currentId: string,
   ): string | null => {
