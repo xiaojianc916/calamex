@@ -16,6 +16,7 @@
 import type { UnlistenFn } from '@tauri-apps/api/event';
 import { FitAddon } from '@xterm/addon-fit';
 import { Terminal } from '@xterm/xterm';
+import { consola } from 'consola';
 import { markRaw, nextTick, type Ref, ref, shallowRef } from 'vue';
 import { loadTauriEvent } from '@/services/tauri.ipc-runtime';
 import type { TThemeMode } from '@/types/app';
@@ -94,6 +95,9 @@ export type {
 } from './session-types';
 
 // ─── TerminalSession 类 ───────────────────────────────────────────────────────
+
+// 终端会话错误日志统一走 consola（与 IPC 层 consola.withTag('ipc') 同口径）。
+const terminalLogger = consola.withTag('terminal');
 
 // PTY 列宽/行高的合法区间常量：取代散落的魔法数字，集中表达约束。
 const TERMINAL_MIN_COLS = 2;
@@ -839,7 +843,7 @@ export class TerminalSession {
         scrollToBottom: shouldKeepViewportAtBottom,
       });
     } catch (error) {
-      console.warn('终端 live resize 尺寸同步失败', error);
+      terminalLogger.warn('终端 live resize 尺寸同步失败', error);
     } finally {
       this._endLayoutScrollGuardSoon();
     }
@@ -937,7 +941,7 @@ export class TerminalSession {
       this._markInteractiveResizeRepaintSuppression();
       this._syncPtySize(terminal.cols, terminal.rows);
     } catch (error) {
-      console.warn('终端尺寸同步失败', error);
+      terminalLogger.warn('终端尺寸同步失败', error);
     } finally {
       this._endLayoutScrollGuardSoon();
     }
@@ -946,7 +950,7 @@ export class TerminalSession {
   private _syncPtySize(cols: number, rows: number): void {
     if (!this.session.value) return;
     void this._tauri.resizeTerminalSession({ sessionId: this.id, cols, rows }).catch((error) => {
-      console.warn('终端 PTY 尺寸同步失败', { sessionId: this.id, cols, rows, error });
+      terminalLogger.warn('终端 PTY 尺寸同步失败', { sessionId: this.id, cols, rows, error });
     });
   }
 
@@ -1098,7 +1102,7 @@ export class TerminalSession {
       runId,
       exitCode,
       finishedAt: new Date().toISOString(),
-    } as ITerminalRunCompletedPayload;
+    };
   }
 
   private _clearTrackedRunState(runId?: string): void {

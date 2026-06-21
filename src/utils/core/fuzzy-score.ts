@@ -36,7 +36,7 @@ const CHAR_CLASS_NAMES = ['nonword', 'whitespace', 'lower', 'upper', 'digit'] as
 const classifyChar = (char: string): TCharClass => {
   const code = char.charCodeAt(0);
   if (code >= 128) return 'nonword';
-  return CHAR_CLASS_NAMES[CHAR_CLASS_LUT[code]]!;
+  return CHAR_CLASS_NAMES[CHAR_CLASS_LUT[code]] ?? 'nonword';
 };
 
 // 在文本位置 index 命中一个字符时的边界奖励（与前一个字符的类别相关）。

@@ -357,7 +357,10 @@ export function reduceThread(thread: IAiThread, event: TAiThreadReduceEvent): IA
     case 'stream_error':
       return finalizeNonTerminalTools(thread, 'failed');
     case 'stream_completed':
-      return thread;
+      // 回合正常收尾：仍处于非终态的 tool 收敛为 failed（与 stream_error 同策）。
+      // 正常路径下工具在 done 前已 completed，此处为空操作；仅当工具完成事件因 id
+      // 不匹配等原因丢失时，避免条目永久卡在 in_progress（思考中）。
+      return finalizeNonTerminalTools(thread, 'failed');
     default: {
       const _exhaustive: never = event;
       void _exhaustive;

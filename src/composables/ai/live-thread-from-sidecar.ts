@@ -37,11 +37,35 @@ export const buildLiveThreadFromSidecarEvents = (
   options: IBuildLiveThreadOptions,
 ): IAiThread => {
   const now = options.now ?? new Date().toISOString();
-  const reduceEvents = events.flatMap((event) =>
-    sidecarEventToReduceEvents(event, {
+  // 去重：同名工具若已有运行时遥测（agent.tool.*），丢弃旧粗粒度 tool_start/tool_result，
+  // 避免同一工具产生重复 tool_call 条目（运行时通路语义更全，优先保留）。
+  const runtimeToolNames = new Set<string>();
+  for (const event of events) {
+    if (event.type !== 'agent_event') {
+      continue;
+    }
+    const runtime = event.event;
+    if (
+      runtime.type === 'agent.tool.started' ||
+      runtime.type === 'agent.tool.completed' ||
+      runtime.type === 'agent.tool.progress'
+    ) {
+      if (typeof runtime.toolName === 'string' && runtime.toolName.length > 0) {
+        runtimeToolNames.add(runtime.toolName);
+      }
+    }
+  }
+  const reduceEvents = events.flatMap((event) => {
+    if (
+      (event.type === 'tool_start' || event.type === 'tool_result') &&
+      runtimeToolNames.has(event.toolName)
+    ) {
+      return [];
+    }
+    return sidecarEventToReduceEvents(event, {
       now,
       assistantMessageId: options.assistantMessageId,
-    }),
-  );
+    });
+  });
   return reduceThreadAll(options.baseThread, reduceEvents);
 };

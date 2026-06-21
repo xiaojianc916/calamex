@@ -9,6 +9,16 @@ const textByteLength = (value: unknown): number => {
   return typeof TextEncoder !== 'undefined' ? new TextEncoder().encode(value).length : value.length;
 };
 
+const sumTextBytes = (...values: unknown[]): number =>
+  values.reduce<number>((total, value) => total + textByteLength(value), 0);
+
+// Git 出参浅层字节度量的固定开销常量：把原散落的魔法数字语义化，数值与原实现逐一对齐。
+const PAYLOAD_BASE_OVERHEAD_BYTES = 96; // 单个 payload（detail / diff）的固定基准开销
+const CONTAINER_OVERHEAD_BYTES = 32; // 容器节点（每个 hunk、提交历史列表）的结构开销
+const PER_ITEM_OVERHEAD_BYTES = 24; // 每个 file / 提交 entry 的结构开销
+const PER_LEAF_OVERHEAD_BYTES = 16; // 每个 diff line / ref 的结构开销
+const SCALAR_FIELD_BYTES = 8; // 单个 number/boolean/parentId 的计量字节
+
 const shallowStringBytes = (value: unknown): number => {
   if (!value || typeof value !== 'object') return textByteLength(value);
   let total = 0;
@@ -16,7 +26,7 @@ const shallowStringBytes = (value: unknown): number => {
     if (typeof fieldValue === 'string') {
       total += textByteLength(fieldValue);
     } else if (typeof fieldValue === 'number' || typeof fieldValue === 'boolean') {
-      total += 8;
+      total += SCALAR_FIELD_BYTES;
     }
   }
   return total;
@@ -37,20 +47,24 @@ const measureGitCommitDetailOutput = (output: unknown) => {
     shortId?: string;
   };
 
-  const baseBytes =
-    textByteLength(payload.id) +
-    textByteLength(payload.shortId) +
-    textByteLength(payload.summary) +
-    textByteLength(payload.body) +
-    textByteLength(payload.authorName) +
-    textByteLength(payload.authorEmail) +
-    textByteLength(payload.authoredAt);
+  const baseBytes = sumTextBytes(
+    payload.id,
+    payload.shortId,
+    payload.summary,
+    payload.body,
+    payload.authorName,
+    payload.authorEmail,
+    payload.authoredAt,
+  );
 
   const filesBytes = Array.isArray(payload.files)
-    ? payload.files.reduce((total, file) => total + shallowStringBytes(file) + 24, 0)
+    ? payload.files.reduce(
+        (total, file) => total + shallowStringBytes(file) + PER_ITEM_OVERHEAD_BYTES,
+        0,
+      )
     : 0;
 
-  return { bytes: baseBytes + filesBytes + 96 };
+  return { bytes: baseBytes + filesBytes + PAYLOAD_BASE_OVERHEAD_BYTES };
 };
 
 const measureGitDiffPayloadOutput = (output: unknown) => {
@@ -76,24 +90,25 @@ const measureGitDiffPayloadOutput = (output: unknown) => {
     }>;
   };
 
-  let bytes =
-    textByteLength(payload.id) +
-    textByteLength(payload.repositoryRootPath) +
-    textByteLength(payload.path) +
-    textByteLength(payload.relativePath) +
-    textByteLength(payload.fileName) +
-    textByteLength(payload.title) +
-    textByteLength(payload.mode) +
-    textByteLength(payload.originalContent) +
-    textByteLength(payload.modifiedContent) +
-    96;
+  const scalarBytes = sumTextBytes(
+    payload.id,
+    payload.repositoryRootPath,
+    payload.path,
+    payload.relativePath,
+    payload.fileName,
+    payload.title,
+    payload.mode,
+    payload.originalContent,
+    payload.modifiedContent,
+  );
+  let bytes = scalarBytes + PAYLOAD_BASE_OVERHEAD_BYTES;
 
   if (Array.isArray(payload.hunks)) {
     for (const hunk of payload.hunks) {
-      bytes += 32;
+      bytes += CONTAINER_OVERHEAD_BYTES;
       if (!Array.isArray(hunk.lines)) continue;
       for (const line of hunk.lines) {
-        bytes += textByteLength(line.content) + textByteLength(line.tag) + 16;
+        bytes += textByteLength(line.content) + textByteLength(line.tag) + PER_LEAF_OVERHEAD_BYTES;
       }
     }
   }
@@ -124,24 +139,25 @@ export const measureGitCommitHistoryOutput = (output: unknown) => {
 
   const entriesBytes = Array.isArray(payload.entries)
     ? payload.entries.reduce((total, entry) => {
-        let entryBytes =
-          textByteLength(entry.id) +
-          textByteLength(entry.shortId) +
-          textByteLength(entry.summary) +
-          textByteLength(entry.authorName) +
-          textByteLength(entry.authorEmail) +
-          textByteLength(entry.authoredAt) +
-          24;
+        const scalarBytes = sumTextBytes(
+          entry.id,
+          entry.shortId,
+          entry.summary,
+          entry.authorName,
+          entry.authorEmail,
+          entry.authoredAt,
+        );
+        let entryBytes = scalarBytes + PER_ITEM_OVERHEAD_BYTES;
 
         if (Array.isArray(entry.parentIds)) {
           for (const parentId of entry.parentIds) {
-            entryBytes += textByteLength(parentId) + 8;
+            entryBytes += textByteLength(parentId) + SCALAR_FIELD_BYTES;
           }
         }
 
         if (Array.isArray(entry.refs)) {
           for (const ref of entry.refs) {
-            entryBytes += shallowStringBytes(ref) + 16;
+            entryBytes += shallowStringBytes(ref) + PER_LEAF_OVERHEAD_BYTES;
           }
         }
 
@@ -149,7 +165,7 @@ export const measureGitCommitHistoryOutput = (output: unknown) => {
       }, 0)
     : 0;
 
-  return { bytes: entriesBytes + 32 };
+  return { bytes: entriesBytes + CONTAINER_OVERHEAD_BYTES };
 };
 
 type TGitTauriService = Pick<

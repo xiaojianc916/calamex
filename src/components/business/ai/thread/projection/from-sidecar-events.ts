@@ -29,7 +29,7 @@ import {
 } from '@/components/business/ai/plan/runtime-timeline';
 import { classifyRuntimeToolKind } from '@/constants/ai/runtime-tools';
 import type { TAiAssistantChannel, TAiThreadReduceEvent } from '@/store/aiThread/events';
-import type { TAgentRuntimeEvent, TAgentUiEvent } from '@/types/ai/sidecar';
+import type { TAgentRuntimeEvent, TAgentUiEvent, TJsonValue } from '@/types/ai/sidecar';
 import type { IAiThreadToolCallContent } from '@/types/ai/thread';
 
 import { RUNTIME_KIND_TO_TOOL_KIND } from './tool-kind';
@@ -139,6 +139,58 @@ const fromRuntimeEvent = (
   }
 };
 
+/* ----- 旧粗粒度 tool_start / tool_result（无运行时遥测时的回退通路） -----------
+ * 部分后端 / 外部 agent 只发粗粒度 tool_start/tool_result（缺稳定 toolUseId），且无对应
+ * agent.tool.* 运行时事件。此前这两类被丢弃，导致 reduce 真源里没有 tool_call 条目
+ * （messages[].toolCalls 为空）。这里按 toolName 关联起止（同名工具串行假设）补出
+ * tool_started/tool_completed；当同名工具另有运行时遥测时，由监听层
+ * （buildLiveThreadFromSidecarEvents）去重，避免重复条目。
+ * -------------------------------------------------------------------------- */
+/** 粗粒度工具按 toolName 关联起止的稳定 id 前缀。 */
+const COARSE_TOOL_ID_PREFIX = 'sidecar-tool:';
+
+/** 内部记忆类工具不作为用户可见 tool_call 条目落地（与 OLD 投影一致）。 */
+const COARSE_HIDDEN_TOOL_NAMES: ReadonlySet<string> = new Set([
+  'updateWorkingMemory',
+  'update_working_memory',
+  '__updateWorkingMemory__',
+]);
+
+/** 从 tool input/output 中挑一个有代表性的预览串作为展示标题（path/query/command…）。 */
+const COARSE_PREVIEW_KEYS = [
+  'path',
+  'file',
+  'filePath',
+  'relativePath',
+  'targetPath',
+  'sourcePath',
+  'query',
+  'q',
+  'pattern',
+  'keyword',
+  'search',
+  'searchTerm',
+  'command',
+  'cmd',
+  'script',
+  'url',
+  'uri',
+  'summary',
+] as const;
+
+const pickCoarsePreview = (value: TJsonValue): string | undefined => {
+  if (value === null || typeof value !== 'object' || Array.isArray(value)) {
+    return undefined;
+  }
+  for (const key of COARSE_PREVIEW_KEYS) {
+    const candidate = value[key];
+    if (typeof candidate === 'string' && candidate.trim().length > 0) {
+      return candidate.trim();
+    }
+  }
+  return undefined;
+};
+
 /** 单条边车 UI 事件 → 0..n 条 reduce 规范化事件。纯函数，不修改入参、无副作用。 */
 export const sidecarEventToReduceEvents = (
   event: TAgentUiEvent,
@@ -154,12 +206,43 @@ export const sidecarEventToReduceEvents = (
       );
     case 'agent_event':
       return fromRuntimeEvent(event.event, options);
+    case 'tool_start': {
+      if (COARSE_HIDDEN_TOOL_NAMES.has(event.toolName)) {
+        return [];
+      }
+      const preview = pickCoarsePreview(event.input);
+      return [
+        {
+          kind: 'tool_started',
+          id: `${COARSE_TOOL_ID_PREFIX}${event.toolName}`,
+          createdAt: options.now,
+          title: preview ?? event.toolName,
+          name: event.toolName,
+          toolKind: RUNTIME_KIND_TO_TOOL_KIND[classifyRuntimeToolKind(event.toolName)],
+          status: 'in_progress',
+        },
+      ];
+    }
+    case 'tool_result': {
+      if (COARSE_HIDDEN_TOOL_NAMES.has(event.toolName)) {
+        return [];
+      }
+      const preview = pickCoarsePreview(event.output);
+      return [
+        {
+          kind: 'tool_completed',
+          id: `${COARSE_TOOL_ID_PREFIX}${event.toolName}`,
+          ok: true,
+          ...(preview !== undefined ? { title: preview } : {}),
+        },
+      ];
+    }
     case 'done':
       return [{ kind: 'stream_completed' }];
     case 'error':
       return [{ kind: 'stream_error', message: event.message }];
     default:
-      // 见文件头“有意暂不覆盖”：plan_* / tool_start / tool_result / tool_call(_update) /
+      // 见文件头“有意暂不覆盖”：plan_* / tool_call(_update) /
       // mode_update / available_commands_update / usage_update / config_option_update /
       // approval_required / ask_user_required / diff_ready。
       return [];
