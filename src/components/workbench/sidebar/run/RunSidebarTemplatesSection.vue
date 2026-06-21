@@ -191,7 +191,7 @@ useEventListener(document, 'click', handleDocumentClick);
         <!-- 阶段标签 -->
         <div v-else class="template-phase-label" :style="{ '--phase-c': phase.color }">
           <span class="template-phase-dot"></span>
-           {{ phase.label }} 
+           phase.label 
         </div>
 
         <!-- 类别列表 -->
@@ -252,7 +252,7 @@ useEventListener(document, 'click', handleDocumentClick);
     <Teleport to="body">
       <div class="template-toast" :class="{ 'template-toast--on': toastVisible }">
         <Check class="template-toast-icon" />
-        <span>{{ toastMessage }}</span>
+        <span> toastMessage </span>
       </div>
     </Teleport>
   </section>
@@ -390,13 +390,13 @@ useEventListener(document, 'click', handleDocumentClick);
   background: var(--shell-divider, #e4e4e7);
 }
 
-/* ── 右键菜单 ── */
+/* ── 右键菜单（对齐编辑器右键菜单 LinearContextMenu 样式） ── */
 .template-menu {
   position: fixed;
-  min-width: 184px;
+  min-width: 208px;
   padding: 4px;
-  background: #fafafa;
-  border: 1px solid var(--shell-divider, #e4e4e7);
+  background: #ffffff;
+  border: 1px solid #e8e8e8;
   border-radius: 6px;
   box-shadow: 0 4px 16px rgba(0, 0, 0, 0.08), 0 2px 4px rgba(0, 0, 0, 0.04);
   z-index: 200;
@@ -416,11 +416,11 @@ useEventListener(document, 'click', handleDocumentClick);
 .template-menu-item {
   display: flex;
   align-items: center;
-  gap: 9px;
+  gap: 8px;
   width: 100%;
-  padding: 7px 10px;
-  font-size: 12.5px;
-  color: var(--text-secondary, #3f3f46);
+  padding: 6px 8px;
+  font-size: 14px;
+  color: #1f1f1f;
   border-radius: 4px;
   text-align: left;
   background: transparent;
@@ -431,19 +431,19 @@ useEventListener(document, 'click', handleDocumentClick);
 }
 
 .template-menu-item:hover {
-  background: color-mix(in srgb, var(--surface-hover, #f1f1f2) 100%, transparent);
-  color: var(--text-primary);
+  background: #f5f5f5;
+  color: #1f1f1f;
 }
 
 .template-menu-icon {
-  width: 13px;
-  height: 13px;
+  width: 16px;
+  height: 16px;
   stroke-width: 1.75;
-  color: var(--text-tertiary, #71717a);
+  color: #1f1f1f;
 }
 
 .template-menu-item:hover .template-menu-icon {
-  color: var(--text-primary);
+  color: #1f1f1f;
 }
 
 .template-menu-item--danger {
@@ -456,18 +456,19 @@ useEventListener(document, 'click', handleDocumentClick);
 
 .template-menu-item--danger:hover {
   background: #fef2f2;
+  color: #ef4444;
 }
 
 .template-menu-kbd {
   margin-left: auto;
   font-family: "JetBrains Mono", "SF Mono", Menlo, Consolas, monospace;
   font-size: 10px;
-  color: var(--text-quaternary, #a1a1aa);
+  color: #666666;
 }
 
 .template-menu-sep {
   height: 1px;
-  background: var(--shell-divider, #e4e4e7);
+  background: #eeeeee;
   margin: 4px 0;
 }
 
