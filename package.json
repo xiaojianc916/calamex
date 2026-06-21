@@ -70,7 +70,6 @@
     "@shikijs/langs": "^4.2.0",
     "@shikijs/themes": "^4.2.0",
     "@tanstack/query-persist-client-core": "^5.101.0",
-    "@tanstack/query-sync-storage-persister": "^5.101.0",
     "@tanstack/vue-query": "^5.101.0",
     "@tanstack/vue-virtual": "^3.13.29",
     "@tauri-apps/api": "^2.11.1",
