@@ -147,6 +147,13 @@ const afterMessageByEntryId = computed(() => {
   return resolved;
 });
 
+// 是否已有“可见的助手内容”作为时间线末条目(正文或推理)。一旦出现,就说明 AI 已经开始
+// 回复,底部独立的“正在准备回复”占位应立刻让位给真实内容,不再继续挂着。
+// 这里刻意不再要求 streaming === true:streaming 依赖 streamingMessageId 精确匹配,一旦该
+// id 缺失或滞后(例如无工具调用的纯聊天链路),所有条目的 streaming 都是 false,占位就会在
+// 整段回复期间一直跟在最底部(正是此前反馈的老 bug);并且当 streaming 由 true 翻转为 false
+// 而 isTyping 尚未落定时,占位会“闪一下”再消失,显得突兀。改为基于“末条目是否为助手内容”
+// 判断后,Vue 会在同一帧内完成“移除占位 + 插入首条 AI 内容”,二者无重叠、不抽动。
 const hasInlineProgressEntry = computed(() => {
   const lastEntry = entryTimeline.value.at(-1);
 
@@ -154,10 +161,7 @@ const hasInlineProgressEntry = computed(() => {
     return false;
   }
 
-  return (
-    (lastEntry.kind === 'assistant-text' && lastEntry.streaming) ||
-    (lastEntry.kind === 'reasoning' && lastEntry.streaming)
-  );
+  return lastEntry.kind === 'assistant-text' || lastEntry.kind === 'reasoning';
 });
 
 const shouldRenderStandaloneTyping = computed(() => {
