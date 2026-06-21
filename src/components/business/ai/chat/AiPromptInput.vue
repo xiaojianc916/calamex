@@ -60,6 +60,7 @@ import { isAiAssistantMode, type TAiAssistantMode } from '@/types/ai/assistant-m
 import type { TAiExecutionMode } from '@/types/ai/execution-mode';
 import type { ISelectedSkill, ISkillSummary } from '@/types/ai/skill';
 import AiErrorNotice from './AiErrorNotice.vue';
+import { pickAttachmentFilesViaNativeDialog } from './attachment-file-picker';
 
 interface IAiPromptModeOption {
   key: TAiAssistantMode;
@@ -134,6 +135,11 @@ const props = defineProps<{
   isNetworkPermissionSaving?: boolean;
   executionMode: TAiExecutionMode;
   resolveAttachment: (file: File) => Promise<boolean>;
+  /**
+   * 工作区根目录绝对路径（可选）。用于首次使用原生附件选择器时，
+   * 在没有“上次目录”记忆的情况下回退到工作区根目录。父级未下传时优雅降级。
+   */
+  workspaceRootPath?: string | null;
 }>();
 
 const emit = defineEmits<{
@@ -731,11 +737,22 @@ const handleRemoveAttachment = (id: string): void => {
   emit('removeFile', id);
 };
 
-const handleOpenFileDialog = (): void => {
+// 📎 附件选择：优先调用原生文件对话框（记忆上次目录、首次回退工作区根 / home），
+// 原生环境不可用（如浏览器预览）时回退到隐藏的 <input type=file>。
+const handleOpenFileDialog = async (): Promise<void> => {
   if (props.disabled) {
     return;
   }
-  fileInputRef.value?.click();
+  try {
+    const files = await pickAttachmentFilesViaNativeDialog({
+      workspaceRootPath: props.workspaceRootPath,
+    });
+    for (const file of files) {
+      void queueAttachmentFile(file);
+    }
+  } catch {
+    fileInputRef.value?.click();
+  }
 };
 
 const handleFileChange = (event: Event): void => {
