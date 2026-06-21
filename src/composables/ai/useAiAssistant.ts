@@ -41,7 +41,7 @@ import { aiService } from '@/services/ipc/ai.service';
 import { buildCurrentFileReference } from '@/services/ipc/ai-context.service';
 import { aiEditService } from '@/services/ipc/ai-edit.service';
 import { type IAiPersistedSidecarAgentSession, useAiAgentStore } from '@/store/aiAgent';
-import { legacyThreadToThread, useAiThreadStore } from '@/store/aiThread';
+import { legacyThreadToThread, threadEntriesToMessages, useAiThreadStore } from '@/store/aiThread';
 import type {
   IAiAgentPatchSummary,
   IAiApplyPatchMetadata,
@@ -315,6 +315,13 @@ export const useAiAssistant = (options: IUseAiAssistantOptions) => {
   const commitDisplayMessagesToStore = (
     threadId: string | null = unref(conversationStore.activeThreadId),
   ): void => {
+    // displayMessages 恒为「当前活动线程」的投影；回合线程已被切到后台时，绝不能用活动线程的显示缓冲
+    // 覆盖该后台线程（否则清空后台会话）。后台线程的最终内容由 updateLiveThreadFromSidecarEvents
+    // 经 reduce 直接写入其权威 entries。
+    const activeThreadId = unref(conversationStore.activeThreadId);
+    if (threadId && threadId !== activeThreadId) {
+      return;
+    }
     if (threadId) {
       conversationStore.replaceThreadMessages(threadId, displayMessages.value);
       return;
@@ -394,15 +401,20 @@ export const useAiAssistant = (options: IUseAiAssistantOptions) => {
     events: readonly TAgentUiEvent[],
     liveRenderState: ISidecarLiveRenderState,
   ): void => {
-    const activeThread = conversationStore.activeConversationThread;
     const activeThreadId = unref(conversationStore.activeThreadId);
-    // 仅当该回合线程正是当前可见线程时才覆盖投影，避免串台到其它会话。
-    if (!activeThread || (threadId !== null && threadId !== activeThreadId)) {
+    // 回合线程是否仍是当前可见线程：是则覆盖活动投影；否则该回合已被切到后台，仍需把本回合 reduce 态
+    // 写回「发起会话」的权威 entries（避免回来后内容清空），但不改活动线程。
+    const isActiveTarget = threadId === null || threadId === activeThreadId;
+    const targetLegacyThread = isActiveTarget
+      ? conversationStore.activeConversationThread
+      : (conversationStore.conversationHistoryThreads.find((thread) => thread.id === threadId) ??
+        null);
+    if (!targetLegacyThread) {
       return;
     }
     const seedThread = legacyThreadToThread({
-      ...activeThread,
-      messages: activeThread.messages.filter((message) => message.id !== assistantMessageId),
+      ...targetLegacyThread,
+      messages: targetLegacyThread.messages.filter((message) => message.id !== assistantMessageId),
     });
     const liveThread = buildLiveThreadFromSidecarEvents(events, {
       baseThread: seedThread,
@@ -468,7 +480,15 @@ export const useAiAssistant = (options: IUseAiAssistantOptions) => {
       ...liveThread,
       entries,
     };
-    aiThreadStore.overlayStreamingActiveThread(enrichedThread);
+    if (isActiveTarget) {
+      aiThreadStore.overlayStreamingActiveThread(enrichedThread);
+    } else {
+      // 后台（已切走）线程：经 replaceThreadMessages 写回其权威 entries，不触碰活动线程。
+      conversationStore.replaceThreadMessages(
+        targetLegacyThread.id,
+        threadEntriesToMessages(enrichedThread.entries),
+      );
+    }
   };
 
   const syncDisplayMessagesFromActiveThread = (): void => {
@@ -1134,7 +1154,14 @@ export const useAiAssistant = (options: IUseAiAssistantOptions) => {
       toolCalls: toolProjection.toolCalls,
       streamStatus: sidecarStreamStatus,
       activityText: toolProjection.activityText,
-      runtimeEvents: compactRuntimeEvents(extractVisibleAgentRuntimeEvents(payload.events)),
+      // payload.events 可能漏掉「仅经实时流到达」的 runtime agent 事件，收尾合并本回合累计的可见
+      // runtime 时间线（已含实时 + payload 事件，按 id 去重）。
+      runtimeEvents: compactRuntimeEvents(
+        mergeRuntimeEvents(
+          runtimeTimelineEvents.value,
+          extractVisibleAgentRuntimeEvents(payload.events),
+        ) ?? [],
+      ),
       streamTokenSnapshot: resolveSidecarDoneStreamTokenSnapshot(
         getLatestSidecarLiveEvents(payload.events).doneEvent,
       ),
