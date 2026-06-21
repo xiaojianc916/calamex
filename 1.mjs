@@ -1,97 +1,107 @@
-// step3a-unify-writer.mjs —— 统一 §D：messages 读写真源收敛到权威 entries，去掉 isConversationWriteBuffered 闸门
-// 用法：node 1.mjs          （dry-run 预览）
-//      node 1.mjs --apply   （写回；git 是唯一安全网，不产生 .bak）
+// b1-tool-name.mjs —— Step B1（dry-run 默认；--apply 落盘；无 .bak；全或全不；CRLF/LF 无关）
 import { readFileSync, writeFileSync } from 'node:fs';
 
-const FILE = 'src/composables/ai/useAiAssistant.ts';
 const APPLY = process.argv.includes('--apply');
 
-const edits = [
+const EDITS = [
+  // (1) events.ts：tool_started reduce 事件变体加 name?
   {
-    tag: '①删除 isConversationWriteBuffered 定义',
-    oldStr: `  const isConversationWriteBuffered = (): boolean =>
-    isSending.value ||
-    activeStreamId.value !== null ||
-    activeAgentMessageId.value !== null ||
-    activeAssistantMessage.value !== null ||
-    activeSidecarAgentSession.value !== null ||
-    restoringCheckpointId.value !== null;
-
-  const commitDisplayMessagesToStore = (`,
-    newStr: `  const commitDisplayMessagesToStore = (`,
+    file: 'src/store/aiThread/events.ts',
+    find: `      kind: 'tool_started';
+      id: string;
+      createdAt: string;
+      title: string;
+      toolKind: TAiThreadToolKind;
+      status?: 'pending' | 'in_progress';`,
+    replace: `      kind: 'tool_started';
+      id: string;
+      createdAt: string;
+      title: string;
+      /** 工具原始名（raw toolName）：渲染层 name 用它，区别于语义化展示 title。 */
+      name?: string;
+      toolKind: TAiThreadToolKind;
+      status?: 'pending' | 'in_progress';`,
   },
+  // (2) from-sidecar-events.ts：agent.tool.started 贯通原始 toolName 为 name
   {
-    tag: '②syncDisplayMessagesFromActiveThread 去闸门',
-    oldStr: `  const syncDisplayMessagesFromActiveThread = (): void => {
-    if (!isConversationWriteBuffered()) {
-      // ④.1 §D：权威 entries 已是 SoT，收尾仅回读消息缓冲；不再 setStreamingActiveThread(null)
-      // （那会把权威线程复位为单空线程、抹掉历史）。最终态由 commitDisplayMessagesToStore 落定。
-      displayMessages.value = unref(conversationStore.activeMessages);
-    }
-  };`,
-    newStr: `  const syncDisplayMessagesFromActiveThread = (): void => {
-    // ④.1 §D（统一）：messages 读真源 = 权威 entries，收尾无条件回读，杜绝把流式期"冻结"的
-    // 空缓冲当成最终态（即回复完成后内容消失的根因）。最终落库仍由 commitDisplayMessagesToStore 负责。
-    displayMessages.value = unref(conversationStore.activeMessages);
-  };`,
+    file: 'src/components/business/ai/thread/projection/from-sidecar-events.ts',
+    find: `          title: describeToolAction(event, event.toolName).action,
+          toolKind: RUNTIME_KIND_TO_TOOL_KIND[classifyRuntimeToolKind(event.toolName)],`,
+    replace: `          title: describeToolAction(event, event.toolName).action,
+          // 工具原始名（raw toolName）原样贯通到 reduce；渲染层 name 用它而非语义化 title。
+          ...(event.toolName ? { name: event.toolName } : {}),
+          toolKind: RUNTIME_KIND_TO_TOOL_KIND[classifyRuntimeToolKind(event.toolName)],`,
   },
+  // (3) reduce.ts：upsertToolCall 建条目分支带上 name
   {
-    tag: '③messages setter 去闸门（无条件提交权威）',
-    oldStr: `    set: (nextMessages: IAiChatMessage[]) => {
-      displayMessages.value = nextMessages;
-
-      if (!isConversationWriteBuffered()) {
-        commitDisplayMessagesToStore();
-      }
-    },`,
-    newStr: `    set: (nextMessages: IAiChatMessage[]) => {
-      displayMessages.value = nextMessages;
-      // ④.1 §D（统一）：写真源单写者 = 权威 store，无条件提交（reduce/overlay 幂等）。
-      commitDisplayMessagesToStore();
-    },`,
+    file: 'src/store/aiThread/reduce.ts',
+    find: `      type: 'tool_call',
+      id: event.id,
+      createdAt: event.createdAt,
+      title: event.title,
+      kind: event.toolKind,
+      status: event.status ?? 'in_progress',
+      content: [],`,
+    replace: `      type: 'tool_call',
+      id: event.id,
+      createdAt: event.createdAt,
+      title: event.title,
+      ...(event.name !== undefined ? { name: event.name } : {}),
+      kind: event.toolKind,
+      status: event.status ?? 'in_progress',
+      content: [],`,
   },
+  // (4) reduce.ts：applyToolEvent 的 tool_started 分支保留 / 刷新 name
   {
-    tag: '④watch(activeMessages) 去闸门（实时回灌）',
-    oldStr: `    (nextMessages) => {
-      if (isConversationWriteBuffered()) {
-        return;
-      }
-
-      displayMessages.value = nextMessages;
-    },
-    { flush: 'sync' },`,
-    newStr: `    (nextMessages) => {
-      // ④.1 §D（统一）：权威 entries 即唯一读真源，活动线程一变就实时回灌 displayMessages，
-      // 不再因 buffered 闸门在流式期"冻结"显示缓冲（回复完成后内容消失的根因）。
-      displayMessages.value = nextMessages;
-    },
-    { flush: 'sync' },`,
+    file: 'src/store/aiThread/reduce.ts',
+    find: `    case 'tool_started':
+      return {
+        ...current,
+        title: event.title || current.title,
+        kind: event.toolKind ?? current.kind,
+        status: nextToolStatus(current.status, event.status ?? 'in_progress'),
+      };`,
+    replace: `    case 'tool_started':
+      return {
+        ...current,
+        title: event.title || current.title,
+        name: event.name ?? current.name,
+        kind: event.toolKind ?? current.kind,
+        status: nextToolStatus(current.status, event.status ?? 'in_progress'),
+      };`,
   },
 ];
 
-let src = readFileSync(FILE, 'utf8');
-const before = src;
-
-for (const e of edits) {
-  const n = src.split(e.oldStr).length - 1;
+// 行尾无关：读入归一为 \n 匹配；写回按各文件原始 EOL 还原。全部命中 1 次才落盘。
+const cache = new Map();
+const load = (f) => {
+  if (!cache.has(f)) {
+    const raw = readFileSync(f, 'utf8');
+    cache.set(f, { text: raw.replace(/\r\n/g, '\n'), crlf: raw.includes('\r\n') });
+  }
+  return cache.get(f);
+};
+let ok = true;
+for (const [i, e] of EDITS.entries()) {
+  const n = load(e.file).text.split(e.find).length - 1;
   if (n !== 1) {
-    console.error(`✗ 锚点【${e.tag}】期望命中 1 处，实际 ${n} 处 —— 中止，未写入。`);
-    process.exit(1);
+    console.error(`✗ 第 ${i + 1} 处（${e.file}）锚点命中 ${n} 次（应为 1）`);
+    ok = false;
   }
 }
-for (const e of edits) src = src.replace(e.oldStr, e.newStr);
-
-const left = src.split('isConversationWriteBuffered').length - 1;
-if (left !== 0) {
-  console.error(`✗ 仍残留 isConversationWriteBuffered 引用 ${left} 处 —— 中止，未写入。`);
+if (!ok) {
+  console.error('—— 中止，未写任何文件。');
   process.exit(1);
 }
-
 if (!APPLY) {
-  console.log('✓ dry-run：4 处锚点均唯一命中，去闸门后 0 残留。加 --apply 写回。');
+  console.log('✓ 干跑通过（CRLF/LF 已归一）：4 处锚点各命中 1 次。加 --apply 落盘。');
   process.exit(0);
 }
-if (src === before) { console.log('· 无变化。'); process.exit(0); }
-
-writeFileSync(FILE, src, 'utf8');
-console.log('✓ 已写回 ' + FILE + '（4 处编辑，0 残留，无备份文件）。');
+for (const e of EDITS) {
+  const o = cache.get(e.file);
+  o.text = o.text.replace(e.find, e.replace);
+}
+for (const [f, o] of cache) {
+  writeFileSync(f, o.crlf ? o.text.replace(/\n/g, '\r\n') : o.text);
+}
+console.log('✓ 已写 events.ts / from-sidecar-events.ts / reduce.ts（共 4 处，保留各文件原 EOL）。请跑 vitest + typecheck。');
