@@ -1,9 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import {
-  createSidecarLiveEventBuffer,
-  getLatestSidecarLiveEvents,
-} from '@/composables/ai/useAiAssistant.stream';
+import { createSidecarLiveEventBuffer } from '@/composables/ai/useAiAssistant.stream';
 import type { TAgentUiEvent } from '@/types/ai/sidecar';
 
 const messageDelta = (text: string, phase: 'stage' | 'final' = 'final'): TAgentUiEvent => ({
@@ -29,11 +26,11 @@ describe('createSidecarLiveEventBuffer', () => {
     buffer.push(messageDelta('巷与黄昏，不必追'));
     buffer.flush();
 
-    const { finalMessageEvent } = getLatestSidecarLiveEvents(buffer.events);
+    const finalDeltas = finalMessageDeltas(buffer.events);
 
     // 累计文本,而不是只保留最新片段(否则会出现“逐段替换”的回归)。
-    expect(finalMessageEvent?.text).toBe('日子缓缓向前，风掠过街巷与黄昏，不必追');
-    expect(finalMessageDeltas(buffer.events)).toHaveLength(1);
+    expect(finalDeltas[0]?.text).toBe('日子缓缓向前，风掠过街巷与黄昏，不必追');
+    expect(finalDeltas).toHaveLength(1);
   });
 
   it('accumulates fragments that are coalesced within the same flush frame', () => {
@@ -43,10 +40,10 @@ describe('createSidecarLiveEventBuffer', () => {
     buffer.push(messageDelta('的节奏'));
     buffer.flush();
 
-    const { finalMessageEvent } = getLatestSidecarLiveEvents(buffer.events);
+    const finalDeltas = finalMessageDeltas(buffer.events);
 
-    expect(finalMessageEvent?.text).toBe('守好自己的节奏');
-    expect(finalMessageDeltas(buffer.events)).toHaveLength(1);
+    expect(finalDeltas[0]?.text).toBe('守好自己的节奏');
+    expect(finalDeltas).toHaveLength(1);
   });
 
   it('keeps stage and final phases as independent accumulators', () => {
@@ -61,8 +58,7 @@ describe('createSidecarLiveEventBuffer', () => {
     buffer.push(messageDelta('答案B'));
     buffer.flush();
 
-    const { finalMessageEvent } = getLatestSidecarLiveEvents(buffer.events);
-    expect(finalMessageEvent?.text).toBe('答案A答案B');
+    expect(finalMessageDeltas(buffer.events)[0]?.text).toBe('答案A答案B');
 
     const stageEvent = buffer.events.find(
       (event): event is Extract<TAgentUiEvent, { type: 'message_delta' }> =>

@@ -80,7 +80,6 @@ export interface ILatestSidecarLiveEvents {
   errorEvent: Extract<TAgentUiEvent, { type: 'error' }> | null;
   doneEvent: Extract<TAgentUiEvent, { type: 'done' }> | null;
   messageEvent: Extract<TAgentUiEvent, { type: 'message_delta' }> | null;
-  finalMessageEvent: Extract<TAgentUiEvent, { type: 'message_delta' }> | null;
 }
 
 type TUiFlushHandle =
@@ -107,12 +106,7 @@ export interface ISidecarAnswerStreamMetadata {
   streamStatus: NonNullable<IAiChatMessage['stream']>['status'];
   activityText: string | undefined;
   runtimeEvents: NonNullable<IAiChatMessage['stream']>['runtimeEvents'] | undefined;
-  finalAnswerStarted: boolean | undefined;
   streamTokenSnapshot?: TSidecarStreamTokenSnapshot;
-}
-
-export interface ISidecarAnswerStreamState extends ISidecarAnswerStreamMetadata {
-  sourceText: string;
 }
 
 export const getLatestSidecarLiveEvents = (
@@ -122,7 +116,6 @@ export const getLatestSidecarLiveEvents = (
     errorEvent: null,
     doneEvent: null,
     messageEvent: null,
-    finalMessageEvent: null,
   };
 
   for (let index = events.length - 1; index >= 0; index -= 1) {
@@ -144,13 +137,9 @@ export const getLatestSidecarLiveEvents = (
       if (!latest.messageEvent) {
         latest.messageEvent = event;
       }
-
-      if (!latest.finalMessageEvent && event.phase === 'final') {
-        latest.finalMessageEvent = event;
-      }
     }
 
-    if (latest.errorEvent && latest.doneEvent && latest.messageEvent && latest.finalMessageEvent) {
+    if (latest.errorEvent && latest.doneEvent && latest.messageEvent) {
       break;
     }
   }

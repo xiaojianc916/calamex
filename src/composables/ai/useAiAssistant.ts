@@ -387,14 +387,20 @@ export const useAiAssistant = (options: IUseAiAssistantOptions) => {
     clearSidecarUserQuestion();
   };
 
+  interface ISidecarLiveRenderState {
+    stream: NonNullable<IAiChatMessage['stream']>;
+    patches: IAiChatMessage['patches'];
+  }
+
   const updateLiveThreadFromSidecarEvents = (
     assistantMessageId: string,
     threadId: string | null,
     events: readonly TAgentUiEvent[],
+    liveRenderState: ISidecarLiveRenderState,
   ): void => {
     const activeThread = conversationStore.activeConversationThread;
     const activeThreadId = unref(conversationStore.activeThreadId);
-    // 仅当该回合线程正是当前可见线程时才覆盖投影，避免串台到其他会话。
+    // 仅当该回合线程正是当前可见线程时才覆盖投影，避免串台到其它会话。
     if (!activeThread || (threadId !== null && threadId !== activeThreadId)) {
       return;
     }
@@ -407,29 +413,21 @@ export const useAiAssistant = (options: IUseAiAssistantOptions) => {
       assistantMessageId,
       now: new Date().toISOString(),
     });
-    // reduce 回放出的 assistant entry 不带 stream(runtimeEvents/token/活动文案),overlay 会以它
-    // 覆盖掉 commit 写入的带 stream 版本,导致流式过程中 activeMessages 丢失 stream。用本回合消息
-    // 缓冲里同 id 助手消息的 stream/patches 富集该 entry,保留富时间线又不丢流式快照。
-    const bufferedAssistant = displayMessages.value.find(
-      (message) => message.id === assistantMessageId,
-    );
-    const enrichedThread =
-      bufferedAssistant && (bufferedAssistant.stream || bufferedAssistant.patches?.length)
-        ? {
-            ...liveThread,
-            entries: liveThread.entries.map((entry) =>
-              entry.type === 'assistant_message' && entry.id === assistantMessageId
-                ? {
-                    ...entry,
-                    ...(bufferedAssistant.stream ? { stream: bufferedAssistant.stream } : {}),
-                    ...(bufferedAssistant.patches && bufferedAssistant.patches.length > 0
-                      ? { patches: [...bufferedAssistant.patches] }
-                      : {}),
-                  }
-                : entry,
-            ),
-          }
-        : liveThread;
+    // reduce 回放出的 assistant entry 不带 stream（runtimeEvents/token/活动文案）。
+    // 用本回合实时算出的 stream/patches 富集该 entry——不再回读 legacy displayMessages（已退役）。
+    const hasPatches = Boolean(liveRenderState.patches && liveRenderState.patches.length > 0);
+    const enrichedThread = {
+      ...liveThread,
+      entries: liveThread.entries.map((entry) =>
+        entry.type === 'assistant_message' && entry.id === assistantMessageId
+          ? {
+              ...entry,
+              stream: liveRenderState.stream,
+              ...(hasPatches ? { patches: [...(liveRenderState.patches ?? [])] } : {}),
+            }
+          : entry,
+      ),
+    };
     aiThreadStore.overlayStreamingActiveThread(enrichedThread);
   };
 
@@ -474,14 +472,11 @@ export const useAiAssistant = (options: IUseAiAssistantOptions) => {
   );
 
   const aiStream = useAiStream();
-  const sidecarAnswerStream = useAiStream();
   const agentPlan = useAiAgentPlan();
   const acpAvailableCommands = useAcpAvailableCommands();
   const acpUsage = useAcpUsage();
   const acpSessionConfigOptions = useAcpSessionConfigOptions();
   const { refreshSidecarChangedDocuments } = useSidecarChangedDocumentRefresh();
-  let sidecarAnswerStreamState: ISidecarAnswerStreamState | null = null;
-  let isSidecarAnswerStreamSyncSuppressed = false;
 
   const syncActiveAssistantMessage = (): void => {
     const current = activeAssistantMessage.value;
@@ -639,7 +634,6 @@ export const useAiAssistant = (options: IUseAiAssistantOptions) => {
     streamStatus?: NonNullable<IAiChatMessage['stream']>['status'];
     activityText?: string;
     runtimeEvents?: NonNullable<IAiChatMessage['stream']>['runtimeEvents'];
-    finalAnswerStarted?: boolean;
     streamTokenSnapshot?: TSidecarStreamTokenSnapshot;
     patchState?: IAgentExecutionMessagePatchState;
   }
@@ -653,17 +647,12 @@ export const useAiAssistant = (options: IUseAiAssistantOptions) => {
       streamStatus,
       activityText,
       runtimeEvents,
-      finalAnswerStarted,
       streamTokenSnapshot,
       patchState,
     } = input;
     replaceMessageById(messageId, (message) => {
       const nextActivityText = activityText ?? message.stream?.activityText;
       const nextRuntimeEvents = mergeRuntimeEvents(message.stream?.runtimeEvents, runtimeEvents);
-      const nextFinalAnswerStarted =
-        finalAnswerStarted ??
-        message.stream?.finalAnswerStarted ??
-        (streamStatus === 'completed' && hasMeaningfulAssistantText(content));
       // token 用量统一走非弃用的 usage VM:snapshot 本身即 usage,缺省时沿用既有 message.stream.usage。
       const nextUsage = streamTokenSnapshot ?? message.stream?.usage;
       const stream = streamStatus
@@ -672,7 +661,6 @@ export const useAiAssistant = (options: IUseAiAssistantOptions) => {
             status: streamStatus,
             ...(nextActivityText !== undefined ? { activityText: nextActivityText } : {}),
             ...(nextRuntimeEvents?.length ? { runtimeEvents: nextRuntimeEvents } : {}),
-            ...(nextFinalAnswerStarted ? { finalAnswerStarted: true } : {}),
             ...(nextUsage ? { usage: nextUsage } : {}),
           }
         : message.stream;
@@ -690,206 +678,6 @@ export const useAiAssistant = (options: IUseAiAssistantOptions) => {
       };
     });
   };
-
-  const assignSidecarAnswerStreamMetadata = (
-    state: ISidecarAnswerStreamState,
-    metadata: ISidecarAnswerStreamMetadata,
-  ): void => {
-    state.messageId = metadata.messageId;
-    state.toolCalls = metadata.toolCalls;
-    state.streamStatus = metadata.streamStatus;
-    state.activityText = metadata.activityText;
-    state.runtimeEvents = metadata.runtimeEvents;
-    state.finalAnswerStarted = metadata.finalAnswerStarted;
-  };
-
-  const resolveSidecarAnswerDisplayStatus = (
-    metadata: ISidecarAnswerStreamMetadata,
-  ): NonNullable<IAiChatMessage['stream']>['status'] => {
-    const hasActiveSource =
-      sidecarAnswerStreamState?.messageId === metadata.messageId &&
-      sidecarAnswerStreamState.sourceText.length > 0;
-
-    return metadata.streamStatus === 'completed' &&
-      hasActiveSource &&
-      sidecarAnswerStream.status.value !== 'completed'
-      ? 'streaming'
-      : metadata.streamStatus;
-  };
-
-  const syncSidecarAnswerStreamMessage = (): void => {
-    if (isSidecarAnswerStreamSyncSuppressed) {
-      return;
-    }
-
-    const state = sidecarAnswerStreamState;
-
-    if (!state) {
-      return;
-    }
-
-    updateAgentExecutionMessage({
-      messageId: state.messageId,
-      content: sidecarAnswerStream.content.value,
-      toolCalls: state.toolCalls,
-      streamStatus: resolveSidecarAnswerDisplayStatus(state),
-      activityText: state.activityText,
-      runtimeEvents: state.runtimeEvents,
-      finalAnswerStarted: state.finalAnswerStarted,
-      streamTokenSnapshot: state.streamTokenSnapshot,
-    });
-    commitDisplayMessagesToStore(state.threadId);
-    state.runtimeEvents = undefined;
-
-    if (state.streamStatus === 'completed' && sidecarAnswerStream.status.value === 'completed') {
-      sidecarAnswerStreamState = null;
-    }
-  };
-
-  const runWithSuppressedSidecarAnswerSync = <T>(runner: () => T): T => {
-    const wasSuppressed = isSidecarAnswerStreamSyncSuppressed;
-    isSidecarAnswerStreamSyncSuppressed = true;
-
-    try {
-      return runner();
-    } finally {
-      isSidecarAnswerStreamSyncSuppressed = wasSuppressed;
-    }
-  };
-
-  const ensureSidecarAnswerStreamState = (
-    metadata: ISidecarAnswerStreamMetadata,
-  ): ISidecarAnswerStreamState => {
-    if (!sidecarAnswerStreamState || sidecarAnswerStreamState.messageId !== metadata.messageId) {
-      sidecarAnswerStreamState = {
-        ...metadata,
-        sourceText: '',
-      };
-      runWithSuppressedSidecarAnswerSync(() => {
-        sidecarAnswerStream.start({ messageId: metadata.messageId });
-      });
-
-      return sidecarAnswerStreamState;
-    }
-
-    assignSidecarAnswerStreamMetadata(sidecarAnswerStreamState, metadata);
-
-    return sidecarAnswerStreamState;
-  };
-
-  const resetSidecarAnswerStreamContent = (metadata: ISidecarAnswerStreamMetadata): string => {
-    const state = ensureSidecarAnswerStreamState(metadata);
-    state.sourceText = '';
-    runWithSuppressedSidecarAnswerSync(() => {
-      sidecarAnswerStream.start({ messageId: metadata.messageId });
-    });
-
-    return sidecarAnswerStream.content.value;
-  };
-
-  const updateSidecarAnswerStreamContent = (
-    sourceText: string,
-    metadata: ISidecarAnswerStreamMetadata,
-  ): string => {
-    const state = ensureSidecarAnswerStreamState(metadata);
-
-    if (!sourceText) {
-      state.sourceText = '';
-      runWithSuppressedSidecarAnswerSync(() => {
-        sidecarAnswerStream.start({ messageId: metadata.messageId });
-      });
-
-      return sidecarAnswerStream.content.value;
-    }
-
-    if (sourceText === state.sourceText) {
-      return sidecarAnswerStream.content.value;
-    }
-
-    if (sourceText.startsWith(state.sourceText)) {
-      const delta = sourceText.slice(state.sourceText.length);
-      state.sourceText = sourceText;
-      runWithSuppressedSidecarAnswerSync(() => {
-        sidecarAnswerStream.append(delta);
-      });
-
-      return sidecarAnswerStream.content.value;
-    }
-
-    state.sourceText = '';
-    runWithSuppressedSidecarAnswerSync(() => {
-      sidecarAnswerStream.start({ messageId: metadata.messageId });
-    });
-    state.sourceText = sourceText;
-    runWithSuppressedSidecarAnswerSync(() => {
-      sidecarAnswerStream.append(sourceText);
-    });
-
-    return sidecarAnswerStream.content.value;
-  };
-
-  const disposeSidecarAnswerStream = (messageId?: string): void => {
-    const state = sidecarAnswerStreamState;
-
-    if (!state || (messageId && state.messageId !== messageId)) {
-      return;
-    }
-
-    sidecarAnswerStreamState = null;
-    sidecarAnswerStream.stop();
-  };
-
-  const hasActiveSidecarAnswerStreamSource = (messageId: string): boolean =>
-    sidecarAnswerStreamState?.messageId === messageId &&
-    sidecarAnswerStreamState.sourceText.length > 0;
-
-  const completeSidecarAnswerStream = (
-    finalText: string,
-    metadata: ISidecarAnswerStreamMetadata,
-  ): string => {
-    if (!hasActiveSidecarAnswerStreamSource(metadata.messageId)) {
-      disposeSidecarAnswerStream(metadata.messageId);
-      return finalText;
-    }
-
-    updateSidecarAnswerStreamContent(finalText, metadata);
-    sidecarAnswerStream.complete();
-
-    return sidecarAnswerStream.content.value;
-  };
-
-  const waitForSidecarAnswerStreamCompletion = (messageId: string): Promise<void> => {
-    if (
-      !sidecarAnswerStreamState ||
-      sidecarAnswerStreamState.messageId !== messageId ||
-      sidecarAnswerStream.status.value === 'completed'
-    ) {
-      return Promise.resolve();
-    }
-
-    return new Promise((resolve) => {
-      const stop = watch(
-        () => [sidecarAnswerStream.status.value, sidecarAnswerStreamState?.messageId] as const,
-        ([status, activeMessageId]) => {
-          if (status !== 'completed' && activeMessageId === messageId) {
-            return;
-          }
-
-          stop();
-          resolve();
-        },
-        { flush: 'sync' },
-      );
-    });
-  };
-
-  watch(
-    () => [sidecarAnswerStream.content.value, sidecarAnswerStream.status.value] as const,
-    () => {
-      syncSidecarAnswerStreamMessage();
-    },
-    { flush: 'sync' },
-  );
 
   const refreshChangedDocumentsAfterSidecarRun = async (
     changedFilePaths: readonly string[],
@@ -1115,32 +903,20 @@ export const useAiAssistant = (options: IUseAiAssistantOptions) => {
     threadId: string | null,
     fallbackContent: string,
     events: readonly TAgentUiEvent[],
-  ): void => {
+  ): ISidecarLiveRenderState => {
     applyAcpReceiveSideEvents(events);
-    const currentMessage = findMessageById(assistantMessageId);
-    const { errorEvent, doneEvent, messageEvent, finalMessageEvent } =
-      getLatestSidecarLiveEvents(events);
-    const doneResult = hasMeaningfulAssistantText(doneEvent?.result) ? doneEvent.result : null;
-    const currentVisibleContent = hasMeaningfulAssistantText(currentMessage?.content)
-      ? currentMessage?.content
-      : null;
-    const content = errorEvent
-      ? `Agent 执行失败：${errorEvent.message}`
-      : (doneResult ??
-        finalMessageEvent?.text ??
-        (messageEvent?.text === '' ? '' : (currentVisibleContent ?? fallbackContent)));
-    const streamStatus = errorEvent || doneEvent ? 'completed' : 'streaming';
-    const finalAnswerStarted = Boolean(
-      doneResult ||
-        finalMessageEvent ||
-        (currentMessage?.stream?.finalAnswerStarted && messageEvent?.text !== ''),
-    );
+    // 仅做副作用 + 算出本帧 stream/patches；不再写 legacy displayMessages（reduce 为唯一写者）。
+    void assistantMessageId;
+    void threadId;
+    const { errorEvent, doneEvent } = getLatestSidecarLiveEvents(events);
+    const streamStatus: NonNullable<IAiChatMessage['stream']>['status'] =
+      errorEvent || doneEvent ? 'completed' : 'streaming';
     const toolProjection = projectSidecarEventsToToolState({
       events,
       fallbackActivityText: fallbackContent,
       streamStatus,
     });
-    const runtimeEvents = extractNewVisibleRuntimeEvents(events);
+    const runtimeEvents = compactRuntimeEvents(extractVisibleAgentRuntimeEvents(events));
     const livePatchState = buildLiveAppliedPatchState(extractSidecarPatchEntries(events));
 
     for (const toolCall of toolProjection.toolCalls) {
@@ -1151,50 +927,17 @@ export const useAiAssistant = (options: IUseAiAssistantOptions) => {
       );
     }
 
-    const streamMetadata: ISidecarAnswerStreamMetadata = {
-      messageId: assistantMessageId,
-      threadId,
-      toolCalls: toolProjection.toolCalls,
-      streamStatus,
-      activityText: toolProjection.activityText,
-      runtimeEvents,
-      finalAnswerStarted,
-      streamTokenSnapshot: resolveSidecarDoneStreamTokenSnapshot(doneEvent),
+    const tokenSnapshot = resolveSidecarDoneStreamTokenSnapshot(doneEvent);
+    const stream: NonNullable<IAiChatMessage['stream']> = {
+      status: streamStatus,
+      ...(toolProjection.activityText !== undefined
+        ? { activityText: toolProjection.activityText }
+        : {}),
+      ...(runtimeEvents.length ? { runtimeEvents } : {}),
+      ...(tokenSnapshot ? { usage: tokenSnapshot } : {}),
     };
-    const displayContent = (() => {
-      if (errorEvent) {
-        disposeSidecarAnswerStream(assistantMessageId);
-        return content;
-      }
 
-      if (doneResult) {
-        return completeSidecarAnswerStream(doneResult, streamMetadata);
-      }
-
-      if (finalMessageEvent) {
-        return updateSidecarAnswerStreamContent(finalMessageEvent.text, streamMetadata);
-      }
-
-      if (messageEvent?.text === '') {
-        return resetSidecarAnswerStreamContent(streamMetadata);
-      }
-
-      return content;
-    })();
-
-    updateAgentExecutionMessage({
-      messageId: assistantMessageId,
-      content: displayContent,
-      toolCalls: toolProjection.toolCalls,
-      acpToolCalls: reduceAcpUiEventsToToolCalls(events),
-      streamStatus: resolveSidecarAnswerDisplayStatus(streamMetadata),
-      activityText: toolProjection.activityText,
-      runtimeEvents: runtimeEvents,
-      finalAnswerStarted: finalAnswerStarted,
-      streamTokenSnapshot: streamMetadata.streamTokenSnapshot,
-      patchState: livePatchState,
-    });
-    commitDisplayMessagesToStore(threadId);
+    return { stream, patches: livePatchState?.patches };
   };
 
   const appendVisibleRuntimeTimelineEvents = (events: readonly TAgentRuntimeEvent[]): void => {
@@ -1350,22 +1093,11 @@ export const useAiAssistant = (options: IUseAiAssistantOptions) => {
       streamStatus: sidecarStreamStatus,
       activityText: toolProjection.activityText,
       runtimeEvents: compactRuntimeEvents(extractVisibleAgentRuntimeEvents(payload.events)),
-      finalAnswerStarted: hasMeaningfulAssistantText(projection.assistantContent),
       streamTokenSnapshot: resolveSidecarDoneStreamTokenSnapshot(
         getLatestSidecarLiveEvents(payload.events).doneEvent,
       ),
     };
-    if (projection.errorMessage) {
-      disposeSidecarAnswerStream(ctx.assistantMessageId);
-    }
 
-    const displayContent = projection.errorMessage
-      ? projection.assistantContent
-      : completeSidecarAnswerStream(projection.assistantContent, streamMetadata);
-    const sidecarAnswerCompletion =
-      projection.errorMessage || projection.pendingConfirmation
-        ? Promise.resolve()
-        : waitForSidecarAnswerStreamCompletion(ctx.assistantMessageId);
     const sidecarPatchEntries = projection.errorMessage
       ? []
       : extractSidecarPatchEntries(payload.events);
@@ -1412,19 +1144,20 @@ export const useAiAssistant = (options: IUseAiAssistantOptions) => {
       }
     }
 
-    updateAgentExecutionMessage({
-      messageId: ctx.assistantMessageId,
-      content: displayContent,
-      toolCalls: toolProjection.toolCalls,
-      acpToolCalls: reduceAcpUiEventsToToolCalls(payload.events),
-      streamStatus: projection.errorMessage
-        ? 'completed'
-        : resolveSidecarAnswerDisplayStatus(streamMetadata),
-      activityText: toolProjection.activityText,
-      runtimeEvents: streamMetadata.runtimeEvents,
-      finalAnswerStarted: streamMetadata.finalAnswerStarted,
-      streamTokenSnapshot: streamMetadata.streamTokenSnapshot,
-      patchState: patchState,
+    // 收尾：把本回合最终 reduce 态 + patches 写入 authoritative（mirror $subscribe 负责持久化）。
+    const finalStream: NonNullable<IAiChatMessage['stream']> = {
+      status: projection.errorMessage ? 'completed' : streamMetadata.streamStatus,
+      ...(streamMetadata.activityText !== undefined
+        ? { activityText: streamMetadata.activityText }
+        : {}),
+      ...(streamMetadata.runtimeEvents?.length
+        ? { runtimeEvents: streamMetadata.runtimeEvents }
+        : {}),
+      ...(streamMetadata.streamTokenSnapshot ? { usage: streamMetadata.streamTokenSnapshot } : {}),
+    };
+    updateLiveThreadFromSidecarEvents(ctx.assistantMessageId, ctx.threadId, payload.events, {
+      stream: finalStream,
+      patches: patchState?.patches,
     });
 
     await refreshChangedDocumentsAfterSidecarRun(
@@ -1435,7 +1168,6 @@ export const useAiAssistant = (options: IUseAiAssistantOptions) => {
       [...projection.changedFilePaths, ...sidecarAppliedPaths],
       projection.hasFileMutations || sidecarAppliedPaths.length > 0,
     );
-    await sidecarAnswerCompletion;
 
     if (projection.pendingConfirmation) {
       ctx.onPendingConfirmation(projection.pendingConfirmation);
@@ -1462,7 +1194,6 @@ export const useAiAssistant = (options: IUseAiAssistantOptions) => {
   };
 
   const failSidecarAgentMessage = (messageId: string, message: string): void => {
-    disposeSidecarAnswerStream(messageId);
     updateAgentExecutionMessage({
       messageId,
       content: `Agent 执行失败：${message}`,
@@ -1512,8 +1243,18 @@ export const useAiAssistant = (options: IUseAiAssistantOptions) => {
     const sidecarContextReferences = buildSidecarContextReferences(references);
     const liveEventBuffer = createSidecarLiveEventBuffer((events, freshEvents) => {
       appendVisibleRuntimeTimelineEvents(extractVisibleAgentRuntimeEvents(freshEvents));
-      applySidecarLiveEventsToAgentMessage(assistantMessageId, targetThreadId, '', events);
-      updateLiveThreadFromSidecarEvents(assistantMessageId, targetThreadId, events);
+      const liveRenderState = applySidecarLiveEventsToAgentMessage(
+        assistantMessageId,
+        targetThreadId,
+        '',
+        events,
+      );
+      updateLiveThreadFromSidecarEvents(
+        assistantMessageId,
+        targetThreadId,
+        events,
+        liveRenderState,
+      );
     });
     let unlistenSidecarStream: (() => void) | null = null;
 
@@ -1564,9 +1305,7 @@ export const useAiAssistant = (options: IUseAiAssistantOptions) => {
         },
       });
     } catch (error) {
-      if (activeAbortController.value?.signal.aborted) {
-        disposeSidecarAnswerStream(assistantMessageId);
-      } else {
+      if (!activeAbortController.value?.signal.aborted) {
         failSidecarAgentMessage(assistantMessageId, toErrorMessage(error, MSG_CALL_FAILED));
       }
     } finally {
@@ -1598,13 +1337,18 @@ export const useAiAssistant = (options: IUseAiAssistantOptions) => {
     activeBufferedThreadId.value = session.threadId;
     const liveEventBuffer = createSidecarLiveEventBuffer((events, freshEvents) => {
       appendVisibleRuntimeTimelineEvents(extractVisibleAgentRuntimeEvents(freshEvents));
-      applySidecarLiveEventsToAgentMessage(
+      const liveRenderState = applySidecarLiveEventsToAgentMessage(
         session.assistantMessageId,
         session.threadId,
         '',
         events,
       );
-      updateLiveThreadFromSidecarEvents(session.assistantMessageId, session.threadId, events);
+      updateLiveThreadFromSidecarEvents(
+        session.assistantMessageId,
+        session.threadId,
+        events,
+        liveRenderState,
+      );
     });
     let unlistenSidecarStream: (() => void) | null = null;
 
@@ -1678,13 +1422,18 @@ export const useAiAssistant = (options: IUseAiAssistantOptions) => {
     activeBufferedThreadId.value = session.threadId;
     const liveEventBuffer = createSidecarLiveEventBuffer((events, freshEvents) => {
       appendVisibleRuntimeTimelineEvents(extractVisibleAgentRuntimeEvents(freshEvents));
-      applySidecarLiveEventsToAgentMessage(
+      const liveRenderState = applySidecarLiveEventsToAgentMessage(
         session.assistantMessageId,
         session.threadId,
         '',
         events,
       );
-      updateLiveThreadFromSidecarEvents(session.assistantMessageId, session.threadId, events);
+      updateLiveThreadFromSidecarEvents(
+        session.assistantMessageId,
+        session.threadId,
+        events,
+        liveRenderState,
+      );
     });
     let unlistenSidecarStream: (() => void) | null = null;
 
@@ -2022,13 +1771,18 @@ export const useAiAssistant = (options: IUseAiAssistantOptions) => {
         return;
       }
       appendVisibleRuntimeTimelineEvents(extractVisibleAgentRuntimeEvents(freshEvents));
-      applySidecarLiveEventsToAgentMessage(
+      const liveRenderState = applySidecarLiveEventsToAgentMessage(
         assistantMessageId,
         targetThreadId,
         initialActivityText,
         events,
       );
-      updateLiveThreadFromSidecarEvents(assistantMessageId, targetThreadId, events);
+      updateLiveThreadFromSidecarEvents(
+        assistantMessageId,
+        targetThreadId,
+        events,
+        liveRenderState,
+      );
     });
     let unlistenSidecarStream: (() => void) | null = null;
 
@@ -2073,9 +1827,7 @@ export const useAiAssistant = (options: IUseAiAssistantOptions) => {
         clearAttachedFiles({ revokePreviews: false });
       }
     } catch (error) {
-      if (requestAbortController.signal.aborted) {
-        disposeSidecarAnswerStream(assistantMessageId);
-      } else {
+      if (!requestAbortController.signal.aborted) {
         failSidecarAgentMessage(assistantMessageId, toErrorMessage(error, MSG_CALL_FAILED));
       }
     } finally {
@@ -2132,8 +1884,18 @@ export const useAiAssistant = (options: IUseAiAssistantOptions) => {
         return;
       }
       appendVisibleRuntimeTimelineEvents(extractVisibleAgentRuntimeEvents(freshEvents));
-      applySidecarLiveEventsToAgentMessage(assistantMessageId, targetThreadId, '', events);
-      updateLiveThreadFromSidecarEvents(assistantMessageId, targetThreadId, events);
+      const liveRenderState = applySidecarLiveEventsToAgentMessage(
+        assistantMessageId,
+        targetThreadId,
+        '',
+        events,
+      );
+      updateLiveThreadFromSidecarEvents(
+        assistantMessageId,
+        targetThreadId,
+        events,
+        liveRenderState,
+      );
 
       const { doneEvent, errorEvent } = getLatestSidecarLiveEvents(events);
 
@@ -2190,9 +1952,7 @@ export const useAiAssistant = (options: IUseAiAssistantOptions) => {
         clearAttachedFiles({ revokePreviews: false });
       }
     } catch (error) {
-      if (requestAbortController.signal.aborted) {
-        disposeSidecarAnswerStream(assistantMessageId);
-      } else {
+      if (!requestAbortController.signal.aborted) {
         failSidecarAgentMessage(assistantMessageId, toErrorMessage(error, MSG_CALL_FAILED));
       }
     } finally {
@@ -2444,7 +2204,6 @@ export const useAiAssistant = (options: IUseAiAssistantOptions) => {
     activeAssistantMessage.value = null;
     activeAssistantBaseMessages.value = [];
     activeAgentMessageId.value = null;
-    disposeSidecarAnswerStream();
     acpAvailableCommands.reset();
     acpUsage.reset();
     acpSessionConfigOptions.reset();
@@ -2742,7 +2501,6 @@ export const useAiAssistant = (options: IUseAiAssistantOptions) => {
     activeStreamResolve.value = null;
 
     aiStream.stop();
-    disposeSidecarAnswerStream(activeAgentMessageId.value ?? undefined);
 
     if (activeAssistantMessage.value) {
       activeAssistantMessage.value.stream = {
