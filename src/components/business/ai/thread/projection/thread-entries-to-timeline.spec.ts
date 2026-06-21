@@ -218,4 +218,28 @@ describe('threadEntriesToTimeline', () => {
     const timeline = threadEntriesToTimeline(entries);
     expect(timeline.map((e) => e.kind)).toEqual(['user-message', 'assistant-text']);
   });
+
+  it('正文开始后推理停止流式(仅正文保持 streaming)', () => {
+    const entries: IAiThreadEntry[] = [
+      {
+        type: 'assistant_message',
+        id: 'a3',
+        createdAt: ISO,
+        chunks: [
+          { type: 'thought', block: { type: 'text', text: 'thinking' } },
+          { type: 'message', block: { type: 'text', text: 'answer' } },
+        ],
+      },
+    ];
+    const timeline = threadEntriesToTimeline(entries, { streamingMessageId: 'a3' });
+    expect(timeline.map((e) => e.kind)).toEqual(['reasoning', 'assistant-text']);
+    const reasoning = timeline[0];
+    const text = timeline[1];
+    if (reasoning.kind === 'reasoning') {
+      expect(reasoning.streaming).toBe(false);
+    }
+    if (text.kind === 'assistant-text') {
+      expect(text.streaming).toBe(true);
+    }
+  });
 });

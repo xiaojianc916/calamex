@@ -68,6 +68,9 @@ function assistantMessageToEntries(
     }
   }
 
+  // 正文一旦开始,推理即结束流式(随后由 useThreadEntryExpansion 自动折叠);
+  // 正文条目仍保留自身 streaming。修复「思考与正文一起流式输出」。
+  const finalAnswerStarted = messageTexts.length > 0;
   const projected: TAiThreadEntry[] = [];
   if (thoughtSegments.length > 0) {
     const reasoning: IAiThreadReasoningEntry = {
@@ -77,7 +80,7 @@ function assistantMessageToEntries(
       segments: thoughtSegments,
       // 与 runtime 时间线对齐:多段(>1)才视为长推理,渲染层默认折叠。
       isLong: thoughtSegments.length > 1,
-      streaming,
+      streaming: streaming && !finalAnswerStarted,
     };
     projected.push(reasoning);
   }

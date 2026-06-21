@@ -1,14 +1,32 @@
+// tsconfig.tsgo.json
+// ⚠️ 这不是冗余/重复配置：它是 TS7 (tsgo) 的「副跑」专用配置，
+//    与主门禁（tsconfig.app.json + vue-tsc）完全独立、互不影响。
+// 背景：vue-tsc 目前还不支持 tsgo，所以无法整体切 TS7；本文件只让 tsgo
+//      对「非 .vue 的纯 TS」做提速类型检查实验。
+// 入口：package.json 里的 "typecheck:fast"（tsgo --noEmit -p tsconfig.tsgo.json）。
+// 撤销：删掉本文件 + typecheck:fast 脚本 + @typescript/native-preview 依赖即可，无任何副作用。
 {
   "compilerOptions": {
+    // 现代模块设置；bundler 解析与 Vite 对齐
     "module": "ESNext",
     "target": "ESNext",
     "moduleResolution": "bundler",
+    // 跳过 .d.ts 检查，避免第三方类型噪音淹没本次实验的真实报错
     "skipLibCheck": true,
     "resolveJsonModule": true,
     "isolatedModules": true,
+    // 只做类型检查，绝不产出文件
     "noEmit": true,
+    // 与主配置同等严格度，保证对照有意义
     "strict": true,
+    // scripts/ 跑在 Node 上，只需 node 类型
     "types": ["node"]
+    // 注意：故意不设 baseUrl —— TS7 已移除该选项，根 tsconfig 的 baseUrl 不在此生效
   },
-  "include": ["scripts/**/*.ts"]
+  // 故意收窄范围：src/ 大量 import .vue，tsgo 暂时解析不了会刷噪音，因此不纳入
+  "include": [
+    "scripts/**/*.ts"
+    // agent-sidecar 是纯 TS，确认无 .vue 依赖后解开下一行可扩大覆盖：
+    // ,"agent-sidecar/src/**/*.ts"
+  ]
 }

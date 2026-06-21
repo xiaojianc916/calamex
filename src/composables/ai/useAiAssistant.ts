@@ -2031,6 +2031,7 @@ export const useAiAssistant = (options: IUseAiAssistantOptions) => {
       updateLiveThreadFromSidecarEvents(assistantMessageId, targetThreadId, events);
     });
     let unlistenSidecarStream: (() => void) | null = null;
+    let finalEvents: readonly TAgentUiEvent[] = [];
 
     try {
       // 关键修复（外部 Kimi 流式）：用前端预生成的 sidecarSessionId 在发起回合「之前」订阅该
@@ -2054,6 +2055,7 @@ export const useAiAssistant = (options: IUseAiAssistantOptions) => {
       });
 
       liveEventBuffer.flush();
+      finalEvents = liveEventBuffer.events.slice();
       unlistenSidecarStream?.();
       unlistenSidecarStream = null;
 
@@ -2066,7 +2068,7 @@ export const useAiAssistant = (options: IUseAiAssistantOptions) => {
           streamStatus: 'completed',
           finalAnswerStarted: hasMeaningfulAssistantText(currentMessage?.content),
         });
-        commitDisplayMessagesToStore(targetThreadId);
+        // 收尾落库交给 finally 的 entries 覆盖,不再走会抹掉推理 entry 的 legacy round-trip。
       }
 
       if (!errorMessage.value) {
@@ -2083,7 +2085,13 @@ export const useAiAssistant = (options: IUseAiAssistantOptions) => {
       unlistenSidecarStream?.();
       activeAbortController.value = null;
       activeAgentMessageId.value = null;
-      commitDisplayMessagesToStore(targetThreadId);
+      // 正常收尾:以 reduce 真源(保留 thought)覆盖权威活动线程,取代会抹掉推理 entry 的
+      // legacy displayMessages round-trip。取消/异常(无事件)仍走 legacy 收尾。
+      if (!requestAbortController.signal.aborted && finalEvents.length > 0) {
+        updateLiveThreadFromSidecarEvents(assistantMessageId, targetThreadId, finalEvents);
+      } else {
+        commitDisplayMessagesToStore(targetThreadId);
+      }
       clearActiveBufferedThread(targetThreadId);
       isSending.value = false;
       syncDisplayMessagesFromActiveThread();
