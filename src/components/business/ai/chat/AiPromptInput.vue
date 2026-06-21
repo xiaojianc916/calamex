@@ -155,7 +155,6 @@ const emit = defineEmits<{
 }>();
 
 const attrs = useAttrs();
-const fileInputRef = ref<HTMLInputElement | null>(null);
 const surfaceRef = ref<HTMLFormElement | null>(null);
 const editorRef = ref<HTMLDivElement | null>(null);
 const isComposing = ref(false);
@@ -737,8 +736,8 @@ const handleRemoveAttachment = (id: string): void => {
   emit('removeFile', id);
 };
 
-// 📎 附件选择：优先调用原生文件对话框（记忆上次目录、首次回退工作区根 / home），
-// 原生环境不可用（如浏览器预览）时回退到隐藏的 <input type=file>。
+// 📎 附件选择：调用系统原生文件对话框（记忆上次目录、首次回退工作区根 / home）。
+// 仅桌面运行时可用；已移除向隐藏 <input type=file> 的降级。
 const handleOpenFileDialog = async (): Promise<void> => {
   if (props.disabled) {
     return;
@@ -751,24 +750,8 @@ const handleOpenFileDialog = async (): Promise<void> => {
       void queueAttachmentFile(file);
     }
   } catch {
-    fileInputRef.value?.click();
+    // 原生运行时不可用时静默忽略（不再回退到浏览器 <input>）。
   }
-};
-
-const handleFileChange = (event: Event): void => {
-  const input = event.target;
-  if (!(input instanceof HTMLInputElement)) {
-    return;
-  }
-  const fileList = input.files;
-  if (!fileList?.length) {
-    input.value = '';
-    return;
-  }
-  for (const file of Array.from(fileList)) {
-    void queueAttachmentFile(file);
-  }
-  input.value = '';
 };
 
 const handlePaste = (event: ClipboardEvent): void => {
@@ -857,13 +840,6 @@ onMounted(() => {
 <template>
   <footer class="ai-composer">
     <form ref="surfaceRef" class="ai-composer-surface" v-bind="attrs" @submit.prevent="handleSubmit">
-      <input
-        ref="fileInputRef"
-        type="file"
-        class="hidden"
-        multiple
-        @change="handleFileChange"
-      />
       <div v-if="displayedAttachments.length" class="ai-attachments">
         <PromptInputAttachmentsDisplay
           :attachments="displayedAttachments"
