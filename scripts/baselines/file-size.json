@@ -395,14 +395,6 @@
             "expiresAt": "2026-12-31"
         },
         {
-            "path": "src/store/plugins/debouncedPersistStorage.ts",
-            "rule": "max-lines-400",
-            "reason": "存量超限：登记时 518 行 > 400，待按 R-20.x 拆分还债",
-            "owner": "@xiaojianc",
-            "adrRef": "ADR-0003",
-            "expiresAt": "2026-12-31"
-        },
-        {
             "path": "src/store/terminal.ts",
             "rule": "max-lines-400",
             "reason": "存量超限：登记时 401 行 > 400，待按 R-20.x 拆分还债",
