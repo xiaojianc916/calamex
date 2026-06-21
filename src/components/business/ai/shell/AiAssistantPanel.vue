@@ -1232,6 +1232,7 @@ onMounted(() => {
     <template #body>
       <AiChatThread :messages="visibleThreadMessages" :is-typing="assistant.isSending.value"
         :thread-entries="renderThreadEntries"
+        :streaming-message-id="assistant.activeAgentMessageId.value"
         :platform-id="aiIconPlatformId" :provider-label="aiIconTitle"
         :conversation-id="assistant.activeConversationId.value" :workspace-root-path="workspaceRootPath"
         :scroll-state="assistant.activeConversationScrollState.value" :typing-label="assistantTypingLabel"
@@ -1297,7 +1298,8 @@ onMounted(() => {
           @submit="handleSubmitMessage" @stop="assistant.stopCurrentRequest" :resolve-attachment="assistant.attachFile"
           @remove-file="assistant.removeAttachedFile" @model-change="handlePromptModelChange"
           @network-permission-change="handlePromptNetworkPermissionChange"
-          @execution-mode-change="handlePromptExecutionModeChange"
+          @execution-mode-change="handlePromptExecutionModeChange"
+
           @session-config-option-change="handleSessionConfigOptionChange"
           @information-sources-open="openPromptInformationSources" @personalization-open="openPromptPersonalization"
           @prewarm="handlePromptPrewarm" />
