@@ -38,7 +38,7 @@ import {
 } from './git-pull-request-helpers';
 
 /** Git store 后台任务（commit 统计 / PR 预载）失败时的统一日志通道，替代散落的 console.warn。 */
-const gitLogger = consola.withTag('git');
+const gitLogger = logger.child({ module: 'git' });
 
 const MSG_GIT_INIT_NO_REPOSITORY = 'Git 初始化后仍未检测到仓库。';
 const MSG_GIT_NO_REPOSITORY_IN_WORKSPACE = '当前工作区未检测到 Git 仓库。';
@@ -482,7 +482,7 @@ export const useGitStore = defineStore('git', () => {
         try {
           await loadCommitStatsOnly(commitId);
         } catch (error) {
-          gitLogger.warn('background commit stats load failed', error);
+          gitLogger.warn({ event: 'git.commit_stats.background_load_failed', err: error });
         } finally {
           pendingCommitStatsRequests.delete(commitId);
         }
@@ -925,7 +925,11 @@ export const useGitStore = defineStore('git', () => {
           updateActive: false,
           visibleLoading: false,
         }).catch((error) => {
-          gitLogger.warn('background PR detail preload failed', pullRequest.number, error);
+          gitLogger.warn({
+            event: 'git.pull_request.detail_preload_failed',
+            err: error,
+            pullRequestNumber: pullRequest.number,
+          });
         });
       }
     };
@@ -1088,7 +1092,7 @@ export const useGitStore = defineStore('git', () => {
         visibleLoading: false,
       });
     } catch (error) {
-      gitLogger.warn('background PR preload failed', error);
+      gitLogger.warn({ event: 'git.pull_request.background_preload_failed', err: error });
     }
   };
 
