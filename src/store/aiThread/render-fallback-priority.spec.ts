@@ -23,7 +23,7 @@ import { runStartupPersistedRead } from '@/store/aiThread/startupPersistedReadWi
 import type { IAiConversationThread } from '@/types/ai/conversation.schema';
 import type { IAiThread } from '@/types/ai/thread';
 
-vi.mock('@/store/plugins/debouncedPersistStorage', () => ({
+vi.mock('@/store/plugins/attachmentPreviewStorage', () => ({
   restoreAttachmentPreviewPointers: async (value: unknown) => ({ changed: false, value }),
 }));
 

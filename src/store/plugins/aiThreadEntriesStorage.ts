@@ -1,23 +1,21 @@
 import { createStore, del, get, set, type UseStore } from 'idb-keyval';
 
-import { preparePersistValue } from '@/store/plugins/debouncedPersistStorage';
+import { preparePersistValue } from '@/store/plugins/attachmentPreviewStorage';
 import { logger } from '@/utils/platform/logger';
 
 /**
- * entries 模型镜像持久化引擎 (Step 7.4b)。
+ * entries 模型持久化引擎 (Step 7.4b；ADR-0014 Step 8 起为唯一会话持久化真源)。
  *
- * 双写阶段(7.4/7.5)由 glue 在会话 store 变更时投影并 scheduleAiThreadEntriesPersist;
- * 当前未接线 (main.ts / barrel 均不引用) → 零运行时变化。
+ * 由 authoritativeEntriesMirror 在权威 entries 变更时投影并 scheduleAiThreadEntriesPersist;
+ * 启动读经 entriesRenderHydrate + startupPersistedReadWiring 灌入权威线程。
  *
  * 复用约束:
- * - 与 debouncedPersistStorage 共用同一 IndexedDB 库/表, 写盘前调用 preparePersistValue
- *   把 data:image 抽取为 idb:// 指针 (内容派生 id, 与 legacy 抽取幂等同 id), 不产生重复 blob。
- * - 仅新增独立快照 key 'shell-ide.ai-thread-entries'。
+ * - 与 attachmentPreviewStorage 共用同一 IndexedDB 库/表, 写盘前调用 preparePersistValue
+ *   把 data:image 抽取为 idb:// 指针 (内容派生 id, 幂等同 id), 不产生重复 blob。
+ * - 仅使用独立快照 key 'shell-ide.ai-thread-entries'。
  *
- * 调度器为本引擎独有 (与 debounced 刻意分离, 不盲改数据安全关键文件);
- * Step 8 删除 legacy 引擎后本引擎转正, 故该"重复"为迁移期产物, 非长期债。
- *
- * hydrate 仅返回原始快照, 不还原图片指针 —— 还原只在 7.5 真正以 entries 渲染时需要。
+ * hydrate 仅返回原始快照, 不还原图片指针 —— 还原由 entriesRenderHydrate 对活动线程即时
+ * 进行、其余线程经 store 惰性恢复。
  */
 
 const AI_THREAD_ENTRIES_PERSIST_KEY = 'shell-ide.ai-thread-entries';

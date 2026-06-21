@@ -1,12 +1,12 @@
 /* ============================================================================
  * 启动持久化读侧接线（ADR-0014 Step 7.5c）
  *
- * 在启动后台 hydrate（旧 aiConversation key）完成后，再读新 entries key 并经
- * 7.5a 组合器归一，把结果灌入 aiThread store 的持久化回退槽（7.5b）。
+ * 启动后台读新 entries key 并经 7.5a 组合器归一，把结果灌入 aiThread store
+ * （ADR-0014 Step 8 后直接灌权威 entries 线程，见 main.ts）。
  *
- * 顺序约束：必须在 hydrateAiConversationStorage() 之后调用，确保 legacy 回退源
- * （conversation.threads / activeThreadId）已就位；entries key 为空/损坏时，
- * 7.5a 会回退到这些 legacy 线程，保证「迁移失败不致空白」。
+ * 历史顺序约束（已解除）：legacy aiConversation hydrate 随 ADR-0014 Step 8 删除，
+ * 生产 readLegacy 返回空，entries key 为唯一持久化真源；DI 缝仍保留 legacy 回退形状
+ * 供单测注入（entries key 为空/损坏时回退到注入的 legacy 线程，验证「迁移失败不致空白」）。
  *
  * 依赖注入：默认 deps 在调用时惰性取 store（需 pinia 已安装）；单测注入假 deps，
  * 无需 pinia / 真实存储。

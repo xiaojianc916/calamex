@@ -23,7 +23,7 @@ import {
   hydrateAiThreadEntriesSnapshot,
   type IAiThreadEntriesHydrateResult,
 } from '@/store/plugins/aiThreadEntriesStorage';
-import { restoreAttachmentPreviewPointers } from '@/store/plugins/debouncedPersistStorage';
+import { restoreAttachmentPreviewPointers } from '@/store/plugins/attachmentPreviewStorage';
 import type { IAiConversationThread } from '@/types/ai/conversation.schema';
 import type { IAiThread } from '@/types/ai/thread';
 

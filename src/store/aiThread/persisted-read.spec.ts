@@ -7,7 +7,7 @@ import type { IAiThread } from '@/types/ai/thread';
 // 隔离持久化读路径：指针恢复注入假实现。
 const { restoreMock } = vi.hoisted(() => ({ restoreMock: vi.fn() }));
 
-vi.mock('@/store/plugins/debouncedPersistStorage', () => ({
+vi.mock('@/store/plugins/attachmentPreviewStorage', () => ({
   restoreAttachmentPreviewPointers: (value: unknown) => restoreMock(value),
 }));
 

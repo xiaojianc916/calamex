@@ -9,7 +9,6 @@ import {
   runStartupPersistedRead,
   defaultDeps as startupPersistedReadDefaultDeps,
 } from '@/store/aiThread/startupPersistedReadWiring';
-import { hydrateAiConversationStorage } from '@/store/plugins/debouncedPersistStorage';
 import { hydrateSessionStorage } from '@/store/plugins/tauriSessionStorage';
 import { initEditorScrollbarActivity } from '@/utils/editor/editor-scrollbar-activity';
 import { renderFatalBootstrapError } from '@/utils/error/bootstrap-fatal-error';
@@ -124,19 +123,16 @@ const bootstrap = async (): Promise<void> => {
     const hydrateAiConversationAfterBootstrap = (): void => {
       // AI 历史不是首屏必需：延后到首屏后 idle，避免和 session hydrate / Vue mount 抢 IO。
       scheduleIdle(() => {
-        void hydrateAiConversationStorage()
-          .then(() =>
-            runStartupPersistedRead({
-              ...startupPersistedReadDefaultDeps,
-              // ④.1 §C：持久化 SoT 收敛到 aiThread 权威 entries，启动读结果直接灌入
-              // 权威线程（不再走 legacy 回退槽），后续由权威镜像负责落盘。
-              applyPersisted: (threads, activeThreadId) =>
-                useAiThreadStore().setAuthoritativeThreads(threads, activeThreadId),
-            }),
-          )
+        void runStartupPersistedRead({
+          ...startupPersistedReadDefaultDeps,
+          // ④.1 §C：持久化 SoT 收敛到 aiThread 权威 entries，启动读结果直接灌入
+          // 权威线程（不再走 legacy 回退槽），后续由权威镜像负责落盘。
+          applyPersisted: (threads, activeThreadId) =>
+            useAiThreadStore().setAuthoritativeThreads(threads, activeThreadId),
+        })
           .then(() => {
-            // ④.1 §C 双写接线：必须在 legacy hydrate + 权威线程灌入之后再装权威镜像，
-            // 否则首帧立即镜像会把空态写入 entries key，导致下次启动读到“空且权威”而丢历史。
+            // ④.1 §C 双写接线：必须在权威线程灌入之后再装权威镜像，否则首帧立即镜像会把
+            // 空态写入 entries key，导致下次启动读到“空且权威”而丢历史。
             installAuthoritativeEntriesMirror(useAiThreadStore());
           })
           .catch((error: unknown) => {
@@ -146,10 +142,10 @@ const bootstrap = async (): Promise<void> => {
     };
 
     // session 快照是首屏(编辑器/工作区状态)恢复所必需的，仍在挂载前阻塞 await。
-    // 而 ai-conversation 历史只有懒加载的 AI 面板才会用到——首屏并不需要它就位。
-    // 因此把它移出挂载关键路径：在后台并发启动 hydrate，不 await。它带有 300ms 超时
-    // 与 reconcile 数据安全逻辑，会在用户真正打开 AI 面板前完成，且绝不会用空态覆盖
-    // 磁盘上的历史(详见 debouncedPersistStorage)。
+    // 而 AI 会话历史只有懒加载的 AI 面板才会用到——首屏并不需要它就位。因此把它移出挂载
+    // 关键路径：在后台 idle 时读 entries 快照并灌入权威线程，不 await。entries hydrate 带
+    // 300ms 超时 + resolver 回退（坏快照/超时不致空白，详见 entriesRenderHydrate /
+    // aiThreadEntriesStorage），会在用户真正打开 AI 面板前完成。
     markStartup('session-storage-hydrate-start');
     await hydrateSessionStorage();
     markStartup('session-storage-hydrated');
@@ -163,8 +159,8 @@ const bootstrap = async (): Promise<void> => {
     markStartup('vue-plugins-installed');
 
     // 恢复 vue-query 持久化缓存(PR 列表/详情、commit stats)，等价于原 git store
-    // 的 readPersisted* 预读；sync-storage persister 是同步读取，开销与原来一次
-    // localStorage 读取相当，放在挂载前以保证首屏能读到快照。
+    // 的 readPersisted* 预读；persister 读取开销与原来一次 localStorage 读取相当，
+    // 放在挂载前以保证首屏能读到快照。
     await setupQueryPersistence();
     markStartup('vue-query-persistence-ready');
 
