@@ -311,14 +311,6 @@ export const useAiAssistant = (options: IUseAiAssistantOptions) => {
     });
   }
 
-  const isConversationWriteBuffered = (): boolean =>
-    isSending.value ||
-    activeStreamId.value !== null ||
-    activeAgentMessageId.value !== null ||
-    activeAssistantMessage.value !== null ||
-    activeSidecarAgentSession.value !== null ||
-    restoringCheckpointId.value !== null;
-
   const commitDisplayMessagesToStore = (
     threadId: string | null = unref(conversationStore.activeThreadId),
   ): void => {
@@ -431,31 +423,25 @@ export const useAiAssistant = (options: IUseAiAssistantOptions) => {
   };
 
   const syncDisplayMessagesFromActiveThread = (): void => {
-    if (!isConversationWriteBuffered()) {
-      // ④.1 §D：权威 entries 已是 SoT，收尾仅回读消息缓冲；不再 setStreamingActiveThread(null)
-      // （那会把权威线程复位为单空线程、抹掉历史）。最终态由 commitDisplayMessagesToStore 落定。
-      displayMessages.value = unref(conversationStore.activeMessages);
-    }
+    // ④.1 §D（统一）：messages 读真源 = 权威 entries，收尾无条件回读，杜绝把流式期"冻结"的
+    // 空缓冲当成最终态（即回复完成后内容消失的根因）。最终落库仍由 commitDisplayMessagesToStore 负责。
+    displayMessages.value = unref(conversationStore.activeMessages);
   };
 
   const messages = computed<IAiChatMessage[]>({
     get: () => displayMessages.value,
     set: (nextMessages: IAiChatMessage[]) => {
       displayMessages.value = nextMessages;
-
-      if (!isConversationWriteBuffered()) {
-        commitDisplayMessagesToStore();
-      }
+      // ④.1 §D（统一）：写真源单写者 = 权威 store，无条件提交（reduce/overlay 幂等）。
+      commitDisplayMessagesToStore();
     },
   });
 
   watch(
     () => unref(conversationStore.activeMessages),
     (nextMessages) => {
-      if (isConversationWriteBuffered()) {
-        return;
-      }
-
+      // ④.1 §D（统一）：权威 entries 即唯一读真源，活动线程一变就实时回灌 displayMessages，
+      // 不再因 buffered 闸门在流式期"冻结"显示缓冲（回复完成后内容消失的根因）。
       displayMessages.value = nextMessages;
     },
     { flush: 'sync' },

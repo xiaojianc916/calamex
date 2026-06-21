@@ -1,5 +1,6 @@
-// step3a-unify-writer.mjs —— 去掉写缓冲门控，单写者收敛（修“回复完成后消失”）
-// 用法：node step3a-unify-writer.mjs  (预览)  /  node step3a-unify-writer.mjs --apply  (落盘)
+// step3a-unify-writer.mjs —— 统一 §D：messages 读写真源收敛到权威 entries，去掉 isConversationWriteBuffered 闸门
+// 用法：node 1.mjs          （dry-run 预览）
+//      node 1.mjs --apply   （写回；git 是唯一安全网，不产生 .bak）
 import { readFileSync, writeFileSync } from 'node:fs';
 
 const FILE = 'src/composables/ai/useAiAssistant.ts';
@@ -7,109 +8,90 @@ const APPLY = process.argv.includes('--apply');
 
 const edits = [
   {
-    name: 'messages setter 写即提交（去缓冲门控）',
-    find:
-`  const messages = computed<IAiChatMessage[]>({
-    get: () => displayMessages.value,
-    set: (nextMessages: IAiChatMessage[]) => {
-      displayMessages.value = nextMessages;
+    tag: '①删除 isConversationWriteBuffered 定义',
+    oldStr: `  const isConversationWriteBuffered = (): boolean =>
+    isSending.value ||
+    activeStreamId.value !== null ||
+    activeAgentMessageId.value !== null ||
+    activeAssistantMessage.value !== null ||
+    activeSidecarAgentSession.value !== null ||
+    restoringCheckpointId.value !== null;
 
-      if (!isConversationWriteBuffered()) {
-        commitDisplayMessagesToStore();
-      }
-    },
-  });`,
-    replace:
-`  const messages = computed<IAiChatMessage[]>({
-    get: () => displayMessages.value,
-    set: (nextMessages: IAiChatMessage[]) => {
-      displayMessages.value = nextMessages;
-      // ④.1 §D 单写者收敛：写即提交到权威 entries（不再缓冲）。否则整轮缓冲为空，
-      // 收尾 commit 会用过期空缓冲覆盖 overlay 的最终答案（“回复完成后内容消失”根因）。
-      commitDisplayMessagesToStore();
-    },
-  });`,
+  const commitDisplayMessagesToStore = (`,
+    newStr: `  const commitDisplayMessagesToStore = (`,
   },
   {
-    name: 'activeMessages watch 实时回灌（去缓冲门控）',
-    find:
-`  watch(
-    () => unref(conversationStore.activeMessages),
-    (nextMessages) => {
-      if (isConversationWriteBuffered()) {
-        return;
-      }
-
-      displayMessages.value = nextMessages;
-    },
-    { flush: 'sync' },
-  );`,
-    replace:
-`  watch(
-    () => unref(conversationStore.activeMessages),
-    (nextMessages) => {
-      // 权威 entries 为唯一真源：流式中 overlay 写权威 → 这里实时回灌缓冲，messages 即时可见。
-      displayMessages.value = nextMessages;
-    },
-    { flush: 'sync' },
-  );`,
-  },
-  {
-    name: 'syncDisplayMessagesFromActiveThread 去缓冲门控',
-    find:
-`  const syncDisplayMessagesFromActiveThread = (): void => {
+    tag: '②syncDisplayMessagesFromActiveThread 去闸门',
+    oldStr: `  const syncDisplayMessagesFromActiveThread = (): void => {
     if (!isConversationWriteBuffered()) {
       // ④.1 §D：权威 entries 已是 SoT，收尾仅回读消息缓冲；不再 setStreamingActiveThread(null)
       // （那会把权威线程复位为单空线程、抹掉历史）。最终态由 commitDisplayMessagesToStore 落定。
       displayMessages.value = unref(conversationStore.activeMessages);
     }
   };`,
-    replace:
-`  const syncDisplayMessagesFromActiveThread = (): void => {
-    // 权威 entries 已是 SoT，收尾回读消息缓冲与权威对齐。
+    newStr: `  const syncDisplayMessagesFromActiveThread = (): void => {
+    // ④.1 §D（统一）：messages 读真源 = 权威 entries，收尾无条件回读，杜绝把流式期"冻结"的
+    // 空缓冲当成最终态（即回复完成后内容消失的根因）。最终落库仍由 commitDisplayMessagesToStore 负责。
     displayMessages.value = unref(conversationStore.activeMessages);
   };`,
   },
   {
-    name: '移除已废弃的 isConversationWriteBuffered 定义',
-    find:
-`  const isConversationWriteBuffered = (): boolean =>
-    isSending.value ||
-    activeStreamId.value !== null ||
-    activeAgentMessageId.value !== null ||
-    activeAssistantMessage.value !== null ||
-    activeSidecarAgentSession.value !== null ||
-    restoringCheckpointId.value !== null;`,
-    replace:
-`  // （已移除 isConversationWriteBuffered：写缓冲门控随单写者收敛而废弃）`,
+    tag: '③messages setter 去闸门（无条件提交权威）',
+    oldStr: `    set: (nextMessages: IAiChatMessage[]) => {
+      displayMessages.value = nextMessages;
+
+      if (!isConversationWriteBuffered()) {
+        commitDisplayMessagesToStore();
+      }
+    },`,
+    newStr: `    set: (nextMessages: IAiChatMessage[]) => {
+      displayMessages.value = nextMessages;
+      // ④.1 §D（统一）：写真源单写者 = 权威 store，无条件提交（reduce/overlay 幂等）。
+      commitDisplayMessagesToStore();
+    },`,
+  },
+  {
+    tag: '④watch(activeMessages) 去闸门（实时回灌）',
+    oldStr: `    (nextMessages) => {
+      if (isConversationWriteBuffered()) {
+        return;
+      }
+
+      displayMessages.value = nextMessages;
+    },
+    { flush: 'sync' },`,
+    newStr: `    (nextMessages) => {
+      // ④.1 §D（统一）：权威 entries 即唯一读真源，活动线程一变就实时回灌 displayMessages，
+      // 不再因 buffered 闸门在流式期"冻结"显示缓冲（回复完成后内容消失的根因）。
+      displayMessages.value = nextMessages;
+    },
+    { flush: 'sync' },`,
   },
 ];
 
 let src = readFileSync(FILE, 'utf8');
-const report = [];
+const before = src;
+
 for (const e of edits) {
-  const n = src.split(e.find).length - 1;
+  const n = src.split(e.oldStr).length - 1;
   if (n !== 1) {
-    console.error(`✗ 锚点未唯一命中（${n} 次）：${e.name}`);
-    console.error('  —— 中止，未写入任何改动。请把当前文件该处贴回来，我重对锚点。');
+    console.error(`✗ 锚点【${e.tag}】期望命中 1 处，实际 ${n} 处 —— 中止，未写入。`);
     process.exit(1);
   }
-  src = src.replace(e.find, e.replace);
-  report.push(`✓ ${e.name}`);
 }
+for (const e of edits) src = src.replace(e.oldStr, e.newStr);
 
-// 安全校验：确认没有遗漏的 isConversationWriteBuffered 引用（否则 TS 会报未定义/未用）
-const leftover = src.split('isConversationWriteBuffered').length - 1;
-if (leftover !== 0) {
-  console.error(`✗ 仍残留 isConversationWriteBuffered 引用 ${leftover} 处 —— 中止。请贴回残留处。`);
+const left = src.split('isConversationWriteBuffered').length - 1;
+if (left !== 0) {
+  console.error(`✗ 仍残留 isConversationWriteBuffered 引用 ${left} 处 —— 中止，未写入。`);
   process.exit(1);
 }
 
-console.log(`================ Step 3a ${APPLY ? '【APPLY】' : '【DRY-RUN】'} ================`);
-report.forEach((r) => console.log(r));
-if (APPLY) {
-  writeFileSync(FILE, src, 'utf8');
-  console.log(`\n✍ 已写入 ${FILE}（无备份；还原用 git restore）`);
-} else {
-  console.log(`\n（预览：未写入。确认后跑 node step3a-unify-writer.mjs --apply）`);
+if (!APPLY) {
+  console.log('✓ dry-run：4 处锚点均唯一命中，去闸门后 0 残留。加 --apply 写回。');
+  process.exit(0);
 }
+if (src === before) { console.log('· 无变化。'); process.exit(0); }
+
+writeFileSync(FILE, src, 'utf8');
+console.log('✓ 已写回 ' + FILE + '（4 处编辑，0 残留，无备份文件）。');
