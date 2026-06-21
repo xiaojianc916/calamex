@@ -509,7 +509,10 @@ export const useGitStore = defineStore('git', () => {
       return;
     }
 
-    commitStatsTimer = setTimeout(run, GIT_COMMIT_STATS_BACKGROUND_DELAY_MS);
+    commitStatsTimer = {
+      kind: 'timeout',
+      id: setTimeout(run, GIT_COMMIT_STATS_BACKGROUND_DELAY_MS),
+    };
   };
 
   const enqueueCommitStats = (commitId: string): void => {

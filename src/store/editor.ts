@@ -7,7 +7,6 @@ import type { IAiDiffEditorPreview } from '@/types/ai/patch';
 import type {
   IActiveRunSummary,
   IAnalyzeScriptPayload,
-  ICommandTemplate,
   IEditorDocument,
   IEditorSelectionSummary,
   IExecutionEnvironment,
@@ -22,7 +21,7 @@ import type {
 } from '@/types/editor';
 import type { IGitDiffPreviewPayload } from '@/types/git';
 import type { TDocumentDraft, TSessionSnapshot, TSessionWorkbenchState } from '@/types/session';
-import { createUniqueId } from '@/utils/core/id';
+import { createPrefixedId } from '@/utils/core/id';
 import { DEFAULT_EXECUTOR, DEFAULT_SCRIPT } from '@/utils/core/templates';
 import { computeDocumentMetrics, type IDocumentMetrics } from '@/utils/editor/document-metrics';
 import { formatFileSystemTextForDisplay, normalizeFileSystemPath } from '@/utils/file/path';
@@ -62,9 +61,6 @@ const isPersistableTabKind = (kind: IEditorDocument['kind']): kind is TPersistab
 
 const hasPath = (item: IEditorDocument): item is IEditorDocument & { path: string } =>
   item.path !== null && item.path.length > 0;
-
-const isLoadedTextDocument = (document: IEditorDocument): boolean =>
-  document.kind === 'text' && document.bufferLoaded !== false;
 
 const isUnloadableCleanTextDocument = (
   document: IEditorDocument,
@@ -116,9 +112,9 @@ const createEmptyScriptAnalysis = (): IAnalyzeScriptPayload => ({
 // ID generation
 // ---------------------------------------------------------------------------
 
-const createDocumentId = (): string => createUniqueId('document');
-const createLogId = (): string => createUniqueId('log');
-const createRunHistoryId = (): string => createUniqueId('run-history');
+const createDocumentId = (): string => createPrefixedId('document');
+const createLogId = (): string => createPrefixedId('log');
+const createRunHistoryId = (): string => createPrefixedId('run-history');
 
 // ---------------------------------------------------------------------------
 // Document helpers

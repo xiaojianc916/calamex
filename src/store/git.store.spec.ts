@@ -198,7 +198,7 @@ describe('useGitStore', () => {
     await expect(gitStore.loadCommitHistory({ limit: 1 })).resolves.toEqual([firstCommit]);
 
     // commitHistory 现为 shallowRef：追踪其引用变化以验证 append 触发响应式更新。
-    const historyRefs: readonly IGitCommitSummaryPayload[][] = [];
+    const historyRefs: IGitCommitSummaryPayload[][] = [];
     const stop = watch(
       () => gitStore.commitHistory,
       (next) => {
