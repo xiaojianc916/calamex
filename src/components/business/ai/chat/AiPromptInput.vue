@@ -60,7 +60,12 @@ import { skillsTauriService } from '@/services/tauri.skills';
 import type { IAiAttachedFile, IAiConfigPayload, TAiAgentNetworkPermission } from '@/types/ai';
 import { isAiAssistantMode, type TAiAssistantMode } from '@/types/ai/assistant-mode';
 import type { TAiExecutionMode } from '@/types/ai/execution-mode';
-import type { IAcpSessionConfigOption, IAcpSessionConfigOptionsState } from '@/types/ai/sidecar';
+import type {
+  IAcpSessionConfigOption,
+  IAcpSessionConfigOptionsState,
+  IAcpSessionMode,
+  IAcpSessionModesState,
+} from '@/types/ai/sidecar';
 import type { ISelectedSkill, ISkillSummary } from '@/types/ai/skill';
 import AiErrorNotice from './AiErrorNotice.vue';
 
@@ -140,6 +145,8 @@ const props = defineProps<{
   executionMode: TAiExecutionMode;
   sessionConfigOptions?: IAcpSessionConfigOptionsState | null;
   isSessionConfigOptionSwitching?: boolean;
+  sessionModes?: IAcpSessionModesState | null;
+  isSessionModeSwitching?: boolean;
   resolveAttachment: (file: File) => Promise<boolean>;
 }>();
 
@@ -151,6 +158,7 @@ const emit = defineEmits<{
   networkPermissionChange: [permission: TAiAgentNetworkPermission];
   executionModeChange: [mode: TAiExecutionMode];
   sessionConfigOptionChange: [configId: string, valueId: string];
+  sessionModeChange: [modeId: string];
   informationSourcesOpen: [];
   personalizationOpen: [];
   prewarm: [];
@@ -333,6 +341,31 @@ const handleSessionConfigOptionChange = (configId: string, value: unknown): void
     return;
   }
   emit('sessionConfigOptionChange', configId, value);
+};
+
+// ACP 会话模式选择器（session/set_mode）：仅 Kimi ACP agent 且后端公示 availableModes 时显示，
+// 复用 Kimi 内置模式语义（绝不本地伪造 chat/agent/plan）。currentModeId 默认高亮 agent 公示值。
+const sessionModeList = computed<IAcpSessionMode[]>(() => props.sessionModes?.availableModes ?? []);
+
+const sessionModesVisible = computed(
+  () => selectedAgent.value === 'kimi' && sessionModeList.value.length > 0,
+);
+
+const sessionModeCurrentId = computed(() => props.sessionModes?.currentModeId ?? '');
+
+const resolveSessionModeLabel = (): string => {
+  const current = sessionModeList.value.find((mode) => mode.id === sessionModeCurrentId.value);
+  return current?.name ?? '模式';
+};
+
+const handleSessionModeChange = (value: unknown): void => {
+  if (typeof value !== 'string' || !value.trim()) {
+    return;
+  }
+  if (value === sessionModeCurrentId.value) {
+    return;
+  }
+  emit('sessionModeChange', value);
 };
 
 const networkPermissionLabel = computed(() => (networkPermissionEnabled.value ? '已允许' : '询问'));

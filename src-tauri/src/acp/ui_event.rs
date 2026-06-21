@@ -87,6 +87,15 @@ fn usage_update_ui_event(usage: &Value) -> Value {
     json!({ "type": "usage_update", "usage": usage.clone() })
 }
 
+/// 构造会话当前模式变更 `TAgentUiEvent`（`type` 为 `current_mode_update`）。
+///
+/// 投影 ACP `current_mode_update`（外部 agent 在回合中自行切换模式时下发新的 currentModeId）：
+/// 仅透传 `currentModeId`（可为 null），交前端回灌模式选择器高亮（见 src/types/ai/sidecar.ts 的
+/// TAgentUiEventCurrentModeUpdate 与 from-acp-session-modes.ts）。
+fn current_mode_update_ui_event(current_mode_id: &Value) -> Value {
+    json!({ "type": "current_mode_update", "currentModeId": current_mode_id.clone() })
+}
+
 /// 将单条 ACP `SessionNotification` JSON 投影为 0..1 条 `TAgentUiEvent` JSON。
 ///
 /// 入参为 client 层 `AcpStreamFrame.event`（官方 `SessionNotification` 的 camelCase JSON：
@@ -119,6 +128,12 @@ pub fn session_notification_to_ui_event(notification: &Value) -> Option<Value> {
         "usage_update" => {
             let usage = update.get("usage")?;
             Some(usage_update_ui_event(usage))
+        }
+        // 外部 agent 在回合中自行切换模式（标准 current_mode_update）：透传 currentModeId，
+        // 交前端回灌模式选择器高亮（session/set_mode 协议）。
+        "current_mode_update" => {
+            let current_mode_id = update.get("currentModeId")?;
+            Some(current_mode_update_ui_event(current_mode_id))
         }
         // 其余变体暂未投影（plan 经信封回宿主，待后续 slice）。显式 None 作为接入点。
         _ => None,
@@ -254,6 +269,23 @@ mod tests {
     #[test]
     fn usage_update_without_field_yields_none() {
         let n = notif(json!({ "sessionUpdate": "usage_update" }));
+        assert!(session_notification_to_ui_event(&n).is_none());
+    }
+
+    #[test]
+    fn current_mode_update_passes_through_current_mode_id() {
+        let n = notif(json!({
+            "sessionUpdate": "current_mode_update",
+            "currentModeId": "agent"
+        }));
+        let ui = session_notification_to_ui_event(&n).unwrap();
+        assert_eq!(ui["type"], "current_mode_update");
+        assert_eq!(ui["currentModeId"], "agent");
+    }
+
+    #[test]
+    fn current_mode_update_without_field_yields_none() {
+        let n = notif(json!({ "sessionUpdate": "current_mode_update" }));
         assert!(session_notification_to_ui_event(&n).is_none());
     }
 

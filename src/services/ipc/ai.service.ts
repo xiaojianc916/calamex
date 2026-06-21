@@ -19,6 +19,7 @@ import type {
   IAiConversationTitlePayload,
   IAiConversationTitleRequest,
   IAiGetSessionConfigOptionsRequest,
+  IAiGetSessionModesRequest,
   IAiInlineCompletionRequest,
   IAiProposePatchPayload,
   IAiProposePatchRequest,
@@ -28,7 +29,9 @@ import type {
   IAiSaveConfigRequest,
   IAiSaveCredentialsRequest,
   IAiSessionConfigOptionsPayload,
+  IAiSessionModesPayload,
   IAiSetSessionConfigOptionRequest,
+  IAiSetSessionModeRequest,
   IAiSuggestionPoolPayload,
   IAiSuggestionPoolRequest,
   IAiWebFetchInput,
@@ -255,6 +258,12 @@ export const aiService = {
   },
   setSessionConfigOption(payload: IAiSetSessionConfigOptionRequest): Promise<boolean> {
     return tauriService.aiSetSessionConfigOption(payload);
+  },
+  getSessionModes(payload: IAiGetSessionModesRequest): Promise<IAiSessionModesPayload | null> {
+    return tauriService.aiGetSessionModes(payload);
+  },
+  setSessionMode(payload: IAiSetSessionModeRequest): Promise<boolean> {
+    return tauriService.aiSetSessionMode(payload);
   },
   getConfig(): Promise<AiConfigPayload> {
     return tauriService.aiGetConfig();

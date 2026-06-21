@@ -349,6 +349,10 @@ export const agentUiEventSchema = z.discriminatedUnion('type', [
       .optional(),
   }),
   z.object({
+    type: z.literal('current_mode_update'),
+    currentModeId: z.string().nullable(),
+  }),
+  z.object({
     type: z.literal('error'),
     message: z.string().min(1),
   }),

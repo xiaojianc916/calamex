@@ -737,6 +737,7 @@ const handleAgentBackendChange = (agent: unknown): void => {
 
     if (threadId) {
       void assistant.acpSessionConfigOptions.loadConfigOptions(threadId).catch(() => undefined);
+      void assistant.acpSessionModes.loadModes(threadId).catch(() => undefined);
     }
   }
 };
@@ -756,6 +757,20 @@ const handleSessionConfigOptionChange = async (
     await assistant.acpSessionConfigOptions.selectConfigOption(threadId, configId, valueId);
   } catch (error) {
     assistant.error.value = toErrorMessage(error, '切换会话配置失败。');
+  }
+};
+
+// ACP 会话模式切换（session/set_mode）：选择器回投透传给 useAcpSessionModes.selectMode
+// （乐观更新 + setSessionMode 回投，失败回滚并提示）。复用 Kimi 内置模式语义。
+const handleSessionModeChange = async (modeId: string): Promise<void> => {
+  const threadId = assistant.activeConversationId.value;
+  if (!threadId) {
+    return;
+  }
+  try {
+    await assistant.acpSessionModes.selectMode(threadId, modeId);
+  } catch (error) {
+    assistant.error.value = toErrorMessage(error, '切换会话模式失败。');
   }
 };
 
@@ -1288,6 +1303,8 @@ onMounted(() => {
           v-model:agent-backend="sessionAgentBackend"
           :session-config-options="assistant.acpSessionConfigOptions.state.value"
           :is-session-config-option-switching="assistant.acpSessionConfigOptions.isSwitching.value"
+          :session-modes="assistant.acpSessionModes.state.value"
+          :is-session-mode-switching="assistant.acpSessionModes.isSwitching.value"
           :disabled="composerDisabled" :stop-visible="assistant.isSending.value"
           :submit-label="submitLabel" :config="assistant.config.value"
           :is-model-saving="isPromptModelSaving" :selected-model-override="activeAgentModelId"
@@ -1301,6 +1318,7 @@ onMounted(() => {
           @execution-mode-change="handlePromptExecutionModeChange"
 
           @session-config-option-change="handleSessionConfigOptionChange"
+          @session-mode-change="handleSessionModeChange"
           @information-sources-open="openPromptInformationSources" @personalization-open="openPromptPersonalization"
           @prewarm="handlePromptPrewarm" />
       </div>

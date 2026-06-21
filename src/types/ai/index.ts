@@ -307,6 +307,26 @@ export interface IAiSessionConfigOptionsPayload {
   configOptions: unknown;
 }
 
+/**
+ * ACP 会话模式查询 / 切换请求与负载（session/set_mode 协议）。
+ * thread 维度；与生成绑定 AiGetSessionModesRequest / AiSetSessionModeRequest /
+ * AiSessionModesPayload 结构一致（全 camelCase、全必填）。modeId 为 ACP SessionModeId 原值
+ * 逐字透传，跨层不做语义映射。modes 为 ACP SessionModeState（currentModeId + availableModes）
+ * 原始负载逐字透传（形状 unknown），由前端 ACL（from-acp-session-modes）解析为选择器 VM。
+ */
+export interface IAiGetSessionModesRequest {
+  threadId: string;
+}
+
+export interface IAiSetSessionModeRequest {
+  threadId: string;
+  modeId: string;
+}
+
+export interface IAiSessionModesPayload {
+  modes: unknown;
+}
+
 export interface IAiInlineCompletionRequest {
   filePath: string;
   language: string;
