@@ -63,6 +63,7 @@ import type {
   TAgentRuntimeEvent,
   TAgentUiEvent,
 } from '@/types/ai/sidecar';
+import type { IAiThreadAssistantMessageEntry, IAiThreadEntry } from '@/types/ai/thread';
 import type {
   IActiveRunSummary,
   IAnalyzeScriptPayload,
@@ -381,6 +382,8 @@ export const useAiAssistant = (options: IUseAiAssistantOptions) => {
   interface ISidecarLiveRenderState {
     stream: NonNullable<IAiChatMessage['stream']>;
     patches: IAiChatMessage['patches'];
+    // 收尾注入的最终回答正文（live 帧不传）：reduce 无 delta 时也把最终答案落进权威 entries。
+    finalContent?: string;
   }
 
   const updateLiveThreadFromSidecarEvents = (
@@ -407,17 +410,47 @@ export const useAiAssistant = (options: IUseAiAssistantOptions) => {
     // reduce 回放出的 assistant entry 不带 stream（runtimeEvents/token/活动文案）。
     // 用本回合实时算出的 stream/patches 富集该 entry——不再回读 legacy displayMessages（已退役）。
     const hasPatches = Boolean(liveRenderState.patches && liveRenderState.patches.length > 0);
+    const finalContentRaw = liveRenderState.finalContent;
+    const finalText =
+      typeof finalContentRaw === 'string' && finalContentRaw.length > 0 ? finalContentRaw : null;
+    let matchedAssistantEntry = false;
+    const entries = liveThread.entries.map((entry) => {
+      if (entry.type !== 'assistant_message' || entry.id !== assistantMessageId) {
+        return entry;
+      }
+      matchedAssistantEntry = true;
+      // 收尾注入最终正文：丢弃 message 通道增量 chunk（保留 thought），以最终答案为唯一正文，
+      // 杜绝「无 delta -> 正文为空」与「半截增量」。live 帧 finalText 为 null，chunks 原样。
+      const nextChunks: IAiThreadAssistantMessageEntry['chunks'] =
+        finalText !== null
+          ? [
+              ...entry.chunks.filter((chunk) => chunk.type === 'thought'),
+              { type: 'message', block: { type: 'text', text: finalText } },
+            ]
+          : entry.chunks;
+      return {
+        ...entry,
+        chunks: nextChunks,
+        stream: liveRenderState.stream,
+        ...(hasPatches ? { patches: [...(liveRenderState.patches ?? [])] } : {}),
+      };
+    });
+    // reduce 因本回合无 assistant delta/block 而未建 assistant entry 时（直接给最终答案、
+    // 或仅 done 带正文），收尾按 assistantMessageId 补建一条，保证最终正文/stream/token 落地。
+    if (!matchedAssistantEntry && finalText !== null) {
+      const appendedEntry: IAiThreadEntry = {
+        type: 'assistant_message',
+        id: assistantMessageId,
+        createdAt: new Date().toISOString(),
+        chunks: [{ type: 'message', block: { type: 'text', text: finalText } }],
+        stream: liveRenderState.stream,
+        ...(hasPatches ? { patches: [...(liveRenderState.patches ?? [])] } : {}),
+      };
+      entries.push(appendedEntry);
+    }
     const enrichedThread = {
       ...liveThread,
-      entries: liveThread.entries.map((entry) =>
-        entry.type === 'assistant_message' && entry.id === assistantMessageId
-          ? {
-              ...entry,
-              stream: liveRenderState.stream,
-              ...(hasPatches ? { patches: [...(liveRenderState.patches ?? [])] } : {}),
-            }
-          : entry,
-      ),
+      entries,
     };
     aiThreadStore.overlayStreamingActiveThread(enrichedThread);
   };
@@ -1138,11 +1171,21 @@ export const useAiAssistant = (options: IUseAiAssistantOptions) => {
       ...(streamMetadata.runtimeEvents?.length
         ? { runtimeEvents: streamMetadata.runtimeEvents }
         : {}),
-      ...(streamMetadata.streamTokenSnapshot ? { usage: streamMetadata.streamTokenSnapshot } : {}),
+      // token 用量：除 usage VM 外，同时补齐顶层扁平字段，供消费侧两种读法都命中。
+      ...(streamMetadata.streamTokenSnapshot
+        ? {
+            usage: streamMetadata.streamTokenSnapshot,
+            inputTokens: streamMetadata.streamTokenSnapshot.inputTokens,
+            outputTokens: streamMetadata.streamTokenSnapshot.outputTokens,
+            totalTokens: streamMetadata.streamTokenSnapshot.totalTokens,
+          }
+        : {}),
     };
     updateLiveThreadFromSidecarEvents(ctx.assistantMessageId, ctx.threadId, payload.events, {
       stream: finalStream,
       patches: patchState?.patches,
+      // 最终回答正文经收尾注入落进权威 entries（唯一真源）。
+      finalContent: projection.content,
     });
 
     await refreshChangedDocumentsAfterSidecarRun(

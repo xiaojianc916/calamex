@@ -59,6 +59,8 @@ export type TAiThreadReduceEvent =
       id: string;
       createdAt: string;
       title: string;
+      /** 工具原始名（raw toolName）：渲染层 name 用它，区别于语义化展示 title。 */
+      name?: string;
       toolKind: TAiThreadToolKind;
       status?: 'pending' | 'in_progress';
     }

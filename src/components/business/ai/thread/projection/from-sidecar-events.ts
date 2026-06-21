@@ -88,6 +88,8 @@ const fromRuntimeEvent = (
           createdAt: event.timestamp,
           // 标题经 presenter 语义化（与 OLD buildTimelineItems 同源），消除前向通路「原始工具名」信息丢失。
           title: describeToolAction(event, event.toolName).action,
+          // 工具原始名（raw toolName）原样贯通到 reduce；渲染层 name 用它而非语义化 title。
+          ...(event.toolName ? { name: event.toolName } : {}),
           toolKind: RUNTIME_KIND_TO_TOOL_KIND[classifyRuntimeToolKind(event.toolName)],
           status: 'in_progress',
         },

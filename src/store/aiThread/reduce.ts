@@ -127,6 +127,7 @@ function applyToolEvent(
       return {
         ...current,
         title: event.title || current.title,
+        name: event.name ?? current.name,
         kind: event.toolKind ?? current.kind,
         status: nextToolStatus(current.status, event.status ?? 'in_progress'),
       };
@@ -179,6 +180,7 @@ function upsertToolCall(
       id: event.id,
       createdAt: event.createdAt,
       title: event.title,
+      ...(event.name !== undefined ? { name: event.name } : {}),
       kind: event.toolKind,
       status: event.status ?? 'in_progress',
       content: [],
