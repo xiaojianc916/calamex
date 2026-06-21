@@ -1018,7 +1018,7 @@ const nativeSelectionWithDrawnCursorTheme = Prec.highest(
 // 出现位置智能匹配右键触发点(无触发点时回退到光标 / 编辑器顶部)。
 // ──────────────────────────────
 const SEARCH_POPUP_MARGIN = 12;
-const SEARCH_POPUP_WIDTH = 320;
+const SEARCH_POPUP_WIDTH = 272;
 const SEARCH_POPUP_ESTIMATED_HEIGHT = 48;
 
 const SEARCH_ICON_FIND =
@@ -1921,13 +1921,23 @@ defineExpose<IEditorExpose>({
   display: flex;
   align-items: center;
   gap: 4px;
-  width: 320px;
+  width: 272px;
   max-width: calc(100vw - 24px);
   padding: 5px 6px 5px 10px;
   background: #ffffff;
-  border: 1px solid #e6e8eb;
+  border: none;
   border-radius: 12px;
-  box-shadow: 0 10px 30px rgba(15, 23, 42, 0.12), 0 0 0 0.5px rgba(15, 23, 42, 0.04);
+  box-shadow:
+    0 0 0 1px #e7e6e4,
+    0 0 0 2px #efefee,
+    0 0 0 3px #f7f7f7,
+    0 0 0 4px #f8f8f8,
+    0 0 0 5px #f9f9f9,
+    0 0 0 6px #fafafa,
+    0 0 0 7px #fbfbfb,
+    0 0 0 8px #fcfcfc,
+    0 0 0 9px #fdfdfd,
+    0 0 0 10px #fefefe;
   font-family: var(--font-mono);
   color: #1f2937;
 }
@@ -1936,8 +1946,8 @@ defineExpose<IEditorExpose>({
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 22px;
-  height: 22px;
+  width: 20px;
+  height: 20px;
   flex-shrink: 0;
   color: #98a2b3;
   cursor: grab;
@@ -1949,8 +1959,8 @@ defineExpose<IEditorExpose>({
 }
 
 .cm-floating-search__grip svg {
-  width: 15px;
-  height: 15px;
+  width: 13px;
+  height: 13px;
 }
 
 .cm-floating-search__input {
@@ -1984,12 +1994,12 @@ defineExpose<IEditorExpose>({
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 26px;
-  height: 26px;
+  width: 22px;
+  height: 22px;
   flex-shrink: 0;
   padding: 0;
   border: none;
-  border-radius: 7px;
+  border-radius: 6px;
   background: transparent;
   color: #475467;
   cursor: pointer;
@@ -2006,8 +2016,8 @@ defineExpose<IEditorExpose>({
 }
 
 .cm-floating-search__btn svg {
-  width: 16px;
-  height: 16px;
+  width: 14px;
+  height: 14px;
 }
 
 .cm-floating-search__btn--close {
