@@ -247,6 +247,40 @@ describe('sidecarEventToReduceEvents', () => {
     ]);
   });
 
+  it('顶层 message_delta(phase=stage) → assistant_delta(thought)（外部ACP思考进思维链通道）', () => {
+    expect(
+      sidecarEventToReduceEvents(
+        { type: 'message_delta', text: '让我先想想', phase: 'stage' },
+        OPTIONS,
+      ),
+    ).toEqual([
+      {
+        kind: 'assistant_delta',
+        messageId: 'assistant-1',
+        createdAt: OPTIONS.now,
+        channel: 'thought',
+        text: '让我先想想',
+      },
+    ]);
+  });
+
+  it('顶层 message_delta(phase=final) → assistant_delta(message)（最终答案进正文通道）', () => {
+    expect(
+      sidecarEventToReduceEvents(
+        { type: 'message_delta', text: '这是答案', phase: 'final' },
+        OPTIONS,
+      ),
+    ).toEqual([
+      {
+        kind: 'assistant_delta',
+        messageId: 'assistant-1',
+        createdAt: OPTIONS.now,
+        channel: 'message',
+        text: '这是答案',
+      },
+    ]);
+  });
+
   it('暂不覆盖的事件返回空数组', () => {
     expect(sidecarEventToReduceEvents({ type: 'mode_update', modeId: 'm1' }, OPTIONS)).toEqual([]);
     expect(sidecarEventToReduceEvents({ type: 'diff_ready', files: [] }, OPTIONS)).toEqual([]);

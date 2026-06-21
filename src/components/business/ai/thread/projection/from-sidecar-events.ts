@@ -6,7 +6,8 @@
  * ——仅做无副作用转换，可独立单测；接线（5b）另起一刀。
  *
  * 覆盖 Mastra 内建流式主路径：
- *  - 正文 / 思维链增量（agent.text.delta / agent.reasoning.delta、顶层 message_delta）
+ *  - 正文 / 思维链增量（agent.text.delta / agent.reasoning.delta、顶层 message_delta；
+ *    message_delta 按 phase 分流：'stage'→思维链(thought)，'final'/缺省→正文(message)）
  *  - 工具起止 / 取消 / 进度（agent.tool.started / completed / progress）；工具 I/O 预览作为 content 块落地
  *  - 上下文压缩完成（acontext.context_compaction.completed）
  *  - 回合完成 / 错误（agent.run.completed / error、顶层 done / error）
@@ -58,6 +59,17 @@ const toToolOutputContent = (text: string | undefined): IAiThreadToolCallContent
   text !== undefined && text.length > 0
     ? [{ type: 'content', block: { type: 'text', text } }]
     : undefined;
+
+/**
+ * 顶层 message_delta.phase → assistant 通道。
+ * ACP 宿主（src-tauri/src/acp/ui_event.rs）把外部 agent（Kimi/Codex）的 agent_thought_chunk
+ * 映射为 message_delta{phase:'stage'}、agent_message_chunk 映射为 message_delta{phase:'final'}。
+ * 故仅显式 'stage'（推理态）进思维链(thought)；'final' 与缺省（无 phase 的旧/内建发射）按正文(message)，
+ * 与既有行为等价。
+ */
+const messageDeltaChannel = (
+  phase: Extract<TAgentUiEvent, { type: 'message_delta' }>['phase'],
+): TAiAssistantChannel => (phase === 'stage' ? 'thought' : 'message');
 
 const fromRuntimeEvent = (
   event: TAgentRuntimeEvent,
@@ -132,7 +144,12 @@ export const sidecarEventToReduceEvents = (
 ): TAiThreadReduceEvent[] => {
   switch (event.type) {
     case 'message_delta':
-      return toAssistantDelta('message', options.assistantMessageId, options.now, event.text);
+      return toAssistantDelta(
+        messageDeltaChannel(event.phase),
+        options.assistantMessageId,
+        options.now,
+        event.text,
+      );
     case 'agent_event':
       return fromRuntimeEvent(event.event, options);
     case 'done':
