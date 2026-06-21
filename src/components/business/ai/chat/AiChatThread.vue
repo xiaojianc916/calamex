@@ -531,16 +531,21 @@ onBeforeUnmount(() => {
   width: 100%;
 }
 
+/* 消息行间距：虚拟列表行为绝对定位且按 offsetHeight 测量，margin 不计入测量高度（迁移后旧的
+   margin 间距因此失效）。这里用 padding-block-end 把行间距放进会被测量的盒子里，保证条目之间
+   有稳定间隔，且不会与虚拟器的高度测量冲突。 */
 .ai-chat-list__item {
   width: min(100%, 710px);
   margin-inline: auto;
   padding-inline: 12px;
+  padding-block-end: 20px;
 }
 
+/* 滚动内容尾部留白：加大底部 padding，让最后一条 AI 回复与下方输入框之间留出更舒展的空白。 */
 .ai-chat-list__after {
   width: min(100%, 710px);
   margin-inline: auto;
-  padding: 0 12px 12px;
+  padding: 0 12px 32px;
 }
 
 .ai-message-typing {
