@@ -29,7 +29,6 @@ import {
 import { subscribeSidecarSessionStream } from '@/composables/ai/sidecar-stream-listener';
 import { useAcpAvailableCommands } from '@/composables/ai/useAcpAvailableCommands';
 import { useAcpSessionConfigOptions } from '@/composables/ai/useAcpSessionConfigOptions';
-import { useAcpSessionModes } from '@/composables/ai/useAcpSessionModes';
 import { useAcpUsage } from '@/composables/ai/useAcpUsage';
 import { useAiAgentPlan } from '@/composables/ai/useAiAgentPlan';
 import { useAiStream } from '@/composables/ai/useAiStream';
@@ -480,7 +479,6 @@ export const useAiAssistant = (options: IUseAiAssistantOptions) => {
   const acpAvailableCommands = useAcpAvailableCommands();
   const acpUsage = useAcpUsage();
   const acpSessionConfigOptions = useAcpSessionConfigOptions();
-  const acpSessionModes = useAcpSessionModes();
   const { refreshSidecarChangedDocuments } = useSidecarChangedDocumentRefresh();
   let sidecarAnswerStreamState: ISidecarAnswerStreamState | null = null;
   let isSidecarAnswerStreamSyncSuppressed = false;
@@ -1105,9 +1103,6 @@ export const useAiAssistant = (options: IUseAiAssistantOptions) => {
           break;
         case 'config_option_update':
           acpSessionConfigOptions.applyConfigOptionUpdate(event.configOptions);
-          break;
-        case 'current_mode_update':
-          acpSessionModes.applyCurrentModeUpdate(event.currentModeId);
           break;
         default:
           break;
@@ -2036,7 +2031,6 @@ export const useAiAssistant = (options: IUseAiAssistantOptions) => {
       updateLiveThreadFromSidecarEvents(assistantMessageId, targetThreadId, events);
     });
     let unlistenSidecarStream: (() => void) | null = null;
-    let finalEvents: readonly TAgentUiEvent[] = [];
 
     try {
       // 关键修复（外部 Kimi 流式）：用前端预生成的 sidecarSessionId 在发起回合「之前」订阅该
@@ -2060,7 +2054,6 @@ export const useAiAssistant = (options: IUseAiAssistantOptions) => {
       });
 
       liveEventBuffer.flush();
-      finalEvents = liveEventBuffer.events.slice();
       unlistenSidecarStream?.();
       unlistenSidecarStream = null;
 
@@ -2073,7 +2066,7 @@ export const useAiAssistant = (options: IUseAiAssistantOptions) => {
           streamStatus: 'completed',
           finalAnswerStarted: hasMeaningfulAssistantText(currentMessage?.content),
         });
-        // 收尾落库交给 finally 的 entries 覆盖,不再走会抹掉推理 entry 的 legacy round-trip。
+        commitDisplayMessagesToStore(targetThreadId);
       }
 
       if (!errorMessage.value) {
@@ -2090,13 +2083,7 @@ export const useAiAssistant = (options: IUseAiAssistantOptions) => {
       unlistenSidecarStream?.();
       activeAbortController.value = null;
       activeAgentMessageId.value = null;
-      // 正常收尾:以 reduce 真源(保留 thought)覆盖权威活动线程,取代会抹掉推理 entry 的
-      // legacy displayMessages round-trip。取消/异常(无事件)仍走 legacy 收尾。
-      if (!requestAbortController.signal.aborted && finalEvents.length > 0) {
-        updateLiveThreadFromSidecarEvents(assistantMessageId, targetThreadId, finalEvents);
-      } else {
-        commitDisplayMessagesToStore(targetThreadId);
-      }
+      commitDisplayMessagesToStore(targetThreadId);
       clearActiveBufferedThread(targetThreadId);
       isSending.value = false;
       syncDisplayMessagesFromActiveThread();
@@ -2461,7 +2448,6 @@ export const useAiAssistant = (options: IUseAiAssistantOptions) => {
     acpAvailableCommands.reset();
     acpUsage.reset();
     acpSessionConfigOptions.reset();
-    acpSessionModes.reset();
     isClearDialogOpen.value = false;
   };
 
@@ -2855,7 +2841,6 @@ export const useAiAssistant = (options: IUseAiAssistantOptions) => {
     acpAvailableCommands,
     acpUsage,
     acpSessionConfigOptions,
-    acpSessionModes,
     config,
     messages,
     historyThreads,
