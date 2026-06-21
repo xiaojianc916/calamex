@@ -16,7 +16,9 @@ const emit = defineEmits<{
   'update:open': [value: boolean];
 }>();
 
-const title = computed(() => (props.entry.streaming ? '正在推理…' : '推理'));
+// 折叠头标题统一展示为 “Thinking”(流式 / 完成态一致);流式状态另由 shimmer 与
+// BrainCircuit 强调色 + 用时计时体现,不再以文案区分。
+const title = computed(() => 'Thinking');
 
 const reasoningText = computed(() =>
   props.entry.segments
@@ -72,7 +74,7 @@ const showElapsed = computed(() => sawStreaming.value && elapsedSeconds.value > 
       <Brain class="size-4 text-muted-foreground" v-else aria-hidden="true" />
     </template>
     <template #title>
-      <!-- 流式时标题做微光流转(shimmer),与“正在推理…”活跃态呼应;完成后回到静态前景色。 -->
+      <!-- 流式时标题做微光流转(shimmer),与活跃态呼应;完成后回到静态前景色。 -->
       <span
         class="ai-thread-reasoning__title"
         :class="{ 'is-streaming': entry.streaming }"
@@ -99,6 +101,11 @@ const showElapsed = computed(() => sawStreaming.value && elapsedSeconds.value > 
 </template>
 
 <style scoped>
+/* 折叠头标题静态色:#a3a4a5;流式态被下方 shimmer 渐变覆盖(color: transparent)。 */
+.ai-thread-reasoning__title {
+  color: #a3a4a5;
+}
+
 /* 流式微光:文字渐变在 muted↔前景间往复流转,纯装饰;completed 态回到静态前景色。 */
 .ai-thread-reasoning__title.is-streaming {
   background: linear-gradient(
@@ -133,9 +140,9 @@ const showElapsed = computed(() => sawStreaming.value && elapsedSeconds.value > 
 }
 
 .ai-thread-reasoning__text {
-  color: var(--text-tertiary, #6b7280);
-  font-size: 13px;
-  line-height: 20px;
+  color: #a3a4a5;
+  font-size: 12px;
+  line-height: 18px;
   overflow-wrap: anywhere;
 }
 </style>
