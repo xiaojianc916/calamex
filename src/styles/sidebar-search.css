@@ -275,6 +275,49 @@
   color: var(--search-text-subtle);
 }
 
+/* 路径过滤输入框（包含/排除）：常驻淡边框，聚焦时浅蓝描边，
+   与上方主搜索框 .search-panel-input-shell 的外观保持一致。 */
+.path-filter-input {
+  display: grid;
+  gap: 4px;
+  padding: 0 12px;
+}
+
+.path-filter-label {
+  color: var(--search-text-subtle);
+  font-size: 11px;
+}
+
+.path-filter-control {
+  position: relative;
+  display: flex;
+  min-width: 0;
+  align-items: center;
+}
+
+.path-filter-field {
+  width: 100%;
+  min-width: 0;
+  height: 30px;
+  padding: 0 8px;
+  border: 1px solid var(--search-border);
+  border-radius: var(--search-radius);
+  background: #fafafa;
+  color: var(--search-text);
+  font: inherit;
+  outline: 0;
+  transition: border-color 0.12s ease;
+}
+
+.path-filter-field::placeholder {
+  color: var(--search-text-subtle);
+}
+
+.path-filter-field:focus,
+.path-filter-input.is-focused .path-filter-field {
+  border-color: var(--search-accent-soft);
+}
+
 .search-panel-results {
   flex: 1;
   overflow-x: hidden;
