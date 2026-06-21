@@ -8,31 +8,33 @@
         type="text"
         class="path-filter-field"
         :placeholder="placeholder"
+        :aria-label="ariaLabel"
         autocomplete="off"
         spellcheck="false"
         @focus="handleFocus"
         @blur="handleBlur"
-        @keydown.down.prevent="moveActiveSuggestion(1)"
-        @keydown.up.prevent="moveActiveSuggestion(-1)"
+        @input="handleInput"
+        @keydown.down.prevent="moveActive(1)"
+        @keydown.up.prevent="moveActive(-1)"
         @keydown.enter.prevent="applyActiveSuggestion"
-        @keydown.escape="closeSuggestions"
+        @keydown.escape="close"
       />
-      <ul v-if="isSuggestionsOpen" class="path-filter-suggestions" role="listbox">
+      <ul v-if="open" class="path-filter-suggestions" role="listbox">
         <li
           v-for="(suggestion, index) in suggestions"
-          :key="suggestion.path"
+          :key="suggestion.insertValue"
           class="path-filter-suggestion"
-          :class="{ 'is-active': index === activeSuggestionIndex }"
+          :class="{ 'is-active': index === activeIndex }"
           role="option"
-          :aria-selected="index === activeSuggestionIndex"
-          @mousedown.prevent="applySuggestion(suggestion)"
-          @mouseenter="activeSuggestionIndex = index"
+          :aria-selected="index === activeIndex"
+          @mousedown.prevent="acceptSuggestion(index)"
+          @mouseenter="activeIndex = index"
         >
           <span class="path-filter-suggestion-icon" aria-hidden="true">
-            <ExplorerEntryIcon :kind="suggestion.kind" :path="suggestion.path" />
+            <ExplorerEntryIcon :kind="suggestion.kind" :path="suggestion.insertValue" />
           </span>
-          <span class="path-filter-suggestion-name" v-text="suggestion.name" />
-          <span class="path-filter-suggestion-path" v-text="suggestion.parentPath" />
+          <span class="path-filter-suggestion-name" v-text="suggestion.label" />
+          <span class="path-filter-suggestion-path" v-text="suggestion.detail" />
         </li>
       </ul>
     </div>
@@ -40,12 +42,9 @@
 </template>
 
 <script setup lang="ts">
-import { useDebounceFn } from '@vueuse/core';
 import { computed, nextTick, ref, watch } from 'vue';
 import ExplorerEntryIcon from '@/components/workbench/sidebar/explorer/ExplorerEntryIcon.vue';
-import { tauriService } from '@/services/tauri';
-import type { IWorkspaceEntrySuggestion } from '@/types/editor';
-import { getFileName, getParentPath } from './search-sidebar-text';
+import { useWorkspacePathSuggestions } from '@/composables/useWorkspacePathSuggestions';
 
 const props = defineProps<{
   modelValue: string;
@@ -66,97 +65,61 @@ const SUGGESTION_DEBOUNCE_MS = 120;
 const inputRef = ref<HTMLInputElement | null>(null);
 const draft = ref(props.modelValue);
 const isFocused = ref(false);
-const isSuggestionsOpen = ref(false);
-const suggestions = ref<IWorkspaceEntrySuggestion[]>([]);
-const activeSuggestionIndex = ref(0);
-let suggestionRequestId = 0;
+
+// 复用仓库内既有、基于真实 IPC（list_workspace_entries + search_workspace）的补全能力：
+// 目录前缀逐级下钻 + 全局 nucleo 模糊文件名兜底，内置防抖、竞态丢弃与有界 LRU 缓存。
+const { suggestions, open, activeIndex, request, close, moveActive, accept } =
+  useWorkspacePathSuggestions({
+    workspaceRootPath: () => props.workspaceRootPath,
+    isDesktopRuntime: () => props.isDesktopRuntime,
+    matchCase: () => props.matchCase,
+    debounceMs: SUGGESTION_DEBOUNCE_MS,
+    limit: SUGGESTION_LIMIT,
+  });
 
 const placeholder = computed(() =>
   props.matchCase ? `${props.ariaLabel}（区分大小写）` : props.ariaLabel,
 );
 
-const lastSegment = computed(() => {
-  const segments = draft.value.split(',');
-  return segments.at(-1)?.trim() ?? '';
-});
-
-const closeSuggestions = (): void => {
-  isSuggestionsOpen.value = false;
-  suggestions.value = [];
-  activeSuggestionIndex.value = 0;
-};
+const currentCaret = (): number => inputRef.value?.selectionStart ?? draft.value.length;
 
 const handleFocus = (): void => {
   isFocused.value = true;
+  // 重新聚焦时若已有内容，立即按光标所在 token 复算建议，避免空着一片。
+  request(draft.value, currentCaret());
 };
 
 const handleBlur = (): void => {
   isFocused.value = false;
-  window.setTimeout(closeSuggestions, 120);
+  // 延迟关闭，给候选项的 mousedown 选中留出时间窗口。
+  window.setTimeout(close, 120);
 };
 
-const moveActiveSuggestion = (delta: number): void => {
-  if (!isSuggestionsOpen.value || suggestions.value.length === 0) return;
-  const count = suggestions.value.length;
-  activeSuggestionIndex.value = (activeSuggestionIndex.value + delta + count) % count;
+const handleInput = (): void => {
+  request(draft.value, currentCaret());
 };
 
-const applySuggestion = (suggestion: IWorkspaceEntrySuggestion): void => {
-  const segments = draft.value.split(',');
-  segments[segments.length - 1] = suggestion.path;
-  draft.value = segments
-    .map((segment, index) => (index === segments.length - 1 ? segment : segment.trim()))
-    .join(', ');
-  closeSuggestions();
-  void nextTick(() => inputRef.value?.focus());
+const applyAccepted = (result: { value: string; caret: number } | null): void => {
+  if (!result) return;
+  draft.value = result.value;
+  close();
+  void nextTick(() => {
+    inputRef.value?.focus();
+    inputRef.value?.setSelectionRange(result.caret, result.caret);
+  });
+};
+
+const acceptSuggestion = (index: number): void => {
+  applyAccepted(accept(index, draft.value, currentCaret()));
 };
 
 const applyActiveSuggestion = (): void => {
-  if (!isSuggestionsOpen.value || suggestions.value.length === 0) return;
-  const suggestion = suggestions.value[activeSuggestionIndex.value];
-  if (suggestion) applySuggestion(suggestion);
+  if (!open.value || suggestions.value.length === 0) return;
+  acceptSuggestion(activeIndex.value);
 };
-
-const fetchSuggestions = async (fragment: string): Promise<void> => {
-  if (!props.isDesktopRuntime || !props.workspaceRootPath) {
-    closeSuggestions();
-    return;
-  }
-  const requestId = suggestionRequestId + 1;
-  suggestionRequestId = requestId;
-  try {
-    const matches = await tauriService.suggestWorkspaceEntries({
-      workspaceRootPath: props.workspaceRootPath,
-      query: fragment,
-      limit: SUGGESTION_LIMIT,
-    });
-    if (requestId !== suggestionRequestId) return;
-    suggestions.value = matches.map((match) => ({
-      ...match,
-      name: getFileName(match.relativePath),
-      parentPath: getParentPath(match.relativePath),
-    }));
-    isSuggestionsOpen.value = suggestions.value.length > 0;
-    activeSuggestionIndex.value = 0;
-  } catch {
-    closeSuggestions();
-  }
-};
-
-// trailing debounce：高频输入只取最后一次；vueuse 自动 onScopeDispose 取消。
-const scheduleSuggestions = useDebounceFn(
-  (fragment: string) => void fetchSuggestions(fragment),
-  SUGGESTION_DEBOUNCE_MS,
-);
 
 watch(draft, (value) => {
   emit('update:modelValue', value);
-  const fragment = lastSegment.value;
-  if (fragment.length === 0) {
-    closeSuggestions();
-    return;
-  }
-  scheduleSuggestions(fragment);
 });
 
 watch(
