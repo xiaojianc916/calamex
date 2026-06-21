@@ -275,12 +275,23 @@
   color: var(--search-text-subtle);
 }
 
-/* 路径过滤输入框（包含/排除）：常驻淡边框，聚焦时浅蓝描边，
-   与上方主搜索框 .search-panel-input-shell 的外观保持一致。 */
+/* 路径过滤输入框（包含/排除）：复用原 .search-panel-path-filter 的栅格与常驻淡边框，
+   标签靠左、输入框占满其余宽度；聚焦时浅蓝描边，与页面其它输入框一致。 */
 .path-filter-input {
   display: grid;
-  gap: 4px;
-  padding: 0 12px;
+  grid-template-columns: 32px minmax(0, 1fr);
+  align-items: center;
+  gap: 6px;
+  min-height: 28px;
+  padding: 0 8px;
+  border: 1px solid var(--search-border);
+  border-radius: var(--search-radius);
+  background: #fafafa;
+  transition: border-color 0.12s ease;
+}
+
+.path-filter-input.is-focused {
+  border-color: var(--search-accent-soft);
 }
 
 .path-filter-label {
@@ -298,24 +309,103 @@
 .path-filter-field {
   width: 100%;
   min-width: 0;
-  height: 30px;
-  padding: 0 8px;
-  border: 1px solid var(--search-border);
-  border-radius: var(--search-radius);
-  background: #fafafa;
+  height: 22px;
+  border: 0;
+  background: transparent;
   color: var(--search-text);
   font: inherit;
   outline: 0;
-  transition: border-color 0.12s ease;
 }
 
 .path-filter-field::placeholder {
   color: var(--search-text-subtle);
 }
 
-.path-filter-field:focus,
-.path-filter-input.is-focused .path-filter-field {
-  border-color: var(--search-accent-soft);
+/* 路径补全下拉：浮层定位，复刻原 .search-path-filter-menu 的外观（边框、阴影、浅色滚动条）。 */
+.path-filter-suggestions {
+  position: absolute;
+  z-index: 40;
+  top: calc(100% + 6px);
+  right: 0;
+  left: 0;
+  max-height: 240px;
+  margin: 0;
+  padding: 4px;
+  overflow-y: auto;
+  list-style: none;
+  border: 1px solid var(--search-border);
+  border-radius: var(--search-radius);
+  background: var(--search-bg-panel);
+  box-shadow: 0 8px 24px rgb(0 0 0 / 18%);
+  color-scheme: light;
+  scrollbar-width: thin;
+  scrollbar-color: rgb(15 23 42 / 22%) transparent;
+}
+
+.path-filter-suggestions::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+.path-filter-suggestions::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.path-filter-suggestions::-webkit-scrollbar-thumb {
+  border: 2px solid transparent;
+  border-radius: 8px;
+  background-color: rgb(15 23 42 / 22%);
+  background-clip: padding-box;
+}
+
+.path-filter-suggestions::-webkit-scrollbar-thumb:hover {
+  background-color: rgb(15 23 42 / 36%);
+}
+
+.path-filter-suggestion {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  height: 26px;
+  padding: 0 6px;
+  border-radius: var(--search-radius-sm);
+  color: var(--search-text);
+  cursor: pointer;
+}
+
+.path-filter-suggestion.is-active {
+  background: var(--search-bg-selected);
+}
+
+.path-filter-suggestion-icon {
+  display: inline-flex;
+  flex-shrink: 0;
+  color: var(--search-icon);
+}
+
+.path-filter-suggestion-icon .explorer-entry-icon {
+  --file-icon-size: 14px;
+  width: 14px;
+  height: 14px;
+}
+
+.path-filter-suggestion-name {
+  flex-shrink: 0;
+  max-width: 58%;
+  overflow: hidden;
+  color: var(--search-text);
+  font-size: 12px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.path-filter-suggestion-path {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--search-text-subtle);
+  font-size: 11px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .search-panel-results {
@@ -705,8 +795,6 @@
   flex: 0 1 auto;
 }
 
-/* 前缀的省略号已在数据层放到最前（…+末尾上下文），这里关掉 CSS 末尾省略，
-   避免在命中前再出现一个截断省略号。后缀仍保留 ellipsis（省略号在最后侧）。 */
 .search-replace-inline-segment.is-prefix {
   text-overflow: clip;
 }
