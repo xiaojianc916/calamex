@@ -100,7 +100,7 @@
     "photoswipe": "^5.4.4",
     "pinia": "^3.0.4",
     "pinia-plugin-persistedstate": "^4.7.1",
-    "reka-ui": "^2.9.10",
+    "reka-ui": "^2.10.0",
     "rxjs": "catalog:",
     "shiki": "^4.2.0",
     "tailwind-merge": "^3.6.0",

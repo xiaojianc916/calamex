@@ -4,6 +4,12 @@ settings:
   autoInstallPeers: true
   excludeLinksFromLockfile: false
 
+catalogs:
+  default:
+    rxjs:
+      specifier: ^7.8.2
+      version: 7.8.2
+
 overrides:
   rxjs: ^7.8.2
 
@@ -204,10 +210,10 @@ importers:
         specifier: ^4.7.1
         version: 4.7.1(pinia@3.0.4(typescript@6.0.3)(vue@3.5.38(typescript@6.0.3)))
       reka-ui:
-        specifier: ^2.9.10
-        version: 2.9.10(vue@3.5.38(typescript@6.0.3))
+        specifier: ^2.10.0
+        version: 2.10.0(vue@3.5.38(typescript@6.0.3))
       rxjs:
-        specifier: ^7.8.2
+        specifier: 'catalog:'
         version: 7.8.2
       shiki:
         specifier: ^4.2.0
@@ -281,7 +287,7 @@ importers:
         version: 26.0.0
       '@typescript/native-preview':
         specifier: latest
-        version: 7.0.0-dev.20260620.1
+        version: 7.0.0-dev.20260621.1
       '@vitejs/plugin-vue':
         specifier: ^6.0.7
         version: 6.0.7(vite@8.0.16(@types/node@26.0.0)(esbuild@0.28.1)(jiti@2.7.0)(tsx@4.22.4)(yaml@2.9.0))(vue@3.5.38(typescript@6.0.3))
@@ -2526,50 +2532,50 @@ packages:
   '@types/yauzl@2.10.3':
     resolution: {integrity: sha512-oJoftv0LSuaDZE3Le4DbKX+KS9G36NzOeSap90UIK0yMA/NhKJhqlSGtNDORNRaIbQfzjXDrQa0ytJ6mNRGz/Q==}
 
-  '@typescript/native-preview-darwin-arm64@7.0.0-dev.20260620.1':
-    resolution: {integrity: sha512-1qwEjLW1JCRkDYrS8OyWdfXoL9bNHV28kP3ouQxytZmNpghWSMKZutsxDjVVbnlsbydBdYqqZMttPuTUlm3y0A==}
+  '@typescript/native-preview-darwin-arm64@7.0.0-dev.20260621.1':
+    resolution: {integrity: sha512-E81mNlY2JqZlDqflCvRpt6WhU6ha1SOkRC85o+EmKZJCjBxaaJpBGdwGjIisv2jiEMcHy2OW4ZHcE9GTM1BL2A==}
     engines: {node: '>=16.20.0'}
     cpu: [arm64]
     os: [darwin]
 
-  '@typescript/native-preview-darwin-x64@7.0.0-dev.20260620.1':
-    resolution: {integrity: sha512-/Z5Jx8V22RTuHSVR/QCbCT2eFq6NoYc5oLah5/yDoymZaTlmvuwuc50N6y9YXF0zAh+z4QGoyAqd561cAGSNOA==}
+  '@typescript/native-preview-darwin-x64@7.0.0-dev.20260621.1':
+    resolution: {integrity: sha512-VS4VF8L0So56tC1jaJ57pMQOGd0Hc1wU0RIMkJi41/dKvcmc/WTRa7hiWJwzZLxXhZoVkdjesT36D9GahoAulg==}
     engines: {node: '>=16.20.0'}
     cpu: [x64]
     os: [darwin]
 
-  '@typescript/native-preview-linux-arm64@7.0.0-dev.20260620.1':
-    resolution: {integrity: sha512-rz7JoRJE5zaL2RoTOHLUliz6UkDqjUngJEF1/GiSR032v8k8tp8GTezxFoosaCssQSf80cjA5wYup5zrCp4zIg==}
+  '@typescript/native-preview-linux-arm64@7.0.0-dev.20260621.1':
+    resolution: {integrity: sha512-Ek1uLWN6VzqwwTQNu1vcnRW4F3ipqvediLEwJP6uR5P6vrXYE7XvcGLEJcXiw31SR40NhxZW/RhLcJrHQcehrA==}
     engines: {node: '>=16.20.0'}
     cpu: [arm64]
     os: [linux]
 
-  '@typescript/native-preview-linux-arm@7.0.0-dev.20260620.1':
-    resolution: {integrity: sha512-wuqpmYeMkOvHEx+log3bi913JRacYRo7DwkABMbD5wQMEy2GCdp3461aQ5sGrRD/lL4rylZJxE5B5aQqyhkQYA==}
+  '@typescript/native-preview-linux-arm@7.0.0-dev.20260621.1':
+    resolution: {integrity: sha512-2Xp+pu7Xu9EMKxYFiZuyIzd6KUkMn7SvElzgBRwbrhfsk54Jieg2sxyL3aAw9xfzRsEN4m1VrU3Z/iq2gL5OUw==}
     engines: {node: '>=16.20.0'}
     cpu: [arm]
     os: [linux]
 
-  '@typescript/native-preview-linux-x64@7.0.0-dev.20260620.1':
-    resolution: {integrity: sha512-8zhjBFu0RuL16iFr0TlUU8RRMdmvUY+NuSSxaVeitxmvORFoy0EwIaz+ZK9+xRhfHCIcugi6mEcTqEPv48X3oQ==}
+  '@typescript/native-preview-linux-x64@7.0.0-dev.20260621.1':
+    resolution: {integrity: sha512-VUhea6+Drw+PHRpsjsY7lNOZtXAlRXLHrpYynJU3jfnSflYgoqkrvlSzWVhcvhkjxGOZsqlIV+5ryy8ANZ6peg==}
     engines: {node: '>=16.20.0'}
     cpu: [x64]
     os: [linux]
 
-  '@typescript/native-preview-win32-arm64@7.0.0-dev.20260620.1':
-    resolution: {integrity: sha512-Bax5HY/6NUcbk7h+SLJIbRL8TvGRLP1mbvI9T4ah6wfYKRp3rwBlXHP3N+BEYdzOFTUlzBJLknxcjtxWd5cFPw==}
+  '@typescript/native-preview-win32-arm64@7.0.0-dev.20260621.1':
+    resolution: {integrity: sha512-JyxxNWWs2X7WzK90zN8hgGKqP4zo2/y7Z2tlLLaHhSFtEh1AC+tsQun3NBlW9JvF1vHhGI/hPpnoZOxLO0CEWw==}
     engines: {node: '>=16.20.0'}
     cpu: [arm64]
     os: [win32]
 
-  '@typescript/native-preview-win32-x64@7.0.0-dev.20260620.1':
-    resolution: {integrity: sha512-+revF2e9JCBx1rLQCX+ny8KuZ0Tl5de7+YpYd4PUNKgF5yPi9n2+TmXtci8/3yBl7QRyLWG1td28RMa/8eIynQ==}
+  '@typescript/native-preview-win32-x64@7.0.0-dev.20260621.1':
+    resolution: {integrity: sha512-2ijIynqyxK1LkWUpLlmsBKuH7XHk6K4TAwdnfZ7x7BQHF9Z3okIXtKMzOik8fajB3oooVrEvbfOe2Mf+uZ7maQ==}
     engines: {node: '>=16.20.0'}
     cpu: [x64]
     os: [win32]
 
-  '@typescript/native-preview@7.0.0-dev.20260620.1':
-    resolution: {integrity: sha512-W5XiTTbIGZSAJUMJqynchbfcjPcoNn29U8dnd+FK+x+Mj9VT9NNTymZ0YAIf+hU2uYAxx3AGe6/U/2OF2TpQwg==}
+  '@typescript/native-preview@7.0.0-dev.20260621.1':
+    resolution: {integrity: sha512-2epYxi5NDRPOvAG8TPEFd43qDVGHhD4IbIHF0uhsy72OSUbVY2rjEAv1DkW1Q2p/YbszXd7ZL/Ulch8VuDDS1g==}
     engines: {node: '>=16.20.0'}
     hasBin: true
 
@@ -3828,8 +3834,8 @@ packages:
     resolution: {integrity: sha512-j6vWzfrGVfyXxge+O0x5sh6cvxAog0a/4Rdd2K36zCMV5eJ+/+tOAngRO8cODMNWbVRdVlmGZQL2YS3yR8bIUA==}
     engines: {node: '>= 0.4'}
 
-  es-toolkit@1.47.1:
-    resolution: {integrity: sha512-5RAqEwf4P4E17p+W75KLOWw/nOvKZzSQpxM32IpI2KZLaVonjTrZ0Ai5ghMaVI9eKC2p8eoQgcBdkEDgzFk6+Q==}
+  es-toolkit@1.48.1:
+    resolution: {integrity: sha512-wfnXlwd5I75eXRtdD2vuEs50xHHESECDsGD7yiQnfFVNoa5522NwXEbmgo98LfiukSQHs+mBM7/YG3qKJB9/mQ==}
 
   es6-error@4.1.1:
     resolution: {integrity: sha512-Um/+FxMr9CISWh0bi5Zv0iOD+4cFh5qLeks1qhAopKVAJw3drgKbKySikp7wGhDL0HPeaja0P5ULZrxLkniUVg==}
@@ -4027,12 +4033,12 @@ packages:
     resolution: {integrity: sha512-1yD6RmLI1XBfxugvORwlck6f75tYL+iR0jqwsOrOxMZyGYqUuDhJ0l4AXdO1iX/FTs9cBAMEk1gWSEx1kSbylg==}
     engines: {node: '>=6'}
 
-  flow-estree@0.319.0:
-    resolution: {integrity: sha512-CUc84Fcva90Fplcp0R6hhX9nmTGE4VJ/vsoO0iiqXRruajkjhG/gdhNZu0zH92pc4pxB5hv+dml1GDxF6kBvTQ==}
+  flow-estree@0.320.0:
+    resolution: {integrity: sha512-pAqtAcD4UeoNBBpCrpK0oOXhO1oTGxSRsAEc8slnWVDoJJXaHUh/0FJROvlhYH+pyJLYE2YaxmGu6YfWDCkP8g==}
     engines: {node: '>=18'}
 
-  flow-parser@0.319.0:
-    resolution: {integrity: sha512-i77L7/PRjuPbUqD4cIA9khN1SuVS3hzc+PPDF74hzIYrMa6KfDIJXkQoCSjRAWSoYAzpA3Sca4J9h8lIEslqmQ==}
+  flow-parser@0.320.0:
+    resolution: {integrity: sha512-wVSB6Ii6Lk0865xyMvrOIOulvK4JDGdw5UGRyH1smzYJd8qFIGplZeLJpOsMn2fJIVX0BI6IRRJLBTumSNaQAQ==}
     engines: {node: '>=0.4.0'}
 
   follow-redirects@1.16.0:
@@ -5191,8 +5197,8 @@ packages:
   mz@2.7.0:
     resolution: {integrity: sha512-z81GNO7nnYMEhrGh9LeymoE4+Yr0Wn5McHIZMK5cfQCl+NDX08sCZgUc9/6MHni9IWuFLm1Z3HTCXu2z9fN62Q==}
 
-  nanoid@3.3.13:
-    resolution: {integrity: sha512-sPdqC6ByMVVGvF1ynvvMo0/o+oD1VX7DaHhijt1bFgjvBkHBib4t49GoNDhf2NDta4oeUNlaGbSt5K7qjZ955Q==}
+  nanoid@3.3.14:
+    resolution: {integrity: sha512-U9kYi5bpVMEI31yC8iw4bJJp0avcHXA0W8/wNfLfnvJYzihQo2ZRPYPvpAAd570HAcCBjCTN7vnr+v4StKl1IQ==}
     engines: {node: ^10 || ^12 || ^13.7 || ^14 || >=15.0.1}
     hasBin: true
 
@@ -5685,8 +5691,8 @@ packages:
   rehype-katex@7.0.1:
     resolution: {integrity: sha512-OiM2wrZ/wuhKkigASodFoo8wimG3H12LWQaH8qSPVJn9apWKFSH3YOCtbKpBorTVw/eI7cuT21XBbvwEswbIOA==}
 
-  reka-ui@2.9.10:
-    resolution: {integrity: sha512-yuvZVTp4fWH2G3qk+ze/x6YYlyc2Xl1d+eMUlIYrKqzTowBKteoDoN17fitURmqSUck3mc7JbcYgp49DnGu2EQ==}
+  reka-ui@2.10.0:
+    resolution: {integrity: sha512-HIUVfSBM/AyGkcUI7aiOxxMc4N+0UD2ZEun8dcrT0H4fveotEoeDdvzyZu97eeEvEa1H9oGHoOpApkfxlgnC7g==}
     peerDependencies:
       vue: '>= 3.4.0'
 
@@ -6385,8 +6391,8 @@ packages:
     resolution: {integrity: sha512-vIYxrBCC/N/K+Js3qSN88go7kIfNPssr/hHCesKCQNAjmgvYS2oqr69kIufEG+O4+PfezOH4EbIeHCfFov8ZgQ==}
     hasBin: true
 
-  uuid@14.0.0:
-    resolution: {integrity: sha512-Qo+uWgilfSmAhXCMav1uYFynlQO7fMFiMVZsQqZRMIXp0O7rR7qjkj+cPvBHLgBqi960QCoo/PH2/6ZtVqKvrg==}
+  uuid@14.0.1:
+    resolution: {integrity: sha512-6ZxzVpzDXDa3bJWaHilVayA+BH/1zmxCJoVgvmqJnid/gPoKHxUrS/aC/T6LGQtNHT+XHG9fXPJB4d+IrU30Ew==}
     hasBin: true
 
   vary@1.1.2:
@@ -7489,7 +7495,7 @@ snapshots:
   '@commitlint/ensure@21.0.1':
     dependencies:
       '@commitlint/types': 21.0.1
-      es-toolkit: 1.47.1
+      es-toolkit: 1.48.1
 
   '@commitlint/execute-rule@21.0.1': {}
 
@@ -7518,7 +7524,7 @@ snapshots:
       '@commitlint/types': 21.0.1
       cosmiconfig: 9.0.2(typescript@6.0.3)
       cosmiconfig-typescript-loader: 6.3.0(@types/node@26.0.0)(cosmiconfig@9.0.2(typescript@6.0.3))(typescript@6.0.3)
-      es-toolkit: 1.47.1
+      es-toolkit: 1.48.1
       is-plain-obj: 4.1.0
       picocolors: 1.1.1
     transitivePeerDependencies:
@@ -7547,7 +7553,7 @@ snapshots:
     dependencies:
       '@commitlint/config-validator': 21.0.1
       '@commitlint/types': 21.0.1
-      es-toolkit: 1.47.1
+      es-toolkit: 1.48.1
       global-directory: 5.0.0
       resolve-from: 5.0.0
 
@@ -9051,36 +9057,36 @@ snapshots:
       '@types/node': 26.0.0
     optional: true
 
-  '@typescript/native-preview-darwin-arm64@7.0.0-dev.20260620.1':
+  '@typescript/native-preview-darwin-arm64@7.0.0-dev.20260621.1':
     optional: true
 
-  '@typescript/native-preview-darwin-x64@7.0.0-dev.20260620.1':
+  '@typescript/native-preview-darwin-x64@7.0.0-dev.20260621.1':
     optional: true
 
-  '@typescript/native-preview-linux-arm64@7.0.0-dev.20260620.1':
+  '@typescript/native-preview-linux-arm64@7.0.0-dev.20260621.1':
     optional: true
 
-  '@typescript/native-preview-linux-arm@7.0.0-dev.20260620.1':
+  '@typescript/native-preview-linux-arm@7.0.0-dev.20260621.1':
     optional: true
 
-  '@typescript/native-preview-linux-x64@7.0.0-dev.20260620.1':
+  '@typescript/native-preview-linux-x64@7.0.0-dev.20260621.1':
     optional: true
 
-  '@typescript/native-preview-win32-arm64@7.0.0-dev.20260620.1':
+  '@typescript/native-preview-win32-arm64@7.0.0-dev.20260621.1':
     optional: true
 
-  '@typescript/native-preview-win32-x64@7.0.0-dev.20260620.1':
+  '@typescript/native-preview-win32-x64@7.0.0-dev.20260621.1':
     optional: true
 
-  '@typescript/native-preview@7.0.0-dev.20260620.1':
+  '@typescript/native-preview@7.0.0-dev.20260621.1':
     optionalDependencies:
-      '@typescript/native-preview-darwin-arm64': 7.0.0-dev.20260620.1
-      '@typescript/native-preview-darwin-x64': 7.0.0-dev.20260620.1
-      '@typescript/native-preview-linux-arm': 7.0.0-dev.20260620.1
-      '@typescript/native-preview-linux-arm64': 7.0.0-dev.20260620.1
-      '@typescript/native-preview-linux-x64': 7.0.0-dev.20260620.1
-      '@typescript/native-preview-win32-arm64': 7.0.0-dev.20260620.1
-      '@typescript/native-preview-win32-x64': 7.0.0-dev.20260620.1
+      '@typescript/native-preview-darwin-arm64': 7.0.0-dev.20260621.1
+      '@typescript/native-preview-darwin-x64': 7.0.0-dev.20260621.1
+      '@typescript/native-preview-linux-arm': 7.0.0-dev.20260621.1
+      '@typescript/native-preview-linux-arm64': 7.0.0-dev.20260621.1
+      '@typescript/native-preview-linux-x64': 7.0.0-dev.20260621.1
+      '@typescript/native-preview-win32-arm64': 7.0.0-dev.20260621.1
+      '@typescript/native-preview-win32-x64': 7.0.0-dev.20260621.1
 
   '@ungap/structured-clone@1.3.1': {}
 
@@ -10490,7 +10496,7 @@ snapshots:
       has-tostringtag: 1.0.2
       hasown: 2.0.4
 
-  es-toolkit@1.47.1: {}
+  es-toolkit@1.48.1: {}
 
   es6-error@4.1.1: {}
 
@@ -10742,11 +10748,11 @@ snapshots:
     dependencies:
       locate-path: 3.0.0
 
-  flow-estree@0.319.0: {}
+  flow-estree@0.320.0: {}
 
-  flow-parser@0.319.0:
+  flow-parser@0.320.0:
     dependencies:
-      flow-estree: 0.319.0
+      flow-estree: 0.320.0
 
   follow-redirects@1.16.0: {}
 
@@ -11285,7 +11291,7 @@ snapshots:
       '@babel/preset-flow': 7.29.7(@babel/core@7.29.7)
       '@babel/preset-typescript': 7.29.7(@babel/core@7.29.7)
       '@babel/register': 7.29.7(@babel/core@7.29.7)
-      flow-parser: 0.319.0
+      flow-parser: 0.320.0
       graceful-fs: 4.2.11
       micromatch: 4.0.8
       neo-async: 2.6.2
@@ -11777,14 +11783,14 @@ snapshots:
       dagre-d3-es: 7.0.14
       dayjs: 1.11.21
       dompurify: 3.4.11
-      es-toolkit: 1.47.1
+      es-toolkit: 1.48.1
       katex: 0.16.47
       khroma: 2.1.0
       marked: 16.4.2
       roughjs: 4.6.6
       stylis: 4.4.0
       ts-dedent: 2.3.0
-      uuid: 14.0.0
+      uuid: 14.0.1
 
   micromark-core-commonmark@2.0.3:
     dependencies:
@@ -12063,7 +12069,7 @@ snapshots:
       thenify-all: 1.6.0
     optional: true
 
-  nanoid@3.3.13: {}
+  nanoid@3.3.14: {}
 
   nanospinner@1.2.2:
     dependencies:
@@ -12433,7 +12439,7 @@ snapshots:
 
   postcss@8.5.15:
     dependencies:
-      nanoid: 3.3.13
+      nanoid: 3.3.14
       picocolors: 1.1.1
       source-map-js: 1.2.1
 
@@ -12592,7 +12598,7 @@ snapshots:
       unist-util-visit-parents: 6.0.2
       vfile: 6.0.3
 
-  reka-ui@2.9.10(vue@3.5.38(typescript@6.0.3)):
+  reka-ui@2.10.0(vue@3.5.38(typescript@6.0.3)):
     dependencies:
       '@floating-ui/dom': 1.7.6
       '@floating-ui/vue': 1.1.11(vue@3.5.38(typescript@6.0.3))
@@ -13409,7 +13415,7 @@ snapshots:
 
   uuid@11.1.1: {}
 
-  uuid@14.0.0: {}
+  uuid@14.0.1: {}
 
   vary@1.1.2: {}
 
