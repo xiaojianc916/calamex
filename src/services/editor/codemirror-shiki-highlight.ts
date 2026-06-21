@@ -37,7 +37,7 @@ const HIGHLIGHT_OVERSCAN_LINES = 72;
 // token 预取/缓存范围可以大，但 RangeSetBuilder 不应为大量屏幕外行重复创建 Decoration。
 const DECORATION_RENDER_MARGIN_LINES = 8;
 
-// 输入停顿后过多久触发一次重算（毫秒）；过小会让连续输入仍频繁重算，过大高亮滞后明显。
+// 输入停顿后过多久触发一次重算（毫秒）；过小会让连续输入仍频繁重算，过大高亮滑后明显。
 const HIGHLIGHT_RECOMPUTE_DEBOUNCE_MS = 90;
 
 // Shiki token 样式种类远少于 token 数量。缓存 Decoration.mark 可避免滚动/重算时
@@ -818,7 +818,7 @@ export const shikiEditorChromeTheme = EditorView.theme(
     },
     '.cm-scroller': {
       fontFamily: EDITOR_FONT_FAMILY,
-      fontSize: '13px',
+      fontSize: '14px',
       lineHeight: '1.6',
     },
     '.cm-content': {
