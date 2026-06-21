@@ -245,6 +245,16 @@ export function threadEntriesToMessages(entries: readonly IAiThreadEntry[]): IAi
     if (pendingToolCalls.length === 0) {
       return;
     }
+    // 实时流式先建 assistant_message（正文增量）再来 tool_call entry，使工具排在 assistant 之后。
+    // 此时把尾随工具并入紧邻的、尚无 toolCalls 的前一条 assistant（对齐旧模型「一条 assistant 持有本回合工具」），
+    // 否则才另起一条合成 assistant。
+    const lastMessage = messages.at(-1);
+    if (lastMessage && lastMessage.role === 'assistant' && lastMessage.toolCalls === undefined) {
+      lastMessage.toolCalls = pendingToolCalls;
+      pendingToolCalls = [];
+      pendingToolCreatedAt = null;
+      return;
+    }
     messages.push({
       role: 'assistant',
       id: pendingToolCalls[0]!.id + ':assistant',
