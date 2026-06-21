@@ -255,6 +255,39 @@ impl AcpRuntime {
             .find_map(|host| host.session_config_options(thread_id))
     }
 
+    /// 切换指定线程当前 ACP 会话的模式（标准 session/set_mode），令外部 agent（Kimi Code /
+    /// Codex 等）在 agent 公示的模式（如 Auto / Plan / …）间真实切换。线程绑定的会话可能落在
+    /// 任一后端宿主，故向全部已建立宿主广播下发：命中即记为已应用并返回 true。无任何宿主 /
+    /// 无匹配线程时返回 Ok(false)（安全空操作——模式切换绝不应触发子进程派生）。至多一个宿主
+    /// 持有该线程，故某宿主下发失败即整体失败。与 set_session_config_option 同构。
+    pub async fn set_session_mode(
+        &self,
+        thread_id: &str,
+        mode_id: &str,
+    ) -> Result<bool, AcpClientError> {
+        // 先取出 Arc 列表并释放锁，避免在广播下发（跨 await）期间持有 runtime 锁。
+        let hosts = self.hosts.lock().all();
+        let mut applied = false;
+        for host in hosts {
+            if host.set_session_mode(thread_id, mode_id).await? {
+                applied = true;
+            }
+        }
+        Ok(applied)
+    }
+
+    /// 取某线程会话建立时 agent 公示的可用模式清单（ACP NewSessionResponse.modes 原样 JSON：
+    /// SessionModeState = currentModeId + availableModes[]）。线程绑定的会话可能落在任一后端
+    /// 宿主，故向全部已建立宿主查询并返回首个命中。无任何宿主 / 无匹配线程 / agent 未公示模式时
+    /// 返回 None。最小透传。与 session_config_options 同构。
+    pub fn session_modes(&self, thread_id: &str) -> Option<serde_json::Value> {
+        // 先取出 Arc 列表并释放锁，避免在逐宿主查询期间持有 runtime 锁。
+        let hosts = self.hosts.lock().all();
+        hosts
+            .into_iter()
+            .find_map(|host| host.session_modes(thread_id))
+    }
+
     /// 关停并释放全部后端的常驻连接（App 统一退出清理调用）。幂等：无宿主时为安全空操作。
     pub fn shutdown(&self) {
         // 先取走全部 Arc 并释放锁，避免在逐个关停期间持有 runtime 锁。
@@ -333,6 +366,24 @@ mod tests {
         let runtime = AcpRuntime::default();
         // 无任何宿主时，配置项查询为安全空操作：返回 None 且绝不派生子进程。
         assert!(runtime.session_config_options("thread-1").is_none());
+        assert!(runtime.hosts.lock().all().is_empty());
+    }
+
+    #[test]
+    fn set_session_mode_on_unestablished_runtime_is_noop() {
+        let runtime = AcpRuntime::default();
+        // 无任何宿主时，模式切换为安全空操作：返回 Ok(false) 且绝不派生子进程。
+        let applied = tauri::async_runtime::block_on(runtime.set_session_mode("thread-1", "auto"))
+            .expect("set_session_mode on empty runtime should not error");
+        assert!(!applied);
+        assert!(runtime.hosts.lock().all().is_empty());
+    }
+
+    #[test]
+    fn session_modes_on_unestablished_runtime_is_none() {
+        let runtime = AcpRuntime::default();
+        // 无任何宿主时，模式查询为安全空操作：返回 None 且绝不派生子进程。
+        assert!(runtime.session_modes("thread-1").is_none());
         assert!(runtime.hosts.lock().all().is_empty());
     }
 

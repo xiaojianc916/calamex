@@ -3,11 +3,11 @@ use crate::ai::gateway;
 use crate::commands::contracts::{
     AiCancelRequest, AiChatRequest, AiChatStreamPayload, AiConfigPayload,
     AiConversationTitlePayload, AiConversationTitleRequest, AiGetSessionConfigOptionsRequest,
-    AiInlineCompletionRangePayload, AiInlineCompletionRequest, AiInlineCompletionResult,
-    AiProviderConnectionPayload, AiProviderConnectionRequest, AiProviderTestPayload,
-    AiResolveApprovalRequest, AiSaveConfigRequest, AiSaveCredentialsRequest,
-    AiSessionConfigOptionsPayload, AiSetSessionConfigOptionRequest, AiSuggestionPoolPayload,
-    AiSuggestionPoolRequest,
+    AiGetSessionModesRequest, AiInlineCompletionRangePayload, AiInlineCompletionRequest,
+    AiInlineCompletionResult, AiProviderConnectionPayload, AiProviderConnectionRequest,
+    AiProviderTestPayload, AiResolveApprovalRequest, AiSaveConfigRequest, AiSaveCredentialsRequest,
+    AiSessionConfigOptionsPayload, AiSessionModesPayload, AiSetSessionConfigOptionRequest,
+    AiSetSessionModeRequest, AiSuggestionPoolPayload, AiSuggestionPoolRequest,
 };
 use tauri::AppHandle;
 
@@ -302,6 +302,63 @@ pub fn ai_get_session_config_options(
         .session_config_options(thread_id)
         .map(|config_options| AiSessionConfigOptionsPayload { config_options });
     Ok(config_options)
+}
+
+/// 切换 ACP 会话的当前模式（标准 session/set_mode），令外部 agent（Kimi Code / Codex 等）在
+/// agent 公示的模式（如 Auto / Plan / …）间真实切换。当 Agent 为 Kimi 时，前端模式选择器直接
+/// 驱动此命令，复用 Kimi 自身的模式切换语义，绝不本地伪造。
+///
+/// 与 ai_set_session_config_option 同构地委托给 Tauri 托管的 AcpRuntime：线程归属哪个后端宿主
+/// 对命令层透明，由 runtime 向全部已建立宿主广播下发。两字段先行空白校验；返回是否命中某已绑定
+/// 会话——false 表示无匹配（多为会话尚未建立/已结束的良性竞态，命令层不视作错误）。
+#[tauri::command]
+#[specta::specta]
+pub async fn ai_set_session_mode(
+    app: AppHandle,
+    payload: AiSetSessionModeRequest,
+) -> Result<bool, String> {
+    let thread_id = payload.thread_id.trim();
+    if thread_id.is_empty() {
+        return Err("AI_SET_SESSION_MODE_INVALID: threadId 不能为空。".to_string());
+    }
+    let mode_id = payload.mode_id.trim();
+    if mode_id.is_empty() {
+        return Err("AI_SET_SESSION_MODE_INVALID: modeId 不能为空。".to_string());
+    }
+
+    use tauri::Manager as _;
+    let applied = app
+        .state::<crate::acp::AcpRuntime>()
+        .set_session_mode(thread_id, mode_id)
+        .await
+        .map_err(|error| format!("AI_SET_SESSION_MODE_FAILED: {error}"))?;
+    Ok(applied)
+}
+
+/// 取某线程会话建立时 agent 公示的可用模式清单（ACP session/new 的 NewSessionResponse.modes
+/// 原样 JSON：SessionModeState = currentModeId + availableModes[]），供前端模式选择器在会话建立
+/// 后填充候选项并高亮当前模式（默认即 agent 公示的 currentModeId，如 Kimi 的 Auto）。
+///
+/// 与 ai_get_session_config_options 同构地委托给 Tauri 托管的 AcpRuntime：由 runtime 向全部已
+/// 建立宿主查询并返回首个命中。thread_id 先行空白校验；返回 None 表示尚无该线程会话或 agent 未
+/// 公示模式（前端据此回退内置模式）。modes 为最小透传的原样 JSON（导出 TS 为 unknown）。
+#[tauri::command]
+#[specta::specta]
+pub fn ai_get_session_modes(
+    app: AppHandle,
+    payload: AiGetSessionModesRequest,
+) -> Result<Option<AiSessionModesPayload>, String> {
+    let thread_id = payload.thread_id.trim();
+    if thread_id.is_empty() {
+        return Err("AI_GET_SESSION_MODES_INVALID: threadId 不能为空。".to_string());
+    }
+
+    use tauri::Manager as _;
+    let modes = app
+        .state::<crate::acp::AcpRuntime>()
+        .session_modes(thread_id)
+        .map(|modes| AiSessionModesPayload { modes });
+    Ok(modes)
 }
 
 #[tauri::command]
