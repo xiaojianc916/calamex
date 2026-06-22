@@ -1,151 +1,144 @@
-// scripts/c1-1-remove-dead-aistream.mjs
-// C1.1：删除 useAiAssistant.ts 中已死的旧 aiStream / activeAssistantMessage 簇。
-// 行为等价：activeAssistantMessage / activeAssistantBaseMessages 从未被赋非空值，
-// syncActiveAssistantMessage 永远早退、其 watch 空转、stopCurrentRequest 的对应分支永不进入。
-// 用法：node scripts/c1-1-remove-dead-aistream.mjs        (dry-run，仅报告命中)
-//      node scripts/c1-1-remove-dead-aistream.mjs --apply (写回，保留原文件 EOL)
+// scripts/c1-2-collapse-display-messages.mjs
+// C1.2：messages 读写真源收敛到权威 activeMessages，删除 displayMessages 影子缓冲 +
+// 同步 watch + syncDisplayMessagesFromActiveThread。行为等价（sync watch 本就把二者恒等镜像）。
+// 用法：node scripts/c1-2-collapse-display-messages.mjs        (dry-run)
+//      node scripts/c1-2-collapse-display-messages.mjs --apply
 import { readFileSync, writeFileSync } from 'node:fs';
 
 const APPLY = process.argv.includes('--apply');
-const L = (...lines) => lines.join('\n'); // 用 \n 拼行，规避换行转义坑
-
 const FILE = 'src/composables/ai/useAiAssistant.ts';
-
-const replacements = [
-  // 1) 删 useAiStream 导入
-  {
-    find: L(
-      "import { useAiAgentPlan } from '@/composables/ai/useAiAgentPlan';",
-      "import { useAiStream } from '@/composables/ai/useAiStream';",
-    ),
-    to: L("import { useAiAgentPlan } from '@/composables/ai/useAiAgentPlan';"),
-  },
-  // 2) 删 stream 模块里已不再使用的 mapStreamStatus 命名导入
-  {
-    find: L('  isAiEditOperationEntry,', '  mapStreamStatus,', '  mapToolConfirmationDecisionToSidecarDecision,'),
-    to: L('  isAiEditOperationEntry,', '  mapToolConfirmationDecisionToSidecarDecision,'),
-  },
-  // 3) 删两个从未被赋非空值的 ref 声明
-  {
-    find: L(
-      '  const activeStreamResolve = ref<(() => void) | null>(null);',
-      '  const activeAssistantMessage = ref<IAiChatMessage | null>(null);',
-      '  const activeAssistantBaseMessages = shallowRef<IAiChatMessage[]>([]);',
-      '  const activeSidecarAgentSession = ref<IAiPersistedSidecarAgentSession | null>(null);',
-    ),
-    to: L(
-      '  const activeStreamResolve = ref<(() => void) | null>(null);',
-      '  const activeSidecarAgentSession = ref<IAiPersistedSidecarAgentSession | null>(null);',
-    ),
-  },
-  // 4) 删 aiStream 实例声明
-  {
-    find: L('  const aiStream = useAiStream();', '  const agentPlan = useAiAgentPlan();'),
-    to: L('  const agentPlan = useAiAgentPlan();'),
-  },
-  // 5) 删 syncActiveAssistantMessage 函数 + 其 watch（整段空转）
-  {
-    find: L(
-      '  const { refreshSidecarChangedDocuments } = useSidecarChangedDocumentRefresh();',
-      '',
-      '  const syncActiveAssistantMessage = (): void => {',
-      '    const current = activeAssistantMessage.value;',
-      '',
-      '    if (!current) {',
-      '      return;',
-      '    }',
-      '',
-      '    current.content = aiStream.content.value;',
-      '    current.stream = {',
-      '      ...current.stream,',
-      '      status: mapStreamStatus(aiStream.status.value),',
-      '    };',
-      '',
-      '    messages.value = [...activeAssistantBaseMessages.value, { ...current }];',
-      '  };',
-      '',
-      '  watch(',
-      '    () => [aiStream.content.value, aiStream.status.value] as const,',
-      '    () => {',
-      '      syncActiveAssistantMessage();',
-      '    },',
-      "    { flush: 'sync' },",
-      '  );',
-      '',
-      '  const resolveActiveAgentPatchTarget = (): IActiveAgentPatchTarget | null => {',
-    ),
-    to: L(
-      '  const { refreshSidecarChangedDocuments } = useSidecarChangedDocumentRefresh();',
-      '',
-      '  const resolveActiveAgentPatchTarget = (): IActiveAgentPatchTarget | null => {',
-    ),
-  },
-  // 6) 删 stopCurrentRequest 里永不进入的 aiStream / activeAssistantMessage 分支
-  {
-    find: L(
-      '    activeStreamResolve.value?.();',
-      '    activeStreamResolve.value = null;',
-      '',
-      '    aiStream.stop();',
-      '',
-      '    if (activeAssistantMessage.value) {',
-      '      activeAssistantMessage.value.stream = {',
-      '        ...activeAssistantMessage.value.stream,',
-      "        status: 'cancelled',",
-      '      };',
-      '      activeAssistantMessage.value.content = aiStream.content.value;',
-      '',
-      '      messages.value = [...activeAssistantBaseMessages.value, { ...activeAssistantMessage.value }];',
-      '    }',
-      '',
-      '    if (activeAgentMessageId.value) {',
-    ),
-    to: L(
-      '    activeStreamResolve.value?.();',
-      '    activeStreamResolve.value = null;',
-      '',
-      '    if (activeAgentMessageId.value) {',
-    ),
-  },
-  // 7) 删 resetConversationUiState 里对应的两行置空
-  {
-    find: L(
-      '    clearAttachedFiles();',
-      "    errorMessage.value = '';",
-      '    activeAssistantMessage.value = null;',
-      '    activeAssistantBaseMessages.value = [];',
-      '    activeAgentMessageId.value = null;',
-    ),
-    to: L(
-      '    clearAttachedFiles();',
-      "    errorMessage.value = '';",
-      '    activeAgentMessageId.value = null;',
-    ),
-  },
-];
+const L = (...lines) => lines.join('\n');
 
 const raw = readFileSync(FILE, 'utf8');
 const crlf = raw.includes('\r\n');
 let text = crlf ? raw.replace(/\r\n/g, '\n') : raw;
 
-// 第一遍：逐项校验「恰好命中 1 次」
-for (const [i, r] of replacements.entries()) {
-  const n = text.split(r.find).length - 1;
-  if (n !== 1) {
-    console.error(`✗ 替换 #${i + 1} 期望命中 1 次，实际 ${n} 次。已中止，未写入。`);
-    process.exit(1);
-  }
+function findUnique(anchor, label) {
+  const i = text.indexOf(anchor);
+  if (i < 0) { console.error(`✗ [${label}] 未找到锚点`); process.exit(1); }
+  if (text.indexOf(anchor, i + 1) >= 0) { console.error(`✗ [${label}] 锚点不唯一`); process.exit(1); }
+  return i;
 }
-// 第二遍：原子替换
-for (const r of replacements) {
-  text = text.replace(r.find, () => r.to);
+function replaceOnce(label, find, to) {
+  const n = text.split(find).length - 1;
+  if (n !== 1) { console.error(`✗ [${label}] 期望命中 1，实际 ${n}`); process.exit(1); }
+  text = text.replace(find, () => to);
+  console.log(`✓ [${label}]`);
+}
+function replaceRegion(label, startAnchor, endAnchorExclusive, newText) {
+  const s = findUnique(startAnchor, `${label} start`);
+  const e = findUnique(endAnchorExclusive, `${label} end`);
+  if (e <= s) { console.error(`✗ [${label}] end 在 start 之前`); process.exit(1); }
+  text = text.slice(0, s) + newText + text.slice(e);
+  console.log(`✓ [${label}] 区域替换`);
+}
+function removeAll(label, find, expected) {
+  const n = text.split(find).length - 1;
+  if (n !== expected) { console.error(`✗ [${label}] 期望移除 ${expected}，实际 ${n}`); process.exit(1); }
+  text = text.split(find).join('');
+  console.log(`✓ [${label}] 移除 ${n} 处`);
+}
+function replaceOptional(label, find, to) {
+  const n = text.split(find).length - 1;
+  if (n > 1) { console.error(`✗ [${label}] 期望 0/1，实际 ${n}`); process.exit(1); }
+  if (n === 1) { text = text.replace(find, () => to); console.log(`✓ [${label}]`); }
+  else { console.log(`• [${label}] 未命中（注释疑似变体，跳过，不影响结构）`); }
 }
 
+// 1) 删除 displayMessages 影子 ref 声明（含整行换行）
+replaceOnce(
+  'R1 删 displayMessages 声明',
+  '  const displayMessages = shallowRef<IAiChatMessage[]>(unref(conversationStore.activeMessages));\n',
+  '',
+);
+
+// 2) commitDisplayMessagesToStore 改为读真源 messages.value
+replaceOnce(
+  'R2a commit.replaceThreadMessages',
+  '      conversationStore.replaceThreadMessages(threadId, displayMessages.value);',
+  '      conversationStore.replaceThreadMessages(threadId, messages.value);',
+);
+replaceOnce(
+  'R2b commit.replaceMessages',
+  '    conversationStore.replaceMessages(displayMessages.value);',
+  '    conversationStore.replaceMessages(messages.value);',
+);
+
+// 3) 整段删除 syncDisplayMessagesFromActiveThread 函数（含其内带引号的注释，靠唯一锚点切除，不复刻注释字节）
+replaceRegion(
+  'A 删 sync 函数',
+  '  const syncDisplayMessagesFromActiveThread = (): void => {',
+  '  const messages = computed<IAiChatMessage[]>({',
+  '',
+);
+
+// 4) 整段替换 messages computed + 同步 watch -> 直读 activeMessages、直写 store，删 watch
+replaceRegion(
+  'B 重写 messages computed 并删 watch',
+  '  const messages = computed<IAiChatMessage[]>({',
+  '  const historyThreads = computed(() => unref(conversationStore.conversationHistoryThreads));',
+  L(
+    '  const messages = computed<IAiChatMessage[]>({',
+    '    // 读真源 = 权威 entries（activeMessages）；影子缓冲已退役。',
+    '    get: () => unref(conversationStore.activeMessages),',
+    '    set: (nextMessages: IAiChatMessage[]) => {',
+    '      // 写真源单写者 = 权威 store，无条件提交（reduce / overlay 幂等）。',
+    '      const activeThreadId = unref(conversationStore.activeThreadId);',
+    '      if (activeThreadId) {',
+    '        conversationStore.replaceThreadMessages(activeThreadId, nextMessages);',
+    '      } else {',
+    '        conversationStore.replaceMessages(nextMessages);',
+    '      }',
+    '    },',
+    '  });',
+    '',
+    '',
+  ),
+);
+
+// 5) deleteConversation：删掉 else 分支里的 sync 调用（连同空 else）
+replaceOnce(
+  'C deleteConversation else',
+  L(
+    '    if (wasActiveThread) {',
+    '      resetConversationUiState();',
+    '      agentPlan.resetPlan();',
+    '    } else {',
+    '      syncDisplayMessagesFromActiveThread();',
+    '    }',
+  ),
+  L(
+    '    if (wasActiveThread) {',
+    '      resetConversationUiState();',
+    '      agentPlan.resetPlan();',
+    '    }',
+  ),
+);
+
+// 6) 移除其余所有 syncDisplayMessagesFromActiveThread() 调用（三种缩进，按缩进精确计数）
+removeAll('D8 8空格调用', '\n        syncDisplayMessagesFromActiveThread();', 1); // sendMessage plan finally
+removeAll('D6 6空格调用', '\n      syncDisplayMessagesFromActiveThread();', 6); // 5 个 sidecar finally + sendMessage 错误分支
+removeAll('D4 4空格调用', '\n    syncDisplayMessagesFromActiveThread();', 1);   // stopCurrentRequest
+
+// 7) 顺手修正 commit 函数里那条引用 displayMessages 的注释（best-effort，不命中也不影响结构）
+replaceOptional(
+  'E 注释修正',
+  '    // displayMessages 恒为「当前活动线程」的投影；回合线程已被切到后台时，绝不能用活动线程的显示缓冲',
+  '    // 读真源 = 权威 entries（messages getter）；回合线程已被切到后台时，绝不能用活动线程内容覆盖后台线程',
+);
+
+// 8) 终检：影子缓冲 / 同步函数必须彻底消失
+for (const pat of ['displayMessages.value', 'const displayMessages', 'syncDisplayMessagesFromActiveThread']) {
+  const c = text.split(pat).length - 1;
+  if (c !== 0) { console.error(`✗ 终检失败：仍残留 ${pat} ×${c}`); process.exit(1); }
+}
+console.log('✓ 终检通过：displayMessages.value / const displayMessages / syncDisplayMessagesFromActiveThread 均为 0');
+
 if (!APPLY) {
-  console.log('✓ dry-run：7 处替换均恰好命中 1 次。加 --apply 写回。');
+  console.log('\n✓ dry-run 全部通过。加 --apply 写回。');
   process.exit(0);
 }
 
 const out = crlf ? text.replace(/\n/g, '\r\n') : text;
 writeFileSync(FILE, out, 'utf8');
-console.log(`✓ 已写回 ${FILE}（保留原 EOL：${crlf ? 'CRLF' : 'LF'}）。`);
+console.log(`\n✓ 已写回 ${FILE}（保留原 EOL：${crlf ? 'CRLF' : 'LF'}）。`);

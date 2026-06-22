@@ -259,7 +259,6 @@ export const useAiAssistant = (options: IUseAiAssistantOptions) => {
   const activeStreamResolve = ref<(() => void) | null>(null);
   const activeSidecarAgentSession = ref<IAiPersistedSidecarAgentSession | null>(null);
   const activeBufferedThreadId = ref<string | null>(null);
-  const displayMessages = shallowRef<IAiChatMessage[]>(unref(conversationStore.activeMessages));
 
   const { maybeGenerateConversationTitle } = useAiConversationTitles({ conversationStore });
 
@@ -309,7 +308,7 @@ export const useAiAssistant = (options: IUseAiAssistantOptions) => {
   const commitDisplayMessagesToStore = (
     threadId: string | null = unref(conversationStore.activeThreadId),
   ): void => {
-    // displayMessages 恒为「当前活动线程」的投影；回合线程已被切到后台时，绝不能用活动线程的显示缓冲
+    // 读真源 = 权威 entries（messages getter）；回合线程已被切到后台时，绝不能用活动线程内容覆盖后台线程
     // 覆盖该后台线程（否则清空后台会话）。后台线程的最终内容由 updateLiveThreadFromSidecarEvents
     // 经 reduce 直接写入其权威 entries。
     const activeThreadId = unref(conversationStore.activeThreadId);
@@ -317,11 +316,11 @@ export const useAiAssistant = (options: IUseAiAssistantOptions) => {
       return;
     }
     if (threadId) {
-      conversationStore.replaceThreadMessages(threadId, displayMessages.value);
+      conversationStore.replaceThreadMessages(threadId, messages.value);
       return;
     }
 
-    conversationStore.replaceMessages(displayMessages.value);
+    conversationStore.replaceMessages(messages.value);
   };
 
   const clearActiveBufferedThread = (threadId: string | null): void => {
@@ -485,30 +484,19 @@ export const useAiAssistant = (options: IUseAiAssistantOptions) => {
     }
   };
 
-  const syncDisplayMessagesFromActiveThread = (): void => {
-    // ④.1 §D（统一）：messages 读真源 = 权威 entries，收尾无条件回读，杜绝把流式期\"冻结\"的
-    // 空缓冲当成最终态（即回复完成后内容消失的根因）。最终落库仍由 commitDisplayMessagesToStore 负责。
-    displayMessages.value = unref(conversationStore.activeMessages);
-  };
-
   const messages = computed<IAiChatMessage[]>({
-    get: () => displayMessages.value,
+    // 读真源 = 权威 entries（activeMessages）；影子缓冲已退役。
+    get: () => unref(conversationStore.activeMessages),
     set: (nextMessages: IAiChatMessage[]) => {
-      displayMessages.value = nextMessages;
-      // ④.1 §D（统一）：写真源单写者 = 权威 store，无条件提交（reduce/overlay 幂等）。
-      commitDisplayMessagesToStore();
+      // 写真源单写者 = 权威 store，无条件提交（reduce / overlay 幂等）。
+      const activeThreadId = unref(conversationStore.activeThreadId);
+      if (activeThreadId) {
+        conversationStore.replaceThreadMessages(activeThreadId, nextMessages);
+      } else {
+        conversationStore.replaceMessages(nextMessages);
+      }
     },
   });
-
-  watch(
-    () => unref(conversationStore.activeMessages),
-    (nextMessages) => {
-      // ④.1 §D（统一）：权威 entries 即唯一读真源，活动线程一变就实时回灌 displayMessages，
-      // 不再因 buffered 闸门在流式期\"冻结\"显示缓冲（回复完成后内容消失的根因）。
-      displayMessages.value = nextMessages;
-    },
-    { flush: 'sync' },
-  );
 
   const historyThreads = computed(() => unref(conversationStore.conversationHistoryThreads));
   const activeConversationId = computed(() => unref(conversationStore.activeThreadId));
@@ -1368,7 +1356,6 @@ export const useAiAssistant = (options: IUseAiAssistantOptions) => {
       commitDisplayMessagesToStore(targetThreadId);
       clearActiveBufferedThread(targetThreadId);
       isSending.value = false;
-      syncDisplayMessagesFromActiveThread();
     }
   };
 
@@ -1455,7 +1442,6 @@ export const useAiAssistant = (options: IUseAiAssistantOptions) => {
       commitDisplayMessagesToStore(session.threadId);
       clearActiveBufferedThread(session.threadId);
       isSending.value = false;
-      syncDisplayMessagesFromActiveThread();
     }
   };
 
@@ -1542,7 +1528,6 @@ export const useAiAssistant = (options: IUseAiAssistantOptions) => {
       commitDisplayMessagesToStore(session.threadId);
       clearActiveBufferedThread(session.threadId);
       isSending.value = false;
-      syncDisplayMessagesFromActiveThread();
     }
   };
   // -----------------------------------------------------------------------
@@ -1890,7 +1875,6 @@ export const useAiAssistant = (options: IUseAiAssistantOptions) => {
       commitDisplayMessagesToStore(targetThreadId);
       clearActiveBufferedThread(targetThreadId);
       isSending.value = false;
-      syncDisplayMessagesFromActiveThread();
     }
   };
 
@@ -2017,7 +2001,6 @@ export const useAiAssistant = (options: IUseAiAssistantOptions) => {
       commitDisplayMessagesToStore(targetThreadId);
       clearActiveBufferedThread(targetThreadId);
       isSending.value = false;
-      syncDisplayMessagesFromActiveThread();
     }
   };
 
@@ -2124,7 +2107,6 @@ export const useAiAssistant = (options: IUseAiAssistantOptions) => {
       commitDisplayMessagesToStore(titleThreadId);
       clearActiveBufferedThread(titleThreadId);
       isSending.value = false;
-      syncDisplayMessagesFromActiveThread();
       return;
     }
 
@@ -2215,7 +2197,6 @@ export const useAiAssistant = (options: IUseAiAssistantOptions) => {
         commitDisplayMessagesToStore(titleThreadId);
         clearActiveBufferedThread(titleThreadId);
         isSending.value = false;
-        syncDisplayMessagesFromActiveThread();
         if (planSucceeded) {
           void maybeGenerateConversationTitle(titleThreadId);
         }
@@ -2282,8 +2263,6 @@ export const useAiAssistant = (options: IUseAiAssistantOptions) => {
     if (wasActiveThread) {
       resetConversationUiState();
       agentPlan.resetPlan();
-    } else {
-      syncDisplayMessagesFromActiveThread();
     }
 
     return true;
@@ -2569,7 +2548,6 @@ export const useAiAssistant = (options: IUseAiAssistantOptions) => {
     commitDisplayMessagesToStore(targetThreadId);
     clearActiveBufferedThread(targetThreadId);
     isSending.value = false;
-    syncDisplayMessagesFromActiveThread();
     errorMessage.value = '';
   };
 
