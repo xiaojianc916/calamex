@@ -693,15 +693,31 @@ pub fn spawn_acp_client(
                       _cx: ConnectionTo<Agent>| {
                     let resolver = resolver.clone();
                     async move {
-                        let outcome = match resolver(req).await {
-                            PermissionDecision::Selected(option_id) => {
-                                RequestPermissionOutcome::Selected(SelectedPermissionOutcome::new(
-                                    option_id,
-                                ))
+                        // 带外作答(根因修复):审批是人类决策,可阻塞任意长时间。SDK 单入站分发循环
+                        // 按序 await 每个处理器 future,若在此内联 resolver(req).await,整个入站循环会被
+                        // 人类卡死——连同同一回合 Prompt 的 StopReason 响应都无法被路由回去,使命令循环的
+                        // block_task().await 永不返回,后续命令(含带外 session/cancel 触发的 Cancelled
+                        // 响应)永久排队 → 必须重启。把「等裁决 + 回投响应」搬进独立任务,处理器立即返回:
+                        // Responder 独占响应通道(SDK typed.rs/handlers.rs:返回 Handled::Yes 不会自动
+                        // 应答,响应仅由 responder.respond 发出),延迟到独立任务里应答是安全的,且入站循环
+                        // 瞬间空闲,可继续路由 Prompt / Cancelled 响应。
+                        tokio::spawn(async move {
+                            let outcome = match resolver(req).await {
+                                PermissionDecision::Selected(option_id) => {
+                                    RequestPermissionOutcome::Selected(
+                                        SelectedPermissionOutcome::new(option_id),
+                                    )
+                                }
+                                PermissionDecision::Cancelled => {
+                                    RequestPermissionOutcome::Cancelled
+                                }
+                            };
+                            if let Err(error) =
+                                responder.respond(RequestPermissionResponse::new(outcome))
+                            {
+                                log::warn!("acp permission responder failed: {error}");
                             }
-                            PermissionDecision::Cancelled => RequestPermissionOutcome::Cancelled,
-                        };
-                        responder.respond(RequestPermissionResponse::new(outcome))?;
+                        });
                         Ok::<(), agent_client_protocol::Error>(())
                     }
                 },
