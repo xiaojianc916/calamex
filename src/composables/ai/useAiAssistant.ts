@@ -305,24 +305,6 @@ export const useAiAssistant = (options: IUseAiAssistantOptions) => {
     });
   }
 
-  const commitDisplayMessagesToStore = (
-    threadId: string | null = unref(conversationStore.activeThreadId),
-  ): void => {
-    // 读真源 = 权威 entries（messages getter）；回合线程已被切到后台时，绝不能用活动线程内容覆盖后台线程
-    // 覆盖该后台线程（否则清空后台会话）。后台线程的最终内容由 updateLiveThreadFromSidecarEvents
-    // 经 reduce 直接写入其权威 entries。
-    const activeThreadId = unref(conversationStore.activeThreadId);
-    if (threadId && threadId !== activeThreadId) {
-      return;
-    }
-    if (threadId) {
-      conversationStore.replaceThreadMessages(threadId, messages.value);
-      return;
-    }
-
-    conversationStore.replaceMessages(messages.value);
-  };
-
   const clearActiveBufferedThread = (threadId: string | null): void => {
     if (activeBufferedThreadId.value === threadId) {
       activeBufferedThreadId.value = null;
@@ -1276,7 +1258,6 @@ export const useAiAssistant = (options: IUseAiAssistantOptions) => {
     };
 
     messages.value = [...visibleMessages, placeholderMessage];
-    commitDisplayMessagesToStore(targetThreadId);
     activeAgentMessageId.value = assistantMessageId;
     activeAbortController.value = new AbortController();
     const sidecarSessionId = `sidecar:${assistantMessageId}`;
@@ -1353,7 +1334,6 @@ export const useAiAssistant = (options: IUseAiAssistantOptions) => {
       unlistenSidecarStream?.();
       activeAbortController.value = null;
       activeAgentMessageId.value = null;
-      commitDisplayMessagesToStore(targetThreadId);
       clearActiveBufferedThread(targetThreadId);
       isSending.value = false;
     }
@@ -1439,7 +1419,6 @@ export const useAiAssistant = (options: IUseAiAssistantOptions) => {
       unlistenSidecarStream?.();
       activeAgentMessageId.value = null;
       activeSidecarAgentSession.value = null;
-      commitDisplayMessagesToStore(session.threadId);
       clearActiveBufferedThread(session.threadId);
       isSending.value = false;
     }
@@ -1525,7 +1504,6 @@ export const useAiAssistant = (options: IUseAiAssistantOptions) => {
       unlistenSidecarStream?.();
       activeAgentMessageId.value = null;
       activeSidecarAgentSession.value = null;
-      commitDisplayMessagesToStore(session.threadId);
       clearActiveBufferedThread(session.threadId);
       isSending.value = false;
     }
@@ -1797,7 +1775,6 @@ export const useAiAssistant = (options: IUseAiAssistantOptions) => {
     };
 
     messages.value = [...visibleMessages, placeholderMessage];
-    commitDisplayMessagesToStore(targetThreadId);
     activeAgentMessageId.value = assistantMessageId;
     activeAbortController.value = new AbortController();
     const requestAbortController = activeAbortController.value;
@@ -1857,7 +1834,6 @@ export const useAiAssistant = (options: IUseAiAssistantOptions) => {
           streamStatus: 'completed',
           finalAnswerStarted: hasMeaningfulAssistantText(currentMessage?.content),
         });
-        commitDisplayMessagesToStore(targetThreadId);
       }
 
       if (!errorMessage.value) {
@@ -1872,7 +1848,6 @@ export const useAiAssistant = (options: IUseAiAssistantOptions) => {
       unlistenSidecarStream?.();
       activeAbortController.value = null;
       activeAgentMessageId.value = null;
-      commitDisplayMessagesToStore(targetThreadId);
       clearActiveBufferedThread(targetThreadId);
       isSending.value = false;
     }
@@ -1904,7 +1879,6 @@ export const useAiAssistant = (options: IUseAiAssistantOptions) => {
     };
 
     messages.value = [...visibleMessages, placeholderMessage];
-    commitDisplayMessagesToStore(targetThreadId);
     activeAgentMessageId.value = assistantMessageId;
     activeAbortController.value = new AbortController();
     const requestAbortController = activeAbortController.value;
@@ -1998,7 +1972,6 @@ export const useAiAssistant = (options: IUseAiAssistantOptions) => {
       activeStreamId.value = null;
       activeAbortController.value = null;
       activeAgentMessageId.value = null;
-      commitDisplayMessagesToStore(targetThreadId);
       clearActiveBufferedThread(targetThreadId);
       isSending.value = false;
     }
@@ -2045,7 +2018,6 @@ export const useAiAssistant = (options: IUseAiAssistantOptions) => {
     } catch (error) {
       errorMessage.value = toErrorMessage(error, '恢复回滚检查点失败');
     } finally {
-      commitDisplayMessagesToStore();
       restoringCheckpointId.value = null;
     }
   };
@@ -2104,7 +2076,6 @@ export const useAiAssistant = (options: IUseAiAssistantOptions) => {
           references: [],
         },
       ];
-      commitDisplayMessagesToStore(titleThreadId);
       clearActiveBufferedThread(titleThreadId);
       isSending.value = false;
       return;
@@ -2194,7 +2165,6 @@ export const useAiAssistant = (options: IUseAiAssistantOptions) => {
           },
         ];
       } finally {
-        commitDisplayMessagesToStore(titleThreadId);
         clearActiveBufferedThread(titleThreadId);
         isSending.value = false;
         if (planSucceeded) {
@@ -2451,7 +2421,6 @@ export const useAiAssistant = (options: IUseAiAssistantOptions) => {
           : item,
       );
       fileRollbackPrompt.value = null;
-      commitDisplayMessagesToStore();
     } catch (error) {
       errorMessage.value = toErrorMessage(error, '回滚文件变更失败');
     } finally {
@@ -2503,7 +2472,6 @@ export const useAiAssistant = (options: IUseAiAssistantOptions) => {
             }
           : item,
       );
-      commitDisplayMessagesToStore();
     } catch (error) {
       errorMessage.value = toErrorMessage(error, '更新 AED Pin 状态失败');
     } finally {
@@ -2545,7 +2513,6 @@ export const useAiAssistant = (options: IUseAiAssistantOptions) => {
 
     clearSidecarToolConfirmation();
     clearSidecarUserQuestion();
-    commitDisplayMessagesToStore(targetThreadId);
     clearActiveBufferedThread(targetThreadId);
     isSending.value = false;
     errorMessage.value = '';

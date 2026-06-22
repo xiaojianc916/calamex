@@ -4,8 +4,8 @@ import { useVirtualizer } from '@tanstack/vue-virtual';
 import { useTimeoutFn } from '@vueuse/core';
 import type { MarkstreamVirtualMetrics } from 'markstream-vue';
 import {
-  computed,
   type ComponentPublicInstance,
+  computed,
   nextTick,
   onBeforeUnmount,
   provide,
@@ -92,6 +92,10 @@ const VIRTUAL_SCROLLER_MIN_ITEM_SIZE = 96;
 const VIRTUAL_SCROLLER_OVERSCAN = 12;
 // 贴底判定阈值:同时作为 scrollEndThreshold 传给虚拟器,isAtEnd()/followOnAppend 均用它。
 const BOTTOM_FOLLOW_THRESHOLD_PX = 56;
+// 用户手动展开/收起后,顶部锚定的“空闲去抖”时长:高度连续这么久不再变化即视为动画结束。
+const USER_TOGGLE_ANCHOR_IDLE_MS = 180;
+// 顶部锚定硬上限:无论高度是否仍在变,最多滞留这么久就恢复 end 锚定(兜底,避免影响流式钉底)。
+const USER_TOGGLE_ANCHOR_MAX_MS = 1000;
 const SCROLL_STATE_EMIT_THROTTLE_MS = 100;
 const SCROLLBAR_ACTIVE_MS = 900;
 const AI_MARKDOWN_VIRTUAL_MEASUREMENT_KEY = 'calamex-ai-markdown:v1';
@@ -99,6 +103,13 @@ const AI_MARKDOWN_VIRTUAL_MEASUREMENT_KEY = 'calamex-ai-markdown:v1';
 const scrollerRef = ref<HTMLElement | null>(null);
 const isScrollbarActive = ref(false);
 const showScrollButton = ref(false);
+
+// 锚定模式:聊天默认 'end'(末端锚定);用户手动展开/收起某行的“那一次”高度变化期间,
+// 临时切到 'start'(顶部锚定),保持被点击行的视觉位置不动、内容向下展开,而不是被 end
+// 锚定把上方内容(含“Thinking”标题)顶出视口。动画结束后恢复 'end'。
+const anchorMode = ref<'start' | 'end'>('end');
+let restoreEndAnchorTimer: ReturnType<typeof setTimeout> | null = null;
+let anchorWatchdogTimer: ReturnType<typeof setTimeout> | null = null;
 
 // 滚动条激活后 SCROLLBAR_ACTIVE_MS 自动隐藏;immediate: false 仅在 activateScrollbar 时 start。
 const { start: scheduleScrollbarHide } = useTimeoutFn(
@@ -207,7 +218,7 @@ const virtualizerOptions = computed(() => ({
   estimateSize: () => VIRTUAL_SCROLLER_MIN_ITEM_SIZE,
   overscan: VIRTUAL_SCROLLER_OVERSCAN,
   getItemKey: (index: number) => virtualItems.value[index]?.id ?? index,
-  anchorTo: 'end' as const,
+  anchorTo: anchorMode.value,
   followOnAppend: true,
   scrollEndThreshold: BOTTOM_FOLLOW_THRESHOLD_PX,
 }));
@@ -215,6 +226,51 @@ const virtualizerOptions = computed(() => ({
 const chatVirtualizer = useVirtualizer<HTMLElement, HTMLElement>(virtualizerOptions);
 
 const totalSize = computed(() => chatVirtualizer.value.getTotalSize());
+
+const clearAnchorRestoreTimers = (): void => {
+  if (restoreEndAnchorTimer !== null) {
+    clearTimeout(restoreEndAnchorTimer);
+    restoreEndAnchorTimer = null;
+  }
+  if (anchorWatchdogTimer !== null) {
+    clearTimeout(anchorWatchdogTimer);
+    anchorWatchdogTimer = null;
+  }
+};
+
+const restoreEndAnchor = (): void => {
+  clearAnchorRestoreTimers();
+  anchorMode.value = 'end';
+};
+
+// 切到顶部锚定,并启动“看门狗”:无论后续高度是否还在变,最多 USER_TOGGLE_ANCHOR_MAX_MS
+// 后一定恢复 end 锚定,避免在 'start' 模式滞留影响后续流式钉底。
+const beginUserToggleAnchor = (): void => {
+  anchorMode.value = 'start';
+  clearAnchorRestoreTimers();
+  anchorWatchdogTimer = setTimeout(restoreEndAnchor, USER_TOGGLE_ANCHOR_MAX_MS);
+};
+
+// 用户点开/收起某行 → 先沿用既有展开状态逻辑,再把这一次高度变化交给顶部锚定处理。
+const handleEntryToggle = (entry: TAiThreadEntry, expanded: boolean): void => {
+  entryExpansion.setExpanded(entry, expanded);
+  beginUserToggleAnchor();
+};
+
+// 'start' 锚定期间:disclosure 展开/收起是 motion-v 的高度动画,行高逐帧变化会带动
+// totalSize 变化。这里用“空闲去抖”——每次 totalSize 变化都重置恢复计时器,直到高度连续
+// USER_TOGGLE_ANCHOR_IDLE_MS 不再变化(动画结束)才恢复 end 锚定;看门狗作为硬上限兜底。
+watch(totalSize, () => {
+  if (anchorMode.value !== 'start') {
+    return;
+  }
+
+  if (restoreEndAnchorTimer !== null) {
+    clearTimeout(restoreEndAnchorTimer);
+  }
+
+  restoreEndAnchorTimer = setTimeout(restoreEndAnchor, USER_TOGGLE_ANCHOR_IDLE_MS);
+});
 
 const renderRows = computed(() => {
   const rows = chatVirtualizer.value.getVirtualItems();
@@ -395,6 +451,7 @@ watch(
 
 onBeforeUnmount(() => {
   cancelPendingMarkdownHeightReconcile();
+  clearAnchorRestoreTimers();
 });
 </script>
 
@@ -442,7 +499,7 @@ onBeforeUnmount(() => {
                 :plan-details="planDetails"
                 :reverting-changed-files-summary-id="revertingChangedFilesSummaryId"
                 :pinning-changed-files-summary-id="pinningChangedFilesSummaryId"
-                @update:open="entryExpansion.setExpanded(item.entry, $event)"
+                @update:open="handleEntryToggle(item.entry, $event)"
                 @changed-files-rollback="handleChangedFilesRollback"
                 @changed-files-pin="handleChangedFilesPin"
                 @plan-approve="emit('planApprove')"
