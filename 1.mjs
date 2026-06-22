@@ -1,206 +1,151 @@
-#!/usr/bin/env node
-// fix-reasoning-roundtrip.mjs —— 让 entries <-> messages 往返对 thought 无损。
-// 用法: node fix-reasoning-roundtrip.mjs           (干跑)
-//       node fix-reasoning-roundtrip.mjs --apply   (写入)
+// scripts/c1-1-remove-dead-aistream.mjs
+// C1.1：删除 useAiAssistant.ts 中已死的旧 aiStream / activeAssistantMessage 簇。
+// 行为等价：activeAssistantMessage / activeAssistantBaseMessages 从未被赋非空值，
+// syncActiveAssistantMessage 永远早退、其 watch 空转、stopCurrentRequest 的对应分支永不进入。
+// 用法：node scripts/c1-1-remove-dead-aistream.mjs        (dry-run，仅报告命中)
+//      node scripts/c1-1-remove-dead-aistream.mjs --apply (写回，保留原文件 EOL)
 import { readFileSync, writeFileSync } from 'node:fs';
+
 const APPLY = process.argv.includes('--apply');
+const L = (...lines) => lines.join('\n'); // 用 \n 拼行，规避换行转义坑
 
-const edits = [
+const FILE = 'src/composables/ai/useAiAssistant.ts';
+
+const replacements = [
+  // 1) 删 useAiStream 导入
   {
-    file: 'src/types/ai/index.ts',
-    replacements: [
-      {
-        find: `export interface IAiChatMessage extends IAiChatMessageWire {
-  patches?: IAiPatchSet[];
-  changedFilesSummary?: IAiAgentPatchSummary;
-  acpToolCalls?: IAiThreadToolCall[];
-}`,
-        to: `export interface IAiChatMessage extends IAiChatMessageWire {
-  patches?: IAiPatchSet[];
-  changedFilesSummary?: IAiAgentPatchSummary;
-  acpToolCalls?: IAiThreadToolCall[];
-  /**
-   * 思维链(reasoning / 思考过程)纯文本:assistant 思考通道(thought chunks)折叠而成,
-   * 仅 UI 状态层使用、绝不发到 IPC(schema parse 时被 strip)。承载 entries <-> messages
-   * 往返中的 thought 通道,使任何经 legacyMessageToEntries / threadEntriesToMessages 的
-   * 回写都不再丢失思考过程(修复「AI 回复结束后思考过程文本/UI 消失」)。
-   */
-  reasoning?: string;
-}`,
-      },
-    ],
+    find: L(
+      "import { useAiAgentPlan } from '@/composables/ai/useAiAgentPlan';",
+      "import { useAiStream } from '@/composables/ai/useAiStream';",
+    ),
+    to: L("import { useAiAgentPlan } from '@/composables/ai/useAiAgentPlan';"),
   },
+  // 2) 删 stream 模块里已不再使用的 mapStreamStatus 命名导入
   {
-    file: 'src/store/aiThread/legacy-adapter.ts',
-    replacements: [
-      {
-        find: `  const assistantChunks: IAiThreadAssistantMessageEntry['chunks'] =
-    message.content.trim().length > 0
-      ? [{ type: 'message', block: { type: 'text', text: message.content } }]
-      : [];`,
-        to: `  // 思维链(thought)与正文(message)是同一条 chunks 流的两种 variant。从 legacy 消息的
-  // reasoning 还原 thought chunk(置于正文之前),使 messages -> entries 不丢思考过程
-  // (与 threadEntriesToMessages 的 assistantChunksToReasoning 对称、无损往返)。
-  const reasoningText = message.reasoning ?? '';
-  const reasoningChunks: IAiThreadAssistantMessageEntry['chunks'] =
-    reasoningText.trim().length > 0
-      ? [{ type: 'thought', block: { type: 'text', text: reasoningText } }]
-      : [];
-  const messageChunks: IAiThreadAssistantMessageEntry['chunks'] =
-    message.content.trim().length > 0
-      ? [{ type: 'message', block: { type: 'text', text: message.content } }]
-      : [];
-  const assistantChunks: IAiThreadAssistantMessageEntry['chunks'] = [
-    ...reasoningChunks,
-    ...messageChunks,
-  ];`,
-      },
-      {
-        find: `function assistantChunksToText(chunks: IAiThreadAssistantChunks): string {
-  return chunks
-    .flatMap((chunk) =>
-      chunk.type === 'message' && chunk.block.type === 'text' ? [chunk.block.text] : [],
-    )
-    .join('');
-}`,
-        to: `function assistantChunksToText(chunks: IAiThreadAssistantChunks): string {
-  return chunks
-    .flatMap((chunk) =>
-      chunk.type === 'message' && chunk.block.type === 'text' ? [chunk.block.text] : [],
-    )
-    .join('');
-}
-
-/**
- * 把 assistant chunks 的思考通道(thought)折叠为纯文本 reasoning(assistantChunksToText 的
- * 思维链对偶)。多段 thought 以空行衔接,对齐渲染层 reasoning 段落拼接,使 entries <-> messages
- * 往返保留思考过程(修复收尾/编辑回写丢失 thought 的 bug)。
- */
-function assistantChunksToReasoning(chunks: IAiThreadAssistantChunks): string {
-  return chunks
-    .flatMap((chunk) =>
-      chunk.type === 'thought' && chunk.block.type === 'text' ? [chunk.block.text] : [],
-    )
-    .join('\\n\\n');
-}`,
-      },
-      {
-        find: `      case 'assistant_message': {
-        const message: IAiChatMessage = {
-          role: 'assistant',
-          id: entry.id,
-          content: assistantChunksToText(entry.chunks),
-          createdAt: entry.createdAt,
-          references: [],
-          ...(pendingToolCalls.length > 0 ? { toolCalls: pendingToolCalls } : {}),`,
-        to: `      case 'assistant_message': {
-        const reasoning = assistantChunksToReasoning(entry.chunks);
-        const message: IAiChatMessage = {
-          role: 'assistant',
-          id: entry.id,
-          content: assistantChunksToText(entry.chunks),
-          createdAt: entry.createdAt,
-          references: [],
-          ...(reasoning.length > 0 ? { reasoning } : {}),
-          ...(pendingToolCalls.length > 0 ? { toolCalls: pendingToolCalls } : {}),`,
-      },
-    ],
+    find: L('  isAiEditOperationEntry,', '  mapStreamStatus,', '  mapToolConfirmationDecisionToSidecarDecision,'),
+    to: L('  isAiEditOperationEntry,', '  mapToolConfirmationDecisionToSidecarDecision,'),
   },
+  // 3) 删两个从未被赋非空值的 ref 声明
   {
-    file: 'src/store/aiThread/legacy-adapter.reverse.spec.ts',
-    replacements: [
-      {
-        find: `    expect(message?.acpToolCalls?.[0]?.id).toBe('acp-1');
-  });
-
-  it('skips non-message entries without throwing', () => {`,
-        to: `    expect(message?.acpToolCalls?.[0]?.id).toBe('acp-1');
-  });
-
-  it('round-trips assistant reasoning(思考过程 thought 通道)', () => {
-    const withReasoning: IAiChatMessage = {
-      role: 'assistant',
-      id: 'a3',
-      content: '正文答案',
-      createdAt: '2026-01-01T00:00:03.000Z',
-      references: [],
-      reasoning: '我先分析再作答',
-    };
-    const entries = legacyMessageToEntries(withReasoning);
-    const assistant = entries.find((e) => e.type === 'assistant_message');
-    expect(assistant?.type).toBe('assistant_message');
-    if (assistant?.type === 'assistant_message') {
-      expect(assistant.chunks.map((c) => c.type)).toEqual(['thought', 'message']);
-    }
-    const [message] = threadEntriesToMessages(entries);
-    expect(message?.reasoning).toBe('我先分析再作答');
-    expect(message?.content).toBe('正文答案');
-  });
-
-  it('skips non-message entries without throwing', () => {`,
-      },
-    ],
+    find: L(
+      '  const activeStreamResolve = ref<(() => void) | null>(null);',
+      '  const activeAssistantMessage = ref<IAiChatMessage | null>(null);',
+      '  const activeAssistantBaseMessages = shallowRef<IAiChatMessage[]>([]);',
+      '  const activeSidecarAgentSession = ref<IAiPersistedSidecarAgentSession | null>(null);',
+    ),
+    to: L(
+      '  const activeStreamResolve = ref<(() => void) | null>(null);',
+      '  const activeSidecarAgentSession = ref<IAiPersistedSidecarAgentSession | null>(null);',
+    ),
   },
+  // 4) 删 aiStream 实例声明
   {
-    file: 'src/store/aiThread/legacy-adapter.spec.ts',
-    replacements: [
-      {
-        find: `    const assistant = entries[1] as IAiThreadAssistantMessageEntry;
-    expect(assistant.chunks).toEqual([
-      { type: 'message', block: { type: 'text', text: '最终回答' } },
-    ]);
-  });`,
-        to: `    const assistant = entries[1] as IAiThreadAssistantMessageEntry;
-    expect(assistant.chunks).toEqual([
-      { type: 'message', block: { type: 'text', text: '最终回答' } },
-    ]);
-  });
-
-  it('assistant + reasoning -> thought chunk(在正文 chunk 之前)', () => {
-    const entries = legacyMessageToEntries({
-      id: 'a-reason',
-      role: 'assistant',
-      content: '最终回答',
-      createdAt: ISO,
-      references: [],
-      reasoning: '我先分析再作答',
-    });
-    const assistant = entries[0] as IAiThreadAssistantMessageEntry;
-    expect(assistant.type).toBe('assistant_message');
-    expect(assistant.chunks).toEqual([
-      { type: 'thought', block: { type: 'text', text: '我先分析再作答' } },
-      { type: 'message', block: { type: 'text', text: '最终回答' } },
-    ]);
-  });`,
-      },
-    ],
+    find: L('  const aiStream = useAiStream();', '  const agentPlan = useAiAgentPlan();'),
+    to: L('  const agentPlan = useAiAgentPlan();'),
+  },
+  // 5) 删 syncActiveAssistantMessage 函数 + 其 watch（整段空转）
+  {
+    find: L(
+      '  const { refreshSidecarChangedDocuments } = useSidecarChangedDocumentRefresh();',
+      '',
+      '  const syncActiveAssistantMessage = (): void => {',
+      '    const current = activeAssistantMessage.value;',
+      '',
+      '    if (!current) {',
+      '      return;',
+      '    }',
+      '',
+      '    current.content = aiStream.content.value;',
+      '    current.stream = {',
+      '      ...current.stream,',
+      '      status: mapStreamStatus(aiStream.status.value),',
+      '    };',
+      '',
+      '    messages.value = [...activeAssistantBaseMessages.value, { ...current }];',
+      '  };',
+      '',
+      '  watch(',
+      '    () => [aiStream.content.value, aiStream.status.value] as const,',
+      '    () => {',
+      '      syncActiveAssistantMessage();',
+      '    },',
+      "    { flush: 'sync' },",
+      '  );',
+      '',
+      '  const resolveActiveAgentPatchTarget = (): IActiveAgentPatchTarget | null => {',
+    ),
+    to: L(
+      '  const { refreshSidecarChangedDocuments } = useSidecarChangedDocumentRefresh();',
+      '',
+      '  const resolveActiveAgentPatchTarget = (): IActiveAgentPatchTarget | null => {',
+    ),
+  },
+  // 6) 删 stopCurrentRequest 里永不进入的 aiStream / activeAssistantMessage 分支
+  {
+    find: L(
+      '    activeStreamResolve.value?.();',
+      '    activeStreamResolve.value = null;',
+      '',
+      '    aiStream.stop();',
+      '',
+      '    if (activeAssistantMessage.value) {',
+      '      activeAssistantMessage.value.stream = {',
+      '        ...activeAssistantMessage.value.stream,',
+      "        status: 'cancelled',",
+      '      };',
+      '      activeAssistantMessage.value.content = aiStream.content.value;',
+      '',
+      '      messages.value = [...activeAssistantBaseMessages.value, { ...activeAssistantMessage.value }];',
+      '    }',
+      '',
+      '    if (activeAgentMessageId.value) {',
+    ),
+    to: L(
+      '    activeStreamResolve.value?.();',
+      '    activeStreamResolve.value = null;',
+      '',
+      '    if (activeAgentMessageId.value) {',
+    ),
+  },
+  // 7) 删 resetConversationUiState 里对应的两行置空
+  {
+    find: L(
+      '    clearAttachedFiles();',
+      "    errorMessage.value = '';",
+      '    activeAssistantMessage.value = null;',
+      '    activeAssistantBaseMessages.value = [];',
+      '    activeAgentMessageId.value = null;',
+    ),
+    to: L(
+      '    clearAttachedFiles();',
+      "    errorMessage.value = '';",
+      '    activeAgentMessageId.value = null;',
+    ),
   },
 ];
 
-let allOk = true;
-const planned = [];
-for (const edit of edits) {
-  const raw = readFileSync(edit.file, 'utf8');
-  const crlf = raw.includes('\r\n');
-  const text = crlf ? raw.replace(/\r\n/g, '\n') : raw;
-  for (const { find } of edit.replacements) {
-    const count = text.split(find).length - 1;
-    if (count !== 1) {
-      allOk = false;
-      console.error(`✗ ${edit.file}: 期望 1 处匹配,实际 ${count} 处\n--- find ---\n${find}\n------------`);
-    }
+const raw = readFileSync(FILE, 'utf8');
+const crlf = raw.includes('\r\n');
+let text = crlf ? raw.replace(/\r\n/g, '\n') : raw;
+
+// 第一遍：逐项校验「恰好命中 1 次」
+for (const [i, r] of replacements.entries()) {
+  const n = text.split(r.find).length - 1;
+  if (n !== 1) {
+    console.error(`✗ 替换 #${i + 1} 期望命中 1 次，实际 ${n} 次。已中止，未写入。`);
+    process.exit(1);
   }
-  planned.push({ edit, crlf, text });
 }
-if (!allOk) {
-  console.error('\n有匹配未命中(文件可能已改动)。未写入任何文件。');
-  process.exit(1);
+// 第二遍：原子替换
+for (const r of replacements) {
+  text = text.replace(r.find, () => r.to);
 }
-for (const { edit, crlf, text } of planned) {
-  let next = text;
-  for (const { find, to } of edit.replacements) next = next.replace(find, () => to);
-  const out = crlf ? next.replace(/\n/g, '\r\n') : next;
-  if (APPLY) { writeFileSync(edit.file, out, 'utf8'); console.log(`✓ 已写入 ${edit.file}`); }
-  else console.log(`(dry-run) 将更新 ${edit.file}(${edit.replacements.length} 处)`);
+
+if (!APPLY) {
+  console.log('✓ dry-run：7 处替换均恰好命中 1 次。加 --apply 写回。');
+  process.exit(0);
 }
-console.log(APPLY ? '\n完成。请运行 pnpm vitest run 与 pnpm -s vue-tsc --noEmit。' : '\n干跑完成。加 --apply 写入。');
+
+const out = crlf ? text.replace(/\n/g, '\r\n') : text;
+writeFileSync(FILE, out, 'utf8');
+console.log(`✓ 已写回 ${FILE}（保留原 EOL：${crlf ? 'CRLF' : 'LF'}）。`);

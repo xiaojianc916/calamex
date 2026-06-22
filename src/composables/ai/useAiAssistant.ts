@@ -30,7 +30,6 @@ import { useAcpAvailableCommands } from '@/composables/ai/useAcpAvailableCommand
 import { useAcpSessionConfigOptions } from '@/composables/ai/useAcpSessionConfigOptions';
 import { useAcpUsage } from '@/composables/ai/useAcpUsage';
 import { useAiAgentPlan } from '@/composables/ai/useAiAgentPlan';
-import { useAiStream } from '@/composables/ai/useAiStream';
 import {
   type IAiWebSelectionContext,
   useAiWebSelectionInbox,
@@ -120,7 +119,6 @@ import {
   hasMeaningfulAssistantText,
   type ISidecarAnswerStreamMetadata,
   isAiEditOperationEntry,
-  mapStreamStatus,
   mapToolConfirmationDecisionToSidecarDecision,
   resolveSidecarDoneStreamTokenSnapshot,
   resolveSidecarToolProjectionStatus,
@@ -259,8 +257,6 @@ export const useAiAssistant = (options: IUseAiAssistantOptions) => {
   const activeStreamId = ref<string | null>(null);
   const activeAgentMessageId = ref<string | null>(null);
   const activeStreamResolve = ref<(() => void) | null>(null);
-  const activeAssistantMessage = ref<IAiChatMessage | null>(null);
-  const activeAssistantBaseMessages = shallowRef<IAiChatMessage[]>([]);
   const activeSidecarAgentSession = ref<IAiPersistedSidecarAgentSession | null>(null);
   const activeBufferedThreadId = ref<string | null>(null);
   const displayMessages = shallowRef<IAiChatMessage[]>(unref(conversationStore.activeMessages));
@@ -523,36 +519,11 @@ export const useAiAssistant = (options: IUseAiAssistantOptions) => {
     buildConversationCheckpoints(messages.value),
   );
 
-  const aiStream = useAiStream();
   const agentPlan = useAiAgentPlan();
   const acpAvailableCommands = useAcpAvailableCommands();
   const acpUsage = useAcpUsage();
   const acpSessionConfigOptions = useAcpSessionConfigOptions();
   const { refreshSidecarChangedDocuments } = useSidecarChangedDocumentRefresh();
-
-  const syncActiveAssistantMessage = (): void => {
-    const current = activeAssistantMessage.value;
-
-    if (!current) {
-      return;
-    }
-
-    current.content = aiStream.content.value;
-    current.stream = {
-      ...current.stream,
-      status: mapStreamStatus(aiStream.status.value),
-    };
-
-    messages.value = [...activeAssistantBaseMessages.value, { ...current }];
-  };
-
-  watch(
-    () => [aiStream.content.value, aiStream.status.value] as const,
-    () => {
-      syncActiveAssistantMessage();
-    },
-    { flush: 'sync' },
-  );
 
   const resolveActiveAgentPatchTarget = (): IActiveAgentPatchTarget | null => {
     const activeRun = unref(agentPlan.store.activeRun);
@@ -2282,8 +2253,6 @@ export const useAiAssistant = (options: IUseAiAssistantOptions) => {
 
     clearAttachedFiles();
     errorMessage.value = '';
-    activeAssistantMessage.value = null;
-    activeAssistantBaseMessages.value = [];
     activeAgentMessageId.value = null;
     acpAvailableCommands.reset();
     acpUsage.reset();
@@ -2580,18 +2549,6 @@ export const useAiAssistant = (options: IUseAiAssistantOptions) => {
     activeStreamId.value = null;
     activeStreamResolve.value?.();
     activeStreamResolve.value = null;
-
-    aiStream.stop();
-
-    if (activeAssistantMessage.value) {
-      activeAssistantMessage.value.stream = {
-        ...activeAssistantMessage.value.stream,
-        status: 'cancelled',
-      };
-      activeAssistantMessage.value.content = aiStream.content.value;
-
-      messages.value = [...activeAssistantBaseMessages.value, { ...activeAssistantMessage.value }];
-    }
 
     if (activeAgentMessageId.value) {
       const activeMessageId = activeAgentMessageId.value;
