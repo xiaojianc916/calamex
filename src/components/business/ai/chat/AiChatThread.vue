@@ -576,6 +576,7 @@ onBeforeUnmount(() => {
   scroll-behavior: auto;
   scrollbar-color: transparent transparent;
   scrollbar-width: thin;
+  scrollbar-gutter: stable;
 }
 
 .ai-chat-list.is-scrollbar-active .ai-chat-list__scroller {
