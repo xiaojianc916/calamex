@@ -78,6 +78,7 @@ import { logger } from '@/utils/platform/logger';
 // Public types
 // ---------------------------------------------------------------------------
 
+import { extractDocumentText, isDocumentAttachment } from './attachment-document-text';
 // [auto-split imports]
 import { buildLiveThreadFromSidecarEvents } from './live-thread-from-sidecar';
 import {
@@ -198,6 +199,7 @@ export interface IUseAiAssistantOptions {
 
 const MAX_CONTEXT_CHARS = 12_000;
 const MAX_TEXT_ATTACHMENT_BYTES = 128 * 1024;
+const MAX_DOCUMENT_ATTACHMENT_BYTES = 20 * 1024 * 1024;
 const MAX_IMAGE_ATTACHMENT_BYTES = 5 * 1024 * 1024;
 const AI_EDIT_ROLLBACK_TIMELINE_LIMIT = 24;
 const MSG_CALL_FAILED = 'AI 调用失败';
@@ -1609,6 +1611,56 @@ export const useAiAssistant = (options: IUseAiAssistantOptions) => {
 
   const attachFile = async (file: File): Promise<boolean> => {
     const normalizedName = normalizeAttachmentName(file);
+
+    if (isDocumentAttachment(file)) {
+      if (file.size > MAX_DOCUMENT_ATTACHMENT_BYTES) {
+        errorMessage.value = `文档超过 ${formatBytes(MAX_DOCUMENT_ATTACHMENT_BYTES)}，请压缩或拆分后再试。`;
+        return false;
+      }
+
+      const documentText = await extractDocumentText(file).catch((): null => null);
+
+      if (documentText === null) {
+        errorMessage.value = '解析文档失败，请确认文件未损坏后重试。';
+        return false;
+      }
+
+      const trimmedText = documentText.trim();
+
+      if (!trimmedText) {
+        errorMessage.value = '未能从该文档中提取到文本（可能是扫描件或纯图片内容）。';
+        return false;
+      }
+
+      const id = `attachment:${normalizedName}:${file.lastModified}:${file.size}`;
+      const reference: IAiContextReference = {
+        id,
+        kind: 'search-result',
+        label: `附件 · ${normalizedName}`,
+        path: normalizedName,
+        range: null,
+        contentPreview: [
+          `文件名：${normalizedName}`,
+          `大小：${formatBytes(file.size)}`,
+          '内容（已从文档提取为纯文本）：',
+          clipText(trimmedText, MAX_CONTEXT_CHARS),
+        ].join('\n'),
+        redacted: false,
+      };
+
+      replaceAttachedFile({
+        id,
+        name: normalizedName,
+        sizeLabel: formatBytes(file.size),
+        kind: 'text',
+        reference,
+      });
+
+      currentReferences.value = await buildReferences();
+      errorMessage.value = '';
+
+      return true;
+    }
 
     if (isTextAttachment(file)) {
       if (file.size > MAX_TEXT_ATTACHMENT_BYTES) {
