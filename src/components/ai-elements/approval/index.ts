@@ -1,4 +1,8 @@
 export { default as ApprovalPrompt } from './ApprovalPrompt.vue';
+export {
+  buildAcpAskUserQuestions,
+  resolveAcpDecisionFromAskUserResult,
+} from './from-acp-ask-user';
 export type {
   IAcpPermissionOption,
   IAcpPermissionRequest,

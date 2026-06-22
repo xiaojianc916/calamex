@@ -165,7 +165,10 @@ onMounted(() => {
   display: flex;
   flex-direction: column;
   gap: 6px;
-  width: 100%;
+  box-sizing: border-box;
+  width: min(100%, 710px);
+  max-width: 860px;
+  margin-inline: auto;
   min-width: 0;
   padding: 10px 12px;
   border-radius: 8px;
@@ -233,13 +236,13 @@ onMounted(() => {
 }
 
 .approval-prompt__option.is-active {
-  background: color-mix(in srgb, var(--accent-strong) 12%, transparent);
-  color: var(--accent-strong);
-  font-weight: 450;
+  background: var(--surface-hover);
+  color: var(--text-primary);
+  font-weight: 500;
 }
 
 .approval-prompt__option.is-danger.is-active {
-  background: color-mix(in srgb, var(--danger) 12%, transparent);
+  background: color-mix(in srgb, var(--danger) 14%, transparent);
   color: var(--danger);
 }
 

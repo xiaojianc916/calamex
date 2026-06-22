@@ -62,6 +62,11 @@ pub struct ApprovalRequestInfo {
     pub session_id: String,
     pub tool_call_id: String,
     pub options: Vec<ApprovalOptionInfo>,
+    /// 反向 request_permission 的工具调用原始负载（ACP `ToolCallUpdate` 的 camelCase JSON：
+    /// title/kind/rawInput 等）。最小透传，供前端识别 AskUserQuestion 并复原问句，与
+    /// `ui_event.rs` 的 tool_call `acpUpdate` 透传同构。序列化失败/为 null 时省略。
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub tool_call: Option<serde_json::Value>,
 }
 
 /// `resolve(...)` 的错误。
@@ -141,6 +146,9 @@ impl ApprovalRegistry {
                     kind: kind_wire(o.kind),
                 })
                 .collect(),
+            tool_call: serde_json::to_value(&req.tool_call)
+                .ok()
+                .filter(|value| !value.is_null()),
         };
 
         let rx = self.insert(session_id, tool_call_id, resolved);
@@ -392,6 +400,29 @@ mod tests {
             kind_wire(PermissionOptionKind::RejectAlways),
             "reject_always"
         );
+    }
+
+    #[test]
+    fn approval_request_info_serializes_tool_call_as_camel_case_and_skips_none() {
+        let with_tool_call = ApprovalRequestInfo {
+            session_id: "s".to_string(),
+            tool_call_id: "t".to_string(),
+            options: vec![],
+            tool_call: Some(
+                serde_json::json!({ "title": "选择", "rawInput": { "questions": [] } }),
+            ),
+        };
+        let value = serde_json::to_value(&with_tool_call).unwrap();
+        assert_eq!(value["toolCall"]["title"], "选择");
+
+        let without = ApprovalRequestInfo {
+            session_id: "s".to_string(),
+            tool_call_id: "t".to_string(),
+            options: vec![],
+            tool_call: None,
+        };
+        let value_without = serde_json::to_value(&without).unwrap();
+        assert!(value_without.get("toolCall").is_none());
     }
 
     #[test]

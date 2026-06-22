@@ -4,7 +4,10 @@ import { Bot, SquarePen, Trash2 } from '@lucide/vue';
 import { AnimatePresence, Motion } from 'motion-v';
 import { computed, defineAsyncComponent, onMounted, ref } from 'vue';
 import { z } from 'zod';
-import { ApprovalPrompt } from '@/components/ai-elements/approval';
+import {
+  ApprovalPrompt,
+  resolveAcpDecisionFromAskUserResult,
+} from '@/components/ai-elements/approval';
 import QuestionPrompt from '@/components/ai-elements/question/QuestionPrompt.vue';
 import AiChatThread from '@/components/business/ai/chat/AiChatThread.vue';
 import AiErrorNotice from '@/components/business/ai/chat/AiErrorNotice.vue';
@@ -111,6 +114,9 @@ const webSources = useAiWebSources();
 // 申请被永久挂起、回合卡在“思考中”——正是文件修改一直卡住的根因之二。
 const acpApproval = useAcpApproval();
 const acpApprovalCurrent = computed(() => acpApproval.current.value);
+// Kimi 等外部 ACP Agent 的 AskUserQuestion 同样经反向 request_permission 抵达；若识别为提问，
+// 改用项目既有的 QuestionPrompt 反向提问 UI 呈现，而非通用工具审批卡片。
+const acpApprovalQuestions = computed(() => acpApprovalCurrent.value?.askUserQuestions ?? null);
 const aiThreadStore = useAiThreadStore();
 const renderThreadEntries = computed(() => aiThreadStore.renderActiveEntries);
 const suggestionPool = useCopilotSuggestions();
@@ -1081,6 +1087,34 @@ const handleCancelAcpApproval = (): void => {
   void assistant.stopCurrentRequest();
 };
 
+const handleResolveAcpUserQuestion = async (result: IAskUserResult): Promise<void> => {
+  const current = acpApprovalCurrent.value;
+
+  if (!current) {
+    return;
+  }
+
+  // 选中候选项 / 命中 Skip(reject) → 回投该 optionId 原值（对齐 approval.rs 逐字匹配）。
+  const decision = resolveAcpDecisionFromAskUserResult(current.request, result);
+
+  if (decision) {
+    try {
+      await acpApproval.resolve(current.toolCallId, decision);
+    } catch (error) {
+      assistant.error.value = toErrorMessage(error, '提交工具调用审批失败。');
+    }
+    return;
+  }
+
+  // 既未选项也无 reject 可回投 → 取消当前回合（带外 ai_cancel）。
+  acpApproval.dismiss(current.toolCallId);
+  void assistant.stopCurrentRequest();
+};
+
+const handleCancelAcpUserQuestion = (): void => {
+  void handleResolveAcpUserQuestion({ outcome: 'cancelled' });
+};
+
 const saveSettings = async (
   config: IAiConfigPayload,
   apiKey: string,
@@ -1304,7 +1338,7 @@ onMounted(() => {
           :busy="isAgentRunActionPending" @pause="handlePauseRun" @resume="handleResumeRun" @cancel="handleCancelRun"
           @resolve="handleResolveToolConfirmation" />
         <ApprovalPrompt
-          v-if="acpApprovalCurrent"
+          v-if="acpApprovalCurrent && !acpApprovalQuestions"
           autofocus
           :title="acpApprovalCurrent.approval.title"
           :reason="acpApprovalCurrent.approval.summary"
@@ -1312,10 +1346,19 @@ onMounted(() => {
           @select="handleResolveAcpApproval"
           @cancel="handleCancelAcpApproval"
         />
-        <QuestionPrompt v-if="visibleUserQuestion" :questions="visibleUserQuestion.questions"
-          :disabled="isResolvingUserQuestion" @submit="handleResolveUserQuestion"
-          @cancel="handleCancelUserQuestion" />
-        <AiPromptInput v-else v-model="assistant.draft.value" v-model:active-mode="assistant.activeMode.value"
+        <div v-if="acpApprovalQuestions" class="ai-question-surface">
+          <QuestionPrompt
+            autofocus
+            :questions="acpApprovalQuestions ?? []"
+            @submit="handleResolveAcpUserQuestion"
+            @cancel="handleCancelAcpUserQuestion"
+          />
+        </div>
+        <div v-if="visibleUserQuestion" class="ai-question-surface">
+          <QuestionPrompt :questions="visibleUserQuestion.questions" :disabled="isResolvingUserQuestion"
+            @submit="handleResolveUserQuestion" @cancel="handleCancelUserQuestion" />
+        </div>
+        <AiPromptInput v-model="assistant.draft.value" v-model:active-mode="assistant.activeMode.value"
           v-model:agent-backend="sessionAgentBackend"
           :disabled="composerDisabled" :stop-visible="assistant.isSending.value"
           :submit-label="submitLabel" :config="assistant.config.value"
@@ -1719,6 +1762,13 @@ onMounted(() => {
 
 .ai-file-rollback-entry.is-reverted .ai-file-rollback-entry__button {
   color: color-mix(in srgb, var(--success) 68%, var(--text-tertiary));
+}
+
+.ai-question-surface {
+  width: min(100%, 710px);
+  max-width: 860px;
+  margin-inline: auto;
+  padding: 0 10px 4px;
 }
 
 .ai-composer-shell {

@@ -1,6 +1,7 @@
 import { type ComputedRef, computed, onScopeDispose, ref } from 'vue';
 
 import {
+  buildAcpAskUserQuestions,
   buildAcpPermissionApproval,
   type IAcpPermissionRequest,
   type IBuildAcpPermissionApprovalOptions,
@@ -8,6 +9,7 @@ import {
 } from '@/components/ai-elements/approval';
 import { aiService } from '@/services/ipc/ai.service';
 import type { IAcpPermissionRequestPayload } from '@/types/ai/acp-permission.schema';
+import type { IAskUserQuestion } from '@/types/ai/sidecar';
 
 /* ============================================================================
  * ACP 工具调用审批的前端闭环（ADR-20260617 D6）。
@@ -34,6 +36,8 @@ export interface IPendingAcpApproval {
   toolCallId: string;
   request: IAcpPermissionRequest;
   approval: IToolConfirmationApproval;
+  /** 若该请求其实是 AskUserQuestion，则为可喂给 QuestionPrompt 的问题数组；否则 null。 */
+  askUserQuestions: IAskUserQuestion[] | null;
 }
 
 export interface IUseAcpApprovalOptions {
@@ -67,6 +71,7 @@ export const useAcpApproval = (options: IUseAcpApprovalOptions = {}): IUseAcpApp
       toolCallId: payload.toolCallId,
       request,
       approval: buildAcpPermissionApproval(request, options.resolveContext?.(request)),
+      askUserQuestions: buildAcpAskUserQuestions(request),
     };
 
     const existingIndex = queue.value.findIndex((item) => item.toolCallId === payload.toolCallId);

@@ -27,6 +27,12 @@ export interface IAcpPermissionRequest {
   sessionId: string;
   toolCallId: string;
   options: IAcpPermissionOption[];
+  /**
+   * 反向 request_permission 的工具调用原始负载（ACP ToolCallUpdate 的 camelCase JSON，
+   * 含 title/kind/rawInput 等）。宿主最小透传，供前端识别 AskUserQuestion 并复原问句；
+   * 旧宿主未透传时为 undefined（退化为通用审批）。
+   */
+  toolCall?: unknown;
 }
 
 /**

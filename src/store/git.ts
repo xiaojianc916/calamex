@@ -1,4 +1,3 @@
-import { consola } from 'consola';
 import { defineStore } from 'pinia';
 import { computed, ref, shallowRef } from 'vue';
 import { queryClient } from '@/lib/query-client';

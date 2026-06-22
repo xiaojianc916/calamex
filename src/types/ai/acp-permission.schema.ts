@@ -38,6 +38,9 @@ export const acpPermissionRequestPayloadSchema = z.object({
   sessionId: z.string().min(1),
   toolCallId: z.string().min(1),
   options: z.array(acpPermissionOptionPayloadSchema),
+  // 宿主最小透传的工具调用原始负载（ACP ToolCallUpdate 的 camelCase JSON）。可选：
+  // 旧宿主不发；前端 from-acp-ask-user 据此识别 AskUserQuestion 并复原问句。
+  toolCall: z.unknown().optional(),
 });
 
 export type TAcpPermissionOptionKindWire = z.infer<typeof acpPermissionOptionKindSchema>;
