@@ -112,10 +112,22 @@ export function legacyMessageToEntries(message: IAiChatMessage): IAiThreadEntry[
     toolCallEntries.push(toolCallEntry);
     entries.push(toolCallEntry);
   }
-  const assistantChunks: IAiThreadAssistantMessageEntry['chunks'] =
+  // 思维链(thought)与正文(message)是同一条 chunks 流的两种 variant。从 legacy 消息的
+  // reasoning 还原 thought chunk(置于正文之前),使 messages -> entries 不丢思考过程
+  // (与 threadEntriesToMessages 的 assistantChunksToReasoning 对称、无损往返)。
+  const reasoningText = message.reasoning ?? '';
+  const reasoningChunks: IAiThreadAssistantMessageEntry['chunks'] =
+    reasoningText.trim().length > 0
+      ? [{ type: 'thought', block: { type: 'text', text: reasoningText } }]
+      : [];
+  const messageChunks: IAiThreadAssistantMessageEntry['chunks'] =
     message.content.trim().length > 0
       ? [{ type: 'message', block: { type: 'text', text: message.content } }]
       : [];
+  const assistantChunks: IAiThreadAssistantMessageEntry['chunks'] = [
+    ...reasoningChunks,
+    ...messageChunks,
+  ];
   // 有正文 / 流式快照 / acpToolCalls 任一即生成 assistant_message entry，使 stream 与
   // acpToolCalls 在「仅工具调用、无最终正文」的回合也不被丢弃（逆投影据此无损还原）。
   if (
@@ -233,6 +245,19 @@ function assistantChunksToText(chunks: IAiThreadAssistantChunks): string {
 }
 
 /**
+ * 把 assistant chunks 的思考通道(thought)折叠为纯文本 reasoning(assistantChunksToText 的
+ * 思维链对偶)。多段 thought 以空行衔接,对齐渲染层 reasoning 段落拼接,使 entries <-> messages
+ * 往返保留思考过程(修复收尾/编辑回写丢失 thought 的 bug)。
+ */
+function assistantChunksToReasoning(chunks: IAiThreadAssistantChunks): string {
+  return chunks
+    .flatMap((chunk) =>
+      chunk.type === 'thought' && chunk.block.type === 'text' ? [chunk.block.text] : [],
+    )
+    .join('\n\n');
+}
+
+/**
  * 把 entries 折叠为 IAiChatMessage[]（legacyMessageToEntries 的逆）。
  * 用于编排器从 entries 真源重建 message 工作缓冲；有损项见文件头说明。
  */
@@ -286,12 +311,14 @@ export function threadEntriesToMessages(entries: readonly IAiThreadEntry[]): IAi
         break;
       }
       case 'assistant_message': {
+        const reasoning = assistantChunksToReasoning(entry.chunks);
         const message: IAiChatMessage = {
           role: 'assistant',
           id: entry.id,
           content: assistantChunksToText(entry.chunks),
           createdAt: entry.createdAt,
           references: [],
+          ...(reasoning.length > 0 ? { reasoning } : {}),
           ...(pendingToolCalls.length > 0 ? { toolCalls: pendingToolCalls } : {}),
           ...(entry.stream !== undefined ? { stream: entry.stream } : {}),
           ...(entry.acpToolCalls !== undefined ? { acpToolCalls: entry.acpToolCalls } : {}),

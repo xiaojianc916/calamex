@@ -87,6 +87,23 @@ describe('legacyMessageToEntries', () => {
     ]);
   });
 
+  it('assistant + reasoning -> thought chunk(在正文 chunk 之前)', () => {
+    const entries = legacyMessageToEntries({
+      id: 'a-reason',
+      role: 'assistant',
+      content: '最终回答',
+      createdAt: ISO,
+      references: [],
+      reasoning: '我先分析再作答',
+    });
+    const assistant = entries[0] as IAiThreadAssistantMessageEntry;
+    expect(assistant.type).toBe('assistant_message');
+    expect(assistant.chunks).toEqual([
+      { type: 'thought', block: { type: 'text', text: '我先分析再作答' } },
+      { type: 'message', block: { type: 'text', text: '最终回答' } },
+    ]);
+  });
+
   it('状态映射覆盖全部 5 种 legacy 状态', () => {
     const statuses = ['pending', 'running', 'succeeded', 'failed', 'denied'] as const;
     const expected = ['pending', 'in_progress', 'completed', 'failed', 'canceled'];

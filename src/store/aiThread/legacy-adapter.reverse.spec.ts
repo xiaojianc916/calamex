@@ -74,6 +74,26 @@ describe('threadEntriesToMessages', () => {
     expect(message?.acpToolCalls?.[0]?.id).toBe('acp-1');
   });
 
+  it('round-trips assistant reasoning(思考过程 thought 通道)', () => {
+    const withReasoning: IAiChatMessage = {
+      role: 'assistant',
+      id: 'a3',
+      content: '正文答案',
+      createdAt: '2026-01-01T00:00:03.000Z',
+      references: [],
+      reasoning: '我先分析再作答',
+    };
+    const entries = legacyMessageToEntries(withReasoning);
+    const assistant = entries.find((e) => e.type === 'assistant_message');
+    expect(assistant?.type).toBe('assistant_message');
+    if (assistant?.type === 'assistant_message') {
+      expect(assistant.chunks.map((c) => c.type)).toEqual(['thought', 'message']);
+    }
+    const [message] = threadEntriesToMessages(entries);
+    expect(message?.reasoning).toBe('我先分析再作答');
+    expect(message?.content).toBe('正文答案');
+  });
+
   it('skips non-message entries without throwing', () => {
     const entries = legacyMessageToEntries(userMessage);
     expect(threadEntriesToMessages(entries)).toHaveLength(1);
