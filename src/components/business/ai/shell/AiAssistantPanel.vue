@@ -14,10 +14,7 @@ import AiAssistantSuggestionEmpty from '@/components/business/ai/shell/AiAssista
 import AiPanelFrame from '@/components/business/ai/shell/AiPanelFrame.vue';
 import { splitSuggestionsIntoRows } from '@/components/business/ai/shell/split-suggestions';
 import AiThreadRunStatusBar from '@/components/business/ai/thread/AiThreadRunStatusBar.vue';
-import {
-  buildPlanControlMessage,
-  deriveThreadPlanDetails,
-} from '@/components/business/ai/thread/projection';
+import { deriveThreadPlanDetails } from '@/components/business/ai/thread/projection';
 import {
   Select,
   SelectContent,
@@ -53,6 +50,7 @@ import type {
 } from '@/types/ai';
 import type { TAiExecutionMode } from '@/types/ai/execution-mode';
 import type { IAskUserResult } from '@/types/ai/sidecar';
+import type { IAiThreadEntry } from '@/types/ai/thread';
 import type {
   IActiveRunSummary,
   IAnalyzeScriptPayload,
@@ -297,16 +295,30 @@ const planConfirmationVisible = computed(() => {
     isPlanConfirmationStatus.value
   );
 });
-// Plan 审批不再是输入框上方的独立面板，而是平铺时间线里的一条 plan-control 条目：
-// 这里把它合成成一条 assistant 消息追加进可见时间线，运行态明细由投影层派生。
-const planControlMessage = computed(() =>
-  buildPlanControlMessage({
-    goal: planActiveGoal.value,
-    references: [],
-    isAwaitingApproval: planConfirmationVisible.value,
+// Plan 审批作为平铺时间线里的一条 plan-control 条目：等待批准时合成一条数据模型
+// plan_control entry，追加进喂给 AiChatThread 的 thread-entries，由 threadEntriesToTimeline
+// 投影为 plan-control 渲染条目。审批态是 planStore 派生的临时态，故只在渲染期 overlay，
+// 不落 reduce 持久化：批准/拒绝后它随 planConfirmationVisible 自然消失，不残留幽灵卡。
+const planControlEntry = computed<IAiThreadEntry | null>(() => {
+  if (!planConfirmationVisible.value) {
+    return null;
+  }
+
+  const goal = planActiveGoal.value.trim();
+
+  if (goal.length === 0) {
+    return null;
+  }
+
+  return {
+    type: 'plan_control',
+    id: 'thread-plan-control',
     createdAt: planCreatedAt.value ?? new Date().toISOString(),
-  }),
-);
+    goal,
+    references: [],
+    phase: 'awaiting-approval',
+  };
+});
 const threadPlanDetails = computed(() =>
   deriveThreadPlanDetails({
     summary: planSummary.value,
@@ -557,15 +569,15 @@ const threadMessages = computed<IAiChatMessage[]>(() => {
     flowMessage,
   ];
 });
-// 真正喂给平铺时间线的消息：真实会话消息 + 可选的 plan-control 审批条目。
-const visibleThreadMessages = computed<IAiChatMessage[]>(() => {
-  const controlMessage = planControlMessage.value;
+// 真正喂给平铺时间线的 entries：reduce 真源 entries + 可选的 plan-control 审批条目（渲染期 overlay）。
+const visibleThreadEntries = computed<readonly IAiThreadEntry[]>(() => {
+  const controlEntry = planControlEntry.value;
 
-  if (!controlMessage) {
-    return assistant.messages.value;
+  if (!controlEntry) {
+    return renderThreadEntries.value;
   }
 
-  return [...assistant.messages.value, controlMessage];
+  return [...renderThreadEntries.value, controlEntry];
 });
 const tokenUsageMessages = computed<IAiChatMessage[]>(() => {
   if (assistant.activeMode.value === 'plan') {
@@ -1204,8 +1216,8 @@ onMounted(() => {
     </template>
 
     <template #body>
-      <AiChatThread :messages="visibleThreadMessages" :is-typing="assistant.isSending.value"
-        :thread-entries="renderThreadEntries"
+      <AiChatThread :messages="assistant.messages.value" :is-typing="assistant.isSending.value"
+        :thread-entries="visibleThreadEntries"
         :streaming-message-id="assistant.activeAgentMessageId.value"
         :platform-id="aiIconPlatformId" :provider-label="aiIconTitle"
         :conversation-id="assistant.activeConversationId.value" :workspace-root-path="workspaceRootPath"

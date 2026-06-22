@@ -89,7 +89,7 @@ const AI_COMMAND_META = {
     command: 'ai_generate_suggestion_pool',
     guardHint: '生成 AI 提示词池',
     audit: 'info',
-    timeoutMs: 30_000,
+    timeoutMs: 60_000,
     measureInput: buildPayloadMetrics,
   },
   aiChatStream: {

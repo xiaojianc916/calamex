@@ -394,10 +394,11 @@ const mountPanel = (_assistantMock: ReturnType<typeof createAssistantMock>) =>
         SelectLabel: defineComponent({
           template: '<div><slot /></div>',
         }),
-        // 平铺时间线替身:plan 审批不再是独立面板,而是 messages 里 id 为 thread-plan-control
-        // 的一条条目,步骤明细由 planDetails 传入并就地渲染,审批事件向上冒泡。
+        // 平铺时间线替身:plan 审批不再是独立面板,而是 thread-entries 里一条 type 为
+        // plan_control 的数据模型条目(渲染期 overlay),步骤明细由 planDetails 传入就地渲染,
+        // 审批事件向上冒泡;真实组件经 threadEntriesToTimeline 投影为 plan-control 渲染条目。
         AiChatThread: defineComponent({
-          props: ['messages', 'isTyping', 'typingLabel', 'planDetails'],
+          props: ['messages', 'threadEntries', 'isTyping', 'typingLabel', 'planDetails'],
           emits: [
             'planApprove',
             'planReject',
@@ -406,7 +407,7 @@ const mountPanel = (_assistantMock: ReturnType<typeof createAssistantMock>) =>
             'planRemoveStep',
           ],
           template:
-            '<section data-testid="chat-thread"><slot name="empty" /><template v-for="message in messages.filter((entry) => !entry.id.startsWith(\'agent-flow:\'))" :key="message.id"><div v-if="message.id === \'thread-plan-control\'" data-testid="plan-confirmation"><ol><li v-for="step in (planDetails?.steps ?? [])" :key="step.id" v-text="step.title" /></ol><button data-testid="approve-plan" :disabled="!planDetails?.canApprove" @click="$emit(\'planApprove\')">批准</button></div><article v-else :data-role="message.role" v-text="message.content" /><slot name="after-message" :message="message" /></template></section>',
+            '<section data-testid="chat-thread"><slot name="empty" /><div v-if="(threadEntries ?? []).some((entry) => entry.type === \'plan_control\')" data-testid="plan-confirmation"><ol><li v-for="step in (planDetails?.steps ?? [])" :key="step.id" v-text="step.title" /></ol><button data-testid="approve-plan" :disabled="!planDetails?.canApprove" @click="$emit(\'planApprove\')">批准</button></div><template v-for="message in messages.filter((entry) => !entry.id.startsWith(\'agent-flow:\'))" :key="message.id"><article :data-role="message.role" v-text="message.content" /><slot name="after-message" :message="message" /></template></section>',
         }),
         AiAssistantSuggestionEmpty: defineComponent({
           props: ['suggestionRows', 'disabled'],
