@@ -20,7 +20,6 @@ const REJECT_KINDS: ReadonlySet<TAcpPermissionOptionKind> = new Set([
 ]);
 
 const DEFAULT_QUESTION_TEXT = '请选择一个选项';
-const DEFAULT_HEADER = '提问';
 const MAX_HEADER_LENGTH = 16;
 
 type TUnknownRecord = Record<string, unknown>;
@@ -36,6 +35,30 @@ const asNonEmptyString = (value: unknown): string | null =>
 const readRawInput = (toolCall: unknown): TUnknownRecord | null => {
   const record = asRecord(toolCall);
   return record ? asRecord(record.rawInput) : null;
+};
+
+/**
+ * ACP `ToolCallUpdate.content`（[{ type:'content', content:{ type:'text', text } }]）中的首段文本。
+ * Kimi Code（TS 版）经 acp-adapter/session.ts::handleQuestion 把真实问句放在这里，而非 rawInput；
+ * title 则被硬编码为工具名「AskUserQuestion」。
+ */
+const readToolCallContentText = (toolCall: unknown): string | null => {
+  const record = asRecord(toolCall);
+  if (!record || !Array.isArray(record.content)) {
+    return null;
+  }
+  for (const entry of record.content) {
+    const entryRecord = asRecord(entry);
+    if (!entryRecord || entryRecord.type !== 'content') {
+      continue;
+    }
+    const inner = asRecord(entryRecord.content);
+    const text = inner && inner.type === 'text' ? asNonEmptyString(inner.text) : null;
+    if (text) {
+      return text;
+    }
+  }
+  return null;
 };
 
 /** Claude/Kimi AskUserQuestion 的 rawInput.questions[0]（若存在）。 */
@@ -63,22 +86,28 @@ const hasQuestionShapedRawInput = (toolCall: unknown): boolean => {
 const countKind = (request: IAcpPermissionRequest, kind: TAcpPermissionOptionKind): number =>
   request.options.filter((option) => option.kind === kind).length;
 
-/** 问题文本：rawInput.questions[0].question → rawInput.question → toolCall.title → 兜底。 */
+/**
+ * 问题文本优先级：toolCall.content 文本（Kimi 把真实问句放这）→ rawInput.questions[0].question
+ * → rawInput.question → 兜底。不再回退 toolCall.title：Kimi 把它硬编码为工具名，并非问句。
+ */
 const resolveQuestionText = (request: IAcpPermissionRequest): string => {
   const toolCall = request.toolCall;
+  const fromContent = readToolCallContentText(toolCall);
   const firstQuestion = readFirstRawQuestion(toolCall);
   const fromFirstQuestion = firstQuestion ? asNonEmptyString(firstQuestion.question) : null;
   const rawInput = readRawInput(toolCall);
   const fromRawInput = rawInput ? asNonEmptyString(rawInput.question) : null;
-  const fromTitle = asNonEmptyString(asRecord(toolCall)?.title);
-  return fromFirstQuestion ?? fromRawInput ?? fromTitle ?? DEFAULT_QUESTION_TEXT;
+  return fromContent ?? fromFirstQuestion ?? fromRawInput ?? DEFAULT_QUESTION_TEXT;
 };
 
 const resolveHeader = (request: IAcpPermissionRequest): string => {
   const firstQuestion = readFirstRawQuestion(request.toolCall);
   const header = firstQuestion ? asNonEmptyString(firstQuestion.header) : null;
-  const value = header ?? DEFAULT_HEADER;
-  return value.length > MAX_HEADER_LENGTH ? value.slice(0, MAX_HEADER_LENGTH) : value;
+  // Kimi 仅透传 question、不发 header：返回空串，让 UI 以问题正文作标题（不再显示默认「提问」）。
+  if (!header) {
+    return '';
+  }
+  return header.length > MAX_HEADER_LENGTH ? header.slice(0, MAX_HEADER_LENGTH) : header;
 };
 
 /**
@@ -91,12 +120,6 @@ export const buildAcpAskUserQuestions = (
   request: IAcpPermissionRequest,
 ): IAskUserQuestion[] | null => {
   // [diag·临时] 打印真实 ACP request，用于定位 Kimi 的问题文本字段；定位后请删除。
-  console.info(
-    '[acp-askuser] toolCall=',
-    JSON.stringify(request.toolCall ?? null),
-    'options=',
-    JSON.stringify(request.options),
-  );
   const allowOptions = request.options.filter((option) => ALLOW_KINDS.has(option.kind));
   const isAskUser =
     hasQuestionShapedRawInput(request.toolCall) || countKind(request, 'allow_once') >= 2;

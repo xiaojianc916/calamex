@@ -1,7 +1,7 @@
-// 12.mjs —— 自定义(空白)选项改为可点击真勾选：空白也能选中并发送；打字自动选中；单选互斥
+// 13.mjs —— 让 calamex 正确读取 Kimi AskUserQuestion 的真实问句（来自 toolCall.content），并清理临时日志
 import { readFileSync, writeFileSync } from 'node:fs';
 
-const PROMPT = 'src/components/business/ai/chat/AiPromptInput.vue';
+const FILE = 'src/components/ai-elements/approval/from-acp-ask-user.ts';
 
 function patch(file, edits) {
   const raw = readFileSync(file, 'utf8');
@@ -23,198 +23,130 @@ function patch(file, edits) {
   }
   if (changed > 0) {
     writeFileSync(file, crlf ? text.replace(/\n/g, '\r\n') : text, 'utf8');
-    console.log(`→ 写回 ${file}（${changed} 处）`);
+    console.log(`→ 写回（${changed} 处）`);
   }
 }
 
-patch(PROMPT, [
-  {
-    name: 'draft-type',
-    done: 'text: string; freeSelected: boolean }>>(',
-    find: `const questionDrafts = ref<Record<string, { optionIds: string[]; text: string }>>({});`,
-    replace: `const questionDrafts = ref<Record<string, { optionIds: string[]; text: string; freeSelected: boolean }>>(
-  {},
-);`,
-  },
-  {
-    name: 'ensure-draft-sig',
-    done: '): { optionIds: string[]; text: string; freeSelected: boolean } => {',
-    find: `const ensureQuestionDraft = (questionId: string): { optionIds: string[]; text: string } => {`,
-    replace: `const ensureQuestionDraft = (
-  questionId: string,
-): { optionIds: string[]; text: string; freeSelected: boolean } => {`,
-  },
-  {
-    name: 'ensure-draft-created',
-    done: `const created = { optionIds: [] as string[], text: '', freeSelected: false };`,
-    find: `  const created = { optionIds: [] as string[], text: '' };`,
-    replace: `  const created = { optionIds: [] as string[], text: '', freeSelected: false };`,
-  },
-  {
-    name: 'current-draft',
-    done: `: { optionIds: [], text: '', freeSelected: false },`,
-    find: `const currentDraft = computed(() =>
-  currentQuestion.value
-    ? (questionDrafts.value[currentQuestion.value.questionId] ?? { optionIds: [], text: '' })
-    : { optionIds: [], text: '' },
-);`,
-    replace: `const currentDraft = computed(() =>
-  currentQuestion.value
-    ? (questionDrafts.value[currentQuestion.value.questionId] ?? {
-        optionIds: [],
-        text: '',
-        freeSelected: false,
-      })
-    : { optionIds: [], text: '', freeSelected: false },
-);`,
-  },
-  {
-    name: 'toggle-option-clear-free',
-    done: 'freeSelected: multi ? draft.freeSelected : false,',
-    find: `  questionDrafts.value = {
-    ...questionDrafts.value,
-    [question.questionId]: { ...draft, optionIds: nextIds },
-  };
-};`,
-    replace: `  questionDrafts.value = {
-    ...questionDrafts.value,
-    [question.questionId]: {
-      ...draft,
-      optionIds: nextIds,
-      freeSelected: multi ? draft.freeSelected : false,
-    },
-  };
-};`,
-  },
-  {
-    name: 'update-text',
-    done: 'const freeSelected = value.trim().length > 0 ? true : draft.freeSelected;',
-    find: `  const draft = ensureQuestionDraft(question.questionId);
-  questionDrafts.value = {
-    ...questionDrafts.value,
-    [question.questionId]: { ...draft, text: value },
-  };
-};`,
-    replace: `  const draft = ensureQuestionDraft(question.questionId);
-  const multi = question.multiSelect === true;
-  const freeSelected = value.trim().length > 0 ? true : draft.freeSelected;
-  questionDrafts.value = {
-    ...questionDrafts.value,
-    [question.questionId]: {
-      ...draft,
-      text: value,
-      freeSelected,
-      optionIds: !multi && freeSelected ? [] : draft.optionIds,
-    },
-  };
-};`,
-  },
-  {
-    name: 'toggle-free-and-computed',
-    done: 'const toggleFreeOption = (): void => {',
-    find: `const onQuestionTextInput = (event: Event): void => {
-  updateQuestionText((event.target as HTMLTextAreaElement | null)?.value ?? '');
-};`,
-    replace: `const onQuestionTextInput = (event: Event): void => {
-  updateQuestionText((event.target as HTMLTextAreaElement | null)?.value ?? '');
-};
-
-const isFreeSelected = computed(() => currentDraft.value.freeSelected === true);
-
-const toggleFreeOption = (): void => {
-  const question = currentQuestion.value;
-  if (!question) {
+// 容错移除 11.mjs 的临时诊断日志（按 marker 定位整条 console 语句，带自校验）
+function stripDiag(file) {
+  const raw = readFileSync(file, 'utf8');
+  const crlf = raw.includes('\r\n');
+  let text = raw.replace(/\r\n/g, '\n');
+  const marker = '[acp-askuser] toolCall=';
+  const mIdx = text.indexOf(marker);
+  if (mIdx === -1) {
+    console.log('· diag: 未发现，跳过');
     return;
   }
-  const draft = ensureQuestionDraft(question.questionId);
-  const multi = question.multiSelect === true;
-  const nextFree = !draft.freeSelected;
-  questionDrafts.value = {
-    ...questionDrafts.value,
-    [question.questionId]: {
-      ...draft,
-      freeSelected: nextFree,
-      optionIds: !multi && nextFree ? [] : draft.optionIds,
-    },
-  };
+  const startConsole = text.lastIndexOf('console', mIdx);
+  const endParen = text.indexOf(');', mIdx);
+  if (startConsole === -1 || endParen === -1) {
+    console.log('· diag: 结构不符，跳过');
+    return;
+  }
+  const lineStart = text.lastIndexOf('\n', startConsole) + 1;
+  let cut = endParen + 2;
+  if (text[cut] === '\n') cut += 1;
+  const removed = text.slice(lineStart, cut);
+  if (!/acp-askuser/.test(removed) || /=>|export|const resolve/.test(removed)) {
+    console.log('· diag: 安全校验未通过，跳过（请手动检查）');
+    return;
+  }
+  text = text.slice(0, lineStart) + text.slice(cut);
+  writeFileSync(file, crlf ? text.replace(/\n/g, '\r\n') : text, 'utf8');
+  console.log('✓ diag: 已移除临时日志');
+}
+
+patch(FILE, [
+  {
+    name: 'drop-default-header-const',
+    done: "const DEFAULT_QUESTION_TEXT = '请选择一个选项';\nconst MAX_HEADER_LENGTH = 16;",
+    find: "const DEFAULT_QUESTION_TEXT = '请选择一个选项';\nconst DEFAULT_HEADER = '提问';\nconst MAX_HEADER_LENGTH = 16;",
+    replace: "const DEFAULT_QUESTION_TEXT = '请选择一个选项';\nconst MAX_HEADER_LENGTH = 16;",
+  },
+  {
+    name: 'add-content-text-reader',
+    done: 'const readToolCallContentText =',
+    find: `const readRawInput = (toolCall: unknown): TUnknownRecord | null => {
+  const record = asRecord(toolCall);
+  return record ? asRecord(record.rawInput) : null;
+};`,
+    replace: `const readRawInput = (toolCall: unknown): TUnknownRecord | null => {
+  const record = asRecord(toolCall);
+  return record ? asRecord(record.rawInput) : null;
+};
+
+/**
+ * ACP \`ToolCallUpdate.content\`（[{ type:'content', content:{ type:'text', text } }]）中的首段文本。
+ * Kimi Code（TS 版）经 acp-adapter/session.ts::handleQuestion 把真实问句放在这里，而非 rawInput；
+ * title 则被硬编码为工具名「AskUserQuestion」。
+ */
+const readToolCallContentText = (toolCall: unknown): string | null => {
+  const record = asRecord(toolCall);
+  if (!record || !Array.isArray(record.content)) {
+    return null;
+  }
+  for (const entry of record.content) {
+    const entryRecord = asRecord(entry);
+    if (!entryRecord || entryRecord.type !== 'content') {
+      continue;
+    }
+    const inner = asRecord(entryRecord.content);
+    const text = inner && inner.type === 'text' ? asNonEmptyString(inner.text) : null;
+    if (text) {
+      return text;
+    }
+  }
+  return null;
 };`,
   },
   {
-    name: 'draft-answered',
-    done: '|| draft.freeSelected === true;',
-    find: `  return draft.optionIds.length > 0 || draft.text.trim().length > 0;`,
-    replace: `  return draft.optionIds.length > 0 || draft.text.trim().length > 0 || draft.freeSelected === true;`,
+    name: 'resolve-question-text',
+    done: 'const fromContent = readToolCallContentText(toolCall);',
+    find: `/** 问题文本：rawInput.questions[0].question → rawInput.question → toolCall.title → 兜底。 */
+const resolveQuestionText = (request: IAcpPermissionRequest): string => {
+  const toolCall = request.toolCall;
+  const firstQuestion = readFirstRawQuestion(toolCall);
+  const fromFirstQuestion = firstQuestion ? asNonEmptyString(firstQuestion.question) : null;
+  const rawInput = readRawInput(toolCall);
+  const fromRawInput = rawInput ? asNonEmptyString(rawInput.question) : null;
+  const fromTitle = asNonEmptyString(asRecord(toolCall)?.title);
+  return fromFirstQuestion ?? fromRawInput ?? fromTitle ?? DEFAULT_QUESTION_TEXT;
+};`,
+    replace: `/**
+ * 问题文本优先级：toolCall.content 文本（Kimi 把真实问句放这）→ rawInput.questions[0].question
+ * → rawInput.question → 兜底。不再回退 toolCall.title：Kimi 把它硬编码为工具名，并非问句。
+ */
+const resolveQuestionText = (request: IAcpPermissionRequest): string => {
+  const toolCall = request.toolCall;
+  const fromContent = readToolCallContentText(toolCall);
+  const firstQuestion = readFirstRawQuestion(toolCall);
+  const fromFirstQuestion = firstQuestion ? asNonEmptyString(firstQuestion.question) : null;
+  const rawInput = readRawInput(toolCall);
+  const fromRawInput = rawInput ? asNonEmptyString(rawInput.question) : null;
+  return fromContent ?? fromFirstQuestion ?? fromRawInput ?? DEFAULT_QUESTION_TEXT;
+};`,
   },
   {
-    name: 'build-answers-default',
-    done: `questionDrafts.value[question.questionId] ?? { optionIds: [], text: '', freeSelected: false };`,
-    find: `    const draft = questionDrafts.value[question.questionId] ?? { optionIds: [], text: '' };`,
-    replace: `    const draft = questionDrafts.value[question.questionId] ?? { optionIds: [], text: '', freeSelected: false };`,
-  },
-  {
-    name: 'template-free-row',
-    done: `:class="{ 'is-selected': isFreeSelected }"`,
-    find: `              <div
-                class="ai-question-option ai-question-free-row"
-                :class="{ 'is-selected': currentDraft.text.trim().length > 0 }"
-              >
-                <span class="ai-question-checkbox" aria-hidden="true">
-                  <Check
-                    v-if="currentDraft.text.trim().length > 0"
-                    class="ai-question-check"
-                  />
-                </span>
-                <textarea
-                  class="ai-question-free"
-                  rows="1"
-                  :placeholder="currentQuestion?.placeholder || '或者，请描述你的要求……'"
-                  :value="currentDraft.text"
-                  @input="onQuestionTextInput"
-                ></textarea>
-              </div>`,
-    replace: `              <div
-                class="ai-question-option ai-question-free-row"
-                :class="{ 'is-selected': isFreeSelected }"
-              >
-                <button
-                  type="button"
-                  class="ai-question-free-check"
-                  aria-label="选择自定义回答"
-                  @click="toggleFreeOption"
-                >
-                  <span class="ai-question-checkbox" aria-hidden="true">
-                    <Check v-if="isFreeSelected" class="ai-question-check" />
-                  </span>
-                </button>
-                <textarea
-                  class="ai-question-free"
-                  rows="1"
-                  :placeholder="currentQuestion?.placeholder || '或者，请描述你的要求……'"
-                  :value="currentDraft.text"
-                  @input="onQuestionTextInput"
-                ></textarea>
-              </div>`,
-  },
-  {
-    name: 'css-free-check',
-    done: '.ai-question-free-check {',
-    find: `.ai-question-free-row {
-  cursor: text;
-}`,
-    replace: `.ai-question-free-row {
-  cursor: text;
-}
-
-.ai-question-free-check {
-  display: inline-flex;
-  align-items: flex-start;
-  border: 0;
-  background: transparent;
-  padding: 0;
-  margin: 0;
-  cursor: pointer;
-}`,
+    name: 'resolve-header',
+    done: '// Kimi 仅透传 question、不发 header',
+    find: `const resolveHeader = (request: IAcpPermissionRequest): string => {
+  const firstQuestion = readFirstRawQuestion(request.toolCall);
+  const header = firstQuestion ? asNonEmptyString(firstQuestion.header) : null;
+  const value = header ?? DEFAULT_HEADER;
+  return value.length > MAX_HEADER_LENGTH ? value.slice(0, MAX_HEADER_LENGTH) : value;
+};`,
+    replace: `const resolveHeader = (request: IAcpPermissionRequest): string => {
+  const firstQuestion = readFirstRawQuestion(request.toolCall);
+  const header = firstQuestion ? asNonEmptyString(firstQuestion.header) : null;
+  // Kimi 仅透传 question、不发 header：返回空串，让 UI 以问题正文作标题（不再显示默认「提问」）。
+  if (!header) {
+    return '';
+  }
+  return header.length > MAX_HEADER_LENGTH ? header.slice(0, MAX_HEADER_LENGTH) : header;
+};`,
   },
 ]);
 
+stripDiag(FILE);
 console.log('完成。');
