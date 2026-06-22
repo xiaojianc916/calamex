@@ -8,7 +8,6 @@ import {
   ApprovalPrompt,
   resolveAcpDecisionFromAskUserResult,
 } from '@/components/ai-elements/approval';
-import QuestionPrompt from '@/components/ai-elements/question/QuestionPrompt.vue';
 import AiChatThread from '@/components/business/ai/chat/AiChatThread.vue';
 import AiErrorNotice from '@/components/business/ai/chat/AiErrorNotice.vue';
 import AiPromptInput from '@/components/business/ai/chat/AiPromptInput.vue';
@@ -272,6 +271,26 @@ const visibleUserQuestion = computed(() => {
   return question;
 });
 const isResolvingUserQuestion = ref(false);
+// 组合器内联提问：AiPromptInput 内嵌提问框的答案 / 取消，路由到既有 ACP / plan 提问处理器。
+const handleComposerQuestionSubmit = (answers: NonNullable<IAskUserResult['answers']>): void => {
+  const result: IAskUserResult = { outcome: 'selected', answers };
+  if (acpApprovalQuestions.value) {
+    void handleResolveAcpUserQuestion(result);
+    return;
+  }
+  if (visibleUserQuestion.value) {
+    void handleResolveUserQuestion(result);
+  }
+};
+const handleComposerQuestionCancel = (): void => {
+  if (acpApprovalQuestions.value) {
+    void handleCancelAcpUserQuestion();
+    return;
+  }
+  if (visibleUserQuestion.value) {
+    void handleCancelUserQuestion();
+  }
+};
 const planSteps = computed<IAiTaskPlanStep[]>(() => planStore.value.steps);
 const planActiveGoal = computed(() => planStore.value.activeGoal);
 const planActiveRunId = computed<string | null>(() => planStore.value.activeRunId);
@@ -367,8 +386,7 @@ const composerDisabled = computed(
   () =>
     assistant.isSending.value ||
     Boolean(visibleDirectToolConfirmation.value) ||
-    Boolean(visibleUserQuestion.value) ||
-    acpApproval.hasPending.value,
+    (acpApproval.hasPending.value && !acpApprovalQuestions.value),
 );
 const activePlanStep = computed(() => {
   const currentStepId = planActiveRun.value?.currentStepId;
@@ -1346,18 +1364,6 @@ onMounted(() => {
           @select="handleResolveAcpApproval"
           @cancel="handleCancelAcpApproval"
         />
-        <div v-if="acpApprovalQuestions" class="ai-question-surface">
-          <QuestionPrompt
-            autofocus
-            :questions="acpApprovalQuestions ?? []"
-            @submit="handleResolveAcpUserQuestion"
-            @cancel="handleCancelAcpUserQuestion"
-          />
-        </div>
-        <div v-if="visibleUserQuestion" class="ai-question-surface">
-          <QuestionPrompt :questions="visibleUserQuestion.questions" :disabled="isResolvingUserQuestion"
-            @submit="handleResolveUserQuestion" @cancel="handleCancelUserQuestion" />
-        </div>
         <AiPromptInput v-model="assistant.draft.value" v-model:active-mode="assistant.activeMode.value"
           v-model:agent-backend="sessionAgentBackend"
           :disabled="composerDisabled" :stop-visible="assistant.isSending.value"
@@ -1372,7 +1378,10 @@ onMounted(() => {
           @network-permission-change="handlePromptNetworkPermissionChange"
           @execution-mode-change="handlePromptExecutionModeChange"
           @information-sources-open="openPromptInformationSources" @personalization-open="openPromptPersonalization"
-          @prewarm="handlePromptPrewarm" />
+          @prewarm="handlePromptPrewarm"
+          :user-questions="acpApprovalQuestions ?? visibleUserQuestion?.questions ?? null"
+          @question-submit="handleComposerQuestionSubmit"
+          @question-cancel="handleComposerQuestionCancel" />
       </div>
 
       <DeferredAiProviderSettings v-if="assistant.isSettingsOpen.value" v-model:draft="settingsDraft" v-model:api-key="settingsApiKey"

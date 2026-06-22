@@ -3,6 +3,7 @@ import {
   ArrowUp,
   Bot,
   Check,
+  ChevronLeft,
   ChevronRight,
   Globe,
   Network,
@@ -12,6 +13,7 @@ import {
   Route,
   Settings2,
   Square,
+  X,
 } from '@lucide/vue';
 import { computed, onMounted, ref, useAttrs, watch } from 'vue';
 import {
@@ -61,6 +63,28 @@ import type { TAiExecutionMode } from '@/types/ai/execution-mode';
 import type { ISelectedSkill, ISkillSummary } from '@/types/ai/skill';
 import AiErrorNotice from './AiErrorNotice.vue';
 import { pickAttachmentFilesViaNativeDialog } from './attachment-file-picker';
+
+interface IAskUserComposerOption {
+  optionId: string;
+  label: string;
+  description?: string;
+}
+
+interface IAskUserComposerQuestion {
+  questionId: string;
+  question: string;
+  header?: string;
+  type?: 'choice' | 'text' | 'yesno';
+  options?: IAskUserComposerOption[];
+  multiSelect?: boolean;
+  placeholder?: string;
+}
+
+interface IAskUserComposerAnswer {
+  questionId: string;
+  optionIds: string[];
+  text?: string;
+}
 
 interface IAiPromptModeOption {
   key: TAiAssistantMode;
@@ -140,11 +164,15 @@ const props = defineProps<{
    * 在没有“上次目录”记忆的情况下回退到工作区根目录。父级未下传时优雅降级。
    */
   workspaceRootPath?: string | null;
+  /** 进行中的「向用户提问」列表；非空时输入区原地长高为提问框。 */
+  userQuestions?: readonly IAskUserComposerQuestion[] | null;
 }>();
 
 const emit = defineEmits<{
   submit: [];
   stop: [];
+  questionSubmit: [answers: IAskUserComposerAnswer[]];
+  questionCancel: [];
   removeFile: [id: string];
   modelChange: [modelId: string];
   networkPermissionChange: [permission: TAiAgentNetworkPermission];
@@ -159,6 +187,148 @@ const surfaceRef = ref<HTMLFormElement | null>(null);
 const editorRef = ref<HTMLDivElement | null>(null);
 const isComposing = ref(false);
 const pendingAttachmentDrafts = ref<IAiAttachedFile[]>([]);
+
+// -------------------------------------------------------------------------
+// 向用户提问 (AskUserQuestion): 输入区原地长高为提问框, 复用真实工具栏
+// -------------------------------------------------------------------------
+const questionList = computed<IAskUserComposerQuestion[]>(() => [...(props.userQuestions ?? [])]);
+const hasUserQuestions = computed(() => questionList.value.length > 0);
+const questionIndex = ref(0);
+const questionGrown = ref(false);
+const questionDrafts = ref<Record<string, { optionIds: string[]; text: string }>>({});
+
+const currentQuestion = computed<IAskUserComposerQuestion | null>(
+  () => questionList.value[questionIndex.value] ?? null,
+);
+const questionTotal = computed(() => questionList.value.length);
+
+const ensureQuestionDraft = (questionId: string): { optionIds: string[]; text: string } => {
+  const existing = questionDrafts.value[questionId];
+  if (existing) {
+    return existing;
+  }
+  const created = { optionIds: [] as string[], text: '' };
+  questionDrafts.value = { ...questionDrafts.value, [questionId]: created };
+  return created;
+};
+
+const currentDraft = computed(() =>
+  currentQuestion.value
+    ? (questionDrafts.value[currentQuestion.value.questionId] ?? { optionIds: [], text: '' })
+    : { optionIds: [], text: '' },
+);
+
+const isOptionSelected = (optionId: string): boolean =>
+  currentDraft.value.optionIds.includes(optionId);
+
+const toggleQuestionOption = (optionId: string): void => {
+  const question = currentQuestion.value;
+  if (!question) {
+    return;
+  }
+  const draft = ensureQuestionDraft(question.questionId);
+  const multi = question.multiSelect === true;
+  const selected = draft.optionIds.includes(optionId);
+  let nextIds: string[];
+  if (multi) {
+    nextIds = selected
+      ? draft.optionIds.filter((id) => id !== optionId)
+      : [...draft.optionIds, optionId];
+  } else {
+    nextIds = selected ? [] : [optionId];
+  }
+  questionDrafts.value = {
+    ...questionDrafts.value,
+    [question.questionId]: { ...draft, optionIds: nextIds },
+  };
+};
+
+const updateQuestionText = (value: string): void => {
+  const question = currentQuestion.value;
+  if (!question) {
+    return;
+  }
+  const draft = ensureQuestionDraft(question.questionId);
+  questionDrafts.value = {
+    ...questionDrafts.value,
+    [question.questionId]: { ...draft, text: value },
+  };
+};
+
+const onQuestionTextInput = (event: Event): void => {
+  updateQuestionText((event.target as HTMLTextAreaElement | null)?.value ?? '');
+};
+
+const questionDraftAnswered = (questionId: string): boolean => {
+  const draft = questionDrafts.value[questionId];
+  if (!draft) {
+    return false;
+  }
+  return draft.optionIds.length > 0 || draft.text.trim().length > 0;
+};
+
+const currentQuestionAnswered = computed(() =>
+  currentQuestion.value ? questionDraftAnswered(currentQuestion.value.questionId) : false,
+);
+
+const allQuestionsAnswered = computed(() =>
+  questionList.value.every((question) => questionDraftAnswered(question.questionId)),
+);
+
+const goToPrevQuestion = (): void => {
+  if (questionIndex.value > 0) {
+    questionIndex.value -= 1;
+  }
+};
+
+const goToNextQuestion = (): void => {
+  if (questionIndex.value < questionTotal.value - 1) {
+    questionIndex.value += 1;
+  }
+};
+
+const buildQuestionAnswers = (): IAskUserComposerAnswer[] =>
+  questionList.value.map((question) => {
+    const draft = questionDrafts.value[question.questionId] ?? { optionIds: [], text: '' };
+    const text = draft.text.trim();
+    return {
+      questionId: question.questionId,
+      optionIds: [...draft.optionIds],
+      ...(text ? { text } : {}),
+    };
+  });
+
+const handleQuestionCancel = (): void => {
+  emit('questionCancel');
+};
+
+const submitQuestions = (): void => {
+  if (!allQuestionsAnswered.value) {
+    const firstMissing = questionList.value.findIndex(
+      (question) => !questionDraftAnswered(question.questionId),
+    );
+    if (firstMissing >= 0) {
+      questionIndex.value = firstMissing;
+    }
+    return;
+  }
+  emit('questionSubmit', buildQuestionAnswers());
+};
+
+watch(
+  () => props.userQuestions,
+  (next) => {
+    questionIndex.value = 0;
+    questionDrafts.value = {};
+    questionGrown.value = false;
+    if ((next?.length ?? 0) > 0) {
+      window.requestAnimationFrame(() => {
+        questionGrown.value = true;
+      });
+    }
+  },
+  { immediate: true },
+);
 
 // 编辑器内容程序化写入时为 true，避免输入事件回环。
 let isApplyingExternalValue = false;
@@ -672,6 +842,11 @@ const handleSelectSkill = (slug: string): void => {
 };
 
 const handleSubmit = (): void => {
+  if (hasUserQuestions.value) {
+    submitQuestions();
+    return;
+  }
+
   syncFromEditor();
 
   if (props.disabled || !canSubmit.value) {
@@ -848,7 +1023,86 @@ onMounted(() => {
       </div>
       <AiErrorNotice :message="errorMessage" />
       <InputGroup class="ai-prompt-shell">
-        <div class="ai-prompt-editor-wrap">
+        <div
+          v-if="hasUserQuestions"
+          class="ai-question-grow"
+          :class="{ 'is-open': questionGrown }"
+        >
+          <div class="ai-question-inner">
+            <div class="ai-question-head">
+              <span
+                class="ai-question-title"
+                v-text="currentQuestion?.header || currentQuestion?.question"
+              ></span>
+              <div class="ai-question-head-actions">
+                <div v-if="questionTotal > 1" class="ai-question-pager">
+                  <button
+                    type="button"
+                    class="ai-question-pager-btn"
+                    :disabled="questionIndex === 0"
+                    aria-label="上一个问题"
+                    @click="goToPrevQuestion"
+                  >
+                    <ChevronLeft class="size-4" />
+                  </button>
+                  <span class="ai-question-pager-label"> questionIndex + 1  /  questionTotal </span>
+                  <button
+                    type="button"
+                    class="ai-question-pager-btn"
+                    :disabled="questionIndex === questionTotal - 1"
+                    aria-label="下一个问题"
+                    @click="goToNextQuestion"
+                  >
+                    <ChevronRight class="size-4" />
+                  </button>
+                </div>
+                <button
+                  type="button"
+                  class="ai-question-close"
+                  aria-label="取消提问"
+                  @click="handleQuestionCancel"
+                >
+                  <X class="size-4" />
+                </button>
+              </div>
+            </div>
+            <div
+              v-if="currentQuestion?.header && currentQuestion.header !== currentQuestion.question"
+              class="ai-question-subtitle"
+              v-text="currentQuestion?.question"
+            ></div>
+            <div class="ai-question-options">
+              <button
+                v-for="option in currentQuestion?.options ?? []"
+                :key="option.optionId"
+                type="button"
+                class="ai-question-option"
+                :class="{ 'is-selected': isOptionSelected(option.optionId) }"
+                @click="toggleQuestionOption(option.optionId)"
+              >
+                <span class="ai-question-checkbox" aria-hidden="true">
+                  <Check v-if="isOptionSelected(option.optionId)" class="ai-question-check" />
+                </span>
+                <span class="ai-question-option-body">
+                  <span class="ai-question-option-label" v-text="option.label"></span>
+                  <span
+                    v-if="option.description"
+                    class="ai-question-option-desc"
+                    v-text="option.description"
+                  ></span>
+                </span>
+              </button>
+              <textarea
+                class="ai-question-free"
+                rows="1"
+                :placeholder="currentQuestion?.placeholder || '或者，请描述你的要求……'"
+                :value="currentDraft.text"
+                @input="onQuestionTextInput"
+              ></textarea>
+            </div>
+          </div>
+        </div>
+        <div v-else class="ai-prompt-editor-wrap">
           <div
             ref="editorRef"
             class="ai-prompt-textarea ai-prompt-editor"
@@ -1064,7 +1318,7 @@ onMounted(() => {
             </ContextContent>
           </Context>
           <InputGroupButton
-            v-if="disabled && stopVisible"
+            v-if="!hasUserQuestions && disabled && stopVisible"
             type="button"
             variant="outline"
             class="ai-send-button"
@@ -1081,7 +1335,7 @@ onMounted(() => {
             variant="default"
             class="ai-send-button"
             size="icon-xs"
-            :disabled="disabled || !canSubmit"
+            :disabled="hasUserQuestions ? !(currentQuestionAnswered || allQuestionsAnswered) : disabled || !canSubmit"
             :aria-label="submitLabel"
           >
             <ArrowUp class="size-4" />
@@ -1501,6 +1755,187 @@ onMounted(() => {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.ai-question-grow {
+  display: grid;
+  grid-template-rows: 0fr;
+  opacity: 0;
+  transition:
+    grid-template-rows 0.42s cubic-bezier(0.22, 0.61, 0.36, 1),
+    opacity 0.3s ease;
+}
+
+.ai-question-grow.is-open {
+  grid-template-rows: 1fr;
+  opacity: 1;
+}
+
+.ai-question-inner {
+  min-height: 0;
+  overflow: hidden;
+  padding: 14px 18px 4px;
+}
+
+.ai-question-head {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+}
+
+.ai-question-title {
+  flex: 1 1 auto;
+  min-width: 0;
+  color: var(--text-primary);
+  font-size: 15px;
+  font-weight: 600;
+  line-height: 1.45;
+}
+
+.ai-question-head-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  flex: none;
+}
+
+.ai-question-pager {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  color: var(--text-secondary);
+}
+
+.ai-question-pager-label {
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+  min-width: 30px;
+  text-align: center;
+}
+
+.ai-question-pager-btn,
+.ai-question-close {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--text-secondary);
+  transition:
+    background-color 140ms ease,
+    color 140ms ease;
+}
+
+.ai-question-pager-btn:hover:not(:disabled),
+.ai-question-close:hover {
+  background: color-mix(in srgb, var(--text-primary) 7%, transparent);
+  color: var(--text-primary);
+}
+
+.ai-question-pager-btn:disabled {
+  opacity: 0.35;
+}
+
+.ai-question-subtitle {
+  margin-top: 4px;
+  color: var(--text-secondary);
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.ai-question-options {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin-top: 10px;
+}
+
+.ai-question-option {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  width: 100%;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  padding: 7px 8px;
+  text-align: left;
+  cursor: pointer;
+  transition: background-color 140ms ease;
+}
+
+.ai-question-option:hover {
+  background: color-mix(in srgb, var(--text-primary) 5%, transparent);
+}
+
+.ai-question-checkbox {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  margin-top: 1px;
+  flex: none;
+  border: 1.5px solid color-mix(in srgb, var(--text-primary) 22%, transparent);
+  border-radius: 5px;
+  color: #fff;
+  transition:
+    background-color 140ms ease,
+    border-color 140ms ease;
+}
+
+.ai-question-option.is-selected .ai-question-checkbox {
+  background: #2783de;
+  border-color: #2783de;
+}
+
+.ai-question-check {
+  width: 13px;
+  height: 13px;
+  stroke-width: 3;
+}
+
+.ai-question-option-body {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.ai-question-option-label {
+  color: var(--text-primary);
+  font-size: 14px;
+  line-height: 1.4;
+}
+
+.ai-question-option-desc {
+  color: var(--text-tertiary);
+  font-size: 12.5px;
+  line-height: 1.4;
+}
+
+.ai-question-free {
+  width: 100%;
+  margin-top: 2px;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  padding: 8px;
+  color: var(--text-primary);
+  font-size: 14px;
+  line-height: 1.5;
+  resize: none;
+  outline: none;
+  field-sizing: content;
+  max-height: 120px;
+  overflow-y: auto;
+}
+
+.ai-question-free::placeholder {
+  color: var(--text-tertiary);
 }
 
 @media (max-width: 960px) {
