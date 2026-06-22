@@ -3,7 +3,9 @@ import {
   FILE_LANGUAGE_BY_EXTENSION,
   resolveCodeMirrorLanguageId,
 } from '@/services/editor/codemirror-language';
+import { utf8ByteLength } from '@/utils/core/bytes';
 import { computeDocumentMetrics } from '@/utils/editor/document-metrics';
+import { normalizeSearchGrapheme } from '@/utils/file/text/normalize';
 import { splitTextGraphemes } from '@/utils/file/text-preview';
 
 export type TSshPreviewEncoding = 'utf-8' | 'utf-8-bom';
@@ -34,11 +36,6 @@ const LINE_ENDING_LABEL_MAP: Readonly<Record<TSshPreviewLineEnding, string>> = {
   mixed: 'Mixed',
   none: '无',
 };
-
-// 注意：workspace.ts 的 normalizeWorkspaceQuery 仅做 trim + toLocaleLowerCase（无 NFC）。
-// 两处语义不同（搜索图素 vs 工作区查询），如需统一请抽到 utils/file/text/normalize.ts。
-const normalizeSearchGrapheme = (value: string): string =>
-  value.normalize('NFC').toLocaleLowerCase('zh-CN');
 
 const resolveFileExtension = (path: string): string => {
   const normalized = path.trim().toLowerCase().split(/[?#]/u, 1)[0] ?? '';
@@ -233,8 +230,7 @@ export const estimateSshPreviewByteSize = (
     return normalizedLineFeed;
   })();
 
-  const textEncoder = new TextEncoder();
   const bomSize = encoding === 'utf-8-bom' ? 3 : 0;
 
-  return textEncoder.encode(normalized).length + bomSize;
+  return utf8ByteLength(normalized) + bomSize;
 };

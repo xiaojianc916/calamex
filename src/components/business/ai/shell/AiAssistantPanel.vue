@@ -4,6 +4,7 @@ import { Bot, SquarePen, Trash2 } from '@lucide/vue';
 import { AnimatePresence, Motion } from 'motion-v';
 import { computed, defineAsyncComponent, onMounted, ref } from 'vue';
 import { z } from 'zod';
+import { ApprovalPrompt } from '@/components/ai-elements/approval';
 import QuestionPrompt from '@/components/ai-elements/question/QuestionPrompt.vue';
 import AiChatThread from '@/components/business/ai/chat/AiChatThread.vue';
 import AiErrorNotice from '@/components/business/ai/chat/AiErrorNotice.vue';
@@ -22,6 +23,7 @@ import {
   SelectItem,
   SelectTrigger,
 } from '@/components/ui/select';
+import { useAcpApproval } from '@/composables/ai/useAcpApproval';
 import { useAiAgentNetwork } from '@/composables/ai/useAiAgentNetwork';
 import { useAiAgentRun } from '@/composables/ai/useAiAgentRun';
 import { useAiAssistant } from '@/composables/ai/useAiAssistant';
@@ -103,6 +105,12 @@ const assistant = useAiAssistant({
 const agentRun = useAiAgentRun();
 const agentNetwork = useAiAgentNetwork();
 const webSources = useAiWebSources();
+// ACP 工具调用审批闭环（ADR-20260617 D6）：订阅宿主经 ai:sidecar-approval 抹来的反向
+// session/request_permission，在面板内渲染审批浮层并把用户决策原文回投。此前该闭环组合式
+// 从未在任意已挂载组件中实例化，导致 Kimi 等外部 Agent 申请工具权限时无 UI 呈现，
+// 申请被永久挂起、回合卡在“思考中”——正是文件修改一直卡住的根因之二。
+const acpApproval = useAcpApproval();
+const acpApprovalCurrent = computed(() => acpApproval.current.value);
 const aiThreadStore = useAiThreadStore();
 const renderThreadEntries = computed(() => aiThreadStore.renderActiveEntries);
 const suggestionPool = useCopilotSuggestions();
@@ -353,7 +361,8 @@ const composerDisabled = computed(
   () =>
     assistant.isSending.value ||
     Boolean(visibleDirectToolConfirmation.value) ||
-    Boolean(visibleUserQuestion.value),
+    Boolean(visibleUserQuestion.value) ||
+    acpApproval.hasPending.value,
 );
 const activePlanStep = computed(() => {
   const currentStepId = planActiveRun.value?.currentStepId;
@@ -1045,6 +1054,33 @@ const handleCancelUserQuestion = async (): Promise<void> => {
   await handleResolveUserQuestion({ outcome: 'cancelled' });
 };
 
+const handleResolveAcpApproval = async (optionId: string): Promise<void> => {
+  const current = acpApprovalCurrent.value;
+
+  if (!current) {
+    return;
+  }
+
+  try {
+    await acpApproval.resolve(current.toolCallId, optionId);
+  } catch (error) {
+    assistant.error.value = toErrorMessage(error, '提交工具调用审批失败。');
+  }
+};
+
+const handleCancelAcpApproval = (): void => {
+  const current = acpApprovalCurrent.value;
+
+  if (!current) {
+    return;
+  }
+
+  // 取消审批 = 取消当前回合：先本地出队避免重复呈现，再触发带外 ai_cancel；
+  // 宿主 ApprovalRegistry::cancel_session 丢弃 sender → Cancelled，经带外 responder 回投。
+  acpApproval.dismiss(current.toolCallId);
+  void assistant.stopCurrentRequest();
+};
+
 const saveSettings = async (
   config: IAiConfigPayload,
   apiKey: string,
@@ -1267,6 +1303,15 @@ onMounted(() => {
         <AiThreadRunStatusBar :run="planActiveRun" :confirmation="visibleDirectToolConfirmation"
           :busy="isAgentRunActionPending" @pause="handlePauseRun" @resume="handleResumeRun" @cancel="handleCancelRun"
           @resolve="handleResolveToolConfirmation" />
+        <ApprovalPrompt
+          v-if="acpApprovalCurrent"
+          autofocus
+          :title="acpApprovalCurrent.approval.title"
+          :reason="acpApprovalCurrent.approval.summary"
+          :options="acpApprovalCurrent.approval.options"
+          @select="handleResolveAcpApproval"
+          @cancel="handleCancelAcpApproval"
+        />
         <QuestionPrompt v-if="visibleUserQuestion" :questions="visibleUserQuestion.questions"
           :disabled="isResolvingUserQuestion" @submit="handleResolveUserQuestion"
           @cancel="handleCancelUserQuestion" />

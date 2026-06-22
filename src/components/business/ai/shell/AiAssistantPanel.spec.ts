@@ -1,7 +1,7 @@
 import { mount } from '@vue/test-utils';
 import { createPinia, setActivePinia } from 'pinia';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { computed, defineComponent, ref } from 'vue';
+import { computed, defineComponent, h, ref } from 'vue';
 import AiAssistantPanel from '@/components/business/ai/shell/AiAssistantPanel.vue';
 import { createDefaultAiModelEndpointConfig } from '@/services/ipc/ai-config.service';
 import type {
@@ -33,6 +33,7 @@ const useAiWebSourcesMock = vi.hoisted(() => vi.fn());
 const useAiTokenContextMock = vi.hoisted(() => vi.fn());
 const useCopilotSuggestionsMock = vi.hoisted(() => vi.fn());
 const useCopilotContextMock = vi.hoisted(() => vi.fn());
+const useAcpApprovalMock = vi.hoisted(() => vi.fn());
 
 vi.mock('@copilotkit/vue', () => ({
   useFrontendTool: useFrontendToolMock,
@@ -64,6 +65,10 @@ vi.mock('@/composables/ai/useCopilotSuggestions', () => ({
 
 vi.mock('@/composables/ai/useCopilotContext', () => ({
   useCopilotContext: useCopilotContextMock,
+}));
+
+vi.mock('@/composables/ai/useAcpApproval', () => ({
+  useAcpApproval: useAcpApprovalMock,
 }));
 
 type TAssistantMode = 'chat' | 'agent' | 'plan';
@@ -354,6 +359,45 @@ const createAssistantMock = (messagesList: IAiChatMessage[] = []) => {
   };
 };
 
+interface IAcpApprovalCurrentMock {
+  sessionId: string;
+  toolCallId: string;
+  request: { sessionId: string; toolCallId: string; options: unknown[] };
+  approval: {
+    title: string;
+    summary: string | null;
+    impact: string | null;
+    options: Array<{ id: string; label: string; shortcut?: string; tone?: 'default' | 'danger' }>;
+  };
+}
+
+const createAcpApprovalCurrent = (): IAcpApprovalCurrentMock => ({
+  sessionId: 'acp-session-1',
+  toolCallId: 'tool-call-1',
+  request: { sessionId: 'acp-session-1', toolCallId: 'tool-call-1', options: [] },
+  approval: {
+    title: '是否允许写入 src/app.ts？',
+    summary: null,
+    impact: null,
+    options: [
+      { id: 'allow-once-id', label: '允许一次', shortcut: 'y', tone: 'default' },
+      { id: 'reject-once-id', label: '拒绝', shortcut: 'n', tone: 'danger' },
+    ],
+  },
+});
+
+const createAcpApprovalMock = (current: IAcpApprovalCurrentMock | null = null) => {
+  const currentRef = ref<IAcpApprovalCurrentMock | null>(current);
+
+  return {
+    pending: computed(() => (currentRef.value ? [currentRef.value] : [])),
+    current: computed(() => currentRef.value),
+    hasPending: computed(() => currentRef.value !== null),
+    resolve: vi.fn().mockResolvedValue(undefined),
+    dismiss: vi.fn(),
+  };
+};
+
 const mountPanel = (_assistantMock: ReturnType<typeof createAssistantMock>) =>
   mount(AiAssistantPanel, {
     props: {
@@ -438,6 +482,29 @@ const mountPanel = (_assistantMock: ReturnType<typeof createAssistantMock>) =>
           template:
             '<div data-testid="prompt-input"><button data-testid="switch-plan" @click="$emit(\'update:activeMode\', \'plan\')">切到 Plan</button><button data-testid="switch-config-option" @click="$emit(\'sessionConfigOptionChange\', \'model\', \'kimi-k2\')">切换配置</button><button data-testid="submit" @click="$emit(\'submit\')">发送</button></div>',
         }),
+        ApprovalPrompt: defineComponent({
+          props: ['title', 'reason', 'options', 'autofocus'],
+          emits: ['select', 'cancel'],
+          setup(props, { emit }) {
+            return () =>
+              h('div', { 'data-testid': 'acp-approval' }, [
+                h('strong', { 'data-testid': 'acp-approval-title' }, props.title),
+                h(
+                  'button',
+                  {
+                    'data-testid': 'acp-approval-allow',
+                    onClick: () => emit('select', props.options[0]?.id),
+                  },
+                  '允许',
+                ),
+                h(
+                  'button',
+                  { 'data-testid': 'acp-approval-cancel', onClick: () => emit('cancel') },
+                  '取消',
+                ),
+              ]);
+          },
+        }),
         AiProviderSettings: defineComponent({ template: '<div />' }),
         AiWebSourcesPanel: defineComponent({ template: '<div />' }),
         teleport: true,
@@ -483,6 +550,7 @@ describe('AiAssistantPanel', () => {
       latestTokenContextArgs = args;
       return { contextProps: computed(() => ({ state: 'idle' })) };
     });
+    useAcpApprovalMock.mockReturnValue(createAcpApprovalMock());
   });
 
   afterEach(() => {
@@ -761,5 +829,51 @@ describe('AiAssistantPanel', () => {
       'model',
       'kimi-k2',
     );
+  });
+
+  it('renders the ACP tool-permission approval prompt when one is pending', () => {
+    const assistantMock = createAssistantMock([
+      createMessage('message-user', 'user', '改这个文件'),
+    ]);
+    useAiAssistantMock.mockReturnValue(assistantMock);
+    useAcpApprovalMock.mockReturnValue(createAcpApprovalMock(createAcpApprovalCurrent()));
+
+    const wrapper = mountPanel(assistantMock);
+
+    expect(wrapper.find('[data-testid="acp-approval"]').exists()).toBe(true);
+    expect(wrapper.get('[data-testid="acp-approval-title"]').text()).toContain(
+      '是否允许写入 src/app.ts？',
+    );
+  });
+
+  it('routes an ACP approval decision back to the approval queue verbatim', async () => {
+    const assistantMock = createAssistantMock([
+      createMessage('message-user', 'user', '改这个文件'),
+    ]);
+    useAiAssistantMock.mockReturnValue(assistantMock);
+    const acpApprovalMock = createAcpApprovalMock(createAcpApprovalCurrent());
+    useAcpApprovalMock.mockReturnValue(acpApprovalMock);
+
+    const wrapper = mountPanel(assistantMock);
+
+    await wrapper.get('[data-testid="acp-approval-allow"]').trigger('click');
+
+    expect(acpApprovalMock.resolve).toHaveBeenCalledWith('tool-call-1', 'allow-once-id');
+  });
+
+  it('cancelling an ACP approval dismisses it and stops the current run', async () => {
+    const assistantMock = createAssistantMock([
+      createMessage('message-user', 'user', '改这个文件'),
+    ]);
+    useAiAssistantMock.mockReturnValue(assistantMock);
+    const acpApprovalMock = createAcpApprovalMock(createAcpApprovalCurrent());
+    useAcpApprovalMock.mockReturnValue(acpApprovalMock);
+
+    const wrapper = mountPanel(assistantMock);
+
+    await wrapper.get('[data-testid="acp-approval-cancel"]').trigger('click');
+
+    expect(acpApprovalMock.dismiss).toHaveBeenCalledWith('tool-call-1');
+    expect(assistantMock.stopCurrentRequest).toHaveBeenCalledTimes(1);
   });
 });

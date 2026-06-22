@@ -1,13 +1,12 @@
 import { commands } from '@/bindings/tauri';
 import type { ITauriService } from '@/types/tauri';
+import { utf8ByteLength } from '@/utils/core/bytes';
 import { type ICommandMeta, runCommand } from './tauri.ipc-define';
 import { buildPayloadMetrics } from './tauri.ipc-metrics';
 import type { IIpcCallOptions } from './tauri.ipc-types';
 
-const textByteLength = (value: unknown): number => {
-  if (typeof value !== 'string' || value.length === 0) return 0;
-  return typeof TextEncoder !== 'undefined' ? new TextEncoder().encode(value).length : value.length;
-};
+const textByteLength = (value: unknown): number =>
+  typeof value === 'string' && value.length > 0 ? utf8ByteLength(value) : 0;
 
 const sumTextBytes = (...values: unknown[]): number =>
   values.reduce<number>((total, value) => total + textByteLength(value), 0);

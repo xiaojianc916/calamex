@@ -1,4 +1,5 @@
 import { parse, sRGB } from '@texel/color';
+import { clamp } from './math';
 
 export interface IRgbaColor {
   /** 红色通道，0-255 整数。 */
@@ -11,9 +12,7 @@ export interface IRgbaColor {
   a: number;
 }
 
-const clamp01 = (value: number): number => (value < 0 ? 0 : value > 1 ? 1 : value);
-
-const toByte = (value: number): number => Math.round(clamp01(value) * 255);
+const toByte = (value: number): number => Math.round(clamp(value, 0, 1) * 255);
 
 /**
  * 将 CSS 颜色字符串解析为 RGBA 字节值（0-255）。
