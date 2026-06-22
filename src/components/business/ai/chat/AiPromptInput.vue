@@ -860,6 +860,7 @@ onMounted(() => {
             @input="onEditorInput"
             @keydown="handleKeyDown"
             @paste="handlePaste"
+            @contextmenu.prevent
             @focus="handlePrewarmIntent"
             @mouseenter="handlePrewarmIntent"
             @compositionstart="isComposing = true"

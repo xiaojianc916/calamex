@@ -1893,28 +1893,37 @@ export const useAiAssistant = (options: IUseAiAssistantOptions) => {
       if (requestAbortController.signal.aborted) {
         return;
       }
-      appendVisibleRuntimeTimelineEvents(extractVisibleAgentRuntimeEvents(freshEvents));
-      const liveRenderState = applySidecarLiveEventsToAgentMessage(
-        assistantMessageId,
-        targetThreadId,
-        '',
-        events,
-      );
-      updateLiveThreadFromSidecarEvents(
-        assistantMessageId,
-        targetThreadId,
-        events,
-        liveRenderState,
-      );
-
+      // 关键修复(chat 卡死回归):settle() 是本回合唯一的完成信号(解开 await、复位 isSending),
+      // 必须在收到 done/error 帧时永远触发,不能被渲染富集写入的异常饿死——该回调跑在缓冲的
+      // raf/timeout flush 里,抛错是游离的未处理异常,不会 reject 外层 await,会造成永久「正在准备回复」。
       const { doneEvent, errorEvent } = getLatestSidecarLiveEvents(events);
 
-      if (errorEvent) {
-        errorMessage.value = errorEvent.message;
-      }
-
-      if (doneEvent || errorEvent) {
-        settle();
+      try {
+        appendVisibleRuntimeTimelineEvents(extractVisibleAgentRuntimeEvents(freshEvents));
+        const liveRenderState = applySidecarLiveEventsToAgentMessage(
+          assistantMessageId,
+          targetThreadId,
+          '',
+          events,
+        );
+        updateLiveThreadFromSidecarEvents(
+          assistantMessageId,
+          targetThreadId,
+          events,
+          liveRenderState,
+        );
+      } catch (error) {
+        logger.error({ event: 'ai.chat.live_render_failed', err: error });
+        if (!errorMessage.value) {
+          errorMessage.value = toErrorMessage(error, MSG_CALL_FAILED);
+        }
+      } finally {
+        if (errorEvent) {
+          errorMessage.value = errorEvent.message;
+        }
+        if (doneEvent || errorEvent) {
+          settle();
+        }
       }
     });
     const sidecarSessionId = `sidecar:${assistantMessageId}`;

@@ -18,6 +18,11 @@ import { useSshConnectionForm } from './useSshConnectionForm';
 import { useSshRemoteSession } from './useSshRemoteSession';
 import { useSshTerminalBridge } from './useSshTerminalBridge';
 
+defineProps<{
+  /** 当前 SSH 侧边栏是否激活,由 AppSidebar 透传;此处仅为与其它侧边栏面板保持统一接口。 */
+  isActive?: boolean;
+}>();
+
 const emit = defineEmits<{
   'open-terminal': [];
 }>();
