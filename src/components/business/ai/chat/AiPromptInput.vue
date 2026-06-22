@@ -195,27 +195,35 @@ const questionList = computed<IAskUserComposerQuestion[]>(() => [...(props.userQ
 const hasUserQuestions = computed(() => questionList.value.length > 0);
 const questionIndex = ref(0);
 const questionGrown = ref(false);
-const questionDrafts = ref<Record<string, { optionIds: string[]; text: string }>>({});
+const questionDrafts = ref<
+  Record<string, { optionIds: string[]; text: string; freeSelected: boolean }>
+>({});
 
 const currentQuestion = computed<IAskUserComposerQuestion | null>(
   () => questionList.value[questionIndex.value] ?? null,
 );
 const questionTotal = computed(() => questionList.value.length);
 
-const ensureQuestionDraft = (questionId: string): { optionIds: string[]; text: string } => {
+const ensureQuestionDraft = (
+  questionId: string,
+): { optionIds: string[]; text: string; freeSelected: boolean } => {
   const existing = questionDrafts.value[questionId];
   if (existing) {
     return existing;
   }
-  const created = { optionIds: [] as string[], text: '' };
+  const created = { optionIds: [] as string[], text: '', freeSelected: false };
   questionDrafts.value = { ...questionDrafts.value, [questionId]: created };
   return created;
 };
 
 const currentDraft = computed(() =>
   currentQuestion.value
-    ? (questionDrafts.value[currentQuestion.value.questionId] ?? { optionIds: [], text: '' })
-    : { optionIds: [], text: '' },
+    ? (questionDrafts.value[currentQuestion.value.questionId] ?? {
+        optionIds: [],
+        text: '',
+        freeSelected: false,
+      })
+    : { optionIds: [], text: '', freeSelected: false },
 );
 
 const isOptionSelected = (optionId: string): boolean =>
@@ -239,7 +247,11 @@ const toggleQuestionOption = (optionId: string): void => {
   }
   questionDrafts.value = {
     ...questionDrafts.value,
-    [question.questionId]: { ...draft, optionIds: nextIds },
+    [question.questionId]: {
+      ...draft,
+      optionIds: nextIds,
+      freeSelected: multi ? draft.freeSelected : false,
+    },
   };
 };
 
@@ -249,9 +261,16 @@ const updateQuestionText = (value: string): void => {
     return;
   }
   const draft = ensureQuestionDraft(question.questionId);
+  const multi = question.multiSelect === true;
+  const freeSelected = value.trim().length > 0 ? true : draft.freeSelected;
   questionDrafts.value = {
     ...questionDrafts.value,
-    [question.questionId]: { ...draft, text: value },
+    [question.questionId]: {
+      ...draft,
+      text: value,
+      freeSelected,
+      optionIds: !multi && freeSelected ? [] : draft.optionIds,
+    },
   };
 };
 
@@ -259,12 +278,32 @@ const onQuestionTextInput = (event: Event): void => {
   updateQuestionText((event.target as HTMLTextAreaElement | null)?.value ?? '');
 };
 
+const isFreeSelected = computed(() => currentDraft.value.freeSelected === true);
+
+const toggleFreeOption = (): void => {
+  const question = currentQuestion.value;
+  if (!question) {
+    return;
+  }
+  const draft = ensureQuestionDraft(question.questionId);
+  const multi = question.multiSelect === true;
+  const nextFree = !draft.freeSelected;
+  questionDrafts.value = {
+    ...questionDrafts.value,
+    [question.questionId]: {
+      ...draft,
+      freeSelected: nextFree,
+      optionIds: !multi && nextFree ? [] : draft.optionIds,
+    },
+  };
+};
+
 const questionDraftAnswered = (questionId: string): boolean => {
   const draft = questionDrafts.value[questionId];
   if (!draft) {
     return false;
   }
-  return draft.optionIds.length > 0 || draft.text.trim().length > 0;
+  return draft.optionIds.length > 0 || draft.text.trim().length > 0 || draft.freeSelected === true;
 };
 
 const currentQuestionAnswered = computed(() =>
@@ -289,7 +328,11 @@ const goToNextQuestion = (): void => {
 
 const buildQuestionAnswers = (): IAskUserComposerAnswer[] =>
   questionList.value.map((question) => {
-    const draft = questionDrafts.value[question.questionId] ?? { optionIds: [], text: '' };
+    const draft = questionDrafts.value[question.questionId] ?? {
+      optionIds: [],
+      text: '',
+      freeSelected: false,
+    };
     const text = draft.text.trim();
     return {
       questionId: question.questionId,
@@ -1092,13 +1135,28 @@ onMounted(() => {
                   ></span>
                 </span>
               </button>
-              <textarea
-                class="ai-question-free"
-                rows="1"
-                :placeholder="currentQuestion?.placeholder || '或者，请描述你的要求……'"
-                :value="currentDraft.text"
-                @input="onQuestionTextInput"
-              ></textarea>
+              <div
+                class="ai-question-option ai-question-free-row"
+                :class="{ 'is-selected': isFreeSelected }"
+              >
+                <button
+                  type="button"
+                  class="ai-question-free-check"
+                  aria-label="选择自定义回答"
+                  @click="toggleFreeOption"
+                >
+                  <span class="ai-question-checkbox" aria-hidden="true">
+                    <Check v-if="isFreeSelected" class="ai-question-check" />
+                  </span>
+                </button>
+                <textarea
+                  class="ai-question-free"
+                  rows="1"
+                  :placeholder="currentQuestion?.placeholder || '或者，请描述你的要求……'"
+                  :value="currentDraft.text"
+                  @input="onQuestionTextInput"
+                ></textarea>
+              </div>
             </div>
           </div>
         </div>
@@ -1758,6 +1816,7 @@ onMounted(() => {
 }
 
 .ai-question-grow {
+  width: 100%;
   display: grid;
   grid-template-rows: 0fr;
   opacity: 0;
@@ -1915,6 +1974,30 @@ onMounted(() => {
   color: var(--text-tertiary);
   font-size: 12.5px;
   line-height: 1.4;
+}
+
+.ai-question-free-row {
+  cursor: text;
+}
+
+.ai-question-free-check {
+  display: inline-flex;
+  align-items: flex-start;
+  border: 0;
+  background: transparent;
+  padding: 0;
+  margin: 0;
+  cursor: pointer;
+}
+
+.ai-question-free-row:hover {
+  background: transparent;
+}
+
+.ai-question-free-row .ai-question-free {
+  flex: 1 1 auto;
+  margin-top: 0;
+  padding: 0;
 }
 
 .ai-question-free {

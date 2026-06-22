@@ -90,6 +90,13 @@ const resolveHeader = (request: IAcpPermissionRequest): string => {
 export const buildAcpAskUserQuestions = (
   request: IAcpPermissionRequest,
 ): IAskUserQuestion[] | null => {
+  // [diag·临时] 打印真实 ACP request，用于定位 Kimi 的问题文本字段；定位后请删除。
+  console.info(
+    '[acp-askuser] toolCall=',
+    JSON.stringify(request.toolCall ?? null),
+    'options=',
+    JSON.stringify(request.options),
+  );
   const allowOptions = request.options.filter((option) => ALLOW_KINDS.has(option.kind));
   const isAskUser =
     hasQuestionShapedRawInput(request.toolCall) || countKind(request, 'allow_once') >= 2;
