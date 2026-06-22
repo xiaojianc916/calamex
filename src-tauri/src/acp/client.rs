@@ -8,6 +8,7 @@
 
 use std::path::PathBuf;
 use std::sync::Arc;
+use std::sync::Mutex;
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use serde_json::Value;
@@ -406,15 +407,15 @@ enum Command {
         request: AgentAskUserResumeExtRequest,
         reply: oneshot::Sender<Result<Value, String>>,
     },
-    Cancel {
-        session_id: SessionId,
-    },
     Shutdown,
 }
 
 #[derive(Clone)]
 pub struct AcpClientHandle {
     cmd_tx: mpsc::UnboundedSender<Command>,
+    /// 带外取消通道:连接就绪后存入 `cx.clone()`,让 `cancel()` 绕过串行命令队列,
+    /// 即便 Prompt 把命令循环 .await 阻塞,也能直接发 `session/cancel`。
+    cancel_cx: Arc<Mutex<Option<ConnectionTo<Agent>>>>,
 }
 
 impl AcpClientHandle {
@@ -619,9 +620,16 @@ impl AcpClientHandle {
     }
 
     pub fn cancel(&self, session_id: SessionId) -> Result<(), AcpClientError> {
-        self.cmd_tx
-            .send(Command::Cancel { session_id })
-            .map_err(|_| AcpClientError::NotRunning)
+        // 带外取消:直接经连接句柄发送 session/cancel,绕过串行命令队列。
+        // 即使命令循环正卡在某个 Prompt 的 .await 上,取消通知依旧能送达 agent,
+        // 触发 StopReason::Cancelled 解阻塞该 Prompt → 循环恢复 → 死锁解除。
+        let guard = self
+            .cancel_cx
+            .lock()
+            .map_err(|_| AcpClientError::NotRunning)?;
+        let cx = guard.as_ref().ok_or(AcpClientError::NotRunning)?;
+        cx.send_notification(CancelNotification::new(session_id))
+            .map_err(|error| AcpClientError::Transport(error.to_string()))
     }
 
     pub fn shutdown(&self) {
@@ -646,6 +654,10 @@ pub fn spawn_acp_client(
 
     let (cmd_tx, mut cmd_rx) = mpsc::unbounded_channel::<Command>();
     let seq = Arc::new(AtomicU64::new(0));
+
+    // 带外取消通道:连接闭包就绪后写入 cx 克隆,供 AcpClientHandle::cancel 直接使用。
+    let cancel_cx: Arc<Mutex<Option<ConnectionTo<Agent>>>> = Arc::new(Mutex::new(None));
+    let cancel_cx_task = cancel_cx.clone();
 
     let notif_sink = sink.clone();
     let notif_seq = seq.clone();
@@ -699,6 +711,11 @@ pub fn spawn_acp_client(
                 cx.send_request(InitializeRequest::new(ProtocolVersion::V1))
                     .block_task()
                     .await?;
+
+                // 连接已建立:把 cx 克隆存入共享槽,使带外取消在循环阻塞时仍能发出 session/cancel。
+                if let Ok(mut slot) = cancel_cx_task.lock() {
+                    *slot = Some(cx.clone());
+                }
 
                 while let Some(command) = cmd_rx.recv().await {
                     match command {
@@ -797,15 +814,13 @@ pub fn spawn_acp_client(
                             let res = cx.send_request(request).block_task().await;
                             let _ = reply.send(res.map_err(|e| e.to_string()));
                         }
-                        Command::Cancel { session_id } => {
-                            if let Err(error) =
-                                cx.send_notification(CancelNotification::new(session_id))
-                            {
-                                log::warn!("acp cancel notification failed: {error}");
-                            }
-                        }
                         Command::Shutdown => break,
                     }
+                }
+
+                // 循环退出(Shutdown 或命令通道关闭):清空带外取消槽,避免对已断连接再发通知。
+                if let Ok(mut slot) = cancel_cx_task.lock() {
+                    *slot = None;
                 }
 
                 Ok::<(), agent_client_protocol::Error>(())
@@ -817,7 +832,7 @@ pub fn spawn_acp_client(
         }
     });
 
-    Ok(AcpClientHandle { cmd_tx })
+    Ok(AcpClientHandle { cmd_tx, cancel_cx })
 }
 
 #[cfg(test)]
@@ -1089,5 +1104,29 @@ mod tests {
         // optionIds 恒为数组,空则 []
         assert_eq!(value["optionIds"], serde_json::json!([]));
         assert!(value.get("text").is_none());
+    }
+
+    // ---- 取消死锁回归测试 ----
+
+    #[test]
+    fn cancel_bypasses_serial_command_queue() {
+        // 回归(带外取消):cancel() 必须绕过串行命令队列(cmd_tx)直接走连接句柄。
+        // 旧实现把 Cancel 投进 cmd_tx,一旦 Prompt 把命令循环 .await 阻塞,
+        // Cancel 永远排在队尾发不出去 → 死锁直到重启。
+        //
+        // 连接句柄尚未就绪(None)时,cancel 应立即返回 NotRunning,
+        // 且绝不向命令队列投递任何命令(断言队列仍为空)。
+        let (cmd_tx, mut cmd_rx) = mpsc::unbounded_channel::<Command>();
+        let handle = AcpClientHandle {
+            cmd_tx,
+            cancel_cx: Arc::new(Mutex::new(None)),
+        };
+
+        let result = handle.cancel(SessionId::from("sess_1".to_string()));
+        assert!(matches!(result, Err(AcpClientError::NotRunning)));
+        assert!(
+            cmd_rx.try_recv().is_err(),
+            "cancel 不得经由串行命令队列,否则会被阻塞的 Prompt 卡住"
+        );
     }
 }

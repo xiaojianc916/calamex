@@ -21,7 +21,7 @@
     "@agentclientprotocol/sdk": "^0.28.1",
     "@ai-sdk/deepseek": "^2.0.39",
     "@ai-sdk/openai-compatible": "^2.0.51",
-    "@ast-grep/napi": "^0.43.0",
+    "@ast-grep/napi": "^0.44.0",
     "@libsql/client": "^0.17.4",
     "@mastra/agent-browser": "^0.4.0",
     "@mastra/core": "^1.45.0",
@@ -45,7 +45,7 @@
   },
   "devDependencies": {
     "@types/node": "^26.0.0",
-    "ai": "^6.0.0",
+    "ai": "^6.0.208",
     "esbuild": "^0.28.1",
     "tsx": "^4.22.4",
     "typescript": "^6.0.3"
