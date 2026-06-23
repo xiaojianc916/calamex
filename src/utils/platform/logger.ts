@@ -59,11 +59,11 @@ export interface ILogger {
   warn(payload: ILoggerPayload): void;
   info(payload: ILoggerPayload): void;
   error(payload: ILoggerPayload): void;
-  /** 新增：debug 通道，由 LOG_LEVEL>=4 控制可见性。 */
+  /** debug 通道，可见性由日志级别（LOG_LEVEL >= 4）控制。 */
   debug(payload: ILoggerPayload): void;
   /**
-   * 新增：派生一个带固定字段的子 logger（如 traceId / module），
-   * 子 logger 的所有日志都会自动合并这些字段，调用方不必每次重复传。
+   * 派生一个带固定字段的子 logger（如 traceId / module）；
+   * 其所有日志都会自动合并这些字段，调用方无需重复传入。
    */
   child(bindings: Omit<ILoggerPayload, 'event'>): ILogger;
 }

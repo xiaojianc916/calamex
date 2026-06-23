@@ -51,7 +51,7 @@ interface IPersistTextDocumentOptions {
 
 const NON_FORMATTABLE_TARGET_MESSAGE = '当前目标不是可格式化的文本文件。';
 
-// 用专门的错误类型表达「目标不可格式化」，取代散落的字符串字面量比较（stringly-typed control flow）。
+// 用专门的错误类型表达「目标不可格式化」，避免以字符串字面量比较来驱动控制流。
 class NonFormattableTargetError extends Error {
   constructor() {
     super(NON_FORMATTABLE_TARGET_MESSAGE);
@@ -350,8 +350,7 @@ export const useDocumentPersistence = ({
     }
 
     // 开启“保存时格式化”时，按语言解析 formatter 跑格式化，并在同一管线里完成 whitespace
-    // 规范化——只写回一次内容。旧实现先写回格式化结果、再写回规范化结果，多触发一次
-    // 编辑器重排/重着色，是保存时“一闪一闪”的主因之一。
+    // 规范化，只写回一次内容——避免两次写回触发编辑器重排/重着色，从而消除保存时的闪烁。
     if (appStore.settings.editor.formatOnSave) {
       const candidate = editorStore.getDocumentById(documentId);
       if (!candidate || !isLoadedTextDocument(candidate)) {

@@ -1,7 +1,8 @@
-import { consola } from 'consola';
 import { AppError, isAppError } from '@/types/app-error';
+import { createUniqueId } from '@/utils/core/id';
 import { toErrorMessage } from '@/utils/error/error';
 import { assertDesktopRuntime } from '@/utils/platform/desktop-runtime';
+import { logger } from '@/utils/platform/logger';
 import { buildPayloadMetrics } from './tauri.ipc-metrics';
 import type {
   IIpcErrorMapping,
@@ -18,8 +19,8 @@ type TauriEventModule = typeof import('@tauri-apps/api/event');
 
 export const TAURI_IPC_DEFAULT_TIMEOUT_MS = 10_000;
 
-/** IPC 专用日志通道：统一走项目既有的 consola，便于按 tag 过滤与结构化输出。 */
-const ipcLogger = consola.withTag('ipc');
+/** IPC 专用日志通道：统一走项目 logger 门面（受 VITE_LOG_LEVEL 与统一 formatOptions 约束），避免与全局 consola 形成双轨日志。 */
+const ipcLogger = logger.child({ scope: 'ipc' });
 
 let tauriCorePromise: Promise<TauriCoreModule> | null = null;
 let tauriDialogPromise: Promise<TauriDialogModule> | null = null;
@@ -49,7 +50,7 @@ export const loadTauriEvent = (): Promise<TauriEventModule> => {
   return tauriEventPromise;
 };
 
-const createTraceId = (): string => crypto.randomUUID();
+const createTraceId = (): string => createUniqueId();
 
 const emitIpcLog = (record: IIpcLogRecord): void => {
   // 错误始终通过 consola 上报（即使 audit 关闭也会输出）；常规 info 审计日志仅在
@@ -90,7 +91,7 @@ export const normalizeInvokeArgs = (value: unknown): Record<string, unknown> | u
   };
 };
 
-// [round3] long key first: sort by key length descending to avoid short keys shadowing more specific ones
+// 按键长度降序匹配：优先命中更具体的长键，避免短键抢先遮蔽。
 const resolveMappedError = (message: string, errorMap: TErrorMap): IIpcErrorMapping | null => {
   const entries = Object.entries(errorMap).sort(([a], [b]) => b.length - a.length);
   for (const [needle, mapped] of entries) {

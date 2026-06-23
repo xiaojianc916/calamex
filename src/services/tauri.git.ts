@@ -11,7 +11,7 @@ const textByteLength = (value: unknown): number =>
 const sumTextBytes = (...values: unknown[]): number =>
   values.reduce<number>((total, value) => total + textByteLength(value), 0);
 
-// Git 出参浅层字节度量的固定开销常量：把原散落的魔法数字语义化，数值与原实现逐一对齐。
+// Git 出参浅层字节度量的固定开销常量：为各结构层级的估算字节提供具名基准。
 const PAYLOAD_BASE_OVERHEAD_BYTES = 96; // 单个 payload（detail / diff）的固定基准开销
 const CONTAINER_OVERHEAD_BYTES = 32; // 容器节点（每个 hunk、提交历史列表）的结构开销
 const PER_ITEM_OVERHEAD_BYTES = 24; // 每个 file / 提交 entry 的结构开销
@@ -31,7 +31,7 @@ const shallowStringBytes = (value: unknown): number => {
   return total;
 };
 
-// NOTE: 浅层字段遍历度量替代 JSON.stringify，避免对大 payload 的序列化开销。
+// 通过浅层字段遍历估算字节数，避免对大 payload 做一次纯计量用途的序列化。
 const measureGitCommitDetailOutput = (output: unknown) => {
   if (!output || typeof output !== 'object') return buildPayloadMetrics(output);
 
@@ -116,9 +116,9 @@ const measureGitDiffPayloadOutput = (output: unknown) => {
 };
 
 /**
- * git log（提交历史）出参的浅层字节度量。与 measureGitCommitDetailOutput /
- * measureGitDiffPayloadOutput 同口径：只累加已知标量字段与 parentIds/refs 的字节，
- * 避免对整份提交列表做一次纯统计用途的 JSON.stringify。导出以便单测覆盖。
+ * 估算 git log（提交历史）出参的浅层字节数：仅累加已知标量字段与
+ * parentIds / refs 的字节，避免对整份提交列表做一次纯计量用途的序列化。
+ * 导出以供单测覆盖。
  */
 export const measureGitCommitHistoryOutput = (output: unknown) => {
   if (!output || typeof output !== 'object') return buildPayloadMetrics(output);
@@ -200,8 +200,8 @@ type TGitTauriService = Pick<
 >;
 
 /**
- * Git Tauri 命令的声明式包装元数据表。每条的语义与原手写 callSpectaCommand 逐字段对齐，
- * 运行期行为不变；只是把重复的 option 字面量集中到一处便于审计。
+ * Git Tauri 命令的声明式包装元数据表：将各命令的 option 集中声明，
+ * 便于统一审计与维护。
  */
 const GIT_COMMAND_META = {
   getGitRepositoryStatus: {

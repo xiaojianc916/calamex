@@ -1,10 +1,15 @@
-import { mount } from '@vue/test-utils';
+import { flushPromises, mount } from '@vue/test-utils';
 import { describe, expect, it, vi } from 'vitest';
 import { nextTick } from 'vue';
 import AiPromptInput from '@/components/business/ai/chat/AiPromptInput.vue';
+import { pickAttachmentFilesViaNativeDialog } from '@/components/business/ai/chat/attachment-file-picker';
 import type { IAiTokenContextProps } from '@/composables/ai/useAiTokenContext';
 import { createDefaultAiConfigPayload } from '@/services/ipc/ai-config.service';
 import type { IAcpSessionConfigOptionsState } from '@/types/ai/sidecar';
+
+vi.mock('@/components/business/ai/chat/attachment-file-picker', () => ({
+  pickAttachmentFilesViaNativeDialog: vi.fn(() => Promise.resolve([])),
+}));
 
 interface IAiPromptInputTestAttachment {
   id: string;
@@ -91,14 +96,10 @@ describe('AiPromptInput', () => {
     const resolveAttachment = vi.fn(() => Promise.resolve(true));
     const wrapper = mountPromptInput({ resolveAttachment });
     const file = new File(['readme'], 'README.md', { type: 'text/markdown' });
-    const fileInput = wrapper.get('input[type="file"]');
+    vi.mocked(pickAttachmentFilesViaNativeDialog).mockResolvedValueOnce([file]);
 
-    Object.defineProperty(fileInput.element, 'files', {
-      configurable: true,
-      value: [file],
-    });
-
-    await fileInput.trigger('change');
+    await wrapper.get('.ai-attachment-button').trigger('click');
+    await flushPromises();
 
     expect(resolveAttachment).toHaveBeenCalledTimes(1);
     expect(resolveAttachment).toHaveBeenCalledWith(file);
@@ -110,14 +111,10 @@ describe('AiPromptInput', () => {
       resolveAttachment: () => new Promise<boolean>(() => undefined),
     });
     const file = new File(['image-bytes'], 'pasted-image.png', { type: 'image/png' });
-    const fileInput = wrapper.get('input[type="file"]');
+    vi.mocked(pickAttachmentFilesViaNativeDialog).mockResolvedValueOnce([file]);
 
-    Object.defineProperty(fileInput.element, 'files', {
-      configurable: true,
-      value: [file],
-    });
-
-    await fileInput.trigger('change');
+    await wrapper.get('.ai-attachment-button').trigger('click');
+    await flushPromises();
     await nextTick();
 
     expect(wrapper.find('.ai-attachment-processing-overlay').exists()).toBe(true);

@@ -1,227 +1,209 @@
 #!/usr/bin/env node
+// @ts-check
 /**
- * Calamex — desktop-runtime.ts 优化脚本 — patch-desktop-runtime.mjs
+ * round3-typed-ipc-error.mjs
  *
- * 把 setTimeout 轮询改为三路 race：
- *   1. listen('tauri://ready') 事件（Tauri 2 官方就绪信号）
- *   2. Object.defineProperty 被动监听 __TAURI_INTERNALS__
- *   3. setTimeout 轮询（fallback，保留原有兼容性）
- * 谁先就绪谁赢，超时后最终 sync 确认。
+ * 目的：把「桌面运行时缺失」错误从「按本地化中文文案 substring 匹配」
+ *       改造为「按类型(DesktopRuntimeUnavailableError) + 稳定 code 判别」。
  *
- * 安全性：
- * - 三条路径并行 race，任何一条命中即返回 true
- * - 轮询 fallback 完整保留，不改变任何现有行为
- * - 新增的 listen 和 defineProperty 失败时静默降级到纯轮询
- * - 幂等：已修改过则跳过
+ * 行为等价（不影响用户体验）：文案不变、code 仍为 'ipc.desktop-only'、
+ *   scope 仍为 'ipc'；仅把分类依据从字符串包含改为错误类型，并补回真实 traceId。
+ *
+ * 特性：默认 dry-run；--apply 才写盘；幂等（已改过自动跳过）；
+ *       严格锚点匹配（锚点缺失或重复出现即报错中止，绝不模糊改写）。
  *
  * 用法：
- *   node patch-desktop-runtime.mjs --dry-run    # 预览，不写文件
- *   node patch-desktop-runtime.mjs              # 执行修改
+ *   node round3-typed-ipc-error.mjs                # 预览(dry-run)
+ *   node round3-typed-ipc-error.mjs --apply        # 实际写入
+ *   node round3-typed-ipc-error.mjs --root <repo>  # 指定仓库根(默认 cwd)
  */
 
-import { readFileSync, writeFileSync, existsSync } from 'node:fs';
-import { resolve } from 'node:path';
+import { readFile, writeFile } from 'node:fs/promises';
+import { existsSync } from 'node:fs';
+import path from 'node:path';
+import process from 'node:process';
 
-const ROOT = process.env.CALAMEX_ROOT ?? '.';
-const DRY_RUN = process.argv.includes('--dry-run');
-const FILE_PATH = 'src/utils/platform/desktop-runtime.ts';
+const argv = process.argv.slice(2);
+const APPLY = argv.includes('--apply');
+const rootIdx = argv.indexOf('--root');
+const ROOT =
+  rootIdx >= 0 && argv[rootIdx + 1] ? path.resolve(argv[rootIdx + 1]) : process.cwd();
 
-const log = (msg) => console.log(`[patch-desktop-runtime] ${msg}`);
-const warn = (msg) => console.warn(`[patch-desktop-runtime] WARN ${msg}`);
-const ok = (msg) => console.log(`[patch-desktop-runtime] OK ${msg}`);
+const join = (...lines) => lines.join('\n');
 
-// ── 文件 I/O ────────────────────────────────────────────────────
+// ---- 文件 1: src/utils/platform/desktop-runtime.ts ----
+const RUNTIME_FILE = 'src/utils/platform/desktop-runtime.ts';
 
-const readFile = (filePath) => {
-  const abs = resolve(ROOT, filePath);
-  if (!existsSync(abs)) {
-    warn(`File not found: ${filePath}`);
-    return null;
-  }
-  return readFileSync(abs, 'utf-8');
-};
+const RUNTIME_CLASS_BLOCK = join(
+  '/**',
+  ' * 桌面运行时缺失（浏览器预览模式）的类型化错误。',
+  ' * 携带稳定、机器可读的 code，供 IPC 归一层按「类型」判别，',
+  ' * 而非匹配本地化文案（文案一旦改写/国际化即让分类静默失效）。',
+  ' */',
+  'export class DesktopRuntimeUnavailableError extends Error {',
+  "  readonly code = 'ipc.desktop-only';",
+  '  constructor(scene: string) {',
+  '    super(',
+  '      `当前为浏览器预览模式，${scene}仅支持 Tauri 桌面端。请执行 npm run tauri:dev 后重试。`,',
+  '    );',
+  "    this.name = 'DesktopRuntimeUnavailableError';",
+  '  }',
+  '}',
+);
 
-const writeFile = (filePath, content) => {
-  const abs = resolve(ROOT, filePath);
-  if (DRY_RUN) {
-    log(`[DRY-RUN] would write: ${filePath} (${content.length} bytes)`);
-    return;
-  }
-  writeFileSync(abs, content, 'utf-8');
-  ok(`written: ${filePath}`);
-};
+const RUNTIME_FN_ANCHOR =
+  'export const assertDesktopRuntime = async (scene: string): Promise<void> => {';
 
-// ── 精确替换 ─────────────────────────────────────────────────────
+// 用正则匹配 throw，容忍本地 biome/prettier 把它格式化成单行或多行
+const RUNTIME_THROW_REGEX =
+  /throw new Error\(\s*`当前为浏览器预览模式，\$\{scene\}仅支持 Tauri 桌面端。请执行 npm run tauri:dev 后重试。`,?\s*\);/;
+const RUNTIME_THROW_REPLACEMENT = 'throw new DesktopRuntimeUnavailableError(scene);';
 
-const replaceExact = (source, oldStr, newStr, filePath) => {
-  const idx = source.indexOf(oldStr);
-  if (idx === -1) {
-    throw new Error(`Anchor not found in ${filePath}:\n${oldStr.slice(0, 120)}...`);
-  }
-  const second = source.indexOf(oldStr, idx + 1);
-  if (second !== -1) {
-    throw new Error(`Anchor matches multiple locations in ${filePath}, refusing to replace`);
-  }
-  return source.slice(0, idx) + newStr + source.slice(idx + oldStr.length);
-};
+// ---- 文件 2: src/services/tauri.ipc-runtime.ts ----
+const IPC_FILE = 'src/services/tauri.ipc-runtime.ts';
 
-// ── 主修改逻辑 ───────────────────────────────────────────────────
+const IPC_IMPORT_ANCHOR =
+  "import { assertDesktopRuntime } from '@/utils/platform/desktop-runtime';";
+const IPC_IMPORT_REPLACEMENT = join(
+  'import {',
+  '  assertDesktopRuntime,',
+  '  DesktopRuntimeUnavailableError,',
+  "} from '@/utils/platform/desktop-runtime';",
+);
 
-const patchDesktopRuntime = () => {
-  const content = readFile(FILE_PATH);
-  if (!content) {
-    process.exit(1);
-  }
+const IPC_BRANCH_ANCHOR = join(
+  "  const baseMessage = toErrorMessage(error, 'IPC 调用失败');",
+  '',
+  "  if (baseMessage.includes('浏览器预览模式')) {",
+  '    return new AppError({',
+  "      code: 'ipc.desktop-only',",
+  '      message: baseMessage,',
+  "      scope: 'ipc',",
+  '      traceId: context.traceId,',
+  '      cause: error,',
+  '    });',
+  '  }',
+  '',
+  '  const mapped = resolveMappedError(baseMessage, context.errorMap);',
+);
+const IPC_BRANCH_REPLACEMENT = join(
+  '  if (error instanceof DesktopRuntimeUnavailableError) {',
+  '    return new AppError({',
+  '      code: error.code,',
+  '      message: error.message,',
+  "      scope: 'ipc',",
+  '      traceId: context.traceId,',
+  '      cause: error,',
+  '    });',
+  '  }',
+  '',
+  "  const baseMessage = toErrorMessage(error, 'IPC 调用失败');",
+  '',
+  '  const mapped = resolveMappedError(baseMessage, context.errorMap);',
+);
 
-  // 幂等检测
-  if (content.includes('// [round3-p2] event-driven runtime detection')) {
-    log(`${FILE_PATH} already patched, skipping`);
-    return;
-  }
-
-  let p = content;
-
-  // ── 替换 1：整个 waitForDesktopRuntime 函数体 ───────────────────
-  //
-  // 把纯轮询改为三路 race：
-  //   A. listen('tauri://ready') — Tauri 2 官方就绪事件
-  //   B. defineProperty 被动监听 — __TAURI_INTERNALS__ 被注入时立即触发
-  //   C. setTimeout 轮询 — 保留原有 fallback 逻辑
-  // 三路 race，谁先命中谁赢；所有路径都做 cleanup。
-
-  const oldWaitFunction = `export const waitForDesktopRuntime = async (
-  timeoutMs = DEFAULT_RUNTIME_WAIT_MS,
-): Promise<boolean> => {
-  if (syncDesktopRuntime()) {
-    return true;
-  }
-
-  const startedAt = Date.now();
-  while (Date.now() - startedAt < timeoutMs) {
-    await sleep(RUNTIME_POLL_INTERVAL_MS);
-    if (syncDesktopRuntime()) {
-      return true;
-    }
-  }
-
-  return syncDesktopRuntime();
-};`;
-
-  const newWaitFunction = `// [round3-p2] event-driven runtime detection
-// 三路 race：事件 / 被动监听 / 轮询。谁先命中谁赢，不改变任何现有行为。
-const waitForRuntimeViaEvent = async (timeoutMs: number): Promise<boolean> => {
-  // 路径 A：监听 Tauri 2 官方就绪事件 'tauri://ready'
-  try {
-    const { listen } = await import('@tauri-apps/api/event');
-    return await new Promise<boolean>((resolveEvent) => {
-      let unlisten: (() => void) | undefined;
-      const timer = setTimeout(() => {
-        unlisten?.();
-        resolveEvent(false);
-      }, timeoutMs);
-      listen('tauri://ready', () => {
-        clearTimeout(timer);
-        unlisten?.();
-        resolveEvent(syncDesktopRuntime());
-      }).then((fn) => {
-        unlisten = fn;
-      }).catch(() => {
-        clearTimeout(timer);
-        resolveEvent(false);
-      });
-    });
-  } catch {
-    return false;
-  }
-};
-
-const waitForRuntimeViaPolling = async (timeoutMs: number): Promise<boolean> => {
-  // 路径 C：保留原有轮询逻辑作为 fallback
-  const startedAt = Date.now();
-  while (Date.now() - startedAt < timeoutMs) {
-    await sleep(RUNTIME_POLL_INTERVAL_MS);
-    if (syncDesktopRuntime()) {
-      return true;
-    }
-  }
-  return false;
-};
-
-export const waitForDesktopRuntime = async (
-  timeoutMs = DEFAULT_RUNTIME_WAIT_MS,
-): Promise<boolean> => {
-  if (syncDesktopRuntime()) {
-    return true;
-  }
-
-  // 并行 race：事件 vs 轮询，谁先就绪谁赢
-  const [viaEvent, viaPolling] = await Promise.all([
-    waitForRuntimeViaEvent(timeoutMs),
-    waitForRuntimeViaPolling(timeoutMs),
-  ]);
-
-  return viaEvent || viaPolling || syncDesktopRuntime();
-};`;
-
-  p = replaceExact(p, oldWaitFunction, newWaitFunction, FILE_PATH);
-
-  // ── 替换 2：syncDesktopRuntime() 初始调用处增加 defineProperty 被动监听 ──
-  // 在文件末尾 syncDesktopRuntime() 之前注入被动监听 setup，
-  // 让 __TAURI_INTERNALS__ 被注入时立即同步状态，避免首次调用 waitForDesktopRuntime 时还要等轮询。
-
-  const oldTailCall = `syncDesktopRuntime();`;
-
-  const newTailCall = `// [round3-p2] 被动监听：__TAURI_INTERNALS__ 被注入时立即同步，不需等轮询
-const setupPassiveRuntimeWatcher = (): void => {
-  if (typeof window === 'undefined') return;
-  const w = window as Window & { __TAURI_INTERNALS__?: ITauriInternals };
-  // 已经存在就直接同步，无需 defineProperty
-  if (w.__TAURI_INTERNALS__ && typeof w.__TAURI_INTERNALS__.invoke === 'function') {
-    syncDesktopRuntime();
-    return;
-  }
-  // 定义 getter/setter 拦截：Tauri 注入 __TAURI_INTERNALS__ 时立即同步
-  let _internal: ITauriInternals | undefined;
-  try {
-    Object.defineProperty(w, '__TAURI_INTERNALS__', {
-      get(): ITauriInternals | undefined { return _internal; },
-      set(val: ITauriInternals | undefined) {
-        _internal = val;
-        if (val && typeof val.invoke === 'function') {
-          syncDesktopRuntime();
-        }
+const PLAN = [
+  {
+    file: RUNTIME_FILE,
+    ops: [
+      {
+        name: '注入 DesktopRuntimeUnavailableError 类',
+        kind: 'insertBefore',
+        find: RUNTIME_FN_ANCHOR,
+        replace: RUNTIME_CLASS_BLOCK,
+        done: 'class DesktopRuntimeUnavailableError',
       },
-      configurable: true,
-    });
-  } catch {
-    // 属性已存在或不可配置时静默降级到纯轮询
+      {
+        name: '改为抛出类型化错误',
+        kind: 'replace',
+        find: RUNTIME_THROW_REGEX,
+        replace: RUNTIME_THROW_REPLACEMENT,
+        done: 'throw new DesktopRuntimeUnavailableError(scene);',
+      },
+    ],
+  },
+  {
+    file: IPC_FILE,
+    ops: [
+      {
+        name: '导入类型化错误',
+        kind: 'replace',
+        find: IPC_IMPORT_ANCHOR,
+        replace: IPC_IMPORT_REPLACEMENT,
+        done: 'DesktopRuntimeUnavailableError,',
+      },
+      {
+        name: '按类型判别替换 substring 分支',
+        kind: 'replace',
+        find: IPC_BRANCH_ANCHOR,
+        replace: IPC_BRANCH_REPLACEMENT,
+        done: 'if (error instanceof DesktopRuntimeUnavailableError) {',
+      },
+    ],
+  },
+];
+
+const occurrences = (haystack, needle) => {
+  if (needle instanceof RegExp) {
+    const flags = needle.flags.includes('g') ? needle.flags : `${needle.flags}g`;
+    const m = haystack.match(new RegExp(needle.source, flags));
+    return m ? m.length : 0;
   }
+  return haystack.split(needle).length - 1;
 };
 
-setupPassiveRuntimeWatcher();
-syncDesktopRuntime();`;
+let changedFiles = 0;
+let failures = 0;
 
-  p = replaceExact(p, oldTailCall, newTailCall, FILE_PATH);
-
-  writeFile(FILE_PATH, p);
-  ok(`Patch done: ${FILE_PATH}`);
-};
-
-// ── 执行 ─────────────────────────────────────────────────────────
-
-const main = () => {
-  log(`desktop-runtime.ts optimization ${DRY_RUN ? '(DRY-RUN)' : ''}`);
-  log(`Root: ${resolve(ROOT)}`);
-  log('');
-
-  try {
-    patchDesktopRuntime();
-    log('');
-    ok('All done!');
-  } catch (error) {
-    warn(`FAILED: ${error.message}`);
-    process.exit(1);
+for (const { file, ops } of PLAN) {
+  const abs = path.join(ROOT, file);
+  if (!existsSync(abs)) {
+    console.error(`✗ 缺少文件：${file}`);
+    failures++;
+    continue;
   }
-};
+  const original = await readFile(abs, 'utf8');
+  let content = original;
+  const log = [];
 
-main();
+  for (const op of ops) {
+    if (content.includes(op.done)) {
+      log.push(`  • [skip] ${op.name}（已应用）`);
+      continue;
+    }
+    const n = occurrences(content, op.find);
+    if (n === 0) {
+      log.push(`  ✗ [fail] ${op.name}：锚点未找到`);
+      failures++;
+      continue;
+    }
+    if (n > 1) {
+      log.push(`  ✗ [fail] ${op.name}：锚点出现 ${n} 次，拒绝模糊改写`);
+      failures++;
+      continue;
+    }
+    const replacement =
+      op.kind === 'insertBefore' ? `${op.replace}\n\n${op.find}` : op.replace;
+    content = content.replace(op.find, replacement);
+    log.push(`  ✓ [edit] ${op.name}`);
+  }
+
+  console.log(`\n${file}`);
+  for (const line of log) console.log(line);
+
+  if (content !== original) {
+    changedFiles++;
+    if (APPLY) {
+      await writeFile(abs, content, 'utf8');
+      console.log('  → 已写入');
+    } else {
+      console.log('  → dry-run（未写入，加 --apply 生效）');
+    }
+  }
+}
+
+console.log(
+  `\n汇总：拟修改 ${changedFiles} 个文件，失败 ${failures} 项。${APPLY ? '' : '（dry-run）'}`,
+);
+
+if (failures > 0) process.exitCode = 1;
