@@ -4,8 +4,10 @@ interface ITauriInternals {
   invoke?: unknown;
 }
 
-const RUNTIME_POLL_INTERVAL_MS = 40;
-const DEFAULT_RUNTIME_WAIT_MS = 2000;
+// Tauri v2 通过 initialization script 在业务脚本之前注入 __TAURI_INTERNALS__，
+// 因此桌面端在模块加载时同步检查即可命中；这里只保留极短的兜底等待，
+// 浏览器预览模式下会在几帧内快速失败，而不是空转满 2s。
+const DEFAULT_RUNTIME_WAIT_MS = 64;
 
 export const desktopRuntimeReady = ref(false);
 
@@ -18,9 +20,13 @@ const syncDesktopRuntime = (): boolean => {
   return available;
 };
 
-const sleep = (delayMs: number): Promise<void> =>
+const waitNextFrame = (): Promise<void> =>
   new Promise((resolve) => {
-    setTimeout(resolve, delayMs);
+    if (typeof requestAnimationFrame === 'function') {
+      requestAnimationFrame(() => resolve());
+    } else {
+      setTimeout(resolve, 16);
+    }
   });
 
 export const waitForDesktopRuntime = async (
@@ -32,7 +38,7 @@ export const waitForDesktopRuntime = async (
 
   const startedAt = Date.now();
   while (Date.now() - startedAt < timeoutMs) {
-    await sleep(RUNTIME_POLL_INTERVAL_MS);
+    await waitNextFrame();
     if (syncDesktopRuntime()) {
       return true;
     }
