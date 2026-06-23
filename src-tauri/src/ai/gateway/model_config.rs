@@ -61,6 +61,41 @@ pub(crate) fn narrator_sidecar_model_config() -> Result<AgentSidecarModelConfigP
     )
 }
 
+/// 全量「可原生切换」模型清单（前端持久化下发的 seeded_models）对应的 sidecar 模型配置。
+///
+/// 逐条 best-effort：跳过缺厂商前缀、或该厂商无已保存凭证（CredentialStore::resolve 失败，
+/// 多为用户未配置该厂商 Key）的模型——使 Kimi 仅 seed 用户「真正可用（有 Key）」的模型，
+/// 而非把整张清单里没钥匙的条目也写进 config.toml。base_url 一律按厂商默认解析（None →
+/// CredentialStore::resolve 内部回退默认端点），与主 / Narrator 链路一致。
+///
+/// 配置状态不可用时返回空清单（调用方据此只 seed 主 / Narrator，回退既有行为）。
+pub(crate) fn seeded_sidecar_model_configs() -> Vec<AgentSidecarModelConfigPayload> {
+    let config = match crate::ai::gateway::current_config() {
+        Ok(config) => config,
+        Err(_) => return Vec::new(),
+    };
+
+    let mut configs: Vec<AgentSidecarModelConfigPayload> = Vec::new();
+    for model_id in &config.seeded_models {
+        let model_id = model_id.trim();
+        if model_id.is_empty() {
+            continue;
+        }
+        let Ok(provider_id) = model_provider_id(model_id) else {
+            continue;
+        };
+        let Ok(resolved) = CredentialStore::resolve(provider_id, None) else {
+            continue;
+        };
+        configs.push(AgentSidecarModelConfigPayload {
+            model_id: model_id.to_string(),
+            api_key: resolved.api_key.into(),
+            base_url: resolved.base_url,
+        });
+    }
+    configs
+}
+
 #[cfg(test)]
 mod tests {
     use super::model_provider_id;
