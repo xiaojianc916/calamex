@@ -31,12 +31,14 @@ mod suggestions;
 #[cfg(test)]
 mod tests;
 
-pub use config::{clear_credentials, get_config, save_config, save_credentials};
+pub use config::{clear_credentials, get_config, save_config, save_credentials, set_seeded_models};
 pub use connection::{
     ProviderConnectionOutcome, connect_provider, test_provider, test_provider_config,
 };
 pub use conversation::{chat_stream, classify_task, generate_conversation_title, inline_complete};
-pub(crate) use model_config::{current_sidecar_model_config, narrator_sidecar_model_config};
+pub(crate) use model_config::{
+    current_sidecar_model_config, narrator_sidecar_model_config, seeded_sidecar_model_configs,
+};
 pub use suggestions::{generate_suggestion_pool, get_suggestion_pool_cache};
 
 const MAX_AI_MESSAGES: usize = 32;
@@ -66,6 +68,11 @@ struct AiRuntimeConfig {
     narrator: AiModelEndpointRuntimeConfig,
     #[serde(default)]
     credentials: HashMap<String, AiCredentialRuntimeMetadata>,
+    // 「全量可原生切换模型清单」：前端把项目内置可扩展模型目录整体下发并落盘，作为 Kimi 启动时
+    // 要 seed 进 config.toml 的候选模型全集（单一事实源）。#[serde(default)] 保证旧 ai.json
+    // 缺该字段也能反序列化（视为空清单 → 回退仅 seed 主模型 + Narrator 的旧行为）。
+    #[serde(default)]
+    seeded_models: Vec<String>,
     inline_completion_enabled: bool,
     chat_enabled: bool,
     agent_enabled: bool,
@@ -100,6 +107,7 @@ impl Default for AiRuntimeConfig {
             base_url: None,
             narrator: AiModelEndpointRuntimeConfig::default(),
             credentials: HashMap::new(),
+            seeded_models: Vec::new(),
             inline_completion_enabled: true,
             chat_enabled: true,
             agent_enabled: false,
@@ -446,6 +454,7 @@ fn normalize_runtime_config(mut config: AiRuntimeConfig) -> AiRuntimeConfig {
     config.selected_model = selected_model;
     config.base_url = base_url;
     config.narrator = normalize_model_endpoint_config(config.narrator).unwrap_or_default();
+    config.seeded_models = normalize_seeded_models(config.seeded_models);
 
     config
 }
@@ -469,6 +478,24 @@ fn normalize_model_endpoint_config(
         .or_else(|| default_base_url(&config.provider_type));
 
     Some(config)
+}
+
+/// 归一化「全量可原生切换模型清单」（前端持久化下发）：逐项 trim、丢弃空串、保序去重。
+/// 仅做形态清洗，不校验厂商前缀 / 凭证——那些在 seed 时（seeded_sidecar_model_configs）
+/// 逐条 best-effort 跳过，故此处保留原始 model_id 形态（含厂商前缀）。
+fn normalize_seeded_models(models: Vec<String>) -> Vec<String> {
+    let mut seen: std::collections::HashSet<String> = std::collections::HashSet::new();
+    let mut normalized: Vec<String> = Vec::new();
+    for model in models {
+        let trimmed = model.trim();
+        if trimmed.is_empty() {
+            continue;
+        }
+        if seen.insert(trimmed.to_string()) {
+            normalized.push(trimmed.to_string());
+        }
+    }
+    normalized
 }
 
 fn persist_config(config: &AiRuntimeConfig) -> Result<(), String> {

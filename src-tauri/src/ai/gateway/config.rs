@@ -71,6 +71,28 @@ pub fn save_config(
     Ok(payload)
 }
 
+/// 持久化「全量可原生切换模型清单」（前端下发的 seeded_models）。
+///
+/// 该清单是「Kimi 启动时要写入 config.toml 的候选模型全集」的单一事实源：前端把项目内置的
+/// 可扩展模型目录（MASTRA_PROVIDER_PRESET.models）整体下发并落盘 ai.json，后端 provisioner 在
+/// 拉起 kimi acp 前据此逐条 seed（仅 seed 用户有 Key 的厂商，见 seeded_sidecar_model_configs）。
+/// 入参先归一化（trim / 去空 / 保序去重）。与各模型「角色 / 凭证」无关，故不走 save_config 的
+/// 按角色写入，而是独立写 seeded_models 字段。
+pub fn set_seeded_models(models: Vec<String>) -> Result<AiConfigPayload, String> {
+    let normalized = normalize_seeded_models(models);
+
+    let mut guard = config_state()
+        .lock()
+        .map_err(|_| errors::error("AI_PROVIDER_UNAVAILABLE", "AI 配置状态已损坏。"))?;
+    guard.seeded_models = normalized;
+
+    let payload = to_payload(guard.clone());
+    persist_config(&guard)?;
+    audit::emit(AiAuditEventKind::ConfigUpdated);
+
+    Ok(payload)
+}
+
 pub fn save_credentials(
     provider_id: &str,
     alias: Option<&str>,
@@ -205,4 +227,34 @@ pub(super) fn save_connected_model(
     audit::emit(AiAuditEventKind::ConfigUpdated);
 
     Ok(payload)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::super::normalize_seeded_models;
+
+    #[test]
+    fn normalize_seeded_models_trims_drops_empty_and_dedupes_in_order() {
+        let input = vec![
+            "  deepseek/deepseek-v4-pro  ".to_string(),
+            "".to_string(),
+            "   ".to_string(),
+            "zhipuai/glm-4.7-flash".to_string(),
+            "deepseek/deepseek-v4-pro".to_string(),
+        ];
+        let normalized = normalize_seeded_models(input);
+        assert_eq!(
+            normalized,
+            vec![
+                "deepseek/deepseek-v4-pro".to_string(),
+                "zhipuai/glm-4.7-flash".to_string(),
+            ]
+        );
+    }
+
+    #[test]
+    fn normalize_seeded_models_handles_empty_input() {
+        assert!(normalize_seeded_models(Vec::new()).is_empty());
+        assert!(normalize_seeded_models(vec!["  ".to_string(), "".to_string()]).is_empty());
+    }
 }

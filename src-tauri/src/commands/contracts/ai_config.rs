@@ -20,6 +20,19 @@ pub struct AiSaveConfigRequest {
     pub(crate) agent_enabled: bool,
 }
 
+/// 「全量可原生切换模型清单」的下发请求。
+///
+/// 前端把项目内置的可扩展模型目录（MASTRA_PROVIDER_PRESET.models）整体下发，后端落盘
+/// ai.json 的 seeded_models，供 Kimi 启动时把整张清单 seed 进 config.toml——使原生
+/// session/set_config_option 的候选池覆盖全清单（详见 gateway::set_seeded_models /
+/// acp::provisioner）。`models` 缺省为空清单（回退仅 seed 主模型 + Narrator 的旧行为）。
+#[derive(Debug, Clone, Deserialize, Type)]
+#[serde(rename_all = "camelCase")]
+pub struct AiSetSeededModelsRequest {
+    #[serde(default)]
+    pub(crate) models: Vec<String>,
+}
+
 /// ⚠️ `api_key` 已包装在 `SecretString` 中，Debug 输出会被遮蔽为 `***`。
 /// 调用方读取明文请使用 `request.api_key.expose()` 显式取出。
 #[derive(Debug, Clone, Deserialize, Type)]
