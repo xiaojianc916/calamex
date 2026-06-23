@@ -1,42 +1,40 @@
-// polish-comments-batch4.mjs
-// 用法: node polish-comments-batch4.mjs  (在仓库根目录)
-// 纯注释整理，零逻辑/零 UX 改动；每处自校验“唯一精确匹配”，命中数≠1 即跳过并告警。
-import { readFileSync, writeFileSync } from 'node:fs';
+// find-old-symbol.mjs  —  run: node find-old-symbol.mjs
+import { readdirSync, readFileSync, statSync } from 'node:fs';
+import { join, resolve } from 'node:path';
 
-const L = (...lines) => lines.join('\n');
+const ROOT = resolve(process.cwd(), 'src');
+const OLD_RE = /collectConversationRuntimeEvents\b/;           // matches ONLY the old name
+const NEW_NAME = 'collectConversationRuntimeEventsFromEntries'; // the renamed export
+const SKIP = new Set(['node_modules', 'dist', '.git', 'target', 'src-tauri']);
 
-const edits = [
-  {
-    file: 'src/components/editor/CodeMirrorScriptEditor.vue',
-    find: L(
-      '// 编辑器底部预留约 5 行空白：替代 scrollPastEnd()（其会预留近一屏空白、',
-      '// 可把最后一行滚到顶部）。改为固定 5 行更贴近常规编辑器手感。',
-      '// CM6 默认行高约为字号的 1.6 倍，故 15 行 = 24em。',
-    ),
-    replace: L(
-      '// 编辑器底部预留约 15 行空白：不使用 scrollPastEnd()（它会预留近一屏空白，可把最后一行顶到屏幕最上沿），',
-      '// 固定高度更贴近常规编辑器手感。CM6 默认行高约为字号的 1.6 倍，故 24em ≈ 15 行。',
-    ),
-  },
-];
+const oldHits = [];
+const newHits = [];
 
-let skipped = 0;
-const byFile = new Map();
-for (const e of edits) {
-  if (!byFile.has(e.file)) byFile.set(e.file, readFileSync(e.file, 'utf8'));
-}
-
-for (const e of edits) {
-  let text = byFile.get(e.file);
-  const count = text.split(e.find).length - 1;
-  if (count !== 1) {
-    skipped += 1;
-    console.warn(`[skip] ${e.file}: 命中 ${count} 次（期望 1），未修改`);
-    continue;
+const walk = (dir) => {
+  for (const name of readdirSync(dir)) {
+    const full = join(dir, name);
+    if (statSync(full).isDirectory()) {
+      if (!SKIP.has(name)) walk(full);
+      continue;
+    }
+    if (!/\.(ts|tsx|vue|mts|cts|js|mjs)$/.test(name)) continue;
+    readFileSync(full, 'utf8').split('\n').forEach((line, i) => {
+      if (line.includes(NEW_NAME)) newHits.push(`${full}:${i + 1}: ${line.trim()}`);
+      else if (OLD_RE.test(line)) oldHits.push(`${full}:${i + 1}: ${line.trim()}`);
+    });
   }
-  byFile.set(e.file, text.replace(e.find, e.replace));
-  console.log(`[ok]   ${e.file}`);
-}
+};
 
-for (const [file, text] of byFile) writeFileSync(file, text, 'utf8');
-process.exit(skipped > 0 ? 1 : 0);
+walk(ROOT);
+
+console.log(`OLD name "collectConversationRuntimeEvents" — ${oldHits.length} hit(s):`);
+oldHits.forEach((h) => console.log('  ' + h));
+console.log(`\nNEW name "${NEW_NAME}" — ${newHits.length} hit(s):`);
+newHits.forEach((h) => console.log('  ' + h));
+
+if (oldHits.length === 0) {
+  console.log(
+    '\n=> No stale references on disk. Fully RESTART the dev server (stop pnpm dev, then `pnpm dev`). ' +
+      'Vite HMR caches renamed cross-module exports and throws exactly this error until a clean restart.',
+  );
+}

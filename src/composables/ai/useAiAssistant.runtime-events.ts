@@ -171,13 +171,17 @@ export const getLatestCheckpointEvent = (
   return null;
 };
 
-export const collectConversationRuntimeEvents = (
-  currentMessages: readonly IAiChatMessage[],
+export const collectConversationRuntimeEventsFromEntries = (
+  entries: readonly IAiThreadEntry[],
 ): TAgentRuntimeEvent[] => {
   let collectedEvents: TAgentRuntimeEvent[] | undefined;
 
-  for (const message of currentMessages) {
-    collectedEvents = mergeRuntimeEvents(collectedEvents, message.stream?.runtimeEvents);
+  for (const entry of entries) {
+    if (entry.type !== 'assistant_message') {
+      continue;
+    }
+
+    collectedEvents = mergeRuntimeEvents(collectedEvents, entry.stream?.runtimeEvents);
   }
 
   return collectedEvents ?? [];

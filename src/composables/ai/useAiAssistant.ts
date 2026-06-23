@@ -104,7 +104,7 @@ import { useAiProviderConfig } from './useAiAssistant.provider-config';
 import {
   buildConversationCheckpointsFromEntries,
   buildInitialAgentActivityText,
-  collectConversationRuntimeEvents,
+  collectConversationRuntimeEventsFromEntries,
   compactRuntimeEvents,
   createMessageId,
   createScopedId,
@@ -124,7 +124,6 @@ import {
   resolveSidecarDoneStreamTokenSnapshot,
   resolveSidecarToolProjectionStatus,
   resolveSidecarWaitingStreamStatus,
-  type TSidecarStreamTokenSnapshot,
 } from './useAiAssistant.stream';
 
 type TAiQuickActionId = 'explain' | 'fix' | 'review';
@@ -549,51 +548,43 @@ export const useAiAssistant = (options: IUseAiAssistantOptions) => {
     };
   };
 
-  const findMessageIndexById = (
-    currentMessages: readonly IAiChatMessage[],
+  const getAssistantEntry = (messageId: string): IAiThreadAssistantMessageEntry | null => {
+    for (const entry of aiThreadStore.authoritativeActiveEntries) {
+      if (entry.type === 'assistant_message' && entry.id === messageId) {
+        return entry;
+      }
+    }
+
+    return null;
+  };
+
+  const getChangedFilesSummary = (summaryId: string): IAiAgentPatchSummary | null => {
+    for (const entry of aiThreadStore.authoritativeActiveEntries) {
+      if (entry.type === 'changed_files' && entry.id === summaryId) {
+        return entry.summary;
+      }
+    }
+
+    return null;
+  };
+
+  const patchAssistantEntry = (
     messageId: string,
-  ): number => {
-    const lastIndex = currentMessages.length - 1;
-
-    if (lastIndex >= 0 && currentMessages[lastIndex]?.id === messageId) {
-      return lastIndex;
-    }
-
-    return currentMessages.findIndex((message) => message.id === messageId);
+    updater: (entry: IAiThreadAssistantMessageEntry) => IAiThreadAssistantMessageEntry,
+  ): void => {
+    aiThreadStore.patchActiveThreadEntries((entries) =>
+      entries.map((entry) =>
+        entry.type === 'assistant_message' && entry.id === messageId ? updater(entry) : entry,
+      ),
+    );
   };
 
-  const findMessageById = (messageId: string): IAiChatMessage | null => {
-    const currentMessages = messages.value;
-    const messageIndex = findMessageIndexById(currentMessages, messageId);
-
-    return messageIndex >= 0 ? (currentMessages[messageIndex] ?? null) : null;
-  };
-
-  const replaceMessageById = (
-    messageId: string,
-    updater: (message: IAiChatMessage) => IAiChatMessage,
-  ): IAiChatMessage[] => {
-    const currentMessages = messages.value;
-    const messageIndex = findMessageIndexById(currentMessages, messageId);
-
-    if (messageIndex < 0) {
-      return currentMessages;
-    }
-
-    const currentMessage = currentMessages[messageIndex]!;
-    const nextMessage = updater(currentMessage);
-
-    if (nextMessage === currentMessage) {
-      return currentMessages;
-    }
-
-    const nextMessages = currentMessages.slice();
-    nextMessages[messageIndex] = nextMessage;
-
-    messages.value = nextMessages;
-
-    return nextMessages;
-  };
+  const readAssistantEntryText = (entry: IAiThreadAssistantMessageEntry): string =>
+    entry.chunks
+      .flatMap((chunk) =>
+        chunk.type === 'message' && chunk.block.type === 'text' ? [chunk.block.text] : [],
+      )
+      .join('');
 
   const updateAgentStep = (
     stepId: string,
@@ -629,62 +620,6 @@ export const useAiAssistant = (options: IUseAiAssistantOptions) => {
         status,
       },
     ];
-  };
-
-  interface IUpdateAgentExecutionMessageInput {
-    messageId: string;
-    content: string;
-    toolCalls?: IAiChatMessage['toolCalls'];
-    acpToolCalls?: IAiChatMessage['acpToolCalls'];
-    streamStatus?: NonNullable<IAiChatMessage['stream']>['status'];
-    activityText?: string;
-    runtimeEvents?: NonNullable<IAiChatMessage['stream']>['runtimeEvents'];
-    streamTokenSnapshot?: TSidecarStreamTokenSnapshot;
-    finalAnswerStarted?: boolean;
-    patchState?: IAgentExecutionMessagePatchState;
-  }
-
-  const updateAgentExecutionMessage = (input: IUpdateAgentExecutionMessageInput): void => {
-    const {
-      messageId,
-      content,
-      toolCalls = [],
-      acpToolCalls,
-      streamStatus,
-      activityText,
-      runtimeEvents,
-      streamTokenSnapshot,
-      finalAnswerStarted,
-      patchState,
-    } = input;
-    replaceMessageById(messageId, (message) => {
-      const nextActivityText = activityText ?? message.stream?.activityText;
-      const nextRuntimeEvents = mergeRuntimeEvents(message.stream?.runtimeEvents, runtimeEvents);
-      // token 用量统一走非弃用的 usage VM:snapshot 本身即 usage,缺省时沿用既有 message.stream.usage。
-      const nextUsage = streamTokenSnapshot ?? message.stream?.usage;
-      const stream = streamStatus
-        ? {
-            ...message.stream,
-            status: streamStatus,
-            ...(nextActivityText !== undefined ? { activityText: nextActivityText } : {}),
-            ...(nextRuntimeEvents?.length ? { runtimeEvents: nextRuntimeEvents } : {}),
-            ...(nextUsage ? { usage: nextUsage } : {}),
-            ...(finalAnswerStarted !== undefined ? { finalAnswerStarted } : {}),
-          }
-        : message.stream;
-
-      return {
-        ...message,
-        content,
-        toolCalls,
-        stream,
-        ...(acpToolCalls?.length ? { acpToolCalls } : {}),
-        ...(patchState?.patches ? { patches: [...patchState.patches] } : {}),
-        ...(patchState?.changedFilesSummary !== undefined
-          ? { changedFilesSummary: patchState.changedFilesSummary ?? undefined }
-          : {}),
-      };
-    });
   };
 
   const refreshChangedDocumentsAfterSidecarRun = async (
@@ -1248,12 +1183,11 @@ export const useAiAssistant = (options: IUseAiAssistantOptions) => {
   };
 
   const failSidecarAgentMessage = (messageId: string, message: string): void => {
-    updateAgentExecutionMessage({
-      messageId,
-      content: `Agent 执行失败：${message}`,
-      toolCalls: [],
-      streamStatus: 'completed',
-    });
+    patchAssistantEntry(messageId, (entry) => ({
+      ...entry,
+      chunks: [{ type: 'message', block: { type: 'text', text: `Agent 执行失败：${message}` } }],
+      stream: { ...(entry.stream ?? { status: 'completed' }), status: 'completed' },
+    }));
     errorMessage.value = message;
   };
 
@@ -1911,14 +1845,16 @@ export const useAiAssistant = (options: IUseAiAssistantOptions) => {
       unlistenSidecarStream = null;
 
       if (!requestAbortController.signal.aborted) {
-        const currentMessage = findMessageById(assistantMessageId);
-        updateAgentExecutionMessage({
-          messageId: assistantMessageId,
-          content: currentMessage?.content ?? '',
-          toolCalls: currentMessage?.toolCalls ?? [],
-          streamStatus: 'completed',
-          finalAnswerStarted: hasMeaningfulAssistantText(currentMessage?.content),
-        });
+        const assistantEntry = getAssistantEntry(assistantMessageId);
+        const assistantText = assistantEntry ? readAssistantEntryText(assistantEntry) : '';
+        patchAssistantEntry(assistantMessageId, (entry) => ({
+          ...entry,
+          stream: {
+            ...(entry.stream ?? { status: 'completed' }),
+            status: 'completed',
+            finalAnswerStarted: hasMeaningfulAssistantText(assistantText),
+          },
+        }));
       }
 
       if (!errorMessage.value) {
@@ -2087,9 +2023,11 @@ export const useAiAssistant = (options: IUseAiAssistantOptions) => {
       return;
     }
 
-    const targetMessageIndex = findMessageIndexById(messages.value, checkpoint.messageId);
+    const targetEntryIndex = aiThreadStore.authoritativeActiveEntries.findIndex(
+      (entry) => entry.type === 'assistant_message' && entry.id === checkpoint.messageId,
+    );
 
-    if (targetMessageIndex < 0) {
+    if (targetEntryIndex < 0) {
       errorMessage.value = '未找到 checkpoint 对应的对话消息。';
       return;
     }
@@ -2099,9 +2037,10 @@ export const useAiAssistant = (options: IUseAiAssistantOptions) => {
 
     try {
       // 对话 checkpoint 只负责回到历史消息边界；文件改动回滚继续走 AED 操作入口。
-      const nextMessages = messages.value.slice(0, targetMessageIndex + 1);
-      messages.value = nextMessages;
-      runtimeTimelineEvents.value = collectConversationRuntimeEvents(nextMessages);
+      aiThreadStore.patchActiveThreadEntries((entries) => entries.slice(0, targetEntryIndex + 1));
+      runtimeTimelineEvents.value = collectConversationRuntimeEventsFromEntries(
+        aiThreadStore.authoritativeActiveEntries,
+      );
       fileRollbackPrompt.value = null;
       agentSteps.value = [];
       clearSidecarToolConfirmation();
@@ -2401,10 +2340,10 @@ export const useAiAssistant = (options: IUseAiAssistantOptions) => {
       return;
     }
 
-    const message = findMessageById(messageId);
-    const summary = message?.changedFilesSummary;
+    const assistantEntry = getAssistantEntry(messageId);
+    const summary = getChangedFilesSummary(summaryId);
 
-    if (!message || !summary || summary.id !== summaryId) {
+    if (!assistantEntry || !summary || summary.id !== summaryId) {
       errorMessage.value = '未找到可回滚的文件变更。';
       return;
     }
@@ -2419,7 +2358,7 @@ export const useAiAssistant = (options: IUseAiAssistantOptions) => {
     const restoredFilePaths: string[] = [];
 
     try {
-      const checkpointEvent = getLatestCheckpointEvent(message.stream?.runtimeEvents ?? []);
+      const checkpointEvent = getLatestCheckpointEvent(assistantEntry.stream?.runtimeEvents ?? []);
 
       if (checkpointEvent) {
         try {
@@ -2478,7 +2417,7 @@ export const useAiAssistant = (options: IUseAiAssistantOptions) => {
       }
 
       if (restoredFilePaths.length === 0) {
-        const reversePatch = buildReversePatchSet(message.patches, summary);
+        const reversePatch = buildReversePatchSet(assistantEntry.patches, summary);
 
         if (!reversePatch) {
           throw new Error('没有可用于回滚的 AED task 或反向 patch。');
@@ -2529,10 +2468,10 @@ export const useAiAssistant = (options: IUseAiAssistantOptions) => {
       return;
     }
 
-    const message = findMessageById(messageId);
-    const summary = message?.changedFilesSummary;
+    const assistantEntry = getAssistantEntry(messageId);
+    const summary = getChangedFilesSummary(summaryId);
 
-    if (!message || !summary || summary.id !== summaryId) {
+    if (!assistantEntry || !summary || summary.id !== summaryId) {
       errorMessage.value = '未找到可钉住的文件变更。';
       return;
     }
@@ -2587,15 +2526,15 @@ export const useAiAssistant = (options: IUseAiAssistantOptions) => {
 
     if (activeAgentMessageId.value) {
       const activeMessageId = activeAgentMessageId.value;
-      const currentMessage = findMessageById(activeMessageId);
       const isChatStreamCancellation = Boolean(streamId);
 
-      updateAgentExecutionMessage({
-        messageId: activeMessageId,
-        content: isChatStreamCancellation ? (currentMessage?.content ?? '') : 'Agent 执行已取消。',
-        toolCalls: isChatStreamCancellation ? (currentMessage?.toolCalls ?? []) : [],
-        streamStatus: 'cancelled',
-      });
+      patchAssistantEntry(activeMessageId, (entry) => ({
+        ...entry,
+        chunks: isChatStreamCancellation
+          ? entry.chunks
+          : [{ type: 'message', block: { type: 'text', text: 'Agent 执行已取消。' } }],
+        stream: { ...(entry.stream ?? { status: 'cancelled' }), status: 'cancelled' },
+      }));
       activeAgentMessageId.value = null;
     }
 
