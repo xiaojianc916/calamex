@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { Sparkles, Terminal } from '@lucide/vue';
 import { computed, onBeforeUnmount, ref, watch } from 'vue';
+import type { IAcpAvailableCommand } from '@/types/ai/sidecar';
 import type { ISkillSummary } from '@/types/ai/skill';
 
 /** / 菜单锚点:取自输入框容器的视口矩形,用于把浮层贴在输入框上方。 */
@@ -16,10 +17,18 @@ const props = defineProps<{
   query: string;
   skills: readonly ISkillSummary[];
   anchorRect: ISlashAnchorRect | null;
+  /**
+   * 为 true 时由 ACP 公示命令驱动（Kimi 等外部 Agent 的内置命令 + 技能），
+   * 选中 emit select-command(name)；为 false（自研 builtin Agent）维持技能列表。
+   */
+  acp?: boolean;
+  /** ACP available_commands_update 归一后的命令清单（acp 为 true 时消费）。 */
+  commands?: readonly IAcpAvailableCommand[];
 }>();
 
 const emit = defineEmits<{
   (event: 'select-skill', slug: string): void;
+  (event: 'select-command', name: string): void;
   (event: 'close'): void;
 }>();
 
@@ -45,6 +54,28 @@ const filteredSkills = computed(() => {
   });
 });
 
+const filteredCommands = computed(() => {
+  const list = props.commands ?? [];
+  const keyword = normalizedQuery.value;
+  if (!keyword) {
+    return [...list];
+  }
+  return list.filter((command) => {
+    const haystack = `${command.name} ${command.description}`.toLowerCase();
+    return haystack.includes(keyword);
+  });
+});
+
+// 当前可被键盘 / 点击选中的条目数:ACP 模式取命令,自研模式取技能。
+const activeCount = computed(() =>
+  props.acp ? filteredCommands.value.length : filteredSkills.value.length,
+);
+
+// ACP 模式命令为空:区分「会话尚未公示命令」与「过滤无匹配」。
+const acpEmptyHint = computed(() =>
+  (props.commands?.length ?? 0) === 0 ? '会话开始后将出现可用命令' : '没有匹配的命令',
+);
+
 const menuStyle = computed(() => {
   const rect = props.anchorRect;
   if (!rect) {
@@ -59,7 +90,7 @@ const menuStyle = computed(() => {
 });
 
 const clampActiveIndex = (): void => {
-  const count = filteredSkills.value.length;
+  const count = activeCount.value;
   if (count === 0) {
     activeIndex.value = 0;
     return;
@@ -73,7 +104,7 @@ const clampActiveIndex = (): void => {
 };
 
 const moveActive = (delta: number): void => {
-  const count = filteredSkills.value.length;
+  const count = activeCount.value;
   if (count === 0) {
     return;
   }
@@ -81,14 +112,25 @@ const moveActive = (delta: number): void => {
 };
 
 const confirmActive = (): void => {
-  const target = filteredSkills.value[activeIndex.value];
-  if (target) {
-    emit('select-skill', target.slug);
+  if (props.acp) {
+    const command = filteredCommands.value[activeIndex.value];
+    if (command) {
+      emit('select-command', command.name);
+    }
+    return;
+  }
+  const skill = filteredSkills.value[activeIndex.value];
+  if (skill) {
+    emit('select-skill', skill.slug);
   }
 };
 
-const onSelect = (slug: string): void => {
+const onSelectSkill = (slug: string): void => {
   emit('select-skill', slug);
+};
+
+const onSelectCommand = (name: string): void => {
+  emit('select-command', name);
 };
 
 // 捕获阶段拦截方向键 / 回车 / Esc,避免事件落到输入框造成换行或提交。
@@ -108,14 +150,14 @@ const handleKeydown = (event: KeyboardEvent): void => {
       moveActive(-1);
       break;
     case 'Enter':
-      if (filteredSkills.value.length > 0) {
+      if (activeCount.value > 0) {
         event.preventDefault();
         event.stopPropagation();
         confirmActive();
       }
       break;
     case 'Tab':
-      if (filteredSkills.value.length > 0) {
+      if (activeCount.value > 0) {
         event.preventDefault();
         event.stopPropagation();
         confirmActive();
@@ -159,7 +201,7 @@ watch(
   },
 );
 
-watch(filteredSkills, () => {
+watch(activeCount, () => {
   clampActiveIndex();
 });
 

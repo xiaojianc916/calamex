@@ -235,7 +235,11 @@ describe('reduceAcpToolCall — locations 归一', () => {
       }),
       { now: NOW },
     );
-    expect(entry.locations).toEqual([{ path: 'a.ts', line: 10 }, { path: 'b.ts' }, { path: 'c.ts' }]);
+    expect(entry.locations).toEqual([
+      { path: 'a.ts', line: 10 },
+      { path: 'b.ts' },
+      { path: 'c.ts' },
+    ]);
   });
 
   it('locations 缺省则保留旧值', () => {
@@ -246,6 +250,90 @@ describe('reduceAcpToolCall — locations 归一', () => {
     );
     const next = reduceAcpToolCall(first, toolCallUpdate({ toolCallId: 't', status: 'completed' }));
     expect(next.locations).toEqual([{ path: 'a.ts' }]);
+  });
+});
+
+describe('reduceAcpToolCall — Write 工具合成 diff（对齐 Edit）', () => {
+  it('kind=edit 且 rawInput={path,content} → 前置全新增 diff，原文本块保留其后', () => {
+    const entry = reduceAcpToolCall(
+      undefined,
+      toolCall({
+        toolCallId: 'w1',
+        title: 'Write a.txt',
+        kind: 'edit',
+        status: 'in_progress',
+        rawInput: { path: 'a.txt', content: 'l1\nl2' },
+        content: [{ type: 'content', content: { type: 'text', text: 'args' } }],
+      }),
+      { now: NOW },
+    );
+    const diff = entry.content[0];
+    expect(diff?.type).toBe('diff');
+    if (diff?.type !== 'diff') return;
+    expect(diff.diff.filePath).toBe('a.txt');
+    expect(diff.diff.hunks[0]?.lines.map((line) => `${line.kind}:${line.content}`)).toEqual([
+      'add:l1',
+      'add:l2',
+    ]);
+    expect(entry.content[1]).toEqual({
+      type: 'content',
+      block: { type: 'text', text: 'args' },
+    });
+  });
+
+  it('Edit（已含原生 diff）不重复合成', () => {
+    const entry = reduceAcpToolCall(
+      undefined,
+      toolCall({
+        toolCallId: 'e1',
+        kind: 'edit',
+        rawInput: { path: 'a.txt', old_string: 'foo', new_string: 'bar' },
+        content: [{ type: 'diff', path: 'a.txt', oldText: 'foo', newText: 'bar' }],
+      }),
+      { now: NOW },
+    );
+    expect(entry.content.filter((c) => c.type === 'diff')).toHaveLength(1);
+  });
+
+  it('非编辑类 / rawInput 形状不符 → 不合成', () => {
+    const exec = reduceAcpToolCall(
+      undefined,
+      toolCall({ toolCallId: 'x', kind: 'execute', rawInput: { path: 'a', content: 'x' } }),
+      { now: NOW },
+    );
+    expect(exec.content).toEqual([]);
+    const bad = reduceAcpToolCall(
+      undefined,
+      toolCall({ toolCallId: 'y', kind: 'edit', rawInput: { path: 'a' } }),
+      { now: NOW },
+    );
+    expect(bad.content).toEqual([]);
+  });
+
+  it('多帧不累加重复 diff（result 替换内容、心跳帧保留旧值）', () => {
+    const started = reduceAcpToolCall(
+      undefined,
+      toolCall({
+        toolCallId: 'w2',
+        kind: 'edit',
+        status: 'in_progress',
+        rawInput: { path: 'a.txt', content: 'x' },
+        content: [{ type: 'content', content: { type: 'text', text: 'args' } }],
+      }),
+      { now: NOW },
+    );
+    expect(started.content.filter((c) => c.type === 'diff')).toHaveLength(1);
+    const done = reduceAcpToolCall(
+      started,
+      toolCallUpdate({
+        toolCallId: 'w2',
+        status: 'completed',
+        content: [{ type: 'content', content: { type: 'text', text: 'Wrote 1 bytes to a.txt' } }],
+      }),
+    );
+    expect(done.content.filter((c) => c.type === 'diff')).toHaveLength(1);
+    const beat = reduceAcpToolCall(done, toolCallUpdate({ toolCallId: 'w2', status: 'completed' }));
+    expect(beat.content.filter((c) => c.type === 'diff')).toHaveLength(1);
   });
 });
 

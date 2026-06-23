@@ -153,6 +153,8 @@ const rawLanguage = (code: string): string => {
   min-width: 0;
   flex-direction: column;
   background: transparent;
+  /* 代码 / diff / 终端字体对齐 Consolas：经 CSS 变量级联到面板内子组件 */
+  --font-mono: Consolas, 'Cascadia Mono', ui-monospace, 'SFMono-Regular', Menlo, monospace;
 }
 
 .ai-thread-tool-call__header {

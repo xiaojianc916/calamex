@@ -341,6 +341,56 @@ const mapLocations = (locations: unknown): IAiThreadToolCallLocation[] | undefin
   return mapped;
 };
 
+/* ---------- 4.6) Write 工具 diff 合成（对齐 Edit，纯派生） --------------- */
+
+/**
+ * Kimi 的 ACP 适配器（acp-adapter/src/convert.ts displayBlockToAcpContent）只在
+ * file_io 同时带 before/after 时才发 diff；Write 的 display 为
+ * { kind:'file_io', operation:'write', path, content }（agent-core write.ts），
+ * 只有整文件 content、无 before/after，故 diff 被丢弃、Write 展开无 diff。但工具
+ * 入参经 tool_call.rawInput(= event.args) 透传（events-map.ts
+ * toolCallStartToSessionUpdate），含 { path, content }。这里据此把 Write 合成为
+ * 「全新增」diff（oldText=''），与 Edit 共用同一渲染管线，不改协议语义。
+ */
+interface IWriteFileInput {
+  path: string;
+  content: string;
+}
+
+const asWriteFileInput = (rawInput: unknown): IWriteFileInput | null => {
+  if (rawInput === null || typeof rawInput !== 'object') return null;
+  const view = rawInput as { path?: unknown; content?: unknown };
+  return typeof view.path === 'string' && view.path.length > 0 && typeof view.content === 'string'
+    ? { path: view.path, content: view.content }
+    : null;
+};
+
+const contentHasDiff = (content: readonly IAiThreadToolCallContent[]): boolean =>
+  content.some((item) => item.type === 'diff');
+
+/**
+ * kind=edit、内容尚无 diff、且 rawInput 形如 Write 入参时，前置一条「全新增」diff；
+ * 否则原样返回。幂等：已含 diff（Edit 原生 / 上一帧已合成）即跳过，避免多帧累加。
+ */
+const withSynthesizedWriteDiff = (
+  toolCallId: string,
+  kind: TAiThreadToolKind,
+  rawInput: unknown,
+  content: IAiThreadToolCallContent[],
+): IAiThreadToolCallContent[] => {
+  if (kind !== 'edit' || contentHasDiff(content)) return content;
+  const write = asWriteFileInput(rawInput);
+  if (write === null) return content;
+  const diffRef = `acp-write:${encodeURIComponent(toolCallId)}:${encodeURIComponent(write.path)}`;
+  const diff = buildDiffContent({
+    diffRef,
+    filePath: write.path,
+    oldText: '',
+    newText: write.content,
+  });
+  return [diff, ...content];
+};
+
 /* ---------- 5) 公开 API -------------------------------------------------- */
 
 /** 取 ACP 工具调用的稳定主键；缺失时返回空串（调用方应据此跳过）。 */
@@ -381,7 +431,12 @@ export const reduceAcpToolCall = (
       title: title ?? '',
       kind: mapKind(view.kind),
       status: status ?? 'pending',
-      content: hasContent ? mapContent(view.content, id) : [],
+      content: withSynthesizedWriteDiff(
+        id,
+        mapKind(view.kind),
+        view.rawInput,
+        hasContent ? mapContent(view.content, id) : [],
+      ),
       ...locationsPatch,
       ...rawInputPatch,
       ...rawOutputPatch,
@@ -394,7 +449,12 @@ export const reduceAcpToolCall = (
     title: title ?? previous.title,
     kind: hasKind ? mapKind(view.kind) : previous.kind,
     status: status ?? previous.status,
-    content: hasContent ? mapContent(view.content, id) : previous.content,
+    content: withSynthesizedWriteDiff(
+      id,
+      hasKind ? mapKind(view.kind) : previous.kind,
+      view.rawInput !== undefined ? view.rawInput : previous.rawInput,
+      hasContent ? mapContent(view.content, id) : previous.content,
+    ),
     ...locationsPatch,
     ...rawInputPatch,
     ...rawOutputPatch,

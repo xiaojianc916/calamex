@@ -298,6 +298,27 @@ const toggleFreeOption = (): void => {
   };
 };
 
+// 聚焦自由输入框：光标一出现即勾选自由项；单选时清空其它选项以保持互斥。
+const focusFreeOption = (): void => {
+  const question = currentQuestion.value;
+  if (!question) {
+    return;
+  }
+  const draft = ensureQuestionDraft(question.questionId);
+  if (draft.freeSelected) {
+    return;
+  }
+  const multi = question.multiSelect === true;
+  questionDrafts.value = {
+    ...questionDrafts.value,
+    [question.questionId]: {
+      ...draft,
+      freeSelected: true,
+      optionIds: multi ? draft.optionIds : [],
+    },
+  };
+};
+
 const questionDraftAnswered = (questionId: string): boolean => {
   const draft = questionDrafts.value[questionId];
   if (!draft) {
@@ -1155,6 +1176,7 @@ onMounted(() => {
                   :placeholder="currentQuestion?.placeholder || '或者，请描述你的要求……'"
                   :value="currentDraft.text"
                   @input="onQuestionTextInput"
+                  @focus="focusFreeOption"
                 ></textarea>
               </div>
             </div>
