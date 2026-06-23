@@ -19,9 +19,7 @@ const stubs = {
   Brain: true,
 };
 
-const makeEntry = (
-  overrides: Partial<IAiThreadReasoningEntry> = {},
-): IAiThreadReasoningEntry => ({
+const makeEntry = (overrides: Partial<IAiThreadReasoningEntry> = {}): IAiThreadReasoningEntry => ({
   kind: 'reasoning',
   id: 'r1',
   messageId: 'm1',

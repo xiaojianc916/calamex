@@ -90,9 +90,7 @@ describe('attachmentPreviewStorage', () => {
     idbMock.map.set(`${KEY_PREFIX}b1`, 'data:image/png;base64,OTHER');
     const mod = await loadModule();
 
-    const input = [
-      { references: [{ attachmentPreview: { src: `${POINTER_PREFIX}b1` } }] },
-    ];
+    const input = [{ references: [{ attachmentPreview: { src: `${POINTER_PREFIX}b1` } }] }];
     const result = await mod.restoreAttachmentPreviewPointers(input);
 
     expect(result.changed).toBe(true);
