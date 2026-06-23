@@ -156,8 +156,8 @@ export const useGitStore = defineStore('git', () => {
   const pullRequestDetail = ref<IGitPullRequestDetailPayload | null>(null);
   const isPullRequestDetailLoading = ref(false);
 
-  // commit-stats 的权威缓存在 vue-query;同步读取直接调 queryClient.getQueryData。
-  // 已移除冗余的 commitStatsCache ref 镜像——vue-query 的 cacheObservable 已驱动 UI 更新。
+  // commit-stats 的权威缓存在 vue-query;同步读取直接调 queryClient.getQueryData,
+  // 由 vue-query 的 cacheObservable 驱动 UI 更新。
 
   // commit-stats 是不可变的 per-commit 统计:大 staleTime 避免重取,gcTime≈30d 作为保留窗口,
   // meta.persist 让官方 persister 仅持久化这一类查询(见 src/lib/query-client.ts)。
@@ -501,7 +501,7 @@ export const useGitStore = defineStore('git', () => {
 
     if (typeof window !== 'undefined' && typeof window.requestIdleCallback === 'function') {
       // requestIdleCallback 的 timeout 参数保证回调最终一定执行，
-      // 不需要额外加 setTimeout fallback（原双层超时是冗余的防御）。
+      // 因此不需要额外的 setTimeout fallback。
       // commitStatsTimer 存 idleId，取消时用 cancelIdleCallback。
       const idleId = window.requestIdleCallback(run, {
         timeout: GIT_COMMIT_STATS_BACKGROUND_DELAY_MS * 4,

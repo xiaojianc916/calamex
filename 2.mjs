@@ -1,209 +1,131 @@
-#!/usr/bin/env node
-// @ts-check
-/**
- * round3-typed-ipc-error.mjs
- *
- * 目的：把「桌面运行时缺失」错误从「按本地化中文文案 substring 匹配」
- *       改造为「按类型(DesktopRuntimeUnavailableError) + 稳定 code 判别」。
- *
- * 行为等价（不影响用户体验）：文案不变、code 仍为 'ipc.desktop-only'、
- *   scope 仍为 'ipc'；仅把分类依据从字符串包含改为错误类型，并补回真实 traceId。
- *
- * 特性：默认 dry-run；--apply 才写盘；幂等（已改过自动跳过）；
- *       严格锚点匹配（锚点缺失或重复出现即报错中止，绝不模糊改写）。
- *
- * 用法：
- *   node round3-typed-ipc-error.mjs                # 预览(dry-run)
- *   node round3-typed-ipc-error.mjs --apply        # 实际写入
- *   node round3-typed-ipc-error.mjs --root <repo>  # 指定仓库根(默认 cwd)
- */
+// polish-comments-batch2.mjs  —  在仓库根目录 node polish-comments-batch2.mjs
+import { readFileSync, writeFileSync } from 'node:fs';
 
-import { readFile, writeFile } from 'node:fs/promises';
-import { existsSync } from 'node:fs';
-import path from 'node:path';
-import process from 'node:process';
-
-const argv = process.argv.slice(2);
-const APPLY = argv.includes('--apply');
-const rootIdx = argv.indexOf('--root');
-const ROOT =
-  rootIdx >= 0 && argv[rootIdx + 1] ? path.resolve(argv[rootIdx + 1]) : process.cwd();
-
-const join = (...lines) => lines.join('\n');
-
-// ---- 文件 1: src/utils/platform/desktop-runtime.ts ----
-const RUNTIME_FILE = 'src/utils/platform/desktop-runtime.ts';
-
-const RUNTIME_CLASS_BLOCK = join(
-  '/**',
-  ' * 桌面运行时缺失（浏览器预览模式）的类型化错误。',
-  ' * 携带稳定、机器可读的 code，供 IPC 归一层按「类型」判别，',
-  ' * 而非匹配本地化文案（文案一旦改写/国际化即让分类静默失效）。',
-  ' */',
-  'export class DesktopRuntimeUnavailableError extends Error {',
-  "  readonly code = 'ipc.desktop-only';",
-  '  constructor(scene: string) {',
-  '    super(',
-  '      `当前为浏览器预览模式，${scene}仅支持 Tauri 桌面端。请执行 npm run tauri:dev 后重试。`,',
-  '    );',
-  "    this.name = 'DesktopRuntimeUnavailableError';",
-  '  }',
-  '}',
-);
-
-const RUNTIME_FN_ANCHOR =
-  'export const assertDesktopRuntime = async (scene: string): Promise<void> => {';
-
-// 用正则匹配 throw，容忍本地 biome/prettier 把它格式化成单行或多行
-const RUNTIME_THROW_REGEX =
-  /throw new Error\(\s*`当前为浏览器预览模式，\$\{scene\}仅支持 Tauri 桌面端。请执行 npm run tauri:dev 后重试。`,?\s*\);/;
-const RUNTIME_THROW_REPLACEMENT = 'throw new DesktopRuntimeUnavailableError(scene);';
-
-// ---- 文件 2: src/services/tauri.ipc-runtime.ts ----
-const IPC_FILE = 'src/services/tauri.ipc-runtime.ts';
-
-const IPC_IMPORT_ANCHOR =
-  "import { assertDesktopRuntime } from '@/utils/platform/desktop-runtime';";
-const IPC_IMPORT_REPLACEMENT = join(
-  'import {',
-  '  assertDesktopRuntime,',
-  '  DesktopRuntimeUnavailableError,',
-  "} from '@/utils/platform/desktop-runtime';",
-);
-
-const IPC_BRANCH_ANCHOR = join(
-  "  const baseMessage = toErrorMessage(error, 'IPC 调用失败');",
-  '',
-  "  if (baseMessage.includes('浏览器预览模式')) {",
-  '    return new AppError({',
-  "      code: 'ipc.desktop-only',",
-  '      message: baseMessage,',
-  "      scope: 'ipc',",
-  '      traceId: context.traceId,',
-  '      cause: error,',
-  '    });',
-  '  }',
-  '',
-  '  const mapped = resolveMappedError(baseMessage, context.errorMap);',
-);
-const IPC_BRANCH_REPLACEMENT = join(
-  '  if (error instanceof DesktopRuntimeUnavailableError) {',
-  '    return new AppError({',
-  '      code: error.code,',
-  '      message: error.message,',
-  "      scope: 'ipc',",
-  '      traceId: context.traceId,',
-  '      cause: error,',
-  '    });',
-  '  }',
-  '',
-  "  const baseMessage = toErrorMessage(error, 'IPC 调用失败');",
-  '',
-  '  const mapped = resolveMappedError(baseMessage, context.errorMap);',
-);
-
-const PLAN = [
+/** 每条都来自当前 main 源码逐字复制；命中必须恰好 1 次。 */
+const EDITS = [
+  // ── src/composables/useShellWorkbenchView.ts ──────────────────────────────
   {
-    file: RUNTIME_FILE,
-    ops: [
-      {
-        name: '注入 DesktopRuntimeUnavailableError 类',
-        kind: 'insertBefore',
-        find: RUNTIME_FN_ANCHOR,
-        replace: RUNTIME_CLASS_BLOCK,
-        done: 'class DesktopRuntimeUnavailableError',
-      },
-      {
-        name: '改为抛出类型化错误',
-        kind: 'replace',
-        find: RUNTIME_THROW_REGEX,
-        replace: RUNTIME_THROW_REPLACEMENT,
-        done: 'throw new DesktopRuntimeUnavailableError(scene);',
-      },
-    ],
+    file: 'src/composables/useShellWorkbenchView.ts',
+    find: `  /**
+   * 按 Git status letter 精确分类统计文件变更数。
+   *
+   * 修复：此前 gitRemovedCount 恒为 0（写死），且 gitAddedCount 把 modified
+   * 文件也算进了「新增」。现在直接遍历 status.files 数组按 index/worktree
+   * status 分类：A=新增、D=删除、M/R=修改、?=未跟踪。
+   */`,
+    replace: `  /**
+   * 按 Git status letter 精确分类统计文件变更数：遍历 status.files，按 index /
+   * worktree status 归类——A=新增、D=删除、M/R=修改、?=未跟踪。
+   */`,
   },
   {
-    file: IPC_FILE,
-    ops: [
-      {
-        name: '导入类型化错误',
-        kind: 'replace',
-        find: IPC_IMPORT_ANCHOR,
-        replace: IPC_IMPORT_REPLACEMENT,
-        done: 'DesktopRuntimeUnavailableError,',
-      },
-      {
-        name: '按类型判别替换 substring 分支',
-        kind: 'replace',
-        find: IPC_BRANCH_ANCHOR,
-        replace: IPC_BRANCH_REPLACEMENT,
-        done: 'if (error instanceof DesktopRuntimeUnavailableError) {',
-      },
-    ],
+    file: 'src/composables/useShellWorkbenchView.ts',
+    find: `      // 性能优化：切换 AI/编辑模式时不要强制改写终端可见性。
+      // 终端是否可见属于“编辑模式布局状态”，强制写 false 会触发主界面分支切换`,
+    replace: `      // 切换 AI/编辑模式时不要强制改写终端可见性：
+      // 终端是否可见属于“编辑模式布局状态”，强制写 false 会触发主界面分支切换`,
+  },
+  {
+    file: 'src/composables/useShellWorkbenchView.ts',
+    find: `      // 注意：这里不再强制 openEditorMode。仅切换 activeDocumentId（切换已打开的标签、
+      // 文档前进后退）不应强制切到编辑模式；“新打开并激活文档”才进编辑模式的逻辑
+      // 已下沉到 documents watch（依据旧值快照判定是否新增了文档）。`,
+    replace: `      // 仅切换 activeDocumentId（切换已打开的标签、文档前进后退）不强制切到编辑模式；
+      // “新打开并激活文档”才进编辑模式的逻辑下沉在 documents watch（依据旧值快照判定是否新增文档）。`,
+  },
+  {
+    file: 'src/composables/useShellWorkbenchView.ts',
+    find: `  // ── documents 变更 watch ──────────────────────────────────────
+  // 优化前：getter 返回 .map(item => item.id) → 每次 Vue 脏检查时分配新数组；
+  // 回调里再 new Set() x2 做 diff。
+  // 优化后：getter 返回 length + activeDocumentId 组合值（两个原始值拼接为字符串），
+  // 只有文档数量或 activeDocumentId 变化时 Vue 才判定为"变化"并触发回调。
+  // 回调内部直接访问最新 documents 数组构建当前 ID Set，与上一轮缓存的
+  // previousDocumentIdSet 做 diff，避免在 getter 中分配新数组。`,
+    replace: `  // ── documents 变更 watch ──────────────────────────────────────
+  // getter 返回 length 与 activeDocumentId 拼接的字符串：仅当文档数量或 activeDocumentId
+  // 变化时才触发回调，避免在 getter 中用 .map() 分配新数组。回调内基于最新 documents
+  // 构建当前 ID Set，与上一轮缓存的 previousDocumentIdSet 做 diff。`,
+  },
+  {
+    file: 'src/composables/useShellWorkbenchView.ts',
+    find: `      // 切换已打开标签 / 前进后退不会新增文档，因此不会再被强制切到编辑模式
+      //（修复 activeDocumentId 变化即强制 openEditorMode 的回归）。`,
+    replace: `      // 切换已打开标签 / 前进后退不会新增文档，因此不会被强制切到编辑模式。`,
+  },
+
+  // ── src/store/app.ts ──────────────────────────────────────────────────────
+  {
+    file: 'src/store/app.ts',
+    find: `import { clampInt } from '@/utils/core/math'; // [round3] clampInt`,
+    replace: `import { clampInt } from '@/utils/core/math';`,
+  },
+  {
+    file: 'src/store/app.ts',
+    find: `// [round3] prototype check: more precise than toString.call, excludes class instances`,
+    replace: `// 用原型链判断纯对象：比 toString.call 更精确，可排除 class 实例。`,
+  },
+  {
+    file: 'src/store/app.ts',
+    find: `  // [round3] clampInt: reuse math.ts unified implementation`,
+    replace: `  // 复用 math.ts 的 clampInt 统一实现。`,
+  },
+  {
+    file: 'src/store/app.ts',
+    find: `  // 关键修复:item 可能是损坏的 null / 非对象,先做形状校验再访问 .id。`,
+    replace: `  // item 可能是损坏的 null / 非对象,先做形状校验再访问 .id。`,
+  },
+
+  // ── src/store/git.ts ──────────────────────────────────────────────────────
+  {
+    file: 'src/store/git.ts',
+    find: `  // commit-stats 的权威缓存在 vue-query;同步读取直接调 queryClient.getQueryData。
+  // 已移除冗余的 commitStatsCache ref 镜像——vue-query 的 cacheObservable 已驱动 UI 更新。`,
+    replace: `  // commit-stats 的权威缓存在 vue-query;同步读取直接调 queryClient.getQueryData,
+  // 由 vue-query 的 cacheObservable 驱动 UI 更新。`,
+  },
+  {
+    file: 'src/store/git.ts',
+    find: `      // requestIdleCallback 的 timeout 参数保证回调最终一定执行，
+      // 不需要额外加 setTimeout fallback（原双层超时是冗余的防御）。`,
+    replace: `      // requestIdleCallback 的 timeout 参数保证回调最终一定执行，
+      // 因此不需要额外的 setTimeout fallback。`,
+  },
+
+  // ── src/services/tauri.ipc-define.ts ──────────────────────────────────────
+  {
+    file: 'src/services/tauri.ipc-define.ts',
+    find: `/**
+ * 单条 Tauri 命令的声明式包装元数据。
+ *
+ * 把原先散落在各 service 方法字面量里的 command / guardHint / timeout / audit /
+ * measureInput / measureOutput / errorMap 等固定字段集中成「可审计的常量表」，
+ * 运行期行为与手写 callSpectaCommand 完全一致——不新增 schema 校验，也不改变任何默认值。
+ */`,
+    replace: `/**
+ * 单条 Tauri 命令的声明式包装元数据：把 command / guardHint / timeout / audit /
+ * measureInput / measureOutput / errorMap 等固定字段集中为「可审计的常量表」，
+ * 供 runCommand 统一驱动 callSpectaCommand。
+ */`,
   },
 ];
 
-const occurrences = (haystack, needle) => {
-  if (needle instanceof RegExp) {
-    const flags = needle.flags.includes('g') ? needle.flags : `${needle.flags}g`;
-    const m = haystack.match(new RegExp(needle.source, flags));
-    return m ? m.length : 0;
-  }
-  return haystack.split(needle).length - 1;
-};
+let failed = 0;
+const byFile = new Map();
+for (const e of EDITS) (byFile.get(e.file) ?? byFile.set(e.file, []).get(e.file)).push(e);
 
-let changedFiles = 0;
-let failures = 0;
-
-for (const { file, ops } of PLAN) {
-  const abs = path.join(ROOT, file);
-  if (!existsSync(abs)) {
-    console.error(`✗ 缺少文件：${file}`);
-    failures++;
-    continue;
-  }
-  const original = await readFile(abs, 'utf8');
-  let content = original;
-  const log = [];
-
-  for (const op of ops) {
-    if (content.includes(op.done)) {
-      log.push(`  • [skip] ${op.name}（已应用）`);
+for (const [file, edits] of byFile) {
+  let text = readFileSync(file, 'utf8');
+  for (const { find, replace } of edits) {
+    const n = text.split(find).length - 1;
+    if (n !== 1) {
+      console.error(`✗ ${file}: 命中 ${n} 次（应为 1），跳过该条:\n${find.slice(0, 60)}...`);
+      failed++;
       continue;
     }
-    const n = occurrences(content, op.find);
-    if (n === 0) {
-      log.push(`  ✗ [fail] ${op.name}：锚点未找到`);
-      failures++;
-      continue;
-    }
-    if (n > 1) {
-      log.push(`  ✗ [fail] ${op.name}：锚点出现 ${n} 次，拒绝模糊改写`);
-      failures++;
-      continue;
-    }
-    const replacement =
-      op.kind === 'insertBefore' ? `${op.replace}\n\n${op.find}` : op.replace;
-    content = content.replace(op.find, replacement);
-    log.push(`  ✓ [edit] ${op.name}`);
+    text = text.replace(find, replace);
   }
-
-  console.log(`\n${file}`);
-  for (const line of log) console.log(line);
-
-  if (content !== original) {
-    changedFiles++;
-    if (APPLY) {
-      await writeFile(abs, content, 'utf8');
-      console.log('  → 已写入');
-    } else {
-      console.log('  → dry-run（未写入，加 --apply 生效）');
-    }
-  }
+  writeFileSync(file, text, 'utf8');
+  console.log(`✓ ${file}`);
 }
-
-console.log(
-  `\n汇总：拟修改 ${changedFiles} 个文件，失败 ${failures} 项。${APPLY ? '' : '（dry-run）'}`,
-);
-
-if (failures > 0) process.exitCode = 1;
+process.exit(failed ? 1 : 0);

@@ -7,11 +7,9 @@ import type {
 } from './tauri.ipc-types';
 
 /**
- * 单条 Tauri 命令的声明式包装元数据。
- *
- * 把原先散落在各 service 方法字面量里的 command / guardHint / timeout / audit /
- * measureInput / measureOutput / errorMap 等固定字段集中成「可审计的常量表」，
- * 运行期行为与手写 callSpectaCommand 完全一致——不新增 schema 校验，也不改变任何默认值。
+ * 单条 Tauri 命令的声明式包装元数据：把 command / guardHint / timeout / audit /
+ * measureInput / measureOutput / errorMap 等固定字段集中为「可审计的常量表」，
+ * 供 runCommand 统一驱动 callSpectaCommand。
  */
 export interface ICommandMeta {
   /** 后端 tauri 命令名，用于审计日志。 */

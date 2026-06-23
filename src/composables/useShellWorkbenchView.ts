@@ -244,11 +244,8 @@ export const useShellWorkbenchView = (onReady: () => void) => {
   const gitBranchName = computed(() => gitStore.status.headBranchName ?? null);
 
   /**
-   * 按 Git status letter 精确分类统计文件变更数。
-   *
-   * 修复：此前 gitRemovedCount 恒为 0（写死），且 gitAddedCount 把 modified
-   * 文件也算进了「新增」。现在直接遍历 status.files 数组按 index/worktree
-   * status 分类：A=新增、D=删除、M/R=修改、?=未跟踪。
+   * 按 Git status letter 精确分类统计文件变更数：遍历 status.files，按 index /
+   * worktree status 归类——A=新增、D=删除、M/R=修改、?=未跟踪。
    */
   const gitChangeSummary = computed(() => {
     const files = gitStore.status.files ?? [];
@@ -362,7 +359,7 @@ export const useShellWorkbenchView = (onReady: () => void) => {
 
   const applyPrimaryMode = (mode: TWorkbenchPrimaryMode): void => {
     if (mode === 'ai') {
-      // 性能优化：切换 AI/编辑模式时不要强制改写终端可见性。
+      // 切换 AI/编辑模式时不要强制改写终端可见性：
       // 终端是否可见属于“编辑模式布局状态”，强制写 false 会触发主界面分支切换
       // (split/maximized) 导致编辑器区域重建，进而造成切换卡顿。
       // AI 模式下编辑器区域本来就 v-show 隐藏，因此保留终端状态是安全的。
@@ -674,9 +671,8 @@ export const useShellWorkbenchView = (onReady: () => void) => {
         return;
       }
 
-      // 注意：这里不再强制 openEditorMode。仅切换 activeDocumentId（切换已打开的标签、
-      // 文档前进后退）不应强制切到编辑模式；“新打开并激活文档”才进编辑模式的逻辑
-      // 已下沉到 documents watch（依据旧值快照判定是否新增了文档）。
+      // 仅切换 activeDocumentId（切换已打开的标签、文档前进后退）不强制切到编辑模式；
+      // “新打开并激活文档”才进编辑模式的逻辑下沉在 documents watch（依据旧值快照判定是否新增文档）。
       if (docHistory.isNavigating.value) {
         docHistory.finishNavigation();
         return;
@@ -687,12 +683,9 @@ export const useShellWorkbenchView = (onReady: () => void) => {
   );
 
   // ── documents 变更 watch ──────────────────────────────────────
-  // 优化前：getter 返回 .map(item => item.id) → 每次 Vue 脏检查时分配新数组；
-  // 回调里再 new Set() x2 做 diff。
-  // 优化后：getter 返回 length + activeDocumentId 组合值（两个原始值拼接为字符串），
-  // 只有文档数量或 activeDocumentId 变化时 Vue 才判定为"变化"并触发回调。
-  // 回调内部直接访问最新 documents 数组构建当前 ID Set，与上一轮缓存的
-  // previousDocumentIdSet 做 diff，避免在 getter 中分配新数组。
+  // getter 返回 length 与 activeDocumentId 拼接的字符串：仅当文档数量或 activeDocumentId
+  // 变化时才触发回调，避免在 getter 中用 .map() 分配新数组。回调内基于最新 documents
+  // 构建当前 ID Set，与上一轮缓存的 previousDocumentIdSet 做 diff。
   watch(
     () => {
       const docs = workbench.editorStore.documents;
@@ -718,8 +711,7 @@ export const useShellWorkbenchView = (onReady: () => void) => {
 
       // 仅当"新打开了一个文档并将其激活"时才进入编辑模式。
       // 依据缓存的旧 ID 集合判定是否新增了文档，读取实时 activeDocumentId。
-      // 切换已打开标签 / 前进后退不会新增文档，因此不会再被强制切到编辑模式
-      //（修复 activeDocumentId 变化即强制 openEditorMode 的回归）。
+      // 切换已打开标签 / 前进后退不会新增文档，因此不会被强制切到编辑模式。
       if (previousDocumentIdSet.size === 0 || isRestoringWorkbenchSession.value) {
         previousDocumentIdSet = currentIdSet;
         return;

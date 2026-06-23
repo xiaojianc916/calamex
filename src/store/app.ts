@@ -19,7 +19,7 @@ import {
   type IAppSettings,
   type TAppSettingsSectionKey,
 } from '@/types/settings';
-import { clampInt } from '@/utils/core/math'; // [round3] clampInt
+import { clampInt } from '@/utils/core/math';
 
 import { APP_STORE_KEY } from './index';
 
@@ -62,7 +62,7 @@ const MAX_ENVIRONMENT_VARIABLES = 20;
 // Pure helpers
 // ---------------------------------------------------------------------------
 
-// [round3] prototype check: more precise than toString.call, excludes class instances
+// 用原型链判断纯对象：比 toString.call 更精确，可排除 class 实例。
 const isPlainObject = (value: unknown): value is Record<string, unknown> => {
   if (typeof value !== 'object' || value === null) return false;
   const proto = Object.getPrototypeOf(value);
@@ -94,7 +94,7 @@ const coerceEnum = <T>(
  * 没传 fallback 就回到 min。fallback 自身也会被 round + clamp,保证返回值始终合法。
  */
 const clampNumber = (value: unknown, [min, max]: TNumberRange, fallback?: number): number => {
-  // [round3] clampInt: reuse math.ts unified implementation
+  // 复用 math.ts 的 clampInt 统一实现。
   if (typeof value === 'number' && Number.isFinite(value)) {
     return clampInt(value, min, max);
   }
@@ -285,7 +285,7 @@ const normalizeSettings = (value: unknown): IAppSettings => {
     .filter(Boolean)
     .slice(0, MAX_IGNORED_RULES);
 
-  // 关键修复:item 可能是损坏的 null / 非对象,先做形状校验再访问 .id。
+  // item 可能是损坏的 null / 非对象,先做形状校验再访问 .id。
   merged.run.environmentVariables = merged.run.environmentVariables
     .filter(isValidEnvironmentVariable)
     .slice(0, MAX_ENVIRONMENT_VARIABLES);
