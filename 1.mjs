@@ -1,264 +1,425 @@
-// 2.mjs — Write 展开对齐 Edit 的 diff 样式 + 代码字体 Consolas
-// 锚点幂等 codemod（沿用 1.mjs 约定）：命中必须唯一；已应用则跳过；保留原 EOL(LF/CRLF)。
-import { readFileSync, writeFileSync } from 'node:fs';
+import { writeFileSync } from 'node:fs';
 
-let failed = false;
+const path = 'src/components/business/ai/skill/AiSlashCommandMenu.vue';
 
-function patch(file, edits) {
-  let raw;
-  try {
-    raw = readFileSync(file, 'utf8');
-  } catch (e) {
-    console.error(`✗ 读不到文件：${file} — ${e.message}`);
-    failed = true;
+const content = `<script setup lang="ts">
+import { Sparkles, Terminal } from '@lucide/vue';
+import { computed, onBeforeUnmount, ref, watch } from 'vue';
+import type { IAcpAvailableCommand } from '@/types/ai/sidecar';
+import type { ISkillSummary } from '@/types/ai/skill';
+
+/** / 菜单锚点:取自输入框容器的视口矩形,用于把浮层贴在输入框上方。 */
+interface ISlashAnchorRect {
+  left: number;
+  top: number;
+  width: number;
+}
+
+const props = defineProps<{
+  open: boolean;
+  /** '/' 之后已输入的过滤文本(不含斜杠)。 */
+  query: string;
+  skills: readonly ISkillSummary[];
+  anchorRect: ISlashAnchorRect | null;
+  /** 为真时菜单改用 Kimi(ACP)会话公示的内置命令,否则沿用自研技能列表。 */
+  acp?: boolean;
+  /** ACP 会话当前公示的可用命令(仅 acp 为真时使用)。 */
+  commands?: readonly IAcpAvailableCommand[];
+}>();
+
+const emit = defineEmits<{
+  (event: 'select-skill', slug: string): void;
+  (event: 'select-command', name: string): void;
+  (event: 'close'): void;
+}>();
+
+// builtin 模式命令区:仅占位 / 参考,保持与设计图一致但不可点选。
+const placeholderCommands = [
+  { name: '/compact', description: '压缩当前对话上下文' },
+  { name: '/goal', description: '设定本次任务目标' },
+  { name: '/skill', description: '加载指定技能后再继续任务' },
+] as const;
+
+const activeIndex = ref(0);
+
+const normalizedQuery = computed(() => props.query.trim().toLowerCase());
+
+const filteredSkills = computed(() => {
+  const keyword = normalizedQuery.value;
+  if (!keyword) {
+    return [...props.skills];
+  }
+  return props.skills.filter((skill) => {
+    const haystack = (skill.name + ' ' + skill.slug + ' ' + skill.description).toLowerCase();
+    return haystack.includes(keyword);
+  });
+});
+
+const filteredCommands = computed(() => {
+  const list = props.commands ?? [];
+  const keyword = normalizedQuery.value;
+  if (!keyword) {
+    return [...list];
+  }
+  return list.filter((command) => {
+    const haystack = (command.name + ' ' + command.description).toLowerCase();
+    return haystack.includes(keyword);
+  });
+});
+
+// 当前生效列表长度:acp 模式取命令数,否则取技能数。键盘导航 / 回车以此为界。
+const activeCount = computed(() =>
+  props.acp ? filteredCommands.value.length : filteredSkills.value.length,
+);
+
+// acp 空态文案:有过滤词→无匹配;否则提示会话开始后才有命令(ACP 无主动拉取手段)。
+const acpEmptyHint = computed(() =>
+  normalizedQuery.value ? '没有匹配的命令' : '会话开始后将出现可用命令',
+);
+
+const menuStyle = computed(() => {
+  const rect = props.anchorRect;
+  if (!rect) {
+    return { display: 'none' } as const;
+  }
+  const gap = 8;
+  return {
+    left: rect.left + 'px',
+    width: rect.width + 'px',
+    bottom: Math.max(gap, window.innerHeight - rect.top + gap) + 'px',
+  };
+});
+
+const clampActiveIndex = (): void => {
+  const count = activeCount.value;
+  if (count === 0) {
+    activeIndex.value = 0;
     return;
   }
-  const eol = raw.includes('\r\n') ? '\r\n' : '\n';
-  let text = raw.replace(/\r\n/g, '\n');
-
-  for (const { name, find, replace, done } of edits) {
-    if (text.includes(done)) {
-      console.log(`· 跳过（已应用）：${file} → ${name}`);
-      continue;
-    }
-    const hits = text.split(find).length - 1;
-    if (hits !== 1) {
-      console.error(`✗ 锚点命中 ${hits} 次（应为 1）：${file} → ${name}`);
-      failed = true;
-      continue;
-    }
-    text = text.replace(find, replace);
-    console.log(`✓ 已改：${file} → ${name}`);
+  if (activeIndex.value > count - 1) {
+    activeIndex.value = count - 1;
   }
+  if (activeIndex.value < 0) {
+    activeIndex.value = 0;
+  }
+};
 
-  const out = eol === '\n' ? text : text.replace(/\n/g, '\r\n');
-  if (out !== raw) writeFileSync(file, out, 'utf8');
+const moveActive = (delta: number): void => {
+  const count = activeCount.value;
+  if (count === 0) {
+    return;
+  }
+  activeIndex.value = (activeIndex.value + delta + count) % count;
+};
+
+const confirmActive = (): void => {
+  if (props.acp) {
+    const command = filteredCommands.value[activeIndex.value];
+    if (command) {
+      emit('select-command', command.name);
+    }
+    return;
+  }
+  const target = filteredSkills.value[activeIndex.value];
+  if (target) {
+    emit('select-skill', target.slug);
+  }
+};
+
+const onSelectSkill = (slug: string): void => {
+  emit('select-skill', slug);
+};
+
+const onSelectCommand = (name: string): void => {
+  emit('select-command', name);
+};
+
+// 捕获阶段拦截方向键 / 回车 / Esc,避免事件落到输入框造成换行或提交。
+const handleKeydown = (event: KeyboardEvent): void => {
+  if (!props.open) {
+    return;
+  }
+  switch (event.key) {
+    case 'ArrowDown':
+      event.preventDefault();
+      event.stopPropagation();
+      moveActive(1);
+      break;
+    case 'ArrowUp':
+      event.preventDefault();
+      event.stopPropagation();
+      moveActive(-1);
+      break;
+    case 'Enter':
+      if (activeCount.value > 0) {
+        event.preventDefault();
+        event.stopPropagation();
+        confirmActive();
+      }
+      break;
+    case 'Tab':
+      if (activeCount.value > 0) {
+        event.preventDefault();
+        event.stopPropagation();
+        confirmActive();
+      }
+      break;
+    case 'Escape':
+      event.preventDefault();
+      event.stopPropagation();
+      emit('close');
+      break;
+    default:
+      break;
+  }
+};
+
+const bindKeyListener = (): void => {
+  document.addEventListener('keydown', handleKeydown, true);
+};
+
+const unbindKeyListener = (): void => {
+  document.removeEventListener('keydown', handleKeydown, true);
+};
+
+watch(
+  () => props.open,
+  (open) => {
+    if (open) {
+      activeIndex.value = 0;
+      bindKeyListener();
+    } else {
+      unbindKeyListener();
+    }
+  },
+  { immediate: true },
+);
+
+watch(
+  () => props.query,
+  () => {
+    activeIndex.value = 0;
+  },
+);
+
+watch(activeCount, () => {
+  clampActiveIndex();
+});
+
+onBeforeUnmount(() => {
+  unbindKeyListener();
+});
+</script>
+
+<template>
+  <Teleport to="body">
+    <!-- 透明遮罩:仅用于点击关闭,不阻挡视觉(浮层本体覆盖在对话上方) -->
+    <div v-if="open" class="slash-overlay" @mousedown.self="emit('close')">
+      <div
+        class="slash-menu"
+        role="listbox"
+        aria-label="技能与命令"
+        :style="menuStyle"
+        @mousedown.prevent
+      >
+        <section v-if="acp" class="slash-section">
+          <p class="slash-section__title">命令</p>
+          <p v-if="filteredCommands.length === 0" class="slash-empty">
+            <Terminal aria-hidden="true" />
+            <span v-text="acpEmptyHint" />
+          </p>
+          <button
+            v-for="(command, index) in filteredCommands"
+            :key="command.name"
+            type="button"
+            class="slash-item"
+            :class="{ 'slash-item--active': index === activeIndex }"
+            role="option"
+            :aria-selected="index === activeIndex"
+            @mouseenter="activeIndex = index"
+            @click="onSelectCommand(command.name)"
+          >
+            <Terminal class="slash-item__icon" aria-hidden="true" />
+            <span class="slash-item__text">
+              <span class="slash-item__name" v-text="command.name" />
+              <span
+                v-if="command.description"
+                class="slash-item__desc"
+                v-text="command.description"
+              />
+            </span>
+          </button>
+        </section>
+
+        <template v-else>
+          <section class="slash-section">
+            <p class="slash-section__title">命令</p>
+            <button
+              v-for="command in placeholderCommands"
+              :key="command.name"
+              type="button"
+              class="slash-item slash-item--disabled"
+              disabled
+            >
+              <Terminal class="slash-item__icon" aria-hidden="true" />
+              <span class="slash-item__text">
+                <span class="slash-item__name" v-text="command.name" />
+                <span class="slash-item__desc" v-text="command.description" />
+              </span>
+              <span class="slash-item__badge">即将推出</span>
+            </button>
+          </section>
+
+          <section class="slash-section">
+            <p class="slash-section__title">技能</p>
+            <p v-if="filteredSkills.length === 0" class="slash-empty">
+              <Sparkles aria-hidden="true" />
+              没有匹配的技能
+            </p>
+            <button
+              v-for="(skill, index) in filteredSkills"
+              :key="skill.slug"
+              type="button"
+              class="slash-item"
+              :class="{ 'slash-item--active': index === activeIndex }"
+              role="option"
+              :aria-selected="index === activeIndex"
+              @mouseenter="activeIndex = index"
+              @click="onSelectSkill(skill.slug)"
+            >
+              <Sparkles class="slash-item__icon" aria-hidden="true" />
+              <span class="slash-item__text">
+                <span class="slash-item__name" v-text="skill.name" />
+                <span v-if="skill.description" class="slash-item__desc" v-text="skill.description" />
+              </span>
+            </button>
+          </section>
+        </template>
+      </div>
+    </div>
+  </Teleport>
+</template>
+
+<style scoped>
+.slash-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: var(--z-modal, 50);
+  background: transparent;
 }
 
-/* ============================ 1) 投影层：合成 Write diff ============================ */
-
-const TOOLCALL = 'src/components/business/ai/thread/projection/from-acp-tool-call.ts';
-
-// 1a) 在「5) 公开 API」段前插入纯函数
-const HELPER = [
-  '/* ---------- 4.6) Write 工具 diff 合成（对齐 Edit，纯派生） --------------- */',
-  '',
-  '/**',
-  ' * Kimi 的 ACP 适配器（acp-adapter/src/convert.ts displayBlockToAcpContent）只在',
-  ' * file_io 同时带 before/after 时才发 diff；Write 的 display 为',
-  " * { kind:'file_io', operation:'write', path, content }（agent-core write.ts），",
-  ' * 只有整文件 content、无 before/after，故 diff 被丢弃、Write 展开无 diff。但工具',
-  ' * 入参经 tool_call.rawInput(= event.args) 透传（events-map.ts',
-  ' * toolCallStartToSessionUpdate），含 { path, content }。这里据此把 Write 合成为',
-  " * 「全新增」diff（oldText=''），与 Edit 共用同一渲染管线，不改协议语义。",
-  ' */',
-  'interface IWriteFileInput {',
-  '  path: string;',
-  '  content: string;',
-  '}',
-  '',
-  'const asWriteFileInput = (rawInput: unknown): IWriteFileInput | null => {',
-  "  if (rawInput === null || typeof rawInput !== 'object') return null;",
-  '  const view = rawInput as { path?: unknown; content?: unknown };',
-  "  return typeof view.path === 'string' && view.path.length > 0 && typeof view.content === 'string'",
-  '    ? { path: view.path, content: view.content }',
-  '    : null;',
-  '};',
-  '',
-  'const contentHasDiff = (content: readonly IAiThreadToolCallContent[]): boolean =>',
-  "  content.some((item) => item.type === 'diff');",
-  '',
-  '/**',
-  ' * kind=edit、内容尚无 diff、且 rawInput 形如 Write 入参时，前置一条「全新增」diff；',
-  ' * 否则原样返回。幂等：已含 diff（Edit 原生 / 上一帧已合成）即跳过，避免多帧累加。',
-  ' */',
-  'const withSynthesizedWriteDiff = (',
-  '  toolCallId: string,',
-  '  kind: TAiThreadToolKind,',
-  '  rawInput: unknown,',
-  '  content: IAiThreadToolCallContent[],',
-  '): IAiThreadToolCallContent[] => {',
-  "  if (kind !== 'edit' || contentHasDiff(content)) return content;",
-  '  const write = asWriteFileInput(rawInput);',
-  '  if (write === null) return content;',
-  '  const diffRef = `acp-write:${encodeURIComponent(toolCallId)}:${encodeURIComponent(write.path)}`;',
-  "  const diff = buildDiffContent({ diffRef, filePath: write.path, oldText: '', newText: write.content });",
-  '  return [diff, ...content];',
-  '};',
-  '',
-  '',
-].join('\n');
-
-const SECTION5 =
-  '/* ---------- 5) 公开 API -------------------------------------------------- */';
-
-patch(TOOLCALL, [
-  {
-    name: '插入 withSynthesizedWriteDiff 纯函数',
-    find: SECTION5,
-    replace: HELPER + SECTION5,
-    done: 'const withSynthesizedWriteDiff =',
-  },
-  {
-    name: '首帧分支包裹 content',
-    find: '      content: hasContent ? mapContent(view.content, id) : [],',
-    replace: [
-      '      content: withSynthesizedWriteDiff(',
-      '        id,',
-      '        mapKind(view.kind),',
-      '        view.rawInput,',
-      '        hasContent ? mapContent(view.content, id) : [],',
-      '      ),',
-    ].join('\n'),
-    done: 'mapKind(view.kind),\n        view.rawInput,',
-  },
-  {
-    name: '合并分支包裹 content',
-    find: '    content: hasContent ? mapContent(view.content, id) : previous.content,',
-    replace: [
-      '    content: withSynthesizedWriteDiff(',
-      '      id,',
-      '      hasKind ? mapKind(view.kind) : previous.kind,',
-      '      view.rawInput !== undefined ? view.rawInput : previous.rawInput,',
-      '      hasContent ? mapContent(view.content, id) : previous.content,',
-      '    ),',
-    ].join('\n'),
-    done: 'view.rawInput !== undefined ? view.rawInput : previous.rawInput,',
-  },
-]);
-
-/* ============================ 2) 单测 ============================ */
-
-const SPEC = 'src/components/business/ai/thread/projection/from-acp-tool-call.spec.ts';
-
-const SPEC_BLOCK = [
-  "describe('reduceAcpToolCall — Write 工具合成 diff（对齐 Edit）', () => {",
-  "  it('kind=edit 且 rawInput={path,content} → 前置全新增 diff，原文本块保留其后', () => {",
-  '    const entry = reduceAcpToolCall(',
-  '      undefined,',
-  '      toolCall({',
-  "        toolCallId: 'w1',",
-  "        title: 'Write a.txt',",
-  "        kind: 'edit',",
-  "        status: 'in_progress',",
-  "        rawInput: { path: 'a.txt', content: 'l1\\nl2' },",
-  "        content: [{ type: 'content', content: { type: 'text', text: 'args' } }],",
-  '      }),',
-  '      { now: NOW },',
-  '    );',
-  '    const diff = entry.content[0];',
-  "    expect(diff?.type).toBe('diff');",
-  "    if (diff?.type !== 'diff') return;",
-  "    expect(diff.diff.filePath).toBe('a.txt');",
-  '    expect(diff.diff.hunks[0]?.lines.map((line) => `${line.kind}:${line.content}`)).toEqual([',
-  "      'add:l1',",
-  "      'add:l2',",
-  '    ]);',
-  '    expect(entry.content[1]).toEqual({',
-  "      type: 'content',",
-  "      block: { type: 'text', text: 'args' },",
-  '    });',
-  '  });',
-  '',
-  "  it('Edit（已含原生 diff）不重复合成', () => {",
-  '    const entry = reduceAcpToolCall(',
-  '      undefined,',
-  '      toolCall({',
-  "        toolCallId: 'e1',",
-  "        kind: 'edit',",
-  "        rawInput: { path: 'a.txt', old_string: 'foo', new_string: 'bar' },",
-  "        content: [{ type: 'diff', path: 'a.txt', oldText: 'foo', newText: 'bar' }],",
-  '      }),',
-  '      { now: NOW },',
-  '    );',
-  "    expect(entry.content.filter((c) => c.type === 'diff')).toHaveLength(1);",
-  '  });',
-  '',
-  "  it('非编辑类 / rawInput 形状不符 → 不合成', () => {",
-  '    const exec = reduceAcpToolCall(',
-  '      undefined,',
-  "      toolCall({ toolCallId: 'x', kind: 'execute', rawInput: { path: 'a', content: 'x' } }),",
-  '      { now: NOW },',
-  '    );',
-  '    expect(exec.content).toEqual([]);',
-  '    const bad = reduceAcpToolCall(',
-  '      undefined,',
-  "      toolCall({ toolCallId: 'y', kind: 'edit', rawInput: { path: 'a' } }),",
-  '      { now: NOW },',
-  '    );',
-  '    expect(bad.content).toEqual([]);',
-  '  });',
-  '',
-  "  it('多帧不累加重复 diff（result 替换内容、心跳帧保留旧值）', () => {",
-  '    const started = reduceAcpToolCall(',
-  '      undefined,',
-  '      toolCall({',
-  "        toolCallId: 'w2',",
-  "        kind: 'edit',",
-  "        status: 'in_progress',",
-  "        rawInput: { path: 'a.txt', content: 'x' },",
-  "        content: [{ type: 'content', content: { type: 'text', text: 'args' } }],",
-  '      }),',
-  '      { now: NOW },',
-  '    );',
-  "    expect(started.content.filter((c) => c.type === 'diff')).toHaveLength(1);",
-  '    const done = reduceAcpToolCall(',
-  '      started,',
-  '      toolCallUpdate({',
-  "        toolCallId: 'w2',",
-  "        status: 'completed',",
-  "        content: [{ type: 'content', content: { type: 'text', text: 'Wrote 1 bytes to a.txt' } }],",
-  '      }),',
-  '    );',
-  "    expect(done.content.filter((c) => c.type === 'diff')).toHaveLength(1);",
-  "    const beat = reduceAcpToolCall(done, toolCallUpdate({ toolCallId: 'w2', status: 'completed' }));",
-  "    expect(beat.content.filter((c) => c.type === 'diff')).toHaveLength(1);",
-  '  });',
-  '});',
-  '',
-  '',
-].join('\n');
-
-patch(SPEC, [
-  {
-    name: '追加 Write diff 合成用例',
-    find: "describe('getAcpToolCallId', () => {",
-    replace: SPEC_BLOCK + "describe('getAcpToolCallId', () => {",
-    done: 'Write 工具合成 diff（对齐 Edit）',
-  },
-]);
-
-/* ============================ 3) 代码字体 Consolas ============================ */
-
-const VUE = 'src/components/business/ai/thread/AiThreadToolCall.vue';
-
-patch(VUE, [
-  {
-    name: '工具卡作用域内 --font-mono 设为 Consolas',
-    find: [
-      '.ai-thread-tool-call {',
-      '  display: flex;',
-      '  min-width: 0;',
-      '  flex-direction: column;',
-      '  background: transparent;',
-      '}',
-    ].join('\n'),
-    replace: [
-      '.ai-thread-tool-call {',
-      '  display: flex;',
-      '  min-width: 0;',
-      '  flex-direction: column;',
-      '  background: transparent;',
-      '  /* 代码 / diff / 终端字体对齐 Consolas：经 CSS 变量级联到面板内子组件 */',
-      "  --font-mono: Consolas, 'Cascadia Mono', ui-monospace, 'SFMono-Regular', Menlo, monospace;",
-      '}',
-    ].join('\n'),
-    done: '--font-mono: Consolas',
-  },
-]);
-
-if (failed) {
-  console.error('\n❌ 有锚点未命中或文件缺失，未完成的改动请检查上方日志。');
-  process.exit(1);
+.slash-menu {
+  position: fixed;
+  max-height: min(320px, 50vh);
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 8px;
+  border: 1px solid #ececec;
+  border-radius: 14px;
+  background: #ffffff;
+  box-shadow: 0 18px 48px rgb(15 23 42 / 16%);
+  color: #18181b;
 }
-console.log('\n✅ 全部完成。请运行：pnpm lint && pnpm typecheck && pnpm test');
+
+.slash-section {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.slash-section + .slash-section {
+  margin-top: 6px;
+  padding-top: 6px;
+  border-top: 1px solid #f1f1f1;
+}
+
+.slash-section__title {
+  margin: 2px 8px;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  color: #a1a1aa;
+  text-transform: uppercase;
+}
+
+.slash-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  padding: 8px 10px;
+  border: none;
+  border-radius: 10px;
+  background: transparent;
+  text-align: left;
+  cursor: pointer;
+  color: inherit;
+  transition: background 0.12s ease;
+}
+
+.slash-item--active {
+  background: #f4f4f5;
+}
+
+.slash-item--disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
+}
+
+.slash-item__icon {
+  flex: none;
+  width: 16px;
+  height: 16px;
+  color: #71717a;
+}
+
+.slash-item__text {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  min-width: 0;
+  flex: 1 1 auto;
+}
+
+.slash-item__name {
+  font-size: 13px;
+  font-weight: 500;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.slash-item__desc {
+  font-size: 12px;
+  color: #71717a;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.slash-item__badge {
+  flex: none;
+  font-size: 10px;
+  color: #a1a1aa;
+  padding: 2px 6px;
+  border-radius: 999px;
+  background: #f4f4f5;
+}
+
+.slash-empty {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px;
+  margin: 0;
+  font-size: 12px;
+  color: #a1a1aa;
+}
+</style>
+`;
+
+writeFileSync(path, content, 'utf8');
+console.log('✓ write ' + path);
+console.log('完成：AiSlashCommandMenu.vue 已修正（空态改用 v-text，去掉被吞的插值）。');

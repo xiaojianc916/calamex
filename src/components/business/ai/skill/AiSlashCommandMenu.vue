@@ -17,12 +17,9 @@ const props = defineProps<{
   query: string;
   skills: readonly ISkillSummary[];
   anchorRect: ISlashAnchorRect | null;
-  /**
-   * 为 true 时由 ACP 公示命令驱动（Kimi 等外部 Agent 的内置命令 + 技能），
-   * 选中 emit select-command(name)；为 false（自研 builtin Agent）维持技能列表。
-   */
+  /** 为真时菜单改用 Kimi(ACP)会话公示的内置命令,否则沿用自研技能列表。 */
   acp?: boolean;
-  /** ACP available_commands_update 归一后的命令清单（acp 为 true 时消费）。 */
+  /** ACP 会话当前公示的可用命令(仅 acp 为真时使用)。 */
   commands?: readonly IAcpAvailableCommand[];
 }>();
 
@@ -32,7 +29,7 @@ const emit = defineEmits<{
   (event: 'close'): void;
 }>();
 
-// 命令区:本期仅占位 / 参考,保持与设计图一致但不可点选。
+// builtin 模式命令区:仅占位 / 参考,保持与设计图一致但不可点选。
 const placeholderCommands = [
   { name: '/compact', description: '压缩当前对话上下文' },
   { name: '/goal', description: '设定本次任务目标' },
@@ -49,7 +46,7 @@ const filteredSkills = computed(() => {
     return [...props.skills];
   }
   return props.skills.filter((skill) => {
-    const haystack = `${skill.name} ${skill.slug} ${skill.description}`.toLowerCase();
+    const haystack = (skill.name + ' ' + skill.slug + ' ' + skill.description).toLowerCase();
     return haystack.includes(keyword);
   });
 });
@@ -61,19 +58,19 @@ const filteredCommands = computed(() => {
     return [...list];
   }
   return list.filter((command) => {
-    const haystack = `${command.name} ${command.description}`.toLowerCase();
+    const haystack = (command.name + ' ' + command.description).toLowerCase();
     return haystack.includes(keyword);
   });
 });
 
-// 当前可被键盘 / 点击选中的条目数:ACP 模式取命令,自研模式取技能。
+// 当前生效列表长度:acp 模式取命令数,否则取技能数。键盘导航 / 回车以此为界。
 const activeCount = computed(() =>
   props.acp ? filteredCommands.value.length : filteredSkills.value.length,
 );
 
-// ACP 模式命令为空:区分「会话尚未公示命令」与「过滤无匹配」。
+// acp 空态文案:有过滤词→无匹配;否则提示会话开始后才有命令(ACP 无主动拉取手段)。
 const acpEmptyHint = computed(() =>
-  (props.commands?.length ?? 0) === 0 ? '会话开始后将出现可用命令' : '没有匹配的命令',
+  normalizedQuery.value ? '没有匹配的命令' : '会话开始后将出现可用命令',
 );
 
 const menuStyle = computed(() => {
@@ -83,9 +80,9 @@ const menuStyle = computed(() => {
   }
   const gap = 8;
   return {
-    left: `${rect.left}px`,
-    width: `${rect.width}px`,
-    bottom: `${Math.max(gap, window.innerHeight - rect.top + gap)}px`,
+    left: rect.left + 'px',
+    width: rect.width + 'px',
+    bottom: Math.max(gap, window.innerHeight - rect.top + gap) + 'px',
   };
 });
 
@@ -119,9 +116,9 @@ const confirmActive = (): void => {
     }
     return;
   }
-  const skill = filteredSkills.value[activeIndex.value];
-  if (skill) {
-    emit('select-skill', skill.slug);
+  const target = filteredSkills.value[activeIndex.value];
+  if (target) {
+    emit('select-skill', target.slug);
   }
 };
 
@@ -221,48 +218,79 @@ onBeforeUnmount(() => {
         :style="menuStyle"
         @mousedown.prevent
       >
-        <section class="slash-section">
+        <section v-if="acp" class="slash-section">
           <p class="slash-section__title">命令</p>
-          <button
-            v-for="command in placeholderCommands"
-            :key="command.name"
-            type="button"
-            class="slash-item slash-item--disabled"
-            disabled
-          >
-            <Terminal class="slash-item__icon" aria-hidden="true" />
-            <span class="slash-item__text">
-              <span class="slash-item__name" v-text="command.name" />
-              <span class="slash-item__desc" v-text="command.description" />
-            </span>
-            <span class="slash-item__badge">即将推出</span>
-          </button>
-        </section>
-
-        <section class="slash-section">
-          <p class="slash-section__title">技能</p>
-          <p v-if="filteredSkills.length === 0" class="slash-empty">
-            <Sparkles aria-hidden="true" />
-            没有匹配的技能
+          <p v-if="filteredCommands.length === 0" class="slash-empty">
+            <Terminal aria-hidden="true" />
+            <span v-text="acpEmptyHint" />
           </p>
           <button
-            v-for="(skill, index) in filteredSkills"
-            :key="skill.slug"
+            v-for="(command, index) in filteredCommands"
+            :key="command.name"
             type="button"
             class="slash-item"
             :class="{ 'slash-item--active': index === activeIndex }"
             role="option"
             :aria-selected="index === activeIndex"
             @mouseenter="activeIndex = index"
-            @click="onSelect(skill.slug)"
+            @click="onSelectCommand(command.name)"
           >
-            <Sparkles class="slash-item__icon" aria-hidden="true" />
+            <Terminal class="slash-item__icon" aria-hidden="true" />
             <span class="slash-item__text">
-              <span class="slash-item__name" v-text="skill.name" />
-              <span v-if="skill.description" class="slash-item__desc" v-text="skill.description" />
+              <span class="slash-item__name" v-text="command.name" />
+              <span
+                v-if="command.description"
+                class="slash-item__desc"
+                v-text="command.description"
+              />
             </span>
           </button>
         </section>
+
+        <template v-else>
+          <section class="slash-section">
+            <p class="slash-section__title">命令</p>
+            <button
+              v-for="command in placeholderCommands"
+              :key="command.name"
+              type="button"
+              class="slash-item slash-item--disabled"
+              disabled
+            >
+              <Terminal class="slash-item__icon" aria-hidden="true" />
+              <span class="slash-item__text">
+                <span class="slash-item__name" v-text="command.name" />
+                <span class="slash-item__desc" v-text="command.description" />
+              </span>
+              <span class="slash-item__badge">即将推出</span>
+            </button>
+          </section>
+
+          <section class="slash-section">
+            <p class="slash-section__title">技能</p>
+            <p v-if="filteredSkills.length === 0" class="slash-empty">
+              <Sparkles aria-hidden="true" />
+              没有匹配的技能
+            </p>
+            <button
+              v-for="(skill, index) in filteredSkills"
+              :key="skill.slug"
+              type="button"
+              class="slash-item"
+              :class="{ 'slash-item--active': index === activeIndex }"
+              role="option"
+              :aria-selected="index === activeIndex"
+              @mouseenter="activeIndex = index"
+              @click="onSelectSkill(skill.slug)"
+            >
+              <Sparkles class="slash-item__icon" aria-hidden="true" />
+              <span class="slash-item__text">
+                <span class="slash-item__name" v-text="skill.name" />
+                <span v-if="skill.description" class="slash-item__desc" v-text="skill.description" />
+              </span>
+            </button>
+          </section>
+        </template>
       </div>
     </div>
   </Teleport>
