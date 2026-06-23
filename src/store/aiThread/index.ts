@@ -368,6 +368,21 @@ export const useAiThreadStore = defineStore('ai-thread', () => {
     authoritativeHistoryThreads.value.map(threadToLegacyThread),
   );
 
+  /**
+   * Entries-native 写真源：以 updater 直接变换活动线程 entries 并提交（经 patchActiveThread 归一）。
+   * 供编排器各写点取代 legacy message setter（replaceMessages / replaceThreadMessages）逐一改指。
+   */
+  function patchActiveThreadEntries(
+    updater: (entries: readonly IAiThreadEntry[]) => IAiThreadEntry[],
+  ): void {
+    commitAuthoritativeState(
+      threadMutations.patchActiveThread(readAuthoritativeState(), (thread) => ({
+        ...thread,
+        entries: updater(thread.entries),
+      })),
+    );
+  }
+
   function replaceMessages(messages: IAiChatMessage[]): void {
     commitAuthoritativeState(
       threadMutations.patchActiveThread(readAuthoritativeState(), (thread) => ({
@@ -433,6 +448,7 @@ export const useAiThreadStore = defineStore('ai-thread', () => {
     activeMessages,
     activeConversationThread,
     conversationHistoryThreads,
+    patchActiveThreadEntries,
     replaceMessages,
     replaceThreadMessages,
   };

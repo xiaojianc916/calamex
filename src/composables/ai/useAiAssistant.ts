@@ -2419,7 +2419,7 @@ export const useAiAssistant = (options: IUseAiAssistantOptions) => {
     const restoredFilePaths: string[] = [];
 
     try {
-      const checkpointEvent = getLatestCheckpointEvent(message);
+      const checkpointEvent = getLatestCheckpointEvent(message.stream?.runtimeEvents ?? []);
 
       if (checkpointEvent) {
         try {
@@ -2434,19 +2434,21 @@ export const useAiAssistant = (options: IUseAiAssistantOptions) => {
 
           if (restoreRuntimeEvents.length > 0) {
             appendVisibleRuntimeTimelineEvents(restoreRuntimeEvents);
-            messages.value = messages.value.map((item) =>
-              item.id === messageId
-                ? {
-                    ...item,
-                    stream: {
-                      ...(item.stream ?? { status: 'completed' }),
-                      runtimeEvents: mergeRuntimeEvents(
-                        item.stream?.runtimeEvents,
-                        restoreRuntimeEvents,
-                      ),
-                    },
-                  }
-                : item,
+            aiThreadStore.patchActiveThreadEntries((entries) =>
+              entries.map((entry) =>
+                entry.type === 'assistant_message' && entry.id === messageId
+                  ? {
+                      ...entry,
+                      stream: {
+                        ...(entry.stream ?? { status: 'completed' }),
+                        runtimeEvents: mergeRuntimeEvents(
+                          entry.stream?.runtimeEvents,
+                          restoreRuntimeEvents,
+                        ),
+                      },
+                    }
+                  : entry,
+              ),
             );
           }
         } catch (error) {
@@ -2503,16 +2505,12 @@ export const useAiAssistant = (options: IUseAiAssistantOptions) => {
 
       const revertedAt = new Date().toISOString();
 
-      messages.value = messages.value.map((item) =>
-        item.id === messageId && item.changedFilesSummary?.id === summaryId
-          ? {
-              ...item,
-              changedFilesSummary: {
-                ...item.changedFilesSummary,
-                revertedAt,
-              },
-            }
-          : item,
+      aiThreadStore.patchActiveThreadEntries((entries) =>
+        entries.map((entry) =>
+          entry.type === 'changed_files' && entry.id === summaryId
+            ? { ...entry, summary: { ...entry.summary, revertedAt } }
+            : entry,
+        ),
       );
       fileRollbackPrompt.value = null;
     } catch (error) {
@@ -2555,16 +2553,12 @@ export const useAiAssistant = (options: IUseAiAssistantOptions) => {
         pinned,
       });
 
-      messages.value = messages.value.map((item) =>
-        item.id === messageId && item.changedFilesSummary?.id === summaryId
-          ? {
-              ...item,
-              changedFilesSummary: {
-                ...item.changedFilesSummary,
-                pinned,
-              },
-            }
-          : item,
+      aiThreadStore.patchActiveThreadEntries((entries) =>
+        entries.map((entry) =>
+          entry.type === 'changed_files' && entry.id === summaryId
+            ? { ...entry, summary: { ...entry.summary, pinned } }
+            : entry,
+        ),
       );
     } catch (error) {
       errorMessage.value = toErrorMessage(error, '更新 AED Pin 状态失败');
