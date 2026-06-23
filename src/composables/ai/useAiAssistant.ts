@@ -102,7 +102,7 @@ import {
 } from './useAiAssistant.patch';
 import { useAiProviderConfig } from './useAiAssistant.provider-config';
 import {
-  buildConversationCheckpoints,
+  buildConversationCheckpointsFromEntries,
   buildInitialAgentActivityText,
   collectConversationRuntimeEvents,
   compactRuntimeEvents,
@@ -498,7 +498,7 @@ export const useAiAssistant = (options: IUseAiAssistantOptions) => {
     () => conversationStore.activeConversationThread?.scrollState ?? null,
   );
   const conversationCheckpoints = computed<IAiConversationCheckpoint[]>(() =>
-    buildConversationCheckpoints(messages.value),
+    buildConversationCheckpointsFromEntries(aiThreadStore.authoritativeActiveEntries),
   );
 
   const agentPlan = useAiAgentPlan();

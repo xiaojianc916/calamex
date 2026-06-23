@@ -1,131 +1,134 @@
-// polish-comments-batch2.mjs  —  在仓库根目录 node polish-comments-batch2.mjs
 import { readFileSync, writeFileSync } from 'node:fs';
+import { resolve } from 'node:path';
 
-/** 每条都来自当前 main 源码逐字复制；命中必须恰好 1 次。 */
-const EDITS = [
-  // ── src/composables/useShellWorkbenchView.ts ──────────────────────────────
-  {
-    file: 'src/composables/useShellWorkbenchView.ts',
-    find: `  /**
-   * 按 Git status letter 精确分类统计文件变更数。
-   *
-   * 修复：此前 gitRemovedCount 恒为 0（写死），且 gitAddedCount 把 modified
-   * 文件也算进了「新增」。现在直接遍历 status.files 数组按 index/worktree
-   * status 分类：A=新增、D=删除、M/R=修改、?=未跟踪。
-   */`,
-    replace: `  /**
-   * 按 Git status letter 精确分类统计文件变更数：遍历 status.files，按 index /
-   * worktree status 归类——A=新增、D=删除、M/R=修改、?=未跟踪。
-   */`,
-  },
-  {
-    file: 'src/composables/useShellWorkbenchView.ts',
-    find: `      // 性能优化：切换 AI/编辑模式时不要强制改写终端可见性。
-      // 终端是否可见属于“编辑模式布局状态”，强制写 false 会触发主界面分支切换`,
-    replace: `      // 切换 AI/编辑模式时不要强制改写终端可见性：
-      // 终端是否可见属于“编辑模式布局状态”，强制写 false 会触发主界面分支切换`,
-  },
-  {
-    file: 'src/composables/useShellWorkbenchView.ts',
-    find: `      // 注意：这里不再强制 openEditorMode。仅切换 activeDocumentId（切换已打开的标签、
-      // 文档前进后退）不应强制切到编辑模式；“新打开并激活文档”才进编辑模式的逻辑
-      // 已下沉到 documents watch（依据旧值快照判定是否新增了文档）。`,
-    replace: `      // 仅切换 activeDocumentId（切换已打开的标签、文档前进后退）不强制切到编辑模式；
-      // “新打开并激活文档”才进编辑模式的逻辑下沉在 documents watch（依据旧值快照判定是否新增文档）。`,
-  },
-  {
-    file: 'src/composables/useShellWorkbenchView.ts',
-    find: `  // ── documents 变更 watch ──────────────────────────────────────
-  // 优化前：getter 返回 .map(item => item.id) → 每次 Vue 脏检查时分配新数组；
-  // 回调里再 new Set() x2 做 diff。
-  // 优化后：getter 返回 length + activeDocumentId 组合值（两个原始值拼接为字符串），
-  // 只有文档数量或 activeDocumentId 变化时 Vue 才判定为"变化"并触发回调。
-  // 回调内部直接访问最新 documents 数组构建当前 ID Set，与上一轮缓存的
-  // previousDocumentIdSet 做 diff，避免在 getter 中分配新数组。`,
-    replace: `  // ── documents 变更 watch ──────────────────────────────────────
-  // getter 返回 length 与 activeDocumentId 拼接的字符串：仅当文档数量或 activeDocumentId
-  // 变化时才触发回调，避免在 getter 中用 .map() 分配新数组。回调内基于最新 documents
-  // 构建当前 ID Set，与上一轮缓存的 previousDocumentIdSet 做 diff。`,
-  },
-  {
-    file: 'src/composables/useShellWorkbenchView.ts',
-    find: `      // 切换已打开标签 / 前进后退不会新增文档，因此不会再被强制切到编辑模式
-      //（修复 activeDocumentId 变化即强制 openEditorMode 的回归）。`,
-    replace: `      // 切换已打开标签 / 前进后退不会新增文档，因此不会被强制切到编辑模式。`,
-  },
+const ROOT = process.cwd();
 
-  // ── src/store/app.ts ──────────────────────────────────────────────────────
-  {
-    file: 'src/store/app.ts',
-    find: `import { clampInt } from '@/utils/core/math'; // [round3] clampInt`,
-    replace: `import { clampInt } from '@/utils/core/math';`,
-  },
-  {
-    file: 'src/store/app.ts',
-    find: `// [round3] prototype check: more precise than toString.call, excludes class instances`,
-    replace: `// 用原型链判断纯对象：比 toString.call 更精确，可排除 class 实例。`,
-  },
-  {
-    file: 'src/store/app.ts',
-    find: `  // [round3] clampInt: reuse math.ts unified implementation`,
-    replace: `  // 复用 math.ts 的 clampInt 统一实现。`,
-  },
-  {
-    file: 'src/store/app.ts',
-    find: `  // 关键修复:item 可能是损坏的 null / 非对象,先做形状校验再访问 .id。`,
-    replace: `  // item 可能是损坏的 null / 非对象,先做形状校验再访问 .id。`,
-  },
+function detectEol(text) {
+  return text.includes('\r\n') ? '\r\n' : '\n';
+}
 
-  // ── src/store/git.ts ──────────────────────────────────────────────────────
-  {
-    file: 'src/store/git.ts',
-    find: `  // commit-stats 的权威缓存在 vue-query;同步读取直接调 queryClient.getQueryData。
-  // 已移除冗余的 commitStatsCache ref 镜像——vue-query 的 cacheObservable 已驱动 UI 更新。`,
-    replace: `  // commit-stats 的权威缓存在 vue-query;同步读取直接调 queryClient.getQueryData,
-  // 由 vue-query 的 cacheObservable 驱动 UI 更新。`,
-  },
-  {
-    file: 'src/store/git.ts',
-    find: `      // requestIdleCallback 的 timeout 参数保证回调最终一定执行，
-      // 不需要额外加 setTimeout fallback（原双层超时是冗余的防御）。`,
-    replace: `      // requestIdleCallback 的 timeout 参数保证回调最终一定执行，
-      // 因此不需要额外的 setTimeout fallback。`,
-  },
-
-  // ── src/services/tauri.ipc-define.ts ──────────────────────────────────────
-  {
-    file: 'src/services/tauri.ipc-define.ts',
-    find: `/**
- * 单条 Tauri 命令的声明式包装元数据。
- *
- * 把原先散落在各 service 方法字面量里的 command / guardHint / timeout / audit /
- * measureInput / measureOutput / errorMap 等固定字段集中成「可审计的常量表」，
- * 运行期行为与手写 callSpectaCommand 完全一致——不新增 schema 校验，也不改变任何默认值。
- */`,
-    replace: `/**
- * 单条 Tauri 命令的声明式包装元数据：把 command / guardHint / timeout / audit /
- * measureInput / measureOutput / errorMap 等固定字段集中为「可审计的常量表」，
- * 供 runCommand 统一驱动 callSpectaCommand。
- */`,
-  },
-];
-
-let failed = 0;
-const byFile = new Map();
-for (const e of EDITS) (byFile.get(e.file) ?? byFile.set(e.file, []).get(e.file)).push(e);
-
-for (const [file, edits] of byFile) {
-  let text = readFileSync(file, 'utf8');
-  for (const { find, replace } of edits) {
-    const n = text.split(find).length - 1;
-    if (n !== 1) {
-      console.error(`✗ ${file}: 命中 ${n} 次（应为 1），跳过该条:\n${find.slice(0, 60)}...`);
-      failed++;
-      continue;
+function patchFile(relPath, edits) {
+  const abs = resolve(ROOT, relPath);
+  let text = readFileSync(abs, 'utf8');
+  const eol = detectEol(text);
+  for (let i = 0; i < edits.length; i += 1) {
+    const find = edits[i].find.split('\n').join(eol);
+    const replace = edits[i].replace.split('\n').join(eol);
+    const count = text.split(find).length - 1;
+    if (count !== 1) {
+      throw new Error('[' + relPath + '] edit ' + (i + 1) + ': expected 1 match, got ' + count);
     }
     text = text.replace(find, replace);
   }
-  writeFileSync(file, text, 'utf8');
-  console.log(`✓ ${file}`);
+  writeFileSync(abs, text, 'utf8');
+  console.log('OK ' + relPath);
 }
-process.exit(failed ? 1 : 0);
+
+function spliceRegion(relPath, startAnchor, endAnchor, replacement) {
+  const abs = resolve(ROOT, relPath);
+  let text = readFileSync(abs, 'utf8');
+  const eol = detectEol(text);
+  const start = startAnchor.split('\n').join(eol);
+  const end = endAnchor.split('\n').join(eol);
+  const startIdx = text.indexOf(start);
+  if (startIdx < 0) {
+    throw new Error('[' + relPath + '] start anchor not found');
+  }
+  if (text.indexOf(start, startIdx + start.length) !== -1) {
+    throw new Error('[' + relPath + '] start anchor not unique');
+  }
+  const endIdx = text.indexOf(end, startIdx + start.length);
+  if (endIdx < 0) {
+    throw new Error('[' + relPath + '] end anchor not found');
+  }
+  const body = replacement.split('\n').join(eol);
+  text = text.slice(0, startIdx) + body + text.slice(endIdx);
+  writeFileSync(abs, text, 'utf8');
+  console.log('OK ' + relPath + ' (region)');
+}
+
+// --- 1) runtime-events：新增 entries-native 派生，删除 messages 版本 + memo ----
+patchFile('src/composables/ai/useAiAssistant.runtime-events.ts', [
+  {
+    find:
+      "import type { IAiChatMessage } from '@/types/ai';\n" +
+      "import type { IAgentCheckpointEvent, TAgentRuntimeEvent } from '@/types/ai/sidecar';\n",
+    replace:
+      "import type { IAiChatMessage } from '@/types/ai';\n" +
+      "import type { IAgentCheckpointEvent, TAgentRuntimeEvent } from '@/types/ai/sidecar';\n" +
+      "import type { IAiThreadEntry } from '@/types/ai/thread';\n",
+  },
+]);
+
+spliceRegion(
+  'src/composables/ai/useAiAssistant.runtime-events.ts',
+  'export const buildConversationCheckpoints = (',
+  'export const getLatestCheckpointEvent = (message: IAiChatMessage): IAgentCheckpointEvent | null => {',
+  [
+    'export const buildConversationCheckpointsFromEntries = (',
+    '  entries: readonly IAiThreadEntry[],',
+    '): IAiConversationCheckpoint[] => {',
+    '  // 对标 Zed AcpThread：检查点直接由权威 entries 派生（不再经 legacy messages 投影）。',
+    '  // 跳过「最后一条 assistant_message」——正在流式的当前回合，其 runtimeEvents 每 token',
+    '  // 变化且不应提供回滚点；其余 assistant 段各取最近一个 rollback.checkpoint.created。',
+    '  let lastAssistantIndex = -1;',
+    '  entries.forEach((entry, index) => {',
+    "    if (entry.type === 'assistant_message') {",
+    '      lastAssistantIndex = index;',
+    '    }',
+    '  });',
+    '',
+    '  const checkpoints: IAiConversationCheckpoint[] = [];',
+    '',
+    '  entries.forEach((entry, index) => {',
+    "    if (entry.type !== 'assistant_message' || index === lastAssistantIndex) {",
+    '      return;',
+    '    }',
+    '',
+    '    const runtimeEvents = entry.stream?.runtimeEvents ?? [];',
+    '',
+    '    for (let eventIndex = runtimeEvents.length - 1; eventIndex >= 0; eventIndex -= 1) {',
+    '      const event = runtimeEvents[eventIndex];',
+    '',
+    '      if (!event || !isCheckpointCreatedRuntimeEvent(event)) {',
+    '        continue;',
+    '      }',
+    '',
+    '      checkpoints.push({',
+    '        id: event.id,',
+    '        messageId: entry.id,',
+    '        runId: event.runId,',
+    '        snapshotId: event.snapshotId?.trim() || event.runId,',
+    '        sessionId: event.sessionId,',
+    '        createdAt: event.timestamp,',
+    '      });',
+    '      break;',
+    '    }',
+    '  });',
+    '',
+    '  return checkpoints;',
+    '};',
+    '',
+    '',
+  ].join('\n'),
+);
+
+// --- 2) useAiAssistant：切换 import + computed 读真源到 entries ----------------
+patchFile('src/composables/ai/useAiAssistant.ts', [
+  {
+    find: '  buildConversationCheckpoints,\n  buildInitialAgentActivityText,\n',
+    replace: '  buildConversationCheckpointsFromEntries,\n  buildInitialAgentActivityText,\n',
+  },
+  {
+    find:
+      '  const conversationCheckpoints = computed<IAiConversationCheckpoint[]>(() =>\n' +
+      '    buildConversationCheckpoints(messages.value),\n' +
+      '  );\n',
+    replace:
+      '  const conversationCheckpoints = computed<IAiConversationCheckpoint[]>(() =>\n' +
+      '    buildConversationCheckpointsFromEntries(aiThreadStore.authoritativeActiveEntries),\n' +
+      '  );\n',
+  },
+]);
+
+console.log('done');
