@@ -115,6 +115,16 @@ pub struct AcpHost {
     /// 「acp_session_id → 前端键」，sink 据此把外部帧的 session_id 重写为前端键后再下发，
     /// 回合结束即移除。无登记时 sink 原样透传（内置边车帧自带前端键，不命中重写表，行为不变）。
     stream_key_overrides: Arc<Mutex<HashMap<String, String>>>,
+    /// ACP 会话 id ↔ 该会话最近一次 available_commands_update 的 availableCommands 原始数组。
+    /// Kimi 等外部 agent 在 session/new 后经 setTimeout(0) 一次性下发可用斜杠命令（见 kimi-code
+    /// packages/acp-adapter/src/server.ts scheduleAvailableCommandsUpdate），该 one-shot 早于/竞争
+    /// 本回合 stream_key 重写登记、且会话复用后不再重发，仅靠回合内自然转发会被前端按键过滤丢弃 →
+    /// 命令面板恒空。sink 无条件按 ACP 会话 id 缓存，回合发起时以前端键重放，使面板稳定填充（与
+    /// modes_by_thread / config_options_by_thread 的会话级缓存同构）。
+    available_commands_by_session: Arc<Mutex<HashMap<String, serde_json::Value>>>,
+    /// 流式帧下沉口克隆：供回合发起时主动以前端键重放缓存的可用命令（sink 内重写表只在帧自然到达
+    /// 时生效，重放是宿主侧主动构造帧，故宿主直接持 emit）。
+    emit: StreamEmitter,
 }
 
 impl AcpHost {
@@ -131,6 +141,14 @@ impl AcpHost {
         let stream_key_overrides = Arc::new(Mutex::new(HashMap::new()));
         let overrides_for_sink = stream_key_overrides.clone();
 
+        // 外部 agent 一次性下发的可用斜杠命令缓存（按 ACP 会话 id）：sink 无条件捕获，回合发起时重放。
+        let available_commands_by_session: Arc<Mutex<HashMap<String, serde_json::Value>>> =
+            Arc::new(Mutex::new(HashMap::new()));
+        let commands_cache_for_sink = available_commands_by_session.clone();
+
+        // emit 克隆留给宿主侧主动重放（sink 内的重写表只在帧自然到达时生效）。
+        let emit_for_host = emit.clone();
+
         // 单一下沉口：把每条 session/update 帧转发给 emit 闭包，但在转发前按 stream_key_overrides
         // 重写外部 agent 帧的 session_id（ACP UUID → 前端预生成键）。仅当该帧的 ACP 会话 id 命中
         // 重写表才改写（外部 prompt 回合期间登记），否则原样透传——内置边车帧自带前端键、不命中
@@ -138,6 +156,16 @@ impl AcpHost {
         // （runtime::stream_emitter）统一负责，本层不得再投影；终态 done/error 不走 session/update，
         // 由 chat_stream 经 app.emit 直接合成补发。
         let sink: EventSink = Arc::new(move |mut frame: AcpStreamFrame| {
+            // 先按「原始 ACP 会话 id」捕获 available_commands_update 的 availableCommands 原始数组，
+            // 缓存供回合发起时以前端键重放（取键须在重写 session_id 之前，键须为 ACP 会话 UUID）。
+            if let Some(acp_session_id) = frame.session_id.clone() {
+                if let Some(commands) = extract_available_commands_update(&frame.event) {
+                    commands_cache_for_sink
+                        .lock()
+                        .insert(acp_session_id, commands);
+                }
+            }
+
             let remapped_stream_key = frame
                 .session_id
                 .as_deref()
@@ -156,6 +184,8 @@ impl AcpHost {
             modes_by_thread: Arc::new(Mutex::new(HashMap::new())),
             config_options_by_thread: Arc::new(Mutex::new(HashMap::new())),
             stream_key_overrides,
+            available_commands_by_session,
+            emit: emit_for_host,
         })
     }
 
@@ -248,6 +278,8 @@ impl AcpHost {
             self.stream_key_overrides
                 .lock()
                 .insert(acp_session_id.clone(), key.to_string());
+            // 重写已登记 + 前端回合订阅已建立：以前端键重放缓存的可用命令，命令面板即时填充。
+            self.replay_available_commands(&acp_session_id, key);
             true
         } else {
             false
@@ -260,6 +292,28 @@ impl AcpHost {
         }
 
         outcome
+    }
+
+    /// 把某 ACP 会话已缓存的 available_commands 以前端流式键重放一帧 available_commands_update。
+    ///
+    /// 回合发起时调用：Kimi 等外部 agent 的可用斜杠命令是 session/new 后经 setTimeout(0) 的一次性
+    /// 下发，会话复用后不再重发，且其到达时序早于/竞争本回合 stream_key 重写登记，仅靠自然转发会被
+    /// 前端按键过滤丢弃 → 命令面板恒空。此处登记重写后主动以前端键补发一帧，使面板在每个回合订阅
+    /// 建立后稳定填充。无缓存则空操作。
+    fn replay_available_commands(&self, acp_session_id: &str, stream_key: &str) {
+        let commands = self
+            .available_commands_by_session
+            .lock()
+            .get(acp_session_id)
+            .cloned();
+        let Some(commands) = commands else {
+            return;
+        };
+        (self.emit)(AcpStreamFrame {
+            session_id: Some(stream_key.to_string()),
+            seq: 0,
+            event: build_available_commands_event(stream_key, &commands),
+        });
     }
 
     /// 用纯文本驱动一轮**标准 ACP 回合**：把单段文本包成一个 `text` `ContentBlock` 后委托
@@ -535,6 +589,8 @@ impl AcpHost {
             self.stream_key_overrides
                 .lock()
                 .insert(acp_session_id.to_string(), key.to_string());
+            // 同 prompt_with_stream_key：登记重写后立即以前端键重放缓存的可用命令。
+            self.replay_available_commands(acp_session_id, key);
             true
         } else {
             false
@@ -618,6 +674,36 @@ impl AcpHost {
     }
 }
 
+/// 从一帧 session/update 事件 JSON 中提取 available_commands_update 的 availableCommands 数组。
+/// 仅当 update.sessionUpdate 为 "available_commands_update" 且存在 availableCommands 时返回其克隆，
+/// 否则返回 None（其余变体或字段缺失）。纯函数，便于单测。
+fn extract_available_commands_update(event: &serde_json::Value) -> Option<serde_json::Value> {
+    let update = event.get("update")?;
+    if update
+        .get("sessionUpdate")
+        .and_then(serde_json::Value::as_str)
+        != Some("available_commands_update")
+    {
+        return None;
+    }
+    update.get("availableCommands").cloned()
+}
+
+/// 构造一帧以前端流式键标记的 available_commands_update 事件 JSON（与 ui_event 投影同形：
+/// sessionId + update.sessionUpdate + update.availableCommands）。纯函数，便于单测。
+fn build_available_commands_event(
+    stream_key: &str,
+    commands: &serde_json::Value,
+) -> serde_json::Value {
+    serde_json::json!({
+        "sessionId": stream_key,
+        "update": {
+            "sessionUpdate": "available_commands_update",
+            "availableCommands": commands.clone(),
+        }
+    })
+}
+
 /// 修剪并过滤空白可选字符串：`None` / 空 / 全空白 → `None`，否则返回修剪后切片。
 fn non_empty(value: Option<&str>) -> Option<&str> {
     value.map(str::trim).filter(|s| !s.is_empty())
@@ -634,6 +720,52 @@ fn workspace_cwd(workspace_root_path: Option<&str>) -> PathBuf {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn extract_available_commands_update_returns_commands_for_matching_frame() {
+        let event = serde_json::json!({
+            "sessionId": "acp-uuid",
+            "update": {
+                "sessionUpdate": "available_commands_update",
+                "availableCommands": [
+                    { "name": "compact", "description": "压缩上下文" },
+                    { "name": "help", "description": "帮助" }
+                ]
+            }
+        });
+        let commands = extract_available_commands_update(&event).unwrap();
+        assert_eq!(commands.as_array().unwrap().len(), 2);
+        assert_eq!(commands[0]["name"], "compact");
+    }
+
+    #[test]
+    fn extract_available_commands_update_ignores_other_session_updates() {
+        let event = serde_json::json!({
+            "sessionId": "acp-uuid",
+            "update": {
+                "sessionUpdate": "agent_message_chunk",
+                "content": { "type": "text", "text": "hi" }
+            }
+        });
+        assert!(extract_available_commands_update(&event).is_none());
+    }
+
+    #[test]
+    fn extract_available_commands_update_none_when_field_absent() {
+        let event = serde_json::json!({
+            "update": { "sessionUpdate": "available_commands_update" }
+        });
+        assert!(extract_available_commands_update(&event).is_none());
+    }
+
+    #[test]
+    fn build_available_commands_event_targets_stream_key() {
+        let commands = serde_json::json!([{ "name": "status", "description": "状态" }]);
+        let event = build_available_commands_event("sidecar:assistant-1", &commands);
+        assert_eq!(event["sessionId"], "sidecar:assistant-1");
+        assert_eq!(event["update"]["sessionUpdate"], "available_commands_update");
+        assert_eq!(event["update"]["availableCommands"][0]["name"], "status");
+    }
 
     #[test]
     fn non_empty_trims_and_filters_blank() {
