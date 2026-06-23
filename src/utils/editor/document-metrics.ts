@@ -10,13 +10,11 @@ export interface IDocumentMetrics {
 /**
  * 单次 O(n) 扫描同时统计文档「行数」与「码点字符数」。
  *
- * 取代旧实现里每次按键都会执行的
- *   content.split('\n').length   // 分配整篇行数组
- *   Array.from(content).length   // 分配整篇码点数组
- * 这两个调用都会在整篇文档上分配大数组，大文件 + 高频输入时造成明显的 GC 压力。
- * 这里改为一次遍历、零额外数组分配。
+ * 手写单次遍历，而非 content.split / Array.from：
+ * 后两者会在整篇文档上各分配一个大数组，大文件 + 高频输入时造成明显的 GC 压力，
+ * 本实现单次遍历、零额外数组分配。
  *
- * 语义保持与旧实现完全一致：
+ * 计数口径：
  *   - lineCount：等价于 `content.length === 0 ? 1 : content.split('\n').length`
  *   - charCount：等价于 `Array.from(content).length`（按码点计，正确合并 UTF-16 代理对）
  */

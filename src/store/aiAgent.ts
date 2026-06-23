@@ -187,7 +187,7 @@ const normalizeHydratedAgentState = (state: TAiAgentPersistState): TAiAgentPersi
   };
 };
 
-// store 与 source 同型,逐字段赋值改成 Object.assign,避免后续加字段时漏同步。
+// store 与 source 同型,用 Object.assign 整体赋值,避免新增字段时漏同步。
 const applyHydratedAgentState = (
   target: TAiAgentPersistState,
   source: TAiAgentPersistState,
@@ -861,7 +861,7 @@ export const useAiAgentStore = defineStore(
       afterHydrate(ctx) {
         const store = ctx.store as unknown as TAiAgentPersistState;
         // store 上额外挂的 method / getter 在 .object() 默认 strip 行为下会被忽略,
-        // 不必再手工 picking 31 个字段拼对象。
+        // 因此可直接对整个 store 解析,无需手工挑出各持久化字段拼对象。
         const parsed = aiAgentPersistSchema.safeParse(store);
         if (!parsed.success) {
           return;

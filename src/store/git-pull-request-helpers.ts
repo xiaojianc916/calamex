@@ -4,12 +4,11 @@ import { normalizeFileSystemPath } from '@/utils/file/path';
 /**
  * PR 域的纯函数与 vue-query 接线常量。
  *
- * 这些内容从 src/store/git.ts 抽离,目的是:
- * 1) 缩小 git.ts,使其能在单次编辑中可靠地全量重写;
- * 2) 为 PR 列表/详情迁移到 @tanstack/vue-query 提供统一的 query key 与保留窗口。
+ * 独立成模块:把无副作用的 PR 纯函数与查询常量从 git store 的状态逻辑中解耦,
+ * 便于单测,并为 PR 列表/详情统一 vue-query 的 query key 与缓存保留窗口。
  *
- * 注意:这里不包含任何手写 localStorage 持久化逻辑——迁移后由 vue-query
- * 的官方 persister(见 src/lib/query-client.ts)统一承担缓存/gc/持久化。
+ * 缓存/gc/持久化均由 vue-query 的官方 persister(见 src/lib/query-client.ts)统一承担,
+ * 本模块不含任何手写 localStorage 持久化逻辑。
  */
 
 export type TPullRequestState = 'open' | 'closed' | 'all';
@@ -21,10 +20,10 @@ export const PULL_REQUEST_DETAIL_QUERY_PREFIX = ['git', 'pullRequests', 'detail'
 
 /** 列表视为 30s 内新鲜(staleTime),超过则后台重验证(SWR)。 */
 export const PULL_REQUEST_STALE_TIME_MS = 30_000;
-/** PR 缓存保留窗口(gcTime):未被订阅后保留 7 天,与原手写持久化的 maxAge 保持一致。 */
+/** PR 缓存保留窗口(gcTime):未被任何查询订阅后,缓存再保留 7 天才回收。 */
 export const PULL_REQUEST_RETENTION_MS = 7 * 24 * 60 * 60 * 1000;
 
-/** 后台预加载与并发参数(产品逻辑,与缓存实现无关,保留)。 */
+/** 后台预加载与并发参数:属于产品行为,与缓存实现无关。 */
 export const PULL_REQUEST_BACKGROUND_PRELOAD_DELAY_MS = 1200;
 export const PULL_REQUEST_BACKGROUND_PRELOAD_RETRY_INTERVAL_MS = 60_000;
 export const PULL_REQUEST_DETAIL_PRELOAD_LIMIT = 20;

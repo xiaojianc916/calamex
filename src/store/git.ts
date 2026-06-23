@@ -36,20 +36,20 @@ import {
   updatePullRequestListForState,
 } from './git-pull-request-helpers';
 
-/** Git store 后台任务（commit 统计 / PR 预载）失败时的统一日志通道，替代散落的 console.warn。 */
+/** Git store 后台任务（commit 统计 / PR 预载）失败时的统一日志通道。 */
 const gitLogger = logger.child({ module: 'git' });
 
 const MSG_GIT_INIT_NO_REPOSITORY = 'Git 初始化后仍未检测到仓库。';
 const MSG_GIT_NO_REPOSITORY_IN_WORKSPACE = '当前工作区未检测到 Git 仓库。';
-// commit-stats 的内存缓存/持久化/gc 现由 @tanstack/vue-query 承担(见 src/lib/query-client.ts)。
-// 这里只保留后台批量队列(产品逻辑)与 vue-query 的接线参数。
+// commit-stats 的内存缓存/持久化/gc 由 @tanstack/vue-query 承担(见 src/lib/query-client.ts);
+// 此处仅维护后台批量队列(产品逻辑)与 vue-query 的接线参数。
 const GIT_COMMIT_STATS_QUERY_PREFIX = ['git', 'commitStats'];
 // 保留窗口:作为 commit-stats 查询的 gcTime,使不可变的 commit 统计在缓存/持久化中留存约 30 天。
 const GIT_COMMIT_STATS_RETENTION_MS = 30 * 24 * 60 * 60 * 1000;
 const GIT_COMMIT_STATS_BACKGROUND_BATCH_LIMIT = 30;
 const GIT_COMMIT_STATS_BACKGROUND_DELAY_MS = 320;
 // 提交详情/文件 diff/diff 预览均按 commit-id(及路径)寻址,内容不可变:
-// 交由 vue-query 缓存 + fetchQuery 去重,替代手写 Record 缓存与 pending 请求表。
+// 交由 vue-query 缓存 + fetchQuery 去重同一 key 的并发请求。
 const GIT_COMMIT_DETAIL_QUERY_PREFIX = ['git', 'commitDetail'];
 const GIT_COMMIT_FILE_DIFF_QUERY_PREFIX = ['git', 'commitFileDiff'];
 const GIT_COMMIT_FILE_DIFF_PREVIEW_QUERY_PREFIX = ['git', 'commitFileDiffPreview'];
@@ -132,8 +132,8 @@ export const useGitStore = defineStore('git', () => {
   const isLoading = ref(false);
   const isCommitting = ref(false);
 
-  // baseline 缓存已迁入 vue-query：fetchQuery 去重 + staleTime=Infinity，
-  // 失效用 removeQueries。baselineEpoch 保留供调用方判断 baseline 是否已刷新。
+  // baseline 缓存由 vue-query 承载：fetchQuery 去重 + staleTime=Infinity，
+  // 失效用 removeQueries。baselineEpoch 供调用方判断 baseline 是否已刷新。
   const baselineEpoch = ref(0);
 
   const commitHistory = shallowRef<IGitCommitSummaryPayload[]>([]);
@@ -167,8 +167,8 @@ export const useGitStore = defineStore('git', () => {
     meta: { persist: true },
   });
 
-  // PR 列表/详情:列表视为 30s 内新鲜,gcTime≈7d 作为保留窗口(替代原手写 maxAge),
-  // meta.persist 交由官方 persister 持久化(替代原手写的 localStorage 缓存)。
+  // PR 列表/详情:列表视为 30s 内新鲜,gcTime≈7d 作为缓存保留窗口,
+  // meta.persist 交由官方 persister 持久化。
   queryClient.setQueryDefaults(PULL_REQUEST_QUERY_PREFIX, {
     staleTime: PULL_REQUEST_STALE_TIME_MS,
     gcTime: PULL_REQUEST_RETENTION_MS,
@@ -183,7 +183,7 @@ export const useGitStore = defineStore('git', () => {
   queryClient.setQueryDefaults(GIT_COMMIT_FILE_DIFF_PREVIEW_QUERY_PREFIX, { staleTime: Infinity });
 
   // file baseline 查询：按文件路径寻址，文件被修改后需刷新，
-  // 交由 vue-query 的 fetchQuery 去重 + removeQueries 失效，替代手写缓存 + pending 表。
+  // 交由 vue-query 的 fetchQuery 去重 + removeQueries 失效。
   const GIT_FILE_BASELINE_QUERY_PREFIX = ['git', 'fileBaseline'];
   queryClient.setQueryDefaults(GIT_FILE_BASELINE_QUERY_PREFIX, { staleTime: Infinity });
 
@@ -398,7 +398,7 @@ export const useGitStore = defineStore('git', () => {
     return queryClient.getQueryData<TGitCommitStatsPayload>(commitStatsQueryKey(cacheKey)) ?? null;
   };
 
-  // file baseline 已迁入 vue-query：fetchQuery 自动去重同 key 请求，
+  // file baseline 由 vue-query 承载：fetchQuery 自动去重同 key 请求，
   // staleTime=Infinity 命中即复用。文件被修改后由 invalidateFileBaseline 调 removeQueries 失效。
   const getFileBaseline = async (path: string): Promise<IGitFileBaselinePayload> => {
     return queryClient.fetchQuery<IGitFileBaselinePayload>({

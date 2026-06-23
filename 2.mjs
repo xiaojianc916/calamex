@@ -1,248 +1,185 @@
-// fix-aiprompt-main.codemod.mjs — 对 current main(bc01f3f7 / blob eeb5944a) 验证过锚点。
-// ⑧-f 改为单行纯文本锚，规避 CRLF/行尾空格；其余沿用已证实命中的锚。
-// 幂等：done 标记已存在=>跳过；否则 find 恰好 1 次=>应用；否则报错并打印本地相关行。整文件原子，不碰 git、不备份。
+// polish-comments-batch3.mjs
+// 用法：仓库根目录运行  node polish-comments-batch3.mjs
+// 作用：把若干「编辑痕迹 / changelog 噪音」注释，改成大厂风格的“说明为什么”的注释。
+// 安全：逐条断言 find 在文件中恰好命中 1 次；命中 0 或多次则跳过并告警，绝不盲写。
+//      纯注释改动，零逻辑 / 零 UX，git 可完整回退。
+
 import { readFileSync, writeFileSync } from 'node:fs';
 
-const VUE = 'src/components/business/ai/chat/AiPromptInput.vue';
-const SPEC = 'src/components/business/ai/chat/AiPromptInput.spec.ts';
+const NL = '\n';
+const L = (...lines) => lines.join(NL);
 
-const FILES = [
+const edits = [
+  // ── src/store/git.ts ───────────────────────────────────────────────
   {
-    path: VUE,
-    edits: [
-      {
-        id: '⑥⑦-a import ContextTrigger',
-        done: `  ContextTrigger,\n} from '@/components/ai-elements/context';`,
-        probe: [`from '@/components/ai-elements/context'`, `ContextOutputUsage`],
-        find: `  ContextOutputUsage,\n} from '@/components/ai-elements/context';`,
-        replace: `  ContextOutputUsage,\n  ContextTrigger,\n} from '@/components/ai-elements/context';`,
-      },
-      {
-        id: '⑧-b 拓宽 sidecar 类型 import',
-        done: `  IAcpSessionConfigOptionsState,\n} from '@/types/ai/sidecar';`,
-        probe: [`from '@/types/ai/sidecar'`],
-        find: `import type { IAcpAvailableCommand } from '@/types/ai/sidecar';`,
-        replace:
-          `import type {\n` +
-          `  IAcpAvailableCommand,\n` +
-          `  IAcpSessionConfigOption,\n` +
-          `  IAcpSessionConfigOptionsState,\n` +
-          `} from '@/types/ai/sidecar';`,
-      },
-      {
-        id: '⑧-c 新增 props',
-        done: `  sessionConfigOptions?: IAcpSessionConfigOptionsState | null;`,
-        probe: [`acpCommands?: readonly IAcpAvailableCommand[];`],
-        find: `  acpCommands?: readonly IAcpAvailableCommand[];\n}>();`,
-        replace:
-          `  acpCommands?: readonly IAcpAvailableCommand[];\n` +
-          `  /** Kimi(ACP) 会话级配置项（模型 / 思考强度等）；仅 kimi Agent 时渲染为选择器。 */\n` +
-          `  sessionConfigOptions?: IAcpSessionConfigOptionsState | null;\n` +
-          `  /** 配置项切换中（等待 ACP 回执）；为 true 时禁用选择器，避免并发切换。 */\n` +
-          `  isSessionConfigOptionSwitching?: boolean;\n` +
-          `}>();`,
-      },
-      {
-        id: '⑧-d 新增 emit',
-        done: `  sessionConfigOptionChange: [optionId: string, value: string];`,
-        probe: [`prewarm: [];`],
-        find: `  prewarm: [];\n}>();`,
-        replace:
-          `  prewarm: [];\n` +
-          `  sessionConfigOptionChange: [optionId: string, value: string];\n` +
-          `}>();`,
-      },
-      {
-        id: '⑧-e 新增 computed/helpers',
-        done: `const sessionConfigOptionList = computed`,
-        probe: [`const acpSlashCommands = computed`],
-        find: `const acpSlashCommands = computed<readonly IAcpAvailableCommand[]>(() => props.acpCommands ?? []);`,
-        replace:
-          `const acpSlashCommands = computed<readonly IAcpAvailableCommand[]>(() => props.acpCommands ?? []);\n\n` +
-          `// Kimi(ACP) 会话级配置项：父级下传 configOptions，渲染为「每项一个选择器」。\n` +
-          `const sessionConfigOptionList = computed<readonly IAcpSessionConfigOption[]>(\n` +
-          `  () => props.sessionConfigOptions?.configOptions ?? [],\n` +
-          `);\n\n` +
-          `// 入口文案：把 currentValue 映射成对应选项名；找不到时回退原始值。\n` +
-          `const resolveSessionConfigOptionLabel = (option: IAcpSessionConfigOption): string => {\n` +
-          `  const current = option.options.find((choice) => choice.value === option.currentValue);\n` +
-          `  return current?.name ?? option.currentValue;\n` +
-          `};\n\n` +
-          `// 切换配置项：仅上抛 (optionId, value)，由父级落实到 ACP 会话。\n` +
-          `const handleSessionConfigOptionSelect = (optionId: string, value: unknown): void => {\n` +
-          `  if (typeof value !== 'string' || !value.trim()) {\n` +
-          `    return;\n` +
-          `  }\n` +
-          `  emit('sessionConfigOptionChange', optionId, value);\n` +
-          `};`,
-      },
-      {
-        id: '⑧-f 模板插入配置项选择器（单行锚，免疫 CRLF/行尾空格）',
-        done: `class="ai-agent-trigger"`,
-        probe: [`</Select>`, `<Context v-bind`, `resolvedTokenContext`],
-        // 关键：find 不含前导空格、不含换行。匹配 1427 行那段纯文本即可，行尾/换行都不影响。
-        find: `<Context v-bind="resolvedTokenContext" :cost="tokenUsageCost">`,
-        replace:
-          `<template v-if="selectedAgent === 'kimi'">\n` +
-          `            <Select\n` +
-          `              v-for="option in sessionConfigOptionList"\n` +
-          `              :key="option.id"\n` +
-          `              :model-value="option.currentValue"\n` +
-          `              :disabled="modelSelectDisabled || isSessionConfigOptionSwitching"\n` +
-          `              @update:model-value="(value) => handleSessionConfigOptionSelect(option.id, value)"\n` +
-          `            >\n` +
-          `              <SelectTrigger :aria-label="option.name" class="ai-agent-trigger">\n` +
-          `                <span\n` +
-          `                  class="ai-agent-trigger__label"\n` +
-          `                  v-text="resolveSessionConfigOptionLabel(option)"\n` +
-          `                ></span>\n` +
-          `              </SelectTrigger>\n` +
-          `              <SelectContent\n` +
-          `                side="top"\n` +
-          `                align="end"\n` +
-          `                :side-offset="8"\n` +
-          `                class="ai-agent-content"\n` +
-          `              >\n` +
-          `                <SelectGroup>\n` +
-          `                  <SelectItem\n` +
-          `                    v-for="choice in option.options"\n` +
-          `                    :key="choice.value"\n` +
-          `                    class="ai-agent-item"\n` +
-          `                    :value="choice.value"\n` +
-          `                  >\n` +
-          `                    <span class="ai-agent-item__label" v-text="choice.name"></span>\n` +
-          `                  </SelectItem>\n` +
-          `                </SelectGroup>\n` +
-          `              </SelectContent>\n` +
-          `            </Select>\n` +
-          `          </template>\n` +
-          `          <Context v-bind="resolvedTokenContext" :cost="tokenUsageCost">`,
-      },
-    ],
+    file: 'src/store/git.ts',
+    find: '/** Git store 后台任务（commit 统计 / PR 预载）失败时的统一日志通道，替代散落的 console.warn。 */',
+    replace: '/** Git store 后台任务（commit 统计 / PR 预载）失败时的统一日志通道。 */',
   },
   {
-    path: SPEC,
-    edits: [
-      {
-        id: '④⑤-g import flushPromises',
-        done: `import { flushPromises, mount } from '@vue/test-utils';`,
-        probe: [`@vue/test-utils`],
-        find: `import { mount } from '@vue/test-utils';`,
-        replace: `import { flushPromises, mount } from '@vue/test-utils';`,
-      },
-      {
-        id: '④⑤-h mock 原生文件选择器',
-        done: `vi.mock('@/components/business/ai/chat/attachment-file-picker'`,
-        probe: [`attachment-file-picker`, `@/types/ai/sidecar`],
-        find: `import type { IAcpSessionConfigOptionsState } from '@/types/ai/sidecar';`,
-        replace:
-          `import type { IAcpSessionConfigOptionsState } from '@/types/ai/sidecar';\n` +
-          `import { pickAttachmentFilesViaNativeDialog } from '@/components/business/ai/chat/attachment-file-picker';\n\n` +
-          `vi.mock('@/components/business/ai/chat/attachment-file-picker', () => ({\n` +
-          `  pickAttachmentFilesViaNativeDialog: vi.fn(() => Promise.resolve([] as File[])),\n` +
-          `}));`,
-      },
-      {
-        id: '④-i routes chosen files',
-        done:
-          `    const file = new File(['readme'], 'README.md', { type: 'text/markdown' });\n` +
-          `    vi.mocked(pickAttachmentFilesViaNativeDialog).mockResolvedValueOnce([file]);`,
-        probe: [`routes chosen files`, `input[type="file"]`],
-        find:
-          `    const file = new File(['readme'], 'README.md', { type: 'text/markdown' });\n` +
-          `    const fileInput = wrapper.get('input[type="file"]');\n\n` +
-          `    Object.defineProperty(fileInput.element, 'files', {\n` +
-          `      configurable: true,\n` +
-          `      value: [file],\n` +
-          `    });\n\n` +
-          `    await fileInput.trigger('change');\n`,
-        replace:
-          `    const file = new File(['readme'], 'README.md', { type: 'text/markdown' });\n` +
-          `    vi.mocked(pickAttachmentFilesViaNativeDialog).mockResolvedValueOnce([file]);\n\n` +
-          `    await wrapper.get('.ai-attachment-button').trigger('click');\n` +
-          `    await flushPromises();\n`,
-      },
-      {
-        id: '⑤-j processing overlay',
-        done:
-          `    const file = new File(['image-bytes'], 'pasted-image.png', { type: 'image/png' });\n` +
-          `    vi.mocked(pickAttachmentFilesViaNativeDialog).mockResolvedValueOnce([file]);`,
-        probe: [`processing overlay`, `input[type="file"]`],
-        find:
-          `    const file = new File(['image-bytes'], 'pasted-image.png', { type: 'image/png' });\n` +
-          `    const fileInput = wrapper.get('input[type="file"]');\n\n` +
-          `    Object.defineProperty(fileInput.element, 'files', {\n` +
-          `      configurable: true,\n` +
-          `      value: [file],\n` +
-          `    });\n\n` +
-          `    await fileInput.trigger('change');\n` +
-          `    await nextTick();\n`,
-        replace:
-          `    const file = new File(['image-bytes'], 'pasted-image.png', { type: 'image/png' });\n` +
-          `    vi.mocked(pickAttachmentFilesViaNativeDialog).mockResolvedValueOnce([file]);\n\n` +
-          `    await wrapper.get('.ai-attachment-button').trigger('click');\n` +
-          `    await flushPromises();\n` +
-          `    await nextTick();\n`,
-      },
-    ],
+    file: 'src/store/git.ts',
+    find: L(
+      '// commit-stats 的内存缓存/持久化/gc 现由 @tanstack/vue-query 承担(见 src/lib/query-client.ts)。',
+      '// 这里只保留后台批量队列(产品逻辑)与 vue-query 的接线参数。',
+    ),
+    replace: L(
+      '// commit-stats 的内存缓存/持久化/gc 由 @tanstack/vue-query 承担(见 src/lib/query-client.ts);',
+      '// 此处仅维护后台批量队列(产品逻辑)与 vue-query 的接线参数。',
+    ),
+  },
+  {
+    file: 'src/store/git.ts',
+    find: L(
+      '// 提交详情/文件 diff/diff 预览均按 commit-id(及路径)寻址,内容不可变:',
+      '// 交由 vue-query 缓存 + fetchQuery 去重,替代手写 Record 缓存与 pending 请求表。',
+    ),
+    replace: L(
+      '// 提交详情/文件 diff/diff 预览均按 commit-id(及路径)寻址,内容不可变:',
+      '// 交由 vue-query 缓存 + fetchQuery 去重同一 key 的并发请求。',
+    ),
+  },
+  {
+    file: 'src/store/git.ts',
+    find: L(
+      '  // baseline 缓存已迁入 vue-query：fetchQuery 去重 + staleTime=Infinity，',
+      '  // 失效用 removeQueries。baselineEpoch 保留供调用方判断 baseline 是否已刷新。',
+    ),
+    replace: L(
+      '  // baseline 缓存由 vue-query 承载：fetchQuery 去重 + staleTime=Infinity，',
+      '  // 失效用 removeQueries。baselineEpoch 供调用方判断 baseline 是否已刷新。',
+    ),
+  },
+  {
+    file: 'src/store/git.ts',
+    find: L(
+      '  // PR 列表/详情:列表视为 30s 内新鲜,gcTime≈7d 作为保留窗口(替代原手写 maxAge),',
+      '  // meta.persist 交由官方 persister 持久化(替代原手写的 localStorage 缓存)。',
+    ),
+    replace: L(
+      '  // PR 列表/详情:列表视为 30s 内新鲜,gcTime≈7d 作为缓存保留窗口,',
+      '  // meta.persist 交由官方 persister 持久化。',
+    ),
+  },
+  {
+    file: 'src/store/git.ts',
+    find: L(
+      '  // file baseline 查询：按文件路径寻址，文件被修改后需刷新，',
+      '  // 交由 vue-query 的 fetchQuery 去重 + removeQueries 失效，替代手写缓存 + pending 表。',
+    ),
+    replace: L(
+      '  // file baseline 查询：按文件路径寻址，文件被修改后需刷新，',
+      '  // 交由 vue-query 的 fetchQuery 去重 + removeQueries 失效。',
+    ),
+  },
+  {
+    file: 'src/store/git.ts',
+    find: L(
+      '  // file baseline 已迁入 vue-query：fetchQuery 自动去重同 key 请求，',
+      '  // staleTime=Infinity 命中即复用。文件被修改后由 invalidateFileBaseline 调 removeQueries 失效。',
+    ),
+    replace: L(
+      '  // file baseline 由 vue-query 承载：fetchQuery 自动去重同 key 请求，',
+      '  // staleTime=Infinity 命中即复用。文件被修改后由 invalidateFileBaseline 调 removeQueries 失效。',
+    ),
+  },
+
+  // ── src/store/git-pull-request-helpers.ts ──────────────────────────
+  {
+    file: 'src/store/git-pull-request-helpers.ts',
+    find: L(
+      '/**',
+      ' * PR 域的纯函数与 vue-query 接线常量。',
+      ' *',
+      ' * 这些内容从 src/store/git.ts 抽离,目的是:',
+      ' * 1) 缩小 git.ts,使其能在单次编辑中可靠地全量重写;',
+      ' * 2) 为 PR 列表/详情迁移到 @tanstack/vue-query 提供统一的 query key 与保留窗口。',
+      ' *',
+      ' * 注意:这里不包含任何手写 localStorage 持久化逻辑——迁移后由 vue-query',
+      ' * 的官方 persister(见 src/lib/query-client.ts)统一承担缓存/gc/持久化。',
+      ' */',
+    ),
+    replace: L(
+      '/**',
+      ' * PR 域的纯函数与 vue-query 接线常量。',
+      ' *',
+      ' * 独立成模块:把无副作用的 PR 纯函数与查询常量从 git store 的状态逻辑中解耦,',
+      ' * 便于单测,并为 PR 列表/详情统一 vue-query 的 query key 与缓存保留窗口。',
+      ' *',
+      ' * 缓存/gc/持久化均由 vue-query 的官方 persister(见 src/lib/query-client.ts)统一承担,',
+      ' * 本模块不含任何手写 localStorage 持久化逻辑。',
+      ' */',
+    ),
+  },
+  {
+    file: 'src/store/git-pull-request-helpers.ts',
+    find: '/** PR 缓存保留窗口(gcTime):未被订阅后保留 7 天,与原手写持久化的 maxAge 保持一致。 */',
+    replace: '/** PR 缓存保留窗口(gcTime):未被任何查询订阅后,缓存再保留 7 天才回收。 */',
+  },
+  {
+    file: 'src/store/git-pull-request-helpers.ts',
+    find: '/** 后台预加载与并发参数(产品逻辑,与缓存实现无关,保留)。 */',
+    replace: '/** 后台预加载与并发参数:属于产品行为,与缓存实现无关。 */',
+  },
+
+  // ── src/store/aiAgent.ts ───────────────────────────────────────────
+  {
+    file: 'src/store/aiAgent.ts',
+    find: '// store 与 source 同型,逐字段赋值改成 Object.assign,避免后续加字段时漏同步。',
+    replace: '// store 与 source 同型,用 Object.assign 整体赋值,避免新增字段时漏同步。',
+  },
+  {
+    file: 'src/store/aiAgent.ts',
+    find: L(
+      '        // store 上额外挂的 method / getter 在 .object() 默认 strip 行为下会被忽略,',
+      '        // 不必再手工 picking 31 个字段拼对象。',
+    ),
+    replace: L(
+      '        // store 上额外挂的 method / getter 在 .object() 默认 strip 行为下会被忽略,',
+      '        // 因此可直接对整个 store 解析,无需手工挑出各持久化字段拼对象。',
+    ),
+  },
+
+  // ── src/utils/editor/document-metrics.ts ───────────────────────────
+  {
+    file: 'src/utils/editor/document-metrics.ts',
+    find: L(
+      ' * 取代旧实现里每次按键都会执行的',
+      " *   content.split('\\n').length   // 分配整篇行数组",
+      " *   Array.from(content).length   // 分配整篇码点数组",
+      ' * 这两个调用都会在整篇文档上分配大数组，大文件 + 高频输入时造成明显的 GC 压力。',
+      ' * 这里改为一次遍历、零额外数组分配。',
+    ),
+    replace: L(
+      ' * 手写单次遍历，而非 content.split / Array.from：',
+      ' * 后两者会在整篇文档上各分配一个大数组，大文件 + 高频输入时造成明显的 GC 压力，',
+      ' * 本实现单次遍历、零额外数组分配。',
+    ),
+  },
+  {
+    file: 'src/utils/editor/document-metrics.ts',
+    find: ' * 语义保持与旧实现完全一致：',
+    replace: ' * 计数口径：',
   },
 ];
 
-const count = (h, n) => h.split(n).length - 1;
-const dump = (text, probes) => {
-  const out = [];
-  text.split('\n').forEach((ln, i) => {
-    if (probes.some((p) => ln.includes(p))) out.push(`        ${String(i + 1).padStart(4)}| ${ln}`);
-  });
-  return out.length ? out.slice(0, 10).join('\n') : '        （probe 未匹配到任何行）';
-};
+let applied = 0;
+let skipped = 0;
+const buffers = new Map();
 
-let hadSkip = false;
-for (const file of FILES) {
-  let text;
-  try {
-    text = readFileSync(file.path, 'utf8');
-  } catch {
-    console.log(`✗ ${file.path} · 读不到文件，跳过。`);
-    hadSkip = true;
+for (const e of edits) {
+  if (!buffers.has(e.file)) buffers.set(e.file, readFileSync(e.file, 'utf8'));
+  const text = buffers.get(e.file);
+  const count = text.split(e.find).length - 1;
+  if (count !== 1) {
+    console.warn(`[skip] ${e.file}: 命中 ${count} 次（期望 1），跳过该条。`);
+    skipped++;
     continue;
   }
-
-  const plan = [];
-  const skipped = [];
-  const errors = [];
-  for (const e of file.edits) {
-    if (text.includes(e.done)) {
-      skipped.push(e.id);
-      continue;
-    }
-    const n = count(text, e.find);
-    if (n === 1) plan.push(e);
-    else errors.push({ e, n });
-  }
-
-  if (errors.length) {
-    console.log(`✗ ${file.path} · 跳过整个文件：`);
-    for (const { e, n } of errors) {
-      console.log(`    - ${e.id}：未应用且 find 命中 ${n} 次（应为 1）。本地相关行：`);
-      console.log(dump(text, e.probe));
-    }
-    if (skipped.length) console.log(`    （已应用、本可跳过：${skipped.join(' / ')}）`);
-    hadSkip = true;
-    continue;
-  }
-
-  let next = text;
-  for (const e of plan) next = next.replace(e.find, () => e.replace);
-  if (plan.length) writeFileSync(file.path, next, 'utf8');
-  console.log(
-    `✓ ${file.path} · 应用 ${plan.length} 处` +
-      (skipped.length ? `，跳过 ${skipped.length} 处(已应用：${skipped.join(' / ')})` : ''),
-  );
+  buffers.set(e.file, text.replace(e.find, e.replace));
+  applied++;
+  console.log(`[ok]   ${e.file}`);
 }
 
-console.log(
-  hadSkip
-    ? '\n有文件未完成，请勿提交。把上面打印的「本地相关行」贴给我。'
-    : '\n就绪：vue 应用 6 处、spec 4 处已应用跳过。请 pnpm test 验证后再决定是否提交。',
-);
+for (const [file, text] of buffers) writeFileSync(file, text, 'utf8');
+console.log(`\n完成：应用 ${applied} 条，跳过 ${skipped} 条。`);
+process.exit(skipped > 0 ? 1 : 0);
