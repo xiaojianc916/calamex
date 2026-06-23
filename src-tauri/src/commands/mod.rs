@@ -2,6 +2,7 @@ pub(crate) mod agent_sidecar;
 pub(crate) mod agent_webview;
 pub(crate) mod ai;
 pub(crate) mod contracts;
+pub(crate) mod error;
 pub(crate) mod format;
 pub(crate) mod git;
 pub(crate) mod lsp;
@@ -36,6 +37,7 @@ pub use contracts::{
     WorkspacePathDeletePayload, WorkspacePathDeleteRequest, WorkspacePathKind,
     WorkspacePathRenamePayload, WorkspacePathRenameRequest,
 };
+pub use error::CommandError;
 pub use lsp::LspManager;
 pub(crate) use lsp::commands::lsp_stop;
 pub(crate) use script_run::{count_to_u32, find_command_path, line_count};

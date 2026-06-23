@@ -106,6 +106,31 @@ const resolveMappedError = (message: string, errorMap: TErrorMap): IIpcErrorMapp
   return null;
 };
 
+/**
+ * 临时兼容层（#2 后端错误码灰度）：已迁移为 typed error 的命令经 tauri-specta
+ *（ErrorHandlingMode::Throw）抛出结构化 `{ code, message }`（见后端
+ * src-tauri/src/commands/error.rs 的 CommandError）。据此优先归一为带稳定 code 的
+ * AppError，置于旧 substring errorMap 匹配之前。待所有命令完成迁移、统一返回
+ * CommandError 后，连同 resolveMappedError / errorMap 一并删除。
+ */
+interface IStructuredCommandError {
+  code: string;
+  message: string;
+}
+
+const asStructuredCommandError = (error: unknown): IStructuredCommandError | null => {
+  if (typeof error !== 'object' || error === null) {
+    return null;
+  }
+
+  const candidate = error as Record<string, unknown>;
+  if (typeof candidate.code === 'string' && typeof candidate.message === 'string') {
+    return { code: candidate.code, message: candidate.message };
+  }
+
+  return null;
+};
+
 const createTimeoutError = (traceId: string): AppError =>
   new AppError({
     code: 'ipc.timeout',
@@ -263,67 +288,4 @@ export const callSpectaCommand = <T>(
       await assertDesktopRuntime(options.guardHint);
       const invocation = run({ traceId });
       invocation.catch(() => undefined);
-      const output = await raceWithTimeoutAndAbort(invocation, {
-        timeoutMs,
-        signal: options.signal,
-        traceId,
-      });
-
-      if (shouldAudit) {
-        const outputMetrics = options.measureOutput
-          ? options.measureOutput(output)
-          : buildPayloadMetrics(output);
-        reportOutputBytes(outputMetrics.bytes);
-      }
-
-      return output;
-    },
-  );
-
-export const invokeTauriCommand = async <T>(
-  command: string,
-  args?: Record<string, unknown>,
-): Promise<T> => {
-  const { invoke } = await loadTauriCore();
-  return invoke<T>(command, args);
-};
-
-const normalizeIpcError = (
-  error: unknown,
-  context: { traceId: string; errorMap: TErrorMap },
-): AppError => {
-  if (isAppError(error)) {
-    return error;
-  }
-
-  if (error instanceof DesktopRuntimeUnavailableError) {
-    return new AppError({
-      code: error.code,
-      message: error.message,
-      scope: 'ipc',
-      traceId: context.traceId,
-      cause: error,
-    });
-  }
-
-  const baseMessage = toErrorMessage(error, 'IPC 调用失败');
-
-  const mapped = resolveMappedError(baseMessage, context.errorMap);
-  if (mapped) {
-    return new AppError({
-      code: mapped.code,
-      message: mapped.message,
-      scope: 'ipc',
-      traceId: context.traceId,
-      cause: error,
-    });
-  }
-
-  return new AppError({
-    code: 'ipc.invoke-failed',
-    message: baseMessage,
-    scope: 'ipc',
-    traceId: context.traceId,
-    cause: error,
-  });
-};
+      const output = await raceWithTimeoutAndAbort(invoc
