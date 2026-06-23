@@ -8,44 +8,48 @@
 //!
 //! 复用 `shell_tools` 的子进程执行范式：tokio `Command` + `kill_on_drop` + 超时 +
 //! `configure_tokio_command_for_background`（Windows 不弹窗）；二进制发现统一
-//! 「随包优先 → PATH」（`bundled_resource_roots` / `find_command_path`）。
+//!「随包优先 → PATH」（`bundled_resource_roots` / `find_command_path`）。
 
+mod error;
 mod registry;
 mod runner;
 
-use super::{FormatDocumentPayload, FormatDocumentRequest};
+use crate::commands::CommandError;
+use error::FormatErrorKind;
 use registry::resolve_external_formatter;
 use runner::run_external_formatter;
+
+use super::{FormatDocumentPayload, FormatDocumentRequest};
 
 #[tauri::command]
 #[specta::specta]
 pub async fn format_document(
     payload: FormatDocumentRequest,
-) -> Result<FormatDocumentPayload, String> {
+) -> Result<FormatDocumentPayload, CommandError> {
     // 空白或纯空白内容：无需调用任何 formatter，原样回传。
     if payload.content.trim().is_empty() {
-        return finalize_payload(payload.content, None);
+        return finalize_payload(payload.content, None).map_err(CommandError::from);
     }
 
     let Some(spec) = resolve_external_formatter(&payload.language_id) else {
         // 该语言无专用 External formatter：交给前端做 whitespace 归一。
-        return finalize_payload(payload.content, None);
+        return finalize_payload(payload.content, None).map_err(CommandError::from);
     };
 
     let Some(resolved) = spec.discover(payload.path.as_deref()) else {
         // 有默认 formatter 但未发现可用二进制：同样退回前端 whitespace。
-        return finalize_payload(payload.content, None);
+        return finalize_payload(payload.content, None).map_err(CommandError::from);
     };
 
     let formatted = run_external_formatter(&resolved, &payload.content).await?;
 
-    finalize_payload(formatted, Some(spec.id.to_string()))
+    finalize_payload(formatted, Some(spec.id.to_string())).map_err(CommandError::from)
 }
 
 fn finalize_payload(
     content: String,
     formatter_id: Option<String>,
-) -> Result<FormatDocumentPayload, String> {
+) -> Result<FormatDocumentPayload, FormatErrorKind> {
     Ok(FormatDocumentPayload {
         line_count: count_to_u32(super::line_count(&content), "文档行数")?,
         char_count: count_to_u32(content.chars().count(), "文档字符数")?,
@@ -54,6 +58,8 @@ fn finalize_payload(
     })
 }
 
-fn count_to_u32(value: usize, label: &str) -> Result<u32, String> {
-    u32::try_from(value).map_err(|_| format!("{label}超出支持范围。"))
+fn count_to_u32(value: usize, label: &str) -> Result<u32, FormatErrorKind> {
+    u32::try_from(value).map_err(|_| FormatErrorKind::CountOverflow {
+        label: label.to_string(),
+    })
 }

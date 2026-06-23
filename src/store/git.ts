@@ -35,6 +35,7 @@ import {
   type TPullRequestState,
   updatePullRequestListForState,
 } from './git-pull-request-helpers';
+import { useBackgroundQueue } from './git/use-background-queue';
 
 /** Git store 后台任务（commit 统计 / PR 预载）失败时的统一日志通道。 */
 const gitLogger = logger.child({ module: 'git' });
@@ -237,9 +238,6 @@ export const useGitStore = defineStore('git', () => {
   let pullRequestCacheEpoch = 0;
   let pullRequestPreloadTimer: ReturnType<typeof setTimeout> | null = null;
   let scheduledPullRequestPreloadRepositoryKey: string | null = null;
-  let isCommitStatsBackgroundRunning = false;
-  const queuedCommitStatsIds = new Set<string>();
-  const pendingCommitStatsRequests = new Set<string>();
   const pullRequestBackgroundPreloadAttemptedAt = new Map<string, number>();
 
   let pendingPullRequestSupportRequest: Promise<IGitPullRequestSupportPayload> | null = null;
@@ -265,29 +263,18 @@ export const useGitStore = defineStore('git', () => {
     }
     scheduledPullRequestPreloadRepositoryKey = null;
   };
-  type TCommitStatsTimer =
-    | { kind: 'idle'; id: ReturnType<typeof requestIdleCallback> }
-    | { kind: 'timeout'; id: ReturnType<typeof setTimeout> };
 
-  let commitStatsTimer: TCommitStatsTimer | null = null;
-
-  const clearCommitStatsBackgroundQueue = (): void => {
-    if (commitStatsTimer !== null) {
-      if (
-        commitStatsTimer.kind === 'idle' &&
-        typeof window !== 'undefined' &&
-        typeof window.cancelIdleCallback === 'function'
-      ) {
-        window.cancelIdleCallback(commitStatsTimer.id);
-      } else if (commitStatsTimer.kind === 'timeout') {
-        clearTimeout(commitStatsTimer.id);
-      }
-      commitStatsTimer = null;
-    }
-    queuedCommitStatsIds.clear();
-    pendingCommitStatsRequests.clear();
-    isCommitStatsBackgroundRunning = false;
-  };
+  // commit-stats 后台批量队列：调度/去重/失败日志由通用 useBackgroundQueue 承担，
+  // 本 store 仅提供「跳过条件(无仓库根或已有统计) + 单项处理(loadCommitStatsOnly)」。
+  // process / shouldSkip 在运行时才调用，故可在此提前引用后续定义的 getCommitStats / loadCommitStatsOnly。
+  const commitStatsQueue = useBackgroundQueue({
+    process: (commitId) => loadCommitStatsOnly(commitId),
+    shouldSkip: (commitId) =>
+      !status.value.repositoryRootPath || Boolean(getCommitStats(commitId)),
+    delayMs: GIT_COMMIT_STATS_BACKGROUND_DELAY_MS,
+    failureLogEvent: 'git.commit_stats.background_load_failed',
+    logger: gitLogger,
+  });
 
   const clearBaselineCache = (): void => {
     queryClient.removeQueries({ queryKey: [...GIT_FILE_BASELINE_QUERY_PREFIX] });
@@ -296,7 +283,7 @@ export const useGitStore = defineStore('git', () => {
     queryClient.removeQueries({ queryKey: [...GIT_COMMIT_DETAIL_QUERY_PREFIX] });
     queryClient.removeQueries({ queryKey: [...GIT_COMMIT_FILE_DIFF_QUERY_PREFIX] });
     queryClient.removeQueries({ queryKey: [...GIT_COMMIT_FILE_DIFF_PREVIEW_QUERY_PREFIX] });
-    clearCommitStatsBackgroundQueue();
+    commitStatsQueue.clear();
   };
 
   const resetCommitHistory = (): void => {
@@ -462,68 +449,8 @@ export const useGitStore = defineStore('git', () => {
     });
   };
 
-  const drainCommitStatsBackgroundQueue = async (): Promise<void> => {
-    if (isCommitStatsBackgroundRunning) return;
-
-    isCommitStatsBackgroundRunning = true;
-    try {
-      while (queuedCommitStatsIds.size > 0) {
-        const commitId = queuedCommitStatsIds.values().next().value;
-        if (!commitId) break;
-
-        queuedCommitStatsIds.delete(commitId);
-
-        if (getCommitStats(commitId) || pendingCommitStatsRequests.has(commitId)) {
-          continue;
-        }
-
-        pendingCommitStatsRequests.add(commitId);
-        try {
-          await loadCommitStatsOnly(commitId);
-        } catch (error) {
-          gitLogger.warn({ event: 'git.commit_stats.background_load_failed', err: error });
-        } finally {
-          pendingCommitStatsRequests.delete(commitId);
-        }
-      }
-    } finally {
-      isCommitStatsBackgroundRunning = false;
-    }
-  };
-
-  const scheduleCommitStatsBackgroundQueue = (): void => {
-    if (commitStatsTimer !== null || isCommitStatsBackgroundRunning) return;
-
-    const run = (): void => {
-      commitStatsTimer = null;
-      void drainCommitStatsBackgroundQueue();
-    };
-
-    if (typeof window !== 'undefined' && typeof window.requestIdleCallback === 'function') {
-      // requestIdleCallback 的 timeout 参数保证回调最终一定执行，
-      // 因此不需要额外的 setTimeout fallback。
-      // commitStatsTimer 存 idleId，取消时用 cancelIdleCallback。
-      const idleId = window.requestIdleCallback(run, {
-        timeout: GIT_COMMIT_STATS_BACKGROUND_DELAY_MS * 4,
-      });
-      // 保存 idleId 以便 clearCommitStatsBackgroundQueue 取消。
-      // 使用 union type 正确保存 idle callback handle；
-      // 不支持 cancelIdleCallback 的环境（旧 WebView2）退化为 no-op。
-      commitStatsTimer = { kind: 'idle', id: idleId };
-      return;
-    }
-
-    commitStatsTimer = {
-      kind: 'timeout',
-      id: setTimeout(run, GIT_COMMIT_STATS_BACKGROUND_DELAY_MS),
-    };
-  };
-
   const enqueueCommitStats = (commitId: string): void => {
-    if (!status.value.repositoryRootPath || !commitId || getCommitStats(commitId)) return;
-    if (pendingCommitStatsRequests.has(commitId)) return;
-    queuedCommitStatsIds.add(commitId);
-    scheduleCommitStatsBackgroundQueue();
+    commitStatsQueue.enqueue(commitId);
   };
 
   const enqueueCommitStatsForCommits = (
@@ -545,7 +472,7 @@ export const useGitStore = defineStore('git', () => {
     pullRequestDetailRequestId += 1;
     pullRequestDetailPreloadEpoch += 1;
     clearPullRequestPreloadTimer();
-    clearCommitStatsBackgroundQueue();
+    commitStatsQueue.clear();
 
     isLoading.value = false;
     isCommitting.value = false;
