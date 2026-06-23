@@ -12,7 +12,6 @@ import type {
   IAiAgentStepFinalAnswer,
   IAiAgentStepToolResultSummary,
   IAiAgentStepWebSourceSummary,
-  IAiChatMessage,
   IAiContextReference,
   IAiLanguageModelUsage,
   IAiTaskPlanStep,
@@ -36,10 +35,11 @@ import {
   AI_EXECUTION_MODES,
   type TAiExecutionMode,
 } from '@/types/ai/execution-mode';
-import { aiChatMessageSchema, aiLanguageModelUsageSchema } from '@/types/ai/schema';
+import { aiLanguageModelUsageSchema } from '@/types/ai/schema';
 import { AGENT_PLAN_STATUSES } from '@/types/ai/sidecar';
 import { askUserQuestionSchema } from '@/types/ai/sidecar.schema';
 import { aiToolActivityInlineSchema } from '@/types/ai/stream.schema';
+import { aiThreadEntrySchema, type IAiThreadEntry } from '@/types/ai/thread';
 
 // ---------------------------------------------------------------------------
 // Public types
@@ -50,7 +50,7 @@ export interface IAiPersistedSidecarAgentSession {
   assistantMessageId: string;
   threadId: string | null;
   turnId: string | null;
-  baseMessages: IAiChatMessage[];
+  baseEntries: IAiThreadEntry[];
   messageContent: string;
   references: IAiContextReference[];
 }
@@ -79,7 +79,9 @@ const aiPersistedSidecarAgentSessionSchema = z.object({
   assistantMessageId: z.string().min(1),
   threadId: z.string().min(1).nullable(),
   turnId: z.string().min(1).nullable(),
-  baseMessages: z.array(aiChatMessageSchema).max(20),
+  // entries 单一真源：续聊/审批 resume 的基线上下文用权威 entries 快照。
+  // default([]) 兼容尚未写入该字段的旧持久化数据（避免整段 agent state 解析失败）。
+  baseEntries: z.array(aiThreadEntrySchema).max(200).default([]),
   messageContent: z.string(),
   references: z.array(aiContextReferenceSchema).max(20),
 });

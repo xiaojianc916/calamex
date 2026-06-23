@@ -1230,7 +1230,7 @@ describe('useAiAssistant streaming integration', () => {
       assistantMessageId: 'assistant-switch-approval',
       threadId: firstThreadId,
       turnId: 'user-switch-approval',
-      baseMessages: [],
+      baseEntries: [],
       messageContent: '运行验证命令',
       references: [],
     });
@@ -3293,7 +3293,7 @@ describe('useAiAssistant streaming integration', () => {
       assistantMessageId: 'assistant-persisted-approval',
       threadId: null,
       turnId: 'user-persisted-approval',
-      baseMessages: [],
+      baseEntries: [],
       messageContent: '运行一次最小验证',
       references: [],
     });

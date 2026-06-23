@@ -968,15 +968,35 @@ export const useAiAssistant = (options: IUseAiAssistantOptions) => {
     appendVisibleRuntimeTimelineEvents(extractVisibleAgentRuntimeEvents(events));
   };
 
-  const toSidecarMessages = (visibleMessages: IAiChatMessage[]): IAgentSidecarMessage[] => {
-    return visibleMessages
-      .filter((message) => message.role === 'user' || message.role === 'assistant')
-      .map((message) => ({
-        role: message.role,
-        content: message.content.trim(),
-      }))
-      .filter((message) => message.content.length > 0)
-      .slice(-SIDECAR_EXPLICIT_CONTEXT_MESSAGE_LIMIT);
+  // 上下文真源 = 权威 entries（对标 Zed AcpThread::to_markdown 由 entries 派生上下文）：
+  // user_message → 文本块以空行衔接；assistant_message → message chunk 文本顺序拼接；
+  // 仅取 user/assistant 文本、去空、保序、截最近 N 条。与旧 messages 投影按构造等价。
+  const toSidecarMessages = (entries: readonly IAiThreadEntry[]): IAgentSidecarMessage[] => {
+    const sidecarMessages: IAgentSidecarMessage[] = [];
+    for (const entry of entries) {
+      if (entry.type === 'user_message') {
+        const content = entry.content
+          .flatMap((block) => (block.type === 'text' ? [block.text] : []))
+          .join('\n\n')
+          .trim();
+        if (content.length > 0) {
+          sidecarMessages.push({ role: 'user', content });
+        }
+        continue;
+      }
+      if (entry.type === 'assistant_message') {
+        const content = entry.chunks
+          .flatMap((chunk) =>
+            chunk.type === 'message' && chunk.block.type === 'text' ? [chunk.block.text] : [],
+          )
+          .join('')
+          .trim();
+        if (content.length > 0) {
+          sidecarMessages.push({ role: 'assistant', content });
+        }
+      }
+    }
+    return sidecarMessages.slice(-SIDECAR_EXPLICIT_CONTEXT_MESSAGE_LIMIT);
   };
 
   const applySidecarPatchSets = async (
@@ -1254,6 +1274,9 @@ export const useAiAssistant = (options: IUseAiAssistantOptions) => {
     const assistantMessageId = createMessageId('assistant');
     const targetThreadId = threadId;
     activeBufferedThreadId.value = targetThreadId;
+    // 回合基线 = 「发起回合前」的权威 entries 快照（此刻活动线程已含本回合 user_message、
+    // 尚无 assistant 占位）。同时用于本回合 sidecar 上下文与（审批/反向提问）resume 基线。
+    const turnBaseEntries = [...aiThreadStore.authoritativeActiveEntries];
     const initialActivityText = buildInitialAgentActivityText();
     const placeholderMessage: IAiChatMessage = {
       id: assistantMessageId,
@@ -1299,7 +1322,7 @@ export const useAiAssistant = (options: IUseAiAssistantOptions) => {
         sessionId: sidecarSessionId,
         mode: 'agent',
         goal: messageContent,
-        messages: toSidecarMessages(visibleMessages),
+        messages: toSidecarMessages(turnBaseEntries),
         workspaceRootPath: options.workspaceRootPath.value,
         context: sidecarContextReferences,
         ...(targetThreadId ? { threadId: targetThreadId } : {}),
@@ -1320,7 +1343,7 @@ export const useAiAssistant = (options: IUseAiAssistantOptions) => {
             assistantMessageId,
             threadId: targetThreadId,
             turnId,
-            baseMessages: visibleMessages,
+            baseEntries: turnBaseEntries,
             messageContent,
             references: sidecarContextReferences,
           });
@@ -1331,7 +1354,7 @@ export const useAiAssistant = (options: IUseAiAssistantOptions) => {
             assistantMessageId,
             threadId: targetThreadId,
             turnId,
-            baseMessages: visibleMessages,
+            baseEntries: turnBaseEntries,
             messageContent,
             references: sidecarContextReferences,
           });
@@ -1392,7 +1415,7 @@ export const useAiAssistant = (options: IUseAiAssistantOptions) => {
         requestId: confirmation.id,
         decision: mapToolConfirmationDecisionToSidecarDecision(decision),
         goal: session.messageContent,
-        messages: toSidecarMessages(session.baseMessages),
+        messages: toSidecarMessages(session.baseEntries),
         workspaceRootPath: options.workspaceRootPath.value,
         context: session.references,
         ...(session.threadId ? { threadId: session.threadId } : {}),
@@ -1477,7 +1500,7 @@ export const useAiAssistant = (options: IUseAiAssistantOptions) => {
           sessionId: session.sessionId,
         }),
         goal: session.messageContent,
-        messages: toSidecarMessages(session.baseMessages),
+        messages: toSidecarMessages(session.baseEntries),
         workspaceRootPath: options.workspaceRootPath.value,
         context: session.references,
         ...(session.threadId ? { threadId: session.threadId } : {}),
