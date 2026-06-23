@@ -115,15 +115,32 @@ export const useAiThreadStore = defineStore('ai-thread', () => {
    * 并把活动线程指向本回合，供 §D 编排器每帧覆盖时使用。仍经 commitThreadsState 归一
    * （trim + ensureActiveThread），与 setStreamingActiveThread 行为一致。
    */
-  function overlayStreamingActiveThread(thread: IAiThread): void {
+  /**
+   * 按 id upsert 一条流式线程：命中替换、未命中前插，经 commitThreadsState 归一。
+   * activeThreadId 由调用方语义决定——活动回合指向本回合线程，后台回合保持当前活动线程。
+   */
+  function upsertStreamingThread(
+    thread: IAiThread,
+    resolveActiveThreadId: (state: threadMutations.IAiThreadState) => string | null,
+  ): void {
     const state = readAuthoritativeState();
     const exists = state.threads.some((item) => item.id === thread.id);
     const threads = exists
       ? state.threads.map((item) => (item.id === thread.id ? thread : item))
       : [thread, ...state.threads];
     commitAuthoritativeState(
-      threadMutations.commitThreadsState({ threads, activeThreadId: thread.id }),
+      threadMutations.commitThreadsState({ threads, activeThreadId: resolveActiveThreadId(state) }),
     );
+  }
+
+  /** 流式回合中以本回合权威 entries 覆盖单条活动线程并指向它（保留历史其余线程）。 */
+  function overlayStreamingActiveThread(thread: IAiThread): void {
+    upsertStreamingThread(thread, () => thread.id);
+  }
+
+  /** 后台（已切走）回合：按 id 覆盖其权威 entries，活动线程保持不变。 */
+  function overlayStreamingThread(thread: IAiThread): void {
+    upsertStreamingThread(thread, (state) => state.activeThreadId);
   }
 
   /**
@@ -393,6 +410,7 @@ export const useAiThreadStore = defineStore('ai-thread', () => {
     setLiveThread,
     setStreamingActiveThread,
     overlayStreamingActiveThread,
+    overlayStreamingThread,
     setPersistedThreads,
     setPersistedActiveThreadId,
     // Step 8 砟2b：entries 权威写 actions（未接线）

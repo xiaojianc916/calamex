@@ -39,7 +39,7 @@ import { aiService } from '@/services/ipc/ai.service';
 import { buildCurrentFileReference } from '@/services/ipc/ai-context.service';
 import { aiEditService } from '@/services/ipc/ai-edit.service';
 import { type IAiPersistedSidecarAgentSession, useAiAgentStore } from '@/store/aiAgent';
-import { legacyThreadToThread, threadEntriesToMessages, useAiThreadStore } from '@/store/aiThread';
+import { useAiThreadStore } from '@/store/aiThread';
 import type {
   IAiAgentPatchSummary,
   IAiApplyPatchMetadata,
@@ -61,7 +61,7 @@ import type {
   TAgentRuntimeEvent,
   TAgentUiEvent,
 } from '@/types/ai/sidecar';
-import type { IAiThreadAssistantMessageEntry, IAiThreadEntry } from '@/types/ai/thread';
+import type { IAiThread, IAiThreadAssistantMessageEntry, IAiThreadEntry } from '@/types/ai/thread';
 import type {
   IActiveRunSummary,
   IAnalyzeScriptPayload,
@@ -382,17 +382,19 @@ export const useAiAssistant = (options: IUseAiAssistantOptions) => {
     // 回合线程是否仍是当前可见线程：是则覆盖活动投影；否则该回合已被切到后台，仍需把本回合 reduce 态
     // 写回「发起会话」的权威 entries（避免回来后内容清空），但不改活动线程。
     const isActiveTarget = threadId === null || threadId === activeThreadId;
-    const targetLegacyThread = isActiveTarget
-      ? conversationStore.activeConversationThread
-      : (conversationStore.conversationHistoryThreads.find((thread) => thread.id === threadId) ??
+    const targetThread = isActiveTarget
+      ? aiThreadStore.authoritativeActiveThread
+      : (aiThreadStore.authoritativeHistoryThreads.find((thread) => thread.id === threadId) ??
         null);
-    if (!targetLegacyThread) {
+    if (!targetThread) {
       return;
     }
-    const seedThread = legacyThreadToThread({
-      ...targetLegacyThread,
-      messages: targetLegacyThread.messages.filter((message) => message.id !== assistantMessageId),
-    });
+    // entries 唯一真源：直接以权威 entries 为 seed，剔除本回合占位 assistant entry（buildLive 会重建），
+    // 不再经 legacy 形状往返（threadToLegacyThread → legacyThreadToThread）。
+    const seedThread: IAiThread = {
+      ...targetThread,
+      entries: targetThread.entries.filter((entry) => entry.id !== assistantMessageId),
+    };
     const liveThread = buildLiveThreadFromSidecarEvents(events, {
       baseThread: seedThread,
       assistantMessageId,
@@ -471,11 +473,8 @@ export const useAiAssistant = (options: IUseAiAssistantOptions) => {
     if (isActiveTarget) {
       aiThreadStore.overlayStreamingActiveThread(enrichedThread);
     } else {
-      // 后台（已切走）线程：经 replaceThreadMessages 写回其权威 entries，不触碰活动线程。
-      conversationStore.replaceThreadMessages(
-        targetLegacyThread.id,
-        threadEntriesToMessages(enrichedThread.entries),
-      );
+      // 后台（已切走）线程：按 id 覆盖其权威 entries（不改活动线程），不再经 messages 往返。
+      aiThreadStore.overlayStreamingThread(enrichedThread);
     }
   };
 
