@@ -15,7 +15,6 @@ import {
   mergeAiAgentPatchSummaries,
   parseAiAedPatchRef,
 } from '@/components/business/ai/edit/patch-summary';
-import { reduceAcpUiEventsToToolCalls } from '@/components/business/ai/thread/projection';
 import {
   buildAskUserResumeRequest,
   extractPendingAskUser,
@@ -402,41 +401,40 @@ export const useAiAssistant = (options: IUseAiAssistantOptions) => {
     // reduce 回放出的 assistant entry 不带 stream（runtimeEvents/token/活动文案）。
     // 用本回合实时算出的 stream/patches 富集该 entry——不再回读 legacy displayMessages（已退役）。
     const hasPatches = Boolean(liveRenderState.patches && liveRenderState.patches.length > 0);
-    // ACP tool_call / tool_call_update（reduce 层有意不覆盖）：用既有 ACP 累加器折叠为完整
-    // IAiThreadToolCall[]，挂到本回合 assistant entry 的 acpToolCalls（schema 既有字段、legacy
-    // 双向往返无损），交由 threadEntriesToTimeline 展开为工具卡。空数组则不写该字段。
-    const acpToolCalls = reduceAcpUiEventsToToolCalls(events, {
-      now: new Date().toISOString(),
-    });
-    const acpToolCallsPatch = acpToolCalls.length > 0 ? { acpToolCalls } : {};
     const finalContentRaw = liveRenderState.finalContent;
     const finalText =
       typeof finalContentRaw === 'string' && finalContentRaw.length > 0 ? finalContentRaw : null;
-    let matchedAssistantEntry = false;
-    const entries = liveThread.entries.map((entry) => {
-      if (entry.type !== 'assistant_message' || entry.id !== assistantMessageId) {
-        return entry;
-      }
-      matchedAssistantEntry = true;
-      // 保留交织：本回合若已流式出 message 正文，则原样保留 chunks（thought/tool_call/message 真实交错，
-      // 对标 Codex）；仅当无任何流式正文时，才丢 message 通道并以最终答案兜底（保留 thought 与 tool_call）。
-      const hasStreamedMessageText = entry.chunks.some(
+    // 本回合的 assistant_message 段（Zed 多段：messageId / messageId#n）。stream/patches/最终答案
+    // 兜底只增益「最后一段」（最终答复所在段），与顶层 tool_call entry 的单一表示互不干扰。
+    const turnSegmentIndices = liveThread.entries.flatMap((entry, idx) =>
+      entry.type === 'assistant_message' &&
+      (entry.id === assistantMessageId || entry.id.startsWith(`${assistantMessageId}#`))
+        ? [idx]
+        : [],
+    );
+    const lastSegmentIndex = turnSegmentIndices.at(-1) ?? -1;
+    const matchedAssistantEntry = lastSegmentIndex >= 0;
+    // 本回合是否已流式出任意 message 正文（跨所有段）：是则保留已交错的 chunks，不再注入最终答案。
+    const hasStreamedMessageText = turnSegmentIndices.some((idx) => {
+      const segment = liveThread.entries[idx] as IAiThreadAssistantMessageEntry;
+      return segment.chunks.some(
         (chunk) =>
           chunk.type === 'message' && chunk.block.type === 'text' && chunk.block.text.length > 0,
       );
+    });
+    const entries = liveThread.entries.map((entry, idx) => {
+      if (entry.type !== 'assistant_message' || idx !== lastSegmentIndex) {
+        return entry;
+      }
       const nextChunks: IAiThreadAssistantMessageEntry['chunks'] =
         finalText !== null && !hasStreamedMessageText
-          ? [
-              ...entry.chunks.filter((chunk) => chunk.type !== 'message'),
-              { type: 'message', block: { type: 'text', text: finalText } },
-            ]
+          ? [...entry.chunks, { type: 'message', block: { type: 'text', text: finalText } }]
           : entry.chunks;
       return {
         ...entry,
         chunks: nextChunks,
         stream: liveRenderState.stream,
         ...(hasPatches ? { patches: [...(liveRenderState.patches ?? [])] } : {}),
-        ...acpToolCallsPatch,
       };
     });
     // reduce 因本回合无 assistant delta/block 而未建 assistant entry 时（直接给最终答案、
@@ -452,7 +450,6 @@ export const useAiAssistant = (options: IUseAiAssistantOptions) => {
           finalText !== null ? [{ type: 'message', block: { type: 'text', text: finalText } }] : [],
         stream: liveRenderState.stream,
         ...(hasPatches ? { patches: [...(liveRenderState.patches ?? [])] } : {}),
-        ...acpToolCallsPatch,
       };
       entries.push(appendedEntry);
     }

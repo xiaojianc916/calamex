@@ -56,8 +56,7 @@ export type TAiThreadReduceEvent =
       block: IAiThreadContentBlock;
     }
   | {
-      kind: 'assistant_tool_call';
-      messageId: string;
+      kind: 'acp_tool_call';
       createdAt: string;
       update: TAcpToolCall | TAcpToolCallUpdate;
     }

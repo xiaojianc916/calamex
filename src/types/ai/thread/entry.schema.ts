@@ -26,7 +26,6 @@ import { aiThreadToolCallSchema } from '@/types/ai/thread/tool-call.schema';
 export const aiThreadAssistantChunkSchema = z.discriminatedUnion('type', [
   z.object({ type: z.literal('message'), block: aiThreadContentBlockSchema }),
   z.object({ type: z.literal('thought'), block: aiThreadContentBlockSchema }),
-  z.object({ type: z.literal('tool_call'), toolCall: aiThreadToolCallSchema }),
 ]);
 
 export const aiThreadUserMessageEntrySchema = z.object({
@@ -53,11 +52,6 @@ export const aiThreadAssistantMessageEntrySchema = z.object({
    * 无损还原会话内 checkpoint / token / 活动文案。可选以兼容存量与非流式历史条目。
    */
   stream: aiChatMessageStreamSnapshotSchema.optional().catch(undefined),
-  /**
-   * ACP openWorld 后端的工具调用投影（对标 legacy `IAiChatMessage.acpToolCalls`）。
-   * 复用本协议层 `aiThreadToolCallSchema`，逆投影原样回挂，免重放 runtimeEvents 重建。
-   */
-  acpToolCalls: z.array(aiThreadToolCallSchema).optional().catch(undefined),
   /**
    * 顶层 patches 往返(对标 legacy IAiChatMessage.patches):折叠 diff 卡 / 回滚反向 patch 依赖。
    * 复用 ai.schema 的 aiPatchSetSchema 单一真源,使 entries 在持久化与逆投影中无损还原。

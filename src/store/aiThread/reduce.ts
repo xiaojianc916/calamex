@@ -69,7 +69,7 @@ function appendAssistantText(
 ): IAiThreadAssistantMessageEntry {
   const { chunks } = entry;
   const last = chunks[chunks.length - 1];
-  if (last && last.type !== 'tool_call' && last.type === channel && last.block.type === 'text') {
+  if (last && last.type === channel && last.block.type === 'text') {
     const mergedChunk = {
       ...last,
       block: { ...last.block, text: last.block.text + text },
@@ -96,74 +96,63 @@ function upsertAssistantChunk(
   thread: IAiThread,
   event: TAiThreadReduceEventByKind<'assistant_delta' | 'assistant_block'>,
 ): IAiThread {
-  const index = thread.entries.findIndex(
-    (entry) => entry.type === 'assistant_message' && entry.id === event.messageId,
-  );
-
   const applyTo = (entry: IAiThreadAssistantMessageEntry): IAiThreadAssistantMessageEntry =>
     event.kind === 'assistant_delta'
       ? appendAssistantText(entry, event.channel, event.text)
       : pushAssistantBlock(entry, event.channel, event.block);
 
-  if (index === -1) {
-    const seeded = applyTo({
-      type: 'assistant_message',
-      id: event.messageId,
-      createdAt: event.createdAt,
-      chunks: [],
-    });
-    return { ...thread, entries: [...thread.entries, seeded] };
+  // 对标 Zed push_assistant_content_block：仅当「最后一条」entry 是 assistant_message 时并入当前段，
+  // 否则（其间已插入 tool_call 等 entry，或新回合）另起一段。这样思考/正文/工具按真实到达顺序交错，
+  // 工具调用永远落在它实际发生的位置（修复正文被吸到工具之前的错乱）。
+  const lastIndex = thread.entries.length - 1;
+  const last = lastIndex >= 0 ? thread.entries[lastIndex] : undefined;
+  if (last && last.type === 'assistant_message') {
+    return { ...thread, entries: replaceAt(thread.entries, lastIndex, applyTo(last)) };
   }
 
-  const current = thread.entries[index] as IAiThreadAssistantMessageEntry;
-  return { ...thread, entries: replaceAt(thread.entries, index, applyTo(current)) };
+  // 段 id：同回合（messageId）首段沿用 messageId，后续段追加 #n，保证事件回放期确定且唯一。
+  const turnSegmentCount = thread.entries.filter(
+    (entry) =>
+      entry.type === 'assistant_message' &&
+      (entry.id === event.messageId || entry.id.startsWith(`${event.messageId}#`)),
+  ).length;
+  const segmentId =
+    turnSegmentCount === 0 ? event.messageId : `${event.messageId}#${turnSegmentCount}`;
+  const seeded = applyTo({
+    type: 'assistant_message',
+    id: segmentId,
+    createdAt: event.createdAt,
+    chunks: [],
+  });
+  return { ...thread, entries: [...thread.entries, seeded] };
 }
 
-/* ----- Assistant tool_call chunk upsert (interleaved ACP tool calls) ------ */
+/* ----- ACP tool_call upsert (top-level, interleaved by arrival) ----------- */
 /**
- * 把 ACP tool_call / tool_call_update 作为 assistant_message 的 chunk 落入同一条
- * chunks 流，使工具调用与思考/正文按到达顺序交织（对标 Codex/Zed）。按 getAcpToolCallId
- * 在该 assistant 的 chunks 内 upsert：首帧建 tool_call chunk，后续 update 经
- * reduceAcpToolCall 原地归并；assistant entry 不存在时按 messageId 先建。
+ * ACP tool_call / tool_call_update 归一为顶层 tool_call entry（对标 Zed upsert_tool_call）：
+ * 按 getAcpToolCallId 在 entries 中 upsert——首帧追加到末尾（落在真实发生位置），后续 update
+ * 经 reduceAcpToolCall 原地归并，绝不重复追加。与思考/正文的交错由「追加末尾 + Zed 段切分」得到。
  */
-function upsertAssistantToolCallChunk(
+function upsertAcpToolCall(
   thread: IAiThread,
-  event: TAiThreadReduceEventByKind<'assistant_tool_call'>,
+  event: TAiThreadReduceEventByKind<'acp_tool_call'>,
 ): IAiThread {
   const toolCallId = getAcpToolCallId(event.update);
   if (toolCallId === '') {
     return thread;
   }
 
-  const applyTo = (entry: IAiThreadAssistantMessageEntry): IAiThreadAssistantMessageEntry => {
-    const chunkIndex = entry.chunks.findIndex(
-      (chunk) => chunk.type === 'tool_call' && chunk.toolCall.id === toolCallId,
-    );
-    const previousChunk = chunkIndex === -1 ? undefined : entry.chunks[chunkIndex];
-    const previousToolCall =
-      previousChunk && previousChunk.type === 'tool_call' ? previousChunk.toolCall : undefined;
-    const merged = reduceAcpToolCall(previousToolCall, event.update, { now: event.createdAt });
-    const mergedChunk = { type: 'tool_call', toolCall: merged } as IAiThreadAssistantChunk;
-    return chunkIndex === -1
-      ? { ...entry, chunks: [...entry.chunks, mergedChunk] }
-      : { ...entry, chunks: replaceAt(entry.chunks, chunkIndex, mergedChunk) };
-  };
-
   const index = thread.entries.findIndex(
-    (entry) => entry.type === 'assistant_message' && entry.id === event.messageId,
+    (entry) => entry.type === 'tool_call' && entry.id === toolCallId,
   );
   if (index === -1) {
-    const seeded = applyTo({
-      type: 'assistant_message',
-      id: event.messageId,
-      createdAt: event.createdAt,
-      chunks: [],
-    });
-    return { ...thread, entries: [...thread.entries, seeded] };
+    const created = reduceAcpToolCall(undefined, event.update, { now: event.createdAt });
+    return { ...thread, entries: [...thread.entries, created] };
   }
 
-  const current = thread.entries[index] as IAiThreadAssistantMessageEntry;
-  return { ...thread, entries: replaceAt(thread.entries, index, applyTo(current)) };
+  const previous = thread.entries[index] as IAiThreadToolCall;
+  const merged = reduceAcpToolCall(previous, event.update, { now: previous.createdAt });
+  return { ...thread, entries: replaceAt(thread.entries, index, merged) };
 }
 
 /* ----- Tool-call upsert (upsert_tool_call) -------------------------------- */
@@ -390,8 +379,8 @@ export function reduceThread(thread: IAiThread, event: TAiThreadReduceEvent): IA
     case 'assistant_delta':
     case 'assistant_block':
       return upsertAssistantChunk(thread, event);
-    case 'assistant_tool_call':
-      return upsertAssistantToolCallChunk(thread, event);
+    case 'acp_tool_call':
+      return upsertAcpToolCall(thread, event);
     case 'tool_started':
     case 'tool_progress':
     case 'tool_completed':

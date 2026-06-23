@@ -239,12 +239,11 @@ export const sidecarEventToReduceEvents = (
     }
     case 'tool_call':
     case 'tool_call_update':
-      // ACP（Kimi/Codex 等 openWorld 后端）工具调用 UI 事件：作为 assistant_message 的
-      // tool_call chunk 落入同一 chunks 流，使「思考/正文/工具」按到达顺序真实交织（对标 Codex）。
+      // ACP（Kimi/Codex 等 openWorld 后端）工具调用 UI 事件：归一为顶层 acp_tool_call reduce
+      // 事件，由 reducer 作为独立 tool_call entry 按到达顺序 upsert，与思考/正文真实交织（对标 Zed）。
       return [
         {
-          kind: 'assistant_tool_call',
-          messageId: options.assistantMessageId,
+          kind: 'acp_tool_call',
           createdAt: options.now,
           update: event.acpUpdate,
         },

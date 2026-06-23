@@ -1,17 +1,9 @@
 /**
- * 数据模型 IAiThreadEntry[](reduce 真源)-> 平铺渲染时间线 TAiThreadEntry[] 的纯投影。
+ * 数据模型 IAiThreadEntry[]（reduce 真源）-> 平铺渲染时间线 TAiThreadEntry[] 的纯投影。
  *
- * 与 build-thread-entries.ts 互补:后者输入是遗留 IAiChatMessage[](双轨期旧路径),
- * 本函数输入是新数据模型 entries(reduce 驱动),供 renderFromEntries=true 时渲染层消费。
- *
- * 本片范围(Step 6 骨架,刻意最小化、可逆):
- * - plan 条目暂不进平铺时间线(计划步骤仍由 deriveThreadPlanDetails 的独立面板渲染),故跳过。
- * - plan_control 审批卡投影为 plan-control 条目并入平铺时间线。
- * - user-message 的 references 由数据模型透传(reduce / legacy-adapter 已携带)。
- * - tool-call 的 terminals 暂为空、awaiting 暂为 false(终端快照重建与 HITL 等待留后续)。
- * - changed-files 仅产出末尾汇总条目,不把 diff 内联到工具条目(数据模型未存 patches)。
- * - streaming 由调用方经 options.streamingMessageId 注入,纯函数默认 false。
- * 以上留白均不改变旧路径行为;切回 renderFromEntries=false 即恢复遗留投影。
+ * 单一表示（对标 Zed acp_thread.rs）：工具调用只作为顶层 tool_call entry 存在，按真实到达
+ * 顺序与 assistant_message 段交错；assistant chunks 仅含 message / thought。本投影按 entries
+ * 顺序逐条铺开，不再从 assistant entry hoist 工具卡、也不再处理 tool_call chunk。
  */
 import type {
   IAiThreadAssistantMessageEntry,
@@ -25,23 +17,23 @@ import type {
   TAiThreadEntry,
 } from './entry-types';
 
-/** 段落分隔符:多个文本块之间以空行连接。 */
+/** 段落分隔符：多个文本块之间以空行连接。 */
 const PARAGRAPH_BREAK = '\n\n';
 
 /** context_compaction 无显式文案时的兜底展示文本。 */
 export const DEFAULT_CONTEXT_COMPACTION_TEXT = '已整理上下文以释放空间';
 
 export interface IThreadEntriesToTimelineOptions {
-  /** 正在流式输出的来源消息 id;命中的 assistant 条目标记 streaming=true。 */
+  /** 正在流式输出的来源消息 id；命中的 assistant 条目标记 streaming=true。 */
   streamingMessageId?: string | null;
 }
 
-/** 取内容块的纯文本(仅 text 块产出文本;富块留待后续切片)。 */
+/** 取内容块的纯文本（仅 text 块产出文本；富块留待后续切片）。 */
 function blockToText(block: IAiThreadContentBlock): string {
   return block.type === 'text' ? block.text : '';
 }
 
-/** 拼接内容块为 markdown(忽略空文本块,段间以空行分隔)。 */
+/** 拼接内容块为 markdown（忽略空文本块，段间以空行分隔）。 */
 function blocksToMarkdown(blocks: readonly IAiThreadContentBlock[]): string {
   return blocks
     .map(blockToText)
@@ -49,95 +41,12 @@ function blocksToMarkdown(blocks: readonly IAiThreadContentBlock[]): string {
     .join(PARAGRAPH_BREAK);
 }
 
-/**
- * 含 tool_call chunk 的 assistant_message：按 chunks 到达顺序逐段投影，使思考、正文、
- * 工具调用按真实交错铺进平铺时间线（对标 Codex/Zed）。相邻同类文本段合并：连续 thought
- * 汇成一条 reasoning，连续 message 汇成一条 assistant-text；tool_call 即产出一条 tool-call。
- * id 以段序号去重（:reasoning:n / :text:n），避免同一消息多段 id 冲突。
- */
-function assistantMessageChunksInterleaved(
-  entry: IAiThreadAssistantMessageEntry,
-  streaming: boolean,
-): TAiThreadEntry[] {
-  const projected: TAiThreadEntry[] = [];
-  let pendingThoughts: string[] = [];
-  let pendingMessages: string[] = [];
-  let segmentIndex = 0;
-
-  const flushThoughts = (): void => {
-    if (pendingThoughts.length === 0) {
-      return;
-    }
-    const reasoning: IAiThreadReasoningEntry = {
-      kind: 'reasoning',
-      id: `${entry.id}:reasoning:${segmentIndex}`,
-      messageId: entry.id,
-      segments: pendingThoughts,
-      isLong: pendingThoughts.length > 1,
-      streaming,
-    };
-    projected.push(reasoning);
-    pendingThoughts = [];
-    segmentIndex += 1;
-  };
-
-  const flushMessages = (): void => {
-    if (pendingMessages.length === 0) {
-      return;
-    }
-    const assistantText: IAiThreadAssistantTextEntry = {
-      kind: 'assistant-text',
-      id: `${entry.id}:text:${segmentIndex}`,
-      messageId: entry.id,
-      markdown: pendingMessages.join(PARAGRAPH_BREAK),
-      streaming,
-    };
-    projected.push(assistantText);
-    pendingMessages = [];
-    segmentIndex += 1;
-  };
-
-  for (const chunk of entry.chunks) {
-    if (chunk.type === 'tool_call') {
-      flushThoughts();
-      flushMessages();
-      projected.push({
-        kind: 'tool-call',
-        id: chunk.toolCall.id,
-        messageId: entry.id,
-        toolCall: chunk.toolCall,
-        terminals: {},
-        awaiting: false,
-      });
-      continue;
-    }
-    const text = blockToText(chunk.block);
-    if (text.length === 0) {
-      continue;
-    }
-    if (chunk.type === 'thought') {
-      flushMessages();
-      pendingThoughts.push(text);
-    } else {
-      flushThoughts();
-      pendingMessages.push(text);
-    }
-  }
-  flushThoughts();
-  flushMessages();
-  return projected;
-}
-
-/** 把一条 assistant_message 拆为 reasoning(thought)与 assistant-text(message)两类条目。 */
+/** 把一条 assistant_message 拆为 reasoning(thought) 与 assistant-text(message) 两类条目。 */
 function assistantMessageToEntries(
   entry: IAiThreadAssistantMessageEntry,
   streaming: boolean,
 ): TAiThreadEntry[] {
-  // 含 tool_call chunk 的回合走交织投影：思考/正文/工具按 chunks 到达顺序铺开，
-  // 与 Codex 风格的真实交错一致（无 tool_call 时保持原有 reasoning+text 投影不变）。
-  if (entry.chunks.some((chunk) => chunk.type === 'tool_call')) {
-    return assistantMessageChunksInterleaved(entry, streaming);
-  }
+  // ACP 工具调用已归一为顶层 tool_call entry；chunks 仅含 message / thought，按通道聚合即可。
   const thoughtSegments: string[] = [];
   const messageTexts: string[] = [];
   for (const chunk of entry.chunks) {
@@ -152,17 +61,17 @@ function assistantMessageToEntries(
     }
   }
 
-  // 正文一旦开始,推理即结束流式(随后由 useThreadEntryExpansion 自动折叠);
+  // 正文一旦开始，推理即结束流式（随后由 useThreadEntryExpansion 自动折叠）；
   // 正文条目仍保留自身 streaming。修复「思考与正文一起流式输出」。
   const finalAnswerStarted = messageTexts.length > 0;
   const projected: TAiThreadEntry[] = [];
   if (thoughtSegments.length > 0) {
     const reasoning: IAiThreadReasoningEntry = {
       kind: 'reasoning',
-      id: `${entry.id}:reasoning`,
+      id: entry.id + ':reasoning',
       messageId: entry.id,
       segments: thoughtSegments,
-      // 与 runtime 时间线对齐:多段(>1)才视为长推理,渲染层默认折叠。
+      // 与 runtime 时间线对齐：多段（>1）才视为长推理，渲染层默认折叠。
       isLong: thoughtSegments.length > 1,
       streaming: streaming && !finalAnswerStarted,
     };
@@ -171,7 +80,7 @@ function assistantMessageToEntries(
   if (messageTexts.length > 0) {
     const assistantText: IAiThreadAssistantTextEntry = {
       kind: 'assistant-text',
-      id: `${entry.id}:text`,
+      id: entry.id + ':text',
       messageId: entry.id,
       markdown: messageTexts.join(PARAGRAPH_BREAK),
       streaming,
@@ -205,19 +114,8 @@ export function threadEntriesToTimeline(
       }
       case 'assistant_message': {
         const streaming = streamingMessageId !== null && entry.id === streamingMessageId;
-        // ACP 工具调用（Kimi 等外部 agent）承载于 assistant entry 的 acpToolCalls
-        // （reduce / legacy 均不展开为顶层 tool_call entry，仅此处投影）。
-        // Zed 风格：工具卡排在最终答复之前。
-        for (const toolCall of entry.acpToolCalls ?? []) {
-          timeline.push({
-            kind: 'tool-call',
-            id: toolCall.id,
-            messageId: entry.id,
-            toolCall,
-            terminals: {},
-            awaiting: false,
-          });
-        }
+        // ACP 工具调用已由 reducer 归一为顶层 tool_call entry，按真实到达顺序与思考/正文交错，
+        // 此处不再从 assistant entry 投影工具卡（单一表示，对标 Zed）。
         for (const projected of assistantMessageToEntries(entry, streaming)) {
           timeline.push(projected);
         }
@@ -235,7 +133,7 @@ export function threadEntriesToTimeline(
         break;
       }
       case 'plan': {
-        // 本片刻意跳过:plan 步骤由独立面板渲染,不进平铺时间线。
+        // 本片刻意跳过：plan 步骤由独立面板渲染，不进平铺时间线。
         break;
       }
       case 'plan_control': {

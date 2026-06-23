@@ -133,18 +133,13 @@ export function legacyMessageToEntries(message: IAiChatMessage): IAiThreadEntry[
       : [...reasoningChunks, ...messageChunks];
   // 有正文 / 流式快照 / acpToolCalls 任一即生成 assistant_message entry，使 stream 与
   // acpToolCalls 在「仅工具调用、无最终正文」的回合也不被丢弃（逆投影据此无损还原）。
-  if (
-    assistantChunks.length > 0 ||
-    message.stream !== undefined ||
-    (message.acpToolCalls?.length ?? 0) > 0
-  ) {
+  if (assistantChunks.length > 0 || message.stream !== undefined) {
     const assistantEntry: IAiThreadAssistantMessageEntry = {
       type: 'assistant_message',
       id: message.id,
       createdAt: message.createdAt,
       chunks: assistantChunks,
       ...(message.stream !== undefined ? { stream: message.stream } : {}),
-      ...(message.acpToolCalls !== undefined ? { acpToolCalls: message.acpToolCalls } : {}),
       ...(message.patches && message.patches.length > 0 ? { patches: [...message.patches] } : {}),
     };
     entries.push(assistantEntry);
@@ -327,7 +322,6 @@ export function threadEntriesToMessages(entries: readonly IAiThreadEntry[]): IAi
           ...(entry.chunks.length > 0 ? { chunks: entry.chunks } : {}),
           ...(pendingToolCalls.length > 0 ? { toolCalls: pendingToolCalls } : {}),
           ...(entry.stream !== undefined ? { stream: entry.stream } : {}),
-          ...(entry.acpToolCalls !== undefined ? { acpToolCalls: entry.acpToolCalls } : {}),
           ...(entry.patches !== undefined ? { patches: entry.patches } : {}),
         };
         pendingToolCalls = [];
