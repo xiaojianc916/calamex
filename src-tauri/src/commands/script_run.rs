@@ -2,34 +2,12 @@ use super::{ExecutionEnvironment, ExecutionOption, ExecutorKind};
 use std::{
     env,
     path::{Path, PathBuf},
-    sync::Mutex,
-    time::{Duration, Instant},
 };
-
-const EXECUTOR_CACHE_TTL: Duration = Duration::from_secs(30);
-
-#[derive(Clone)]
-struct ExecutorCandidate {
-    kind: ExecutorKind,
-    label: &'static str,
-    description: &'static str,
-    path: Option<PathBuf>,
-    available: bool,
-}
-
-#[derive(Clone)]
-struct CachedExecutorCandidates {
-    captured_at: Instant,
-    executors: Vec<ExecutorCandidate>,
-}
-
-static EXECUTOR_CANDIDATES_CACHE: Mutex<Option<CachedExecutorCandidates>> = Mutex::new(None);
 
 #[tauri::command]
 #[specta::specta]
 pub async fn detect_execution_environment() -> Result<ExecutionEnvironment, String> {
-    let executors = collect_executor_candidates().await;
-    Ok(build_execution_environment(&executors))
+    Ok(build_execution_environment(detect_wsl()))
 }
 
 pub(crate) fn line_count(content: &str) -> usize {
@@ -100,81 +78,35 @@ fn is_executable_file(path: &Path) -> bool {
     }
 }
 
-async fn collect_executor_candidates() -> Vec<ExecutorCandidate> {
-    if let Some(executors) = read_cached_executor_candidates() {
-        return executors;
-    }
-
-    let mut executors = build_executor_candidates();
-
-    for item in executors.iter_mut() {
-        item.available = probe_executor(item).await;
-    }
-
-    cache_executor_candidates(&executors);
-    executors
+/// 探测唯一执行环境 WSL2 的可执行文件路径。
+///
+/// WSL2 是本应用唯一的脚本执行环境。此前这里维护了「候选向量 + 30s 缓存 +
+/// build/collect/probe 全套」脚手架，但实际只有一个硬编码候选、缓存的是一个
+/// 恒定结果，且 probe 从不真正探活（仅判存在性，以避免 `wsl.exe --list` 在
+/// 部分 Windows 环境下挂起阻塞启动）。按 YAGNI 收敛为一次直接的路径探测；
+/// 真正的可用性由后续脚本执行链路兜底报错。
+fn detect_wsl() -> Option<PathBuf> {
+    find_command_path("wsl.exe", &["C:\\Windows\\System32\\wsl.exe"])
 }
 
-fn build_executor_candidates() -> Vec<ExecutorCandidate> {
-    vec![ExecutorCandidate {
-        kind: ExecutorKind::Wsl,
-        label: "WSL2",
-        description: "唯一执行环境，所有脚本统一通过 WSL2 Linux 子系统运行。",
-        path: find_command_path("wsl.exe", &["C:\\Windows\\System32\\wsl.exe"]),
-        available: false,
-    }]
-}
-
-fn read_cached_executor_candidates() -> Option<Vec<ExecutorCandidate>> {
-    let cache = EXECUTOR_CANDIDATES_CACHE.lock().ok()?;
-    let entry = cache.as_ref()?;
-    if entry.captured_at.elapsed() > EXECUTOR_CACHE_TTL {
-        return None;
-    }
-
-    Some(entry.executors.clone())
-}
-
-fn cache_executor_candidates(executors: &[ExecutorCandidate]) {
-    if let Ok(mut cache) = EXECUTOR_CANDIDATES_CACHE.lock() {
-        *cache = Some(CachedExecutorCandidates {
-            captured_at: Instant::now(),
-            executors: executors.to_vec(),
-        });
-    }
-}
-
-fn build_execution_environment(executors: &[ExecutorCandidate]) -> ExecutionEnvironment {
-    let has_any = executors.iter().any(|item| item.available);
+/// 由 WSL2 探测结果构建对前端暴露的执行环境视图。
+///
+/// 保持既有 IPC 契约（`ExecutionEnvironment` / `ExecutionOption`）不变：恒为
+/// 单一 WSL2 选项，`available` / `has_any` 取决于是否找到 `wsl.exe`。
+fn build_execution_environment(wsl_path: Option<PathBuf>) -> ExecutionEnvironment {
+    let available = wsl_path.is_some();
 
     ExecutionEnvironment {
         recommended: ExecutorKind::Wsl,
-        has_any,
-        executors: executors
-            .iter()
-            .map(|item| ExecutionOption {
-                r#type: item.kind.clone(),
-                label: item.label.to_string(),
-                available: item.available,
-                description: item.description.to_string(),
-                command_path: item
-                    .path
-                    .as_ref()
-                    .map(|value| value.to_string_lossy().to_string()),
-            })
-            .collect(),
+        has_any: available,
+        executors: vec![ExecutionOption {
+            r#type: ExecutorKind::Wsl,
+            label: "WSL2".to_string(),
+            available,
+            description: "唯一执行环境，所有脚本统一通过 WSL2 Linux 子系统运行。".to_string(),
+            command_path: wsl_path.map(|value| value.to_string_lossy().to_string()),
+        }],
     }
-}
-
-async fn probe_executor(candidate: &ExecutorCandidate) -> bool {
-    if !matches!(candidate.kind, ExecutorKind::Wsl) {
-        return false;
-    }
-
-    // 避免在启动阶段执行 wsl.exe 健康探测。
-    // 某些 Windows 环境下 `wsl.exe --list --quiet` 会长时间挂起，导致前端初始化无法继续。
-    // 启动只做命令存在性判断，实际运行时再由脚本执行链路兜底错误。
-    candidate.path.is_some()
 }
 
 #[cfg(test)]
@@ -217,5 +149,34 @@ mod tests {
         )));
         // 目录不是可执行文件。
         assert!(!is_executable_file(&std::env::temp_dir()));
+    }
+
+    #[test]
+    fn build_execution_environment_reports_available_when_wsl_present() {
+        // 找到 wsl.exe：单一 WSL2 选项，available / has_any 为真，command_path 回填。
+        let env = build_execution_environment(Some(PathBuf::from(
+            "C:\\Windows\\System32\\wsl.exe",
+        )));
+        assert!(env.has_any);
+        assert!(matches!(env.recommended, ExecutorKind::Wsl));
+        assert_eq!(env.executors.len(), 1);
+        let option = &env.executors[0];
+        assert!(matches!(option.r#type, ExecutorKind::Wsl));
+        assert!(option.available);
+        assert_eq!(
+            option.command_path.as_deref(),
+            Some("C:\\Windows\\System32\\wsl.exe")
+        );
+    }
+
+    #[test]
+    fn build_execution_environment_reports_unavailable_when_wsl_missing() {
+        // 未找到 wsl.exe：仍暴露单一 WSL2 选项，但 available / has_any 为假，无 command_path。
+        let env = build_execution_environment(None);
+        assert!(!env.has_any);
+        assert_eq!(env.executors.len(), 1);
+        let option = &env.executors[0];
+        assert!(!option.available);
+        assert!(option.command_path.is_none());
     }
 }
