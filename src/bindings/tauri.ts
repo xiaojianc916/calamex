@@ -1301,6 +1301,14 @@ export type CloseTerminalSessionRequest = {
 	sessionId: string,
 };
 
+/**  序列化给前端的命令错误：稳定 `code` + 后端权威 `message`。 */
+export type CommandError = {
+	/**  稳定错误码，带域命名空间（如 `"format.timeout"`），前端据此分支处理。 */
+	code: string,
+	/**  人类可读消息（后端权威文案）。 */
+	message: string,
+};
+
 /**  删除技能返回。 */
 export type DeleteSkillPayload = {
 	slug: string,
