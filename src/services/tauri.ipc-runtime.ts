@@ -288,4 +288,80 @@ export const callSpectaCommand = <T>(
       await assertDesktopRuntime(options.guardHint);
       const invocation = run({ traceId });
       invocation.catch(() => undefined);
-      const output = await raceWithTimeoutAndAbort(invoc
+      const output = await raceWithTimeoutAndAbort(invocation, {
+        timeoutMs,
+        signal: options.signal,
+        traceId,
+      });
+
+      if (shouldAudit) {
+        const outputMetrics = options.measureOutput
+          ? options.measureOutput(output)
+          : buildPayloadMetrics(output);
+        reportOutputBytes(outputMetrics.bytes);
+      }
+
+      return output;
+    },
+  );
+
+export const invokeTauriCommand = async <T>(
+  command: string,
+  args?: Record<string, unknown>,
+): Promise<T> => {
+  const { invoke } = await loadTauriCore();
+  return invoke<T>(command, args);
+};
+
+const normalizeIpcError = (
+  error: unknown,
+  context: { traceId: string; errorMap: TErrorMap },
+): AppError => {
+  if (isAppError(error)) {
+    return error;
+  }
+
+  if (error instanceof DesktopRuntimeUnavailableError) {
+    return new AppError({
+      code: error.code,
+      message: error.message,
+      scope: 'ipc',
+      traceId: context.traceId,
+      cause: error,
+    });
+  }
+
+  // 临时兼容层（#2）：已迁移命令抛出的结构化 { code, message } 优先归一，
+  // 置于旧 substring errorMap 匹配之前；全部迁移完成后连同 errorMap 一并删除。
+  const structured = asStructuredCommandError(error);
+  if (structured) {
+    return new AppError({
+      code: structured.code,
+      message: structured.message,
+      scope: 'ipc',
+      traceId: context.traceId,
+      cause: error,
+    });
+  }
+
+  const baseMessage = toErrorMessage(error, 'IPC 调用失败');
+
+  const mapped = resolveMappedError(baseMessage, context.errorMap);
+  if (mapped) {
+    return new AppError({
+      code: mapped.code,
+      message: mapped.message,
+      scope: 'ipc',
+      traceId: context.traceId,
+      cause: error,
+    });
+  }
+
+  return new AppError({
+    code: 'ipc.invoke-failed',
+    message: baseMessage,
+    scope: 'ipc',
+    traceId: context.traceId,
+    cause: error,
+  });
+};
