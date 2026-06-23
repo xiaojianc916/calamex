@@ -8,6 +8,7 @@
  * 为什么是手写联合而非 Zod：该类型是纯前端内部边界（不跨 IPC /
  * event wire），与 `TAgentUiEvent` 同性质，按项目惯例不为内部类型建 schema。
  * ========================================================================== */
+import type { TAcpToolCall, TAcpToolCallUpdate } from '@/types/ai/acp-tool-call';
 import type { IAiContextReference } from '@/types/ai/context';
 import type {
   IAiThreadChangedFilesEntry,
@@ -53,6 +54,12 @@ export type TAiThreadReduceEvent =
       createdAt: string;
       channel: TAiAssistantChannel;
       block: IAiThreadContentBlock;
+    }
+  | {
+      kind: 'assistant_tool_call';
+      messageId: string;
+      createdAt: string;
+      update: TAcpToolCall | TAcpToolCallUpdate;
     }
   | {
       kind: 'tool_started';

@@ -60,6 +60,7 @@ import { skillsTauriService } from '@/services/tauri.skills';
 import type { IAiAttachedFile, IAiConfigPayload, TAiAgentNetworkPermission } from '@/types/ai';
 import { isAiAssistantMode, type TAiAssistantMode } from '@/types/ai/assistant-mode';
 import type { TAiExecutionMode } from '@/types/ai/execution-mode';
+import type { IAcpAvailableCommand } from '@/types/ai/sidecar';
 import type { ISelectedSkill, ISkillSummary } from '@/types/ai/skill';
 import AiErrorNotice from './AiErrorNotice.vue';
 import { pickAttachmentFilesViaNativeDialog } from './attachment-file-picker';
@@ -166,6 +167,8 @@ const props = defineProps<{
   workspaceRootPath?: string | null;
   /** 进行中的「向用户提问」列表；非空时输入区原地长高为提问框。 */
   userQuestions?: readonly IAskUserComposerQuestion[] | null;
+  /** Kimi(ACP) 会话公示的可用命令；仅 kimi Agent 时透传给斜杠菜单作为命令列表。 */
+  acpCommands?: readonly IAcpAvailableCommand[];
 }>();
 
 const emit = defineEmits<{
@@ -404,6 +407,10 @@ const slashQuery = ref('');
 const slashAnchorRect = ref<ISlashAnchorRect | null>(null);
 const skillsManagerOpen = ref(false);
 let skillsLoadPromise: Promise<void> | null = null;
+
+// kimi(ACP) 模式下斜杠菜单改用会话公示命令；builtin 仍用自研技能列表。
+const useAcpSlashCommands = computed(() => selectedAgent.value === 'kimi');
+const acpSlashCommands = computed<readonly IAcpAvailableCommand[]>(() => props.acpCommands ?? []);
 
 const modeOptions: IAiPromptModeOption[] = [
   { key: 'chat', label: 'chat' },
@@ -771,7 +778,7 @@ const updateSlashStateFromCaret = (): void => {
   const query = getSlashQueryAtCaret();
   if (query !== null) {
     slashQuery.value = query;
-    if (!slashOpen.value) {
+    if (!slashOpen.value && !useAcpSlashCommands.value) {
       void ensureSkillsLoaded();
     }
     refreshSlashAnchorRect();
@@ -903,6 +910,42 @@ const handleSelectSkill = (slug: string): void => {
   const summary = skills.value.find((item) => item.slug === slug);
   const name = summary?.name?.trim() || slug;
   insertSkillPill({ slug, name });
+};
+
+// 选择 Kimi(ACP) 命令：把光标处的 "/查询" 片段整体替换为 "/命令 "（纯文本，不是技能胶囊）。
+const insertSlashCommandText = (name: string): void => {
+  const root = editorRef.value;
+  if (!root) {
+    return;
+  }
+  const normalized = name.startsWith('/') ? name.slice(1) : name;
+  root.focus();
+  const range = getEditorSelectionRange();
+  if (range && range.startContainer.nodeType === Node.TEXT_NODE) {
+    const node = range.startContainer as Text;
+    const value = node.nodeValue ?? '';
+    const before = value.slice(0, range.startOffset);
+    const after = value.slice(range.startOffset);
+    const slashAt = before.lastIndexOf('/');
+    if (slashAt >= 0) {
+      const inserted = '/' + normalized + ' ';
+      node.nodeValue = before.slice(0, slashAt) + inserted + after;
+      const caret = slashAt + inserted.length;
+      range.setStart(node, caret);
+      range.collapse(true);
+      const selection = window.getSelection();
+      if (selection) {
+        selection.removeAllRanges();
+        selection.addRange(range);
+      }
+    }
+  }
+  closeSlashMenu();
+  syncFromEditor();
+};
+
+const handleSelectCommand = (name: string): void => {
+  insertSlashCommandText(name);
 };
 
 const handleSubmit = (): void => {
@@ -1429,7 +1472,10 @@ onMounted(() => {
       :query="slashQuery"
       :skills="skills"
       :anchor-rect="slashAnchorRect"
+      :acp="useAcpSlashCommands"
+      :commands="acpSlashCommands"
       @select-skill="handleSelectSkill"
+      @select-command="handleSelectCommand"
       @close="closeSlashMenu"
     />
     <SkillManagerDialog v-model:open="skillsManagerOpen" @saved="loadSkills" />

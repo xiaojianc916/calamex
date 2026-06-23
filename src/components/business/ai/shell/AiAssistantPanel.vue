@@ -161,6 +161,11 @@ const agentOptions: ISessionAgentOption[] = [
 
 const sessionAgentBackend = ref<TSessionAgentBackend>('kimi');
 
+// kimi 会话向输入框透传 ACP 公示命令，供斜杠菜单作为内置命令列表；其它 Agent 不透传（用自研技能）。
+const kimiSlashCommands = computed(() =>
+  sessionAgentBackend.value === 'kimi' ? assistant.acpAvailableCommands.commands.value : undefined,
+);
+
 // 各 Agent 的会话级模型记忆：
 // - builtin 直接复用 ai.json 的全局 selectedModel（保留既有持久化与 mastra 运行时语义）。
 // - 其它 Agent（如 kimi）在此各记一份，互不影响；切它们的模型不会触碰 builtin 的全局模型。
@@ -1366,6 +1371,7 @@ onMounted(() => {
         />
         <AiPromptInput v-model="assistant.draft.value" v-model:active-mode="assistant.activeMode.value"
           v-model:agent-backend="sessionAgentBackend"
+          :acp-commands="kimiSlashCommands"
           :disabled="composerDisabled" :stop-visible="assistant.isSending.value"
           :submit-label="submitLabel" :config="assistant.config.value"
           :is-model-saving="isPromptModelSaving" :selected-model-override="activeAgentModelId"

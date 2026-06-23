@@ -26,6 +26,7 @@ import { aiThreadToolCallSchema } from '@/types/ai/thread/tool-call.schema';
 export const aiThreadAssistantChunkSchema = z.discriminatedUnion('type', [
   z.object({ type: z.literal('message'), block: aiThreadContentBlockSchema }),
   z.object({ type: z.literal('thought'), block: aiThreadContentBlockSchema }),
+  z.object({ type: z.literal('tool_call'), toolCall: aiThreadToolCallSchema }),
 ]);
 
 export const aiThreadUserMessageEntrySchema = z.object({

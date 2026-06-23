@@ -24,7 +24,7 @@ export const AI_THREAD_ENTRY_TYPES = [
 ] as const;
 
 /** 助手消息 chunk 类型（正文 / 思维链，对标 `AssistantMessageChunk`）。 */
-export const AI_ASSISTANT_CHUNK_TYPES = ['message', 'thought'] as const;
+export const AI_ASSISTANT_CHUNK_TYPES = ['message', 'thought', 'tool_call'] as const;
 
 /** 内容块类型（对标 `ContentBlock`；文本 / 图片 / 资源链接 / 来源）。 */
 export const AI_CONTENT_BLOCK_TYPES = ['text', 'image', 'resource_link', 'source'] as const;

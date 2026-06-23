@@ -10,6 +10,10 @@
  * - ToolCallStatus：终态不可回退的单向收敛
  * ========================================================================== */
 
+import {
+  getAcpToolCallId,
+  reduceAcpToolCall,
+} from '@/components/business/ai/thread/projection/from-acp-tool-call';
 import type {
   TAiAssistantChannel,
   TAiThreadReduceEvent,
@@ -65,7 +69,7 @@ function appendAssistantText(
 ): IAiThreadAssistantMessageEntry {
   const { chunks } = entry;
   const last = chunks[chunks.length - 1];
-  if (last && last.type === channel && last.block.type === 'text') {
+  if (last && last.type !== 'tool_call' && last.type === channel && last.block.type === 'text') {
     const mergedChunk = {
       ...last,
       block: { ...last.block, text: last.block.text + text },
@@ -101,6 +105,53 @@ function upsertAssistantChunk(
       ? appendAssistantText(entry, event.channel, event.text)
       : pushAssistantBlock(entry, event.channel, event.block);
 
+  if (index === -1) {
+    const seeded = applyTo({
+      type: 'assistant_message',
+      id: event.messageId,
+      createdAt: event.createdAt,
+      chunks: [],
+    });
+    return { ...thread, entries: [...thread.entries, seeded] };
+  }
+
+  const current = thread.entries[index] as IAiThreadAssistantMessageEntry;
+  return { ...thread, entries: replaceAt(thread.entries, index, applyTo(current)) };
+}
+
+/* ----- Assistant tool_call chunk upsert (interleaved ACP tool calls) ------ */
+/**
+ * 把 ACP tool_call / tool_call_update 作为 assistant_message 的 chunk 落入同一条
+ * chunks 流，使工具调用与思考/正文按到达顺序交织（对标 Codex/Zed）。按 getAcpToolCallId
+ * 在该 assistant 的 chunks 内 upsert：首帧建 tool_call chunk，后续 update 经
+ * reduceAcpToolCall 原地归并；assistant entry 不存在时按 messageId 先建。
+ */
+function upsertAssistantToolCallChunk(
+  thread: IAiThread,
+  event: TAiThreadReduceEventByKind<'assistant_tool_call'>,
+): IAiThread {
+  const toolCallId = getAcpToolCallId(event.update);
+  if (toolCallId === '') {
+    return thread;
+  }
+
+  const applyTo = (entry: IAiThreadAssistantMessageEntry): IAiThreadAssistantMessageEntry => {
+    const chunkIndex = entry.chunks.findIndex(
+      (chunk) => chunk.type === 'tool_call' && chunk.toolCall.id === toolCallId,
+    );
+    const previousChunk = chunkIndex === -1 ? undefined : entry.chunks[chunkIndex];
+    const previousToolCall =
+      previousChunk && previousChunk.type === 'tool_call' ? previousChunk.toolCall : undefined;
+    const merged = reduceAcpToolCall(previousToolCall, event.update, { now: event.createdAt });
+    const mergedChunk = { type: 'tool_call', toolCall: merged } as IAiThreadAssistantChunk;
+    return chunkIndex === -1
+      ? { ...entry, chunks: [...entry.chunks, mergedChunk] }
+      : { ...entry, chunks: replaceAt(entry.chunks, chunkIndex, mergedChunk) };
+  };
+
+  const index = thread.entries.findIndex(
+    (entry) => entry.type === 'assistant_message' && entry.id === event.messageId,
+  );
   if (index === -1) {
     const seeded = applyTo({
       type: 'assistant_message',
@@ -339,6 +390,8 @@ export function reduceThread(thread: IAiThread, event: TAiThreadReduceEvent): IA
     case 'assistant_delta':
     case 'assistant_block':
       return upsertAssistantChunk(thread, event);
+    case 'assistant_tool_call':
+      return upsertAssistantToolCallChunk(thread, event);
     case 'tool_started':
     case 'tool_progress':
     case 'tool_completed':
