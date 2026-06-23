@@ -60,6 +60,36 @@ fn verification_to_test_payload(verification: Result<String, String>) -> AiProvi
     }
 }
 
+/// AI 模型/厂商配置变更后，让**正在运行的**外部 ACP 后端（Kimi）即时生效。
+///
+/// 背景（历史缺陷）：`ai_save_config` 此前只持久化 `ai.json` + 更新内存配置，从不触碰
+/// `AcpRuntime`。而 Kimi（`kimi acp`）只在进程启动时由 `KimiProvisioner::prepare()` 把当前
+/// 配置 seed 成托管 `config.toml` 的 `default_model` / provider 列表、**启动后不热加载**，
+/// 故设置里切换模型对「已在运行的 Kimi」是空操作——表现为「无论选什么都用 kimi 模型」。
+///
+/// 修复：保存成功后，若 Kimi 后端**正在运行**则 `restart_backend(Kimi)`——重启会先关停旧
+/// 宿主、重新 `prepare()`（用最新配置重写 `config.toml`）、再重派生子进程，使所选模型即时生效。
+/// 未运行则不动：下次按需 `get_or_spawn` 时自然以最新配置 `prepare`，无需为「重新应用配置」
+/// 平白拉起一个本未运行的后端（保持懒派生语义）。重启失败仅记录日志、不影响「配置已保存」这一
+/// 既成结果（配置已落盘，下次拉起仍读取最新值）。
+fn reconfigure_running_external_backends(app: &AppHandle) {
+    use tauri::Manager as _;
+    let runtime = app.state::<crate::acp::AcpRuntime>();
+    if !runtime.is_backend_running(crate::acp::AcpBackendId::Kimi) {
+        return;
+    }
+    match runtime.restart_backend(app, crate::acp::AcpBackendId::Kimi) {
+        Ok(_) => log::info!(
+            target: "acp",
+            "AI 配置已保存，已重启运行中的 Kimi 后端以应用最新模型/厂商配置。"
+        ),
+        Err(error) => log::warn!(
+            target: "acp",
+            "AI 配置已保存，但重启运行中的 Kimi 后端失败（下次拉起仍会读取最新配置）：{error}"
+        ),
+    }
+}
+
 #[tauri::command]
 #[specta::specta]
 pub fn ai_get_config() -> Result<AiConfigPayload, String> {
@@ -68,8 +98,11 @@ pub fn ai_get_config() -> Result<AiConfigPayload, String> {
 
 #[tauri::command]
 #[specta::specta]
-pub fn ai_save_config(payload: AiSaveConfigRequest) -> Result<AiConfigPayload, String> {
-    gateway::save_config(
+pub fn ai_save_config(
+    app: AppHandle,
+    payload: AiSaveConfigRequest,
+) -> Result<AiConfigPayload, String> {
+    let config = gateway::save_config(
         payload.role.as_deref(),
         &payload.provider_type,
         payload.selected_model,
@@ -77,7 +110,12 @@ pub fn ai_save_config(payload: AiSaveConfigRequest) -> Result<AiConfigPayload, S
         payload.inline_completion_enabled,
         payload.chat_enabled,
         payload.agent_enabled,
-    )
+    )?;
+
+    // 配置已落盘：让正在运行的外部后端（Kimi）即时应用新模型/厂商（详见函数文档）。
+    reconfigure_running_external_backends(&app);
+
+    Ok(config)
 }
 
 #[tauri::command]
@@ -134,6 +172,9 @@ pub async fn ai_connect_provider(
         payload.api_key.as_ref().map(|value| value.expose()),
     )
     .await?;
+
+    // 「开始连接」也会改变所选模型/厂商与凭证；同 ai_save_config，连接成功后让正在运行的 Kimi 即时生效。
+    reconfigure_running_external_backends(&app);
 
     Ok(AiProviderConnectionPayload {
         config: outcome.config,

@@ -179,6 +179,15 @@ impl AcpRuntime {
         Ok(host)
     }
 
+    /// 指定后端当前是否已建立（正在运行）。只读、绝不派生子进程。
+    ///
+    /// 供 AI 设置保存后判断是否需要重启外部 agent 使新配置生效：未运行则无需重启——下次
+    /// `get_or_spawn_backend` 会自然以最新配置 `prepare` 后再派生，故无需为「重新应用配置」
+    /// 平白拉起一个本未运行的后端（保持懒派生语义）。
+    pub fn is_backend_running(&self, backend: AcpBackendId) -> bool {
+        self.hosts.lock().slot(backend).is_some()
+    }
+
     /// 驱逐指定后端缓存的失效宿主：取出并关停（结束其常驻连接任务、回收 stdio 子进程）。
     /// 用于「客户端任务已退出」（AcpClientError::NotRunning）后清除已死宿主，使下一次请求经
     /// get_or_spawn_backend 重新派生一个新连接，而非永远复用同一个已死连接、反复报同一错。
@@ -346,6 +355,16 @@ mod tests {
         let runtime = AcpRuntime::default();
         // 无任何宿主时，审批解决为安全空操作：返回 false 且绝不派生子进程。
         assert!(!runtime.resolve_approval("sess-1", "tool-1", "allow-once"));
+        assert!(runtime.hosts.lock().all().is_empty());
+    }
+
+    #[test]
+    fn is_backend_running_false_on_unestablished_runtime() {
+        let runtime = AcpRuntime::default();
+        // 未建立任何后端时恒为 false，且查询只读、绝不派生子进程。
+        assert!(!runtime.is_backend_running(AcpBackendId::Kimi));
+        assert!(!runtime.is_backend_running(AcpBackendId::Builtin));
+        assert!(!runtime.is_backend_running(AcpBackendId::Codex));
         assert!(runtime.hosts.lock().all().is_empty());
     }
 
