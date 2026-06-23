@@ -17,6 +17,7 @@ import type { IAiChatMessage } from '@/types/ai';
 import type { IAiConversationThread } from '@/types/ai/conversation.schema';
 import type {
   IAiThread,
+  IAiThreadAssistantChunk,
   IAiThreadAssistantMessageEntry,
   IAiThreadEntry,
   IAiThreadToolCall,
@@ -124,10 +125,12 @@ export function legacyMessageToEntries(message: IAiChatMessage): IAiThreadEntry[
     message.content.trim().length > 0
       ? [{ type: 'message', block: { type: 'text', text: message.content } }]
       : [];
-  const assistantChunks: IAiThreadAssistantMessageEntry['chunks'] = [
-    ...reasoningChunks,
-    ...messageChunks,
-  ];
+  // 优先用 message.chunks 原样还原（含 tool_call 交织 + 顺序）；缺省再从 reasoning/content 重建，
+  // 使 messages -> entries 不丢工具 chunk 与思考/正文真实交错（与 threadEntriesToMessages 对称）。
+  const assistantChunks: IAiThreadAssistantMessageEntry['chunks'] =
+    message.chunks && message.chunks.length > 0
+      ? message.chunks
+      : [...reasoningChunks, ...messageChunks];
   // 有正文 / 流式快照 / acpToolCalls 任一即生成 assistant_message entry，使 stream 与
   // acpToolCalls 在「仅工具调用、无最终正文」的回合也不被丢弃（逆投影据此无损还原）。
   if (
@@ -319,6 +322,9 @@ export function threadEntriesToMessages(entries: readonly IAiThreadEntry[]): IAi
           createdAt: entry.createdAt,
           references: [],
           ...(reasoning.length > 0 ? { reasoning } : {}),
+          // chunks 原样回挂（含 tool_call 交织）：使 entries -> messages -> entries 往返保真，
+          // 收尾/水合不丢工具调用与思考/正文交错（reasoning/content 仍并存，供旧读取路径兜底）。
+          ...(entry.chunks.length > 0 ? { chunks: entry.chunks } : {}),
           ...(pendingToolCalls.length > 0 ? { toolCalls: pendingToolCalls } : {}),
           ...(entry.stream !== undefined ? { stream: entry.stream } : {}),
           ...(entry.acpToolCalls !== undefined ? { acpToolCalls: entry.acpToolCalls } : {}),

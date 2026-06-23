@@ -49,11 +49,95 @@ function blocksToMarkdown(blocks: readonly IAiThreadContentBlock[]): string {
     .join(PARAGRAPH_BREAK);
 }
 
+/**
+ * 含 tool_call chunk 的 assistant_message：按 chunks 到达顺序逐段投影，使思考、正文、
+ * 工具调用按真实交错铺进平铺时间线（对标 Codex/Zed）。相邻同类文本段合并：连续 thought
+ * 汇成一条 reasoning，连续 message 汇成一条 assistant-text；tool_call 即产出一条 tool-call。
+ * id 以段序号去重（:reasoning:n / :text:n），避免同一消息多段 id 冲突。
+ */
+function assistantMessageChunksInterleaved(
+  entry: IAiThreadAssistantMessageEntry,
+  streaming: boolean,
+): TAiThreadEntry[] {
+  const projected: TAiThreadEntry[] = [];
+  let pendingThoughts: string[] = [];
+  let pendingMessages: string[] = [];
+  let segmentIndex = 0;
+
+  const flushThoughts = (): void => {
+    if (pendingThoughts.length === 0) {
+      return;
+    }
+    const reasoning: IAiThreadReasoningEntry = {
+      kind: 'reasoning',
+      id: `${entry.id}:reasoning:${segmentIndex}`,
+      messageId: entry.id,
+      segments: pendingThoughts,
+      isLong: pendingThoughts.length > 1,
+      streaming,
+    };
+    projected.push(reasoning);
+    pendingThoughts = [];
+    segmentIndex += 1;
+  };
+
+  const flushMessages = (): void => {
+    if (pendingMessages.length === 0) {
+      return;
+    }
+    const assistantText: IAiThreadAssistantTextEntry = {
+      kind: 'assistant-text',
+      id: `${entry.id}:text:${segmentIndex}`,
+      messageId: entry.id,
+      markdown: pendingMessages.join(PARAGRAPH_BREAK),
+      streaming,
+    };
+    projected.push(assistantText);
+    pendingMessages = [];
+    segmentIndex += 1;
+  };
+
+  for (const chunk of entry.chunks) {
+    if (chunk.type === 'tool_call') {
+      flushThoughts();
+      flushMessages();
+      projected.push({
+        kind: 'tool-call',
+        id: chunk.toolCall.id,
+        messageId: entry.id,
+        toolCall: chunk.toolCall,
+        terminals: {},
+        awaiting: false,
+      });
+      continue;
+    }
+    const text = blockToText(chunk.block);
+    if (text.length === 0) {
+      continue;
+    }
+    if (chunk.type === 'thought') {
+      flushMessages();
+      pendingThoughts.push(text);
+    } else {
+      flushThoughts();
+      pendingMessages.push(text);
+    }
+  }
+  flushThoughts();
+  flushMessages();
+  return projected;
+}
+
 /** 把一条 assistant_message 拆为 reasoning(thought)与 assistant-text(message)两类条目。 */
 function assistantMessageToEntries(
   entry: IAiThreadAssistantMessageEntry,
   streaming: boolean,
 ): TAiThreadEntry[] {
+  // 含 tool_call chunk 的回合走交织投影：思考/正文/工具按 chunks 到达顺序铺开，
+  // 与 Codex 风格的真实交错一致（无 tool_call 时保持原有 reasoning+text 投影不变）。
+  if (entry.chunks.some((chunk) => chunk.type === 'tool_call')) {
+    return assistantMessageChunksInterleaved(entry, streaming);
+  }
   const thoughtSegments: string[] = [];
   const messageTexts: string[] = [];
   for (const chunk of entry.chunks) {

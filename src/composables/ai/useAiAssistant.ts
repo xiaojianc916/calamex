@@ -418,12 +418,16 @@ export const useAiAssistant = (options: IUseAiAssistantOptions) => {
         return entry;
       }
       matchedAssistantEntry = true;
-      // 收尾注入最终正文：丢弃 message 通道增量 chunk（保留 thought），以最终答案为唯一正文，
-      // 杜绝「无 delta -> 正文为空」与「半截增量」。live 帧 finalText 为 null，chunks 原样。
+      // 保留交织：本回合若已流式出 message 正文，则原样保留 chunks（thought/tool_call/message 真实交错，
+      // 对标 Codex）；仅当无任何流式正文时，才丢 message 通道并以最终答案兜底（保留 thought 与 tool_call）。
+      const hasStreamedMessageText = entry.chunks.some(
+        (chunk) =>
+          chunk.type === 'message' && chunk.block.type === 'text' && chunk.block.text.length > 0,
+      );
       const nextChunks: IAiThreadAssistantMessageEntry['chunks'] =
-        finalText !== null
+        finalText !== null && !hasStreamedMessageText
           ? [
-              ...entry.chunks.filter((chunk) => chunk.type === 'thought'),
+              ...entry.chunks.filter((chunk) => chunk.type !== 'message'),
               { type: 'message', block: { type: 'text', text: finalText } },
             ]
           : entry.chunks;

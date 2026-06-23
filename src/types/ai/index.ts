@@ -25,7 +25,7 @@ import type {
   aiSuggestionPoolPayloadSchema,
   aiSuggestionPoolRequestSchema,
 } from '@/types/ai/schema';
-import type { IAiThreadToolCall } from '@/types/ai/thread';
+import type { IAiThreadAssistantChunk, IAiThreadToolCall } from '@/types/ai/thread';
 
 /* ============================================================================
  * Plain enums / unions (no schema needed — primitive literal unions)
@@ -229,6 +229,12 @@ export interface IAiChatMessage extends IAiChatMessageWire {
    * 回写都不再丢失思考过程(修复「AI 回复结束后思考过程文本/UI 消失」)。
    */
   reasoning?: string;
+  /**
+   * assistant chunks 流原样快照（message / thought / tool_call 的交织序列）：仅 UI 状态层使用、
+   * 绝不发到 IPC（schema parse 时被 strip）。承载 entries <-> messages 往返中的交织顺序与 ACP
+   * 工具 chunk，使收尾/水合回写不再丢失工具调用与思考/正文的真实交错。
+   */
+  chunks?: IAiThreadAssistantChunk[];
 }
 
 export type TAiAttachmentStatus = 'processing' | 'ready' | 'failed';
