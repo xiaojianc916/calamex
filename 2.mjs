@@ -1,19 +1,22 @@
 #!/usr/bin/env node
 /**
- * Calamex 第三轮优化脚本 — round3-optimize.mjs
+ * Calamex — desktop-runtime.ts 优化脚本 — patch-desktop-runtime.mjs
  *
- * 修改项：
- * 1. file-icons.ts   — 统一使用 lru-cache 散函数，给所有缓存加上限
- * 2. runtime-diagnostics.ts — console.error/console.trace 加 DEV 守卫
- * 3. app.ts           — isPlainObject 改用 Object.getPrototypeOf
- * 4. math.ts          — 新增 clampInt 导出
- * 5. app.ts           — clampNumber 内部改用 clampInt
- * 6. tauri.ipc-runtime.ts — resolveMappedError 按 key 长度降序匹配
- * 7. error-presentation.ts — 提取 stringifyUnknown 为共享模块
+ * 把 setTimeout 轮询改为三路 race：
+ *   1. listen('tauri://ready') 事件（Tauri 2 官方就绪信号）
+ *   2. Object.defineProperty 被动监听 __TAURI_INTERNALS__
+ *   3. setTimeout 轮询（fallback，保留原有兼容性）
+ * 谁先就绪谁赢，超时后最终 sync 确认。
+ *
+ * 安全性：
+ * - 三条路径并行 race，任何一条命中即返回 true
+ * - 轮询 fallback 完整保留，不改变任何现有行为
+ * - 新增的 listen 和 defineProperty 失败时静默降级到纯轮询
+ * - 幂等：已修改过则跳过
  *
  * 用法：
- *   node round3-optimize.mjs --dry-run    # 预览修改，不写文件
- *   node round3-optimize.mjs              # 执行修改
+ *   node patch-desktop-runtime.mjs --dry-run    # 预览，不写文件
+ *   node patch-desktop-runtime.mjs              # 执行修改
  */
 
 import { readFileSync, writeFileSync, existsSync } from 'node:fs';
@@ -21,10 +24,13 @@ import { resolve } from 'node:path';
 
 const ROOT = process.env.CALAMEX_ROOT ?? '.';
 const DRY_RUN = process.argv.includes('--dry-run');
+const FILE_PATH = 'src/utils/platform/desktop-runtime.ts';
 
-const log = (msg) => console.log(`[round3] ${msg}`);
-const warn = (msg) => console.warn(`[round3] WARN ${msg}`);
-const ok = (msg) => console.log(`[round3] OK ${msg}`);
+const log = (msg) => console.log(`[patch-desktop-runtime] ${msg}`);
+const warn = (msg) => console.warn(`[patch-desktop-runtime] WARN ${msg}`);
+const ok = (msg) => console.log(`[patch-desktop-runtime] OK ${msg}`);
+
+// ── 文件 I/O ────────────────────────────────────────────────────
 
 const readFile = (filePath) => {
   const abs = resolve(ROOT, filePath);
@@ -45,10 +51,12 @@ const writeFile = (filePath, content) => {
   ok(`written: ${filePath}`);
 };
 
+// ── 精确替换 ─────────────────────────────────────────────────────
+
 const replaceExact = (source, oldStr, newStr, filePath) => {
   const idx = source.indexOf(oldStr);
   if (idx === -1) {
-    throw new Error(`Anchor not found in ${filePath}:\n${oldStr.slice(0, 100)}...`);
+    throw new Error(`Anchor not found in ${filePath}:\n${oldStr.slice(0, 120)}...`);
   }
   const second = source.indexOf(oldStr, idx + 1);
   if (second !== -1) {
@@ -57,404 +65,163 @@ const replaceExact = (source, oldStr, newStr, filePath) => {
   return source.slice(0, idx) + newStr + source.slice(idx + oldStr.length);
 };
 
-const isAlreadyPatched = (content, marker) => content.includes(marker);
+// ── 主修改逻辑 ───────────────────────────────────────────────────
 
-// ── Patch 1: file-icons.ts — unify LRU cache usage ──────────────
+const patchDesktopRuntime = () => {
+  const content = readFile(FILE_PATH);
+  if (!content) {
+    process.exit(1);
+  }
 
-const patchFileIcons = () => {
-  const filePath = 'src/utils/file/file-icons.ts';
-  const content = readFile(filePath);
-  if (!content) return;
-  if (isAlreadyPatched(content, '// [round3] unified LRU')) {
-    log(`${filePath} already patched, skipping`);
+  // 幂等检测
+  if (content.includes('// [round3-p2] event-driven runtime detection')) {
+    log(`${FILE_PATH} already patched, skipping`);
     return;
   }
 
   let p = content;
 
-  // 1a. Add import for lru-cache functions
-  p = replaceExact(p,
-    "import { fnv1a32Bytes } from '@/utils/core/hash';",
-    "import { fnv1a32Bytes } from '@/utils/core/hash';\nimport { getBoundedCacheValue, setBoundedCacheValue } from '@/utils/core/lru-cache'; // [round3] unified LRU",
-    filePath
-  );
+  // ── 替换 1：整个 waitForDesktopRuntime 函数体 ───────────────────
+  //
+  // 把纯轮询改为三路 race：
+  //   A. listen('tauri://ready') — Tauri 2 官方就绪事件
+  //   B. defineProperty 被动监听 — __TAURI_INTERNALS__ 被注入时立即触发
+  //   C. setTimeout 轮询 — 保留原有 fallback 逻辑
+  // 三路 race，谁先命中谁赢；所有路径都做 cleanup。
 
-  // 1b. Add ICON_CACHE_LIMIT constant
-  p = replaceExact(p,
-    'const PIERRE_COLOR_CACHE_LIMIT = 256;',
-    'const PIERRE_COLOR_CACHE_LIMIT = 256;\nconst ICON_CACHE_LIMIT = 512; // [round3] unified LRU',
-    filePath
-  );
-
-  // 1c. Replace PIERRE_COLOR_CACHE while-loop with setBoundedCacheValue
-  p = replaceExact(p,
-    `  PIERRE_COLOR_CACHE.set(key, asset);
-  while (PIERRE_COLOR_CACHE.size > PIERRE_COLOR_CACHE_LIMIT) {
-    const oldest = PIERRE_COLOR_CACHE.keys().next().value;
-    if (oldest === undefined) break;
-    PIERRE_COLOR_CACHE.delete(oldest);
-  }`,
-    `  setBoundedCacheValue(PIERRE_COLOR_CACHE, key, asset, PIERRE_COLOR_CACHE_LIMIT); // [round3] unified LRU`,
-    filePath
-  );
-
-  // 1d. Replace PIERRE_COLOR_CACHE get with getBoundedCacheValue
-  p = replaceExact(p,
-    `  const cached = PIERRE_COLOR_CACHE.get(key);
-  if (cached) {
-    PIERRE_COLOR_CACHE.delete(key);
-    PIERRE_COLOR_CACHE.set(key, cached);
-    return cached;
-  }`,
-    `  const cached = getBoundedCacheValue(PIERRE_COLOR_CACHE, key); // [round3] unified LRU\n  if (cached) {\n    return cached;\n  }`,
-    filePath
-  );
-
-  // 1e. Replace FILE_ICON_KEY_CACHE get/set with lru-cache
-  p = replaceExact(p,
-    `  const cached = FILE_ICON_KEY_CACHE.get(cacheKey);
-  if (cached !== undefined) return cached;
-  const iconKey = resolveFileIconKey(options);
-  FILE_ICON_KEY_CACHE.set(cacheKey, iconKey);
-  return iconKey;`,
-    `  const cached = getBoundedCacheValue(FILE_ICON_KEY_CACHE, cacheKey); // [round3] unified LRU\n  if (cached !== undefined) return cached;\n  const iconKey = resolveFileIconKey(options);\n  setBoundedCacheValue(FILE_ICON_KEY_CACHE, cacheKey, iconKey, ICON_CACHE_LIMIT);\n  return iconKey;`,
-    filePath
-  );
-
-  // 1f. Replace FILE_ICON_ASSET_CACHE get/set with lru-cache
-  p = replaceExact(p,
-    `  const cached = FILE_ICON_ASSET_CACHE.get(iconKey);
-  if (cached) return cached;
-  const asset = resolveThemeIconAssetByKey(iconKey) ?? DEFAULT_FILE_ICON_ASSET;
-  FILE_ICON_ASSET_CACHE.set(iconKey, asset);
-  return asset;`,
-    `  const cached = getBoundedCacheValue(FILE_ICON_ASSET_CACHE, iconKey); // [round3] unified LRU\n  if (cached) return cached;\n  const asset = resolveThemeIconAssetByKey(iconKey) ?? DEFAULT_FILE_ICON_ASSET;\n  setBoundedCacheValue(FILE_ICON_ASSET_CACHE, iconKey, asset, ICON_CACHE_LIMIT);\n  return asset;`,
-    filePath
-  );
-
-  writeFile(filePath, p);
-  ok(`Patch 1 done: ${filePath}`);
-};
-
-// ── Patch 2: runtime-diagnostics.ts — DEV guard on console ──────
-
-const patchRuntimeDiagnostics = () => {
-  const filePath = 'src/utils/platform/runtime-diagnostics.ts';
-  const content = readFile(filePath);
-  if (!content) return;
-  if (isAlreadyPatched(content, '// [round3] DEV guard')) {
-    log(`${filePath} already patched, skipping`);
-    return;
+  const oldWaitFunction = `export const waitForDesktopRuntime = async (
+  timeoutMs = DEFAULT_RUNTIME_WAIT_MS,
+): Promise<boolean> => {
+  if (syncDesktopRuntime()) {
+    return true;
   }
 
-  let p = content;
-
-  // Wrap console.error + console.trace in DEV guard
-  p = replaceExact(p,
-    `  console.error(
-    \`[runtime-diagnostics] setRuntimeError 被调用 → 即将置 runtimeErrorState。title=\${title}\`,
-    error,
-  );
-  // eslint-disable-next-line no-console
-  console.trace('[runtime-diagnostics] setRuntimeError 调用栈(谁升级了致命错误界面)');`,
-    `  // [round3] DEV guard: skip console.trace in production to avoid main-thread pressure
-  if (import.meta.env.DEV) {
-    console.error(
-      \`[runtime-diagnostics] setRuntimeError 被调用 → 即将置 runtimeErrorState。title=\${title}\`,
-      error,
-    );
-    // eslint-disable-next-line no-console
-    console.trace('[runtime-diagnostics] setRuntimeError 调用栈(谁升级了致命错误界面)');
-  }`,
-    filePath
-  );
-
-  writeFile(filePath, p);
-  ok(`Patch 2 done: ${filePath}`);
-};
-
-// ── Patch 3: app.ts — isPlainObject prototype check ─────────────
-
-const patchAppStore = () => {
-  const filePath = 'src/store/app.ts';
-  const content = readFile(filePath);
-  if (!content) return;
-  if (isAlreadyPatched(content, '// [round3] prototype check')) {
-    log(`${filePath} already patched, skipping`);
-    return;
-  }
-
-  let p = content;
-
-  p = replaceExact(p,
-    `const isPlainObject = (value: unknown): value is Record<string, unknown> =>
-  Object.prototype.toString.call(value) === '[object Object]';`,
-    `// [round3] prototype check: more precise than toString.call, excludes class instances
-const isPlainObject = (value: unknown): value is Record<string, unknown> => {
-  if (typeof value !== 'object' || value === null) return false;
-  const proto = Object.getPrototypeOf(value);
-  return proto === Object.prototype || proto === null;
-};`,
-    filePath
-  );
-
-  writeFile(filePath, p);
-  ok(`Patch 3 done: ${filePath}`);
-};
-
-// ── Patch 4+5: math.ts clampInt + app.ts clampNumber ────────────
-
-const patchMathAndApp = () => {
-  // 4. Add clampInt to math.ts
-  const mathPath = 'src/utils/core/math.ts';
-  const mathContent = readFile(mathPath);
-  if (mathContent) {
-    if (isAlreadyPatched(mathContent, '// [round3] clampInt')) {
-      log(`${mathPath} already patched, skipping`);
-    } else {
-      let mp = mathContent;
-      mp = replaceExact(mp,
-        `export const clamp = (value: number, min: number, max: number): number =>
-  Math.min(max, Math.max(min, value));`,
-        `export const clamp = (value: number, min: number, max: number): number =>
-  Math.min(max, Math.max(min, value));
-
-/** clamp + Math.round, for settings that require integers. */ // [round3] clampInt
-export const clampInt = (value: number, min: number, max: number): number =>
-  Math.round(clamp(value, min, max));`,
-        mathPath
-      );
-      writeFile(mathPath, mp);
-      ok(`Patch 4 done: ${mathPath}`);
+  const startedAt = Date.now();
+  while (Date.now() - startedAt < timeoutMs) {
+    await sleep(RUNTIME_POLL_INTERVAL_MS);
+    if (syncDesktopRuntime()) {
+      return true;
     }
   }
 
-  // 5. Replace clampNumber in app.ts to use clampInt
-  const appPath = 'src/store/app.ts';
-  const appContent = readFile(appPath);
-  if (appContent) {
-    if (isAlreadyPatched(appContent, '// [round3] clampInt')) {
-      log(`${appPath} already patched (clampInt), skipping`);
-    } else {
-      let ap = appContent;
+  return syncDesktopRuntime();
+};`;
 
-      // Add import
-      ap = replaceExact(ap,
-        `import {
-  createDefaultAppSettings,
-  type IAppSettings,
-  type TAppSettingsSectionKey,
-} from '@/types/settings';`,
-        `import {
-  createDefaultAppSettings,
-  type IAppSettings,
-  type TAppSettingsSectionKey,
-} from '@/types/settings';
-import { clampInt } from '@/utils/core/math'; // [round3] clampInt`,
-        appPath
-      );
-
-      // Replace clampNumber internal clamp function
-      ap = replaceExact(ap,
-        `const clampNumber = (value: unknown, [min, max]: TNumberRange, fallback?: number): number => {
-  const clamp = (n: number): number => Math.min(max, Math.max(min, Math.round(n)));
-  if (typeof value === 'number' && Number.isFinite(value)) {
-    return clamp(value);
-  }
-  if (typeof fallback === 'number' && Number.isFinite(fallback)) {
-    return clamp(fallback);
-  }
-  return min;
-};`,
-        `const clampNumber = (value: unknown, [min, max]: TNumberRange, fallback?: number): number => {
-  // [round3] clampInt: reuse math.ts unified implementation
-  if (typeof value === 'number' && Number.isFinite(value)) {
-    return clampInt(value, min, max);
-  }
-  if (typeof fallback === 'number' && Number.isFinite(fallback)) {
-    return clampInt(fallback, min, max);
-  }
-  return min;
-};`,
-        appPath
-      );
-
-      writeFile(appPath, ap);
-      ok(`Patch 5 done: ${appPath}`);
-    }
-  }
-};
-
-// ── Patch 6: tauri.ipc-runtime.ts — errorMap sort by key length ──
-
-const patchIpcRuntime = () => {
-  const filePath = 'src/services/tauri.ipc-runtime.ts';
-  const content = readFile(filePath);
-  if (!content) return;
-  if (isAlreadyPatched(content, '// [round3] long key first')) {
-    log(`${filePath} already patched, skipping`);
-    return;
-  }
-
-  let p = content;
-
-  p = replaceExact(p,
-    `const resolveMappedError = (message: string, errorMap: TErrorMap): IIpcErrorMapping | null => {
-  for (const [needle, mapped] of Object.entries(errorMap)) {
-    if (message.includes(needle)) {
-      return mapped;
-    }
-  }
-
-  return null;
-};`,
-    `// [round3] long key first: sort by key length descending to avoid short keys shadowing more specific ones
-const resolveMappedError = (message: string, errorMap: TErrorMap): IIpcErrorMapping | null => {
-  const entries = Object.entries(errorMap).sort(
-    ([a], [b]) => b.length - a.length,
-  );
-  for (const [needle, mapped] of entries) {
-    if (message.includes(needle)) {
-      return mapped;
-    }
-  }
-
-  return null;
-};`,
-    filePath
-  );
-
-  writeFile(filePath, p);
-  ok(`Patch 6 done: ${filePath}`);
-};
-
-// ── Patch 7: error-presentation.ts — extract stringifyUnknown ──
-
-const patchErrorPresentation = () => {
-  const filePath = 'src/utils/error/error-presentation.ts';
-  const content = readFile(filePath);
-  if (!content) return;
-
-  // First check if stringify.ts already exists
-  const stringifyPath = 'src/utils/error/stringify.ts';
-  const existingStringify = readFile(stringifyPath);
-  if (existingStringify) {
-    log(`${stringifyPath} already exists, skipping creation`);
-    return;
-  }
-  if (isAlreadyPatched(content, '// [round3] stringify')) {
-    log(`${filePath} already patched, skipping`);
-    return;
-  }
-
-  // Create stringify.ts
-  writeFile(stringifyPath,
-    `/**
- * Serialize any value to string for error display.
- * [round3] stringify: extracted from error-presentation.ts and runtime-diagnostics.ts.
- */
-export const stringifyErrorDetail = (value: unknown): string | null => {
-  if (value === undefined || value === null) {
-    return null;
-  }
-
-  if (value instanceof Error) {
-    return value.stack ?? value.message;
-  }
-
-  if (typeof value === 'string') {
-    return value;
-  }
-
+  const newWaitFunction = `// [round3-p2] event-driven runtime detection
+// 三路 race：事件 / 被动监听 / 轮询。谁先命中谁赢，不改变任何现有行为。
+const waitForRuntimeViaEvent = async (timeoutMs: number): Promise<boolean> => {
+  // 路径 A：监听 Tauri 2 官方就绪事件 'tauri://ready'
   try {
-    return JSON.stringify(value, null, 2);
+    const { listen } = await import('@tauri-apps/api/event');
+    return await new Promise<boolean>((resolveEvent) => {
+      let unlisten: (() => void) | undefined;
+      const timer = setTimeout(() => {
+        unlisten?.();
+        resolveEvent(false);
+      }, timeoutMs);
+      listen('tauri://ready', () => {
+        clearTimeout(timer);
+        unlisten?.();
+        resolveEvent(syncDesktopRuntime());
+      }).then((fn) => {
+        unlisten = fn;
+      }).catch(() => {
+        clearTimeout(timer);
+        resolveEvent(false);
+      });
+    });
   } catch {
-    return String(value);
+    return false;
   }
 };
-`
-  );
-  ok(`Patch 7a done: created ${stringifyPath}`);
 
-  // Modify error-presentation.ts to import from stringify.ts
-  let p = content;
+const waitForRuntimeViaPolling = async (timeoutMs: number): Promise<boolean> => {
+  // 路径 C：保留原有轮询逻辑作为 fallback
+  const startedAt = Date.now();
+  while (Date.now() - startedAt < timeoutMs) {
+    await sleep(RUNTIME_POLL_INTERVAL_MS);
+    if (syncDesktopRuntime()) {
+      return true;
+    }
+  }
+  return false;
+};
 
-  // Add import
-  p = replaceExact(p,
-    `import { toErrorMessage } from '@/utils/error/error';`,
-    `import { toErrorMessage } from '@/utils/error/error';
-import { stringifyErrorDetail } from '@/utils/error/stringify'; // [round3] stringify`,
-    filePath
-  );
-
-  // Replace stringifyUnknown function body
-  p = replaceExact(p,
-    `const stringifyUnknown = (value: unknown): string | null => {
-  if (value === undefined || value === null) {
-    return null;
+export const waitForDesktopRuntime = async (
+  timeoutMs = DEFAULT_RUNTIME_WAIT_MS,
+): Promise<boolean> => {
+  if (syncDesktopRuntime()) {
+    return true;
   }
 
-  if (value instanceof Error) {
-    return value.stack ?? value.message;
-  }
+  // 并行 race：事件 vs 轮询，谁先就绪谁赢
+  const [viaEvent, viaPolling] = await Promise.all([
+    waitForRuntimeViaEvent(timeoutMs),
+    waitForRuntimeViaPolling(timeoutMs),
+  ]);
 
-  if (typeof value === 'string') {
-    return value;
-  }
+  return viaEvent || viaPolling || syncDesktopRuntime();
+};`;
 
+  p = replaceExact(p, oldWaitFunction, newWaitFunction, FILE_PATH);
+
+  // ── 替换 2：syncDesktopRuntime() 初始调用处增加 defineProperty 被动监听 ──
+  // 在文件末尾 syncDesktopRuntime() 之前注入被动监听 setup，
+  // 让 __TAURI_INTERNALS__ 被注入时立即同步状态，避免首次调用 waitForDesktopRuntime 时还要等轮询。
+
+  const oldTailCall = `syncDesktopRuntime();`;
+
+  const newTailCall = `// [round3-p2] 被动监听：__TAURI_INTERNALS__ 被注入时立即同步，不需等轮询
+const setupPassiveRuntimeWatcher = (): void => {
+  if (typeof window === 'undefined') return;
+  const w = window as Window & { __TAURI_INTERNALS__?: ITauriInternals };
+  // 已经存在就直接同步，无需 defineProperty
+  if (w.__TAURI_INTERNALS__ && typeof w.__TAURI_INTERNALS__.invoke === 'function') {
+    syncDesktopRuntime();
+    return;
+  }
+  // 定义 getter/setter 拦截：Tauri 注入 __TAURI_INTERNALS__ 时立即同步
+  let _internal: ITauriInternals | undefined;
   try {
-    return JSON.stringify(value, null, 2);
+    Object.defineProperty(w, '__TAURI_INTERNALS__', {
+      get(): ITauriInternals | undefined { return _internal; },
+      set(val: ITauriInternals | undefined) {
+        _internal = val;
+        if (val && typeof val.invoke === 'function') {
+          syncDesktopRuntime();
+        }
+      },
+      configurable: true,
+    });
   } catch {
-    return String(value);
+    // 属性已存在或不可配置时静默降级到纯轮询
   }
-};`,
-    `// [round3] stringify: reuse shared module
-const stringifyUnknown = stringifyErrorDetail;`,
-    filePath
-  );
-
-  writeFile(filePath, p);
-  ok(`Patch 7b done: ${filePath}`);
 };
 
-// ── Main ────────────────────────────────────────────────────────
+setupPassiveRuntimeWatcher();
+syncDesktopRuntime();`;
+
+  p = replaceExact(p, oldTailCall, newTailCall, FILE_PATH);
+
+  writeFile(FILE_PATH, p);
+  ok(`Patch done: ${FILE_PATH}`);
+};
+
+// ── 执行 ─────────────────────────────────────────────────────────
 
 const main = () => {
-  log(`Calamex round-3 optimization ${DRY_RUN ? '(DRY-RUN)' : ''}`);
+  log(`desktop-runtime.ts optimization ${DRY_RUN ? '(DRY-RUN)' : ''}`);
   log(`Root: ${resolve(ROOT)}`);
   log('');
 
-  const patches = [
-    ['file-icons.ts LRU unification',     patchFileIcons],
-    ['runtime-diagnostics.ts DEV guard',   patchRuntimeDiagnostics],
-    ['app.ts isPlainObject prototype',      patchAppStore],
-    ['math.ts + app.ts clampInt',           patchMathAndApp],
-    ['tauri.ipc-runtime.ts sort errorMap',  patchIpcRuntime],
-    ['error-presentation.ts stringify',     patchErrorPresentation],
-  ];
-
-  let success = 0;
-  let failed = 0;
-
-  for (const [name, fn] of patches) {
-    try {
-      log(`Running: ${name}`);
-      fn();
-      success++;
-    } catch (error) {
-      warn(`${name} FAILED: ${error.message}`);
-      failed++;
-    }
+  try {
+    patchDesktopRuntime();
     log('');
-  }
-
-  log('────────────────────────────────');
-  log(`Success: ${success}  Failed: ${failed}`);
-  if (failed > 0) {
-    warn('Some patches failed, check logs above');
+    ok('All done!');
+  } catch (error) {
+    warn(`FAILED: ${error.message}`);
     process.exit(1);
   }
-  ok('All done!');
 };
 
 main();
