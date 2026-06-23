@@ -97,8 +97,13 @@ const bootstrap = async (): Promise<void> => {
 
     const [bootstrapModules] = await Promise.all([bootstrapModulesPromise, globalStylesPromise]);
 
-    const [{ createApp }, { getThemeManager }, { default: App }, { default: router }] =
+    const [vueRuntime, { getThemeManager }, { default: App }, { default: router }] =
       bootstrapModules;
+
+    const { createApp } = vueRuntime;
+    const vaporInteropPlugin = Reflect.get(vueRuntime, 'vaporInteropPlugin') as
+      | Parameters<ReturnType<typeof createApp>['use']>[0]
+      | undefined;
 
     getThemeManager().init();
     markStartup('theme-manager-ready');
@@ -152,6 +157,14 @@ const bootstrap = async (): Promise<void> => {
 
     const app = createApp(App);
     markStartup('vue-app-created');
+
+    if (vaporInteropPlugin) {
+      app.use(vaporInteropPlugin);
+      markStartup('vapor-interop-plugin-installed');
+    } else {
+      markStartup('vapor-interop-plugin-unavailable');
+      console.warn('Vue vaporInteropPlugin 不可用，Vapor/VDOM 混合运行可能失败');
+    }
 
     app.use(pinia);
     app.use(router);

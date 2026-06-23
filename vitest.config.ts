@@ -7,9 +7,16 @@ export default defineConfig({
     vue(), // 只保留 Vue 插件
   ],
   resolve: {
-    alias: {
-      '@': path.resolve(__dirname, 'src'),
-    },
+    alias: [
+      {
+        find: /^vue$/,
+        replacement: path.resolve(__dirname, 'src/__tests__/vue-vapor-vitest-runtime.mjs'),
+      },
+      {
+        find: '@',
+        replacement: path.resolve(__dirname, 'src'),
+      },
+    ],
   },
   test: {
     globals: true,

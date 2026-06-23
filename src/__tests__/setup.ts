@@ -19,7 +19,15 @@
  *    下方的 beforeEach 是冗余但无害。
  */
 
+import { config } from '@vue/test-utils';
 import { beforeEach, vi } from 'vitest';
+import { vaporInteropPlugin } from 'vue';
+
+// vaporInteropPlugin-installed-for-vitest
+config.global.plugins = config.global.plugins ?? [];
+if (!config.global.plugins.includes(vaporInteropPlugin)) {
+  config.global.plugins.push(vaporInteropPlugin);
+}
 
 // ── localStorage / sessionStorage 兜底 ──────────────────────────────────────
 // Node ≥22 内置的全局 localStorage 在未传 --localstorage-file 时为 undefined，

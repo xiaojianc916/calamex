@@ -1,3 +1,4 @@
+import path from 'node:path';
 import { fileURLToPath, URL } from 'node:url';
 import tailwindcss from '@tailwindcss/vite';
 import vue from '@vitejs/plugin-vue';
@@ -109,9 +110,19 @@ export default defineConfig(({ command }) => ({
     strictPort: true,
   },
   resolve: {
-    alias: {
-      '@': fileURLToPath(new URL('./src', import.meta.url)),
-    },
+    alias: [
+      {
+        find: /^vue$/,
+        replacement: path.resolve(
+          __dirname,
+          'node_modules/vue/dist/vue.runtime-with-vapor.esm-browser.js',
+        ),
+      },
+      {
+        find: '@',
+        replacement: fileURLToPath(new URL('./src', import.meta.url)),
+      },
+    ],
   },
   build: {
     chunkSizeWarningLimit: 1500,
