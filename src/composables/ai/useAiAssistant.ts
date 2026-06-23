@@ -15,6 +15,7 @@ import {
   mergeAiAgentPatchSummaries,
   parseAiAedPatchRef,
 } from '@/components/business/ai/edit/patch-summary';
+import { reduceAcpUiEventsToToolCalls } from '@/components/business/ai/thread/projection';
 import {
   buildAskUserResumeRequest,
   extractPendingAskUser,
@@ -401,6 +402,13 @@ export const useAiAssistant = (options: IUseAiAssistantOptions) => {
     // reduce 回放出的 assistant entry 不带 stream（runtimeEvents/token/活动文案）。
     // 用本回合实时算出的 stream/patches 富集该 entry——不再回读 legacy displayMessages（已退役）。
     const hasPatches = Boolean(liveRenderState.patches && liveRenderState.patches.length > 0);
+    // ACP tool_call / tool_call_update（reduce 层有意不覆盖）：用既有 ACP 累加器折叠为完整
+    // IAiThreadToolCall[]，挂到本回合 assistant entry 的 acpToolCalls（schema 既有字段、legacy
+    // 双向往返无损），交由 threadEntriesToTimeline 展开为工具卡。空数组则不写该字段。
+    const acpToolCalls = reduceAcpUiEventsToToolCalls(events, {
+      now: new Date().toISOString(),
+    });
+    const acpToolCallsPatch = acpToolCalls.length > 0 ? { acpToolCalls } : {};
     const finalContentRaw = liveRenderState.finalContent;
     const finalText =
       typeof finalContentRaw === 'string' && finalContentRaw.length > 0 ? finalContentRaw : null;
@@ -424,6 +432,7 @@ export const useAiAssistant = (options: IUseAiAssistantOptions) => {
         chunks: nextChunks,
         stream: liveRenderState.stream,
         ...(hasPatches ? { patches: [...(liveRenderState.patches ?? [])] } : {}),
+        ...acpToolCallsPatch,
       };
     });
     // reduce 因本回合无 assistant delta/block 而未建 assistant entry 时（直接给最终答案、
@@ -439,6 +448,7 @@ export const useAiAssistant = (options: IUseAiAssistantOptions) => {
           finalText !== null ? [{ type: 'message', block: { type: 'text', text: finalText } }] : [],
         stream: liveRenderState.stream,
         ...(hasPatches ? { patches: [...(liveRenderState.patches ?? [])] } : {}),
+        ...acpToolCallsPatch,
       };
       entries.push(appendedEntry);
     }

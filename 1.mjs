@@ -1,425 +1,269 @@
-import { writeFileSync } from 'node:fs';
+import { readFileSync, writeFileSync, existsSync } from 'node:fs';
 
-const path = 'src/components/business/ai/skill/AiSlashCommandMenu.vue';
+const PROMPT = 'src/components/business/ai/chat/AiPromptInput.vue';
+const PANEL = 'src/components/business/ai/shell/AiAssistantPanel.vue';
+const SPEC = 'src/components/business/ai/skill/AiSlashCommandMenu.spec.ts';
 
-const content = `<script setup lang="ts">
-import { Sparkles, Terminal } from '@lucide/vue';
-import { computed, onBeforeUnmount, ref, watch } from 'vue';
-import type { IAcpAvailableCommand } from '@/types/ai/sidecar';
-import type { ISkillSummary } from '@/types/ai/skill';
-
-/** / 菜单锚点:取自输入框容器的视口矩形,用于把浮层贴在输入框上方。 */
-interface ISlashAnchorRect {
-  left: number;
-  top: number;
-  width: number;
+function replaceOnce(src, oldStr, newStr, path) {
+  const parts = src.split(oldStr);
+  if (parts.length !== 2) {
+    throw new Error(
+      '[' + path + '] 期望命中 1 处，实际 ' + (parts.length - 1) +
+        ' 处，已中止。\n--- 锚点首行 ---\n' + oldStr.split('\n')[0],
+    );
+  }
+  return parts.join(newStr);
 }
 
-const props = defineProps<{
-  open: boolean;
-  /** '/' 之后已输入的过滤文本(不含斜杠)。 */
-  query: string;
-  skills: readonly ISkillSummary[];
-  anchorRect: ISlashAnchorRect | null;
-  /** 为真时菜单改用 Kimi(ACP)会话公示的内置命令,否则沿用自研技能列表。 */
-  acp?: boolean;
-  /** ACP 会话当前公示的可用命令(仅 acp 为真时使用)。 */
-  commands?: readonly IAcpAvailableCommand[];
-}>();
+// ---------- 读取 + 哨兵（防重复执行） ----------
+if (!existsSync(PROMPT)) throw new Error('找不到 ' + PROMPT + '（确认在仓库根目录运行）');
+if (!existsSync(PANEL)) throw new Error('找不到 ' + PANEL + '（确认在仓库根目录运行）');
 
-const emit = defineEmits<{
-  (event: 'select-skill', slug: string): void;
-  (event: 'select-command', name: string): void;
-  (event: 'close'): void;
-}>();
+let prompt = readFileSync(PROMPT, 'utf8');
+let panel = readFileSync(PANEL, 'utf8');
 
-// builtin 模式命令区:仅占位 / 参考,保持与设计图一致但不可点选。
-const placeholderCommands = [
-  { name: '/compact', description: '压缩当前对话上下文' },
-  { name: '/goal', description: '设定本次任务目标' },
-  { name: '/skill', description: '加载指定技能后再继续任务' },
-] as const;
+if (prompt.includes('useAcpSlashCommands')) {
+  throw new Error('[' + PROMPT + '] 似乎已接线（含 useAcpSlashCommands），已中止，避免重复插入。');
+}
+if (panel.includes('kimiSlashCommands')) {
+  throw new Error('[' + PANEL + '] 似乎已接线（含 kimiSlashCommands），已中止，避免重复插入。');
+}
 
-const activeIndex = ref(0);
+// ---------- AiPromptInput.vue：6 处手术编辑 ----------
 
-const normalizedQuery = computed(() => props.query.trim().toLowerCase());
-
-const filteredSkills = computed(() => {
-  const keyword = normalizedQuery.value;
-  if (!keyword) {
-    return [...props.skills];
-  }
-  return props.skills.filter((skill) => {
-    const haystack = (skill.name + ' ' + skill.slug + ' ' + skill.description).toLowerCase();
-    return haystack.includes(keyword);
-  });
-});
-
-const filteredCommands = computed(() => {
-  const list = props.commands ?? [];
-  const keyword = normalizedQuery.value;
-  if (!keyword) {
-    return [...list];
-  }
-  return list.filter((command) => {
-    const haystack = (command.name + ' ' + command.description).toLowerCase();
-    return haystack.includes(keyword);
-  });
-});
-
-// 当前生效列表长度:acp 模式取命令数,否则取技能数。键盘导航 / 回车以此为界。
-const activeCount = computed(() =>
-  props.acp ? filteredCommands.value.length : filteredSkills.value.length,
+// A1 导入 IAcpAvailableCommand（按字母序置于 skill 之前）
+prompt = replaceOnce(
+  prompt,
+  "import type { ISelectedSkill, ISkillSummary } from '@/types/ai/skill';",
+  "import type { IAcpAvailableCommand } from '@/types/ai/sidecar';\n" +
+    "import type { ISelectedSkill, ISkillSummary } from '@/types/ai/skill';",
+  PROMPT,
 );
 
-// acp 空态文案:有过滤词→无匹配;否则提示会话开始后才有命令(ACP 无主动拉取手段)。
-const acpEmptyHint = computed(() =>
-  normalizedQuery.value ? '没有匹配的命令' : '会话开始后将出现可用命令',
+// A2 新增 prop acpCommands
+prompt = replaceOnce(
+  prompt,
+  '  userQuestions?: readonly IAskUserComposerQuestion[] | null;\n}>();',
+  '  userQuestions?: readonly IAskUserComposerQuestion[] | null;\n' +
+    '  /** Kimi(ACP) 会话公示的可用命令；仅 kimi Agent 时透传给斜杠菜单作为命令列表。 */\n' +
+    '  acpCommands?: readonly IAcpAvailableCommand[];\n}>();',
+  PROMPT,
 );
 
-const menuStyle = computed(() => {
-  const rect = props.anchorRect;
-  if (!rect) {
-    return { display: 'none' } as const;
-  }
-  const gap = 8;
-  return {
-    left: rect.left + 'px',
-    width: rect.width + 'px',
-    bottom: Math.max(gap, window.innerHeight - rect.top + gap) + 'px',
-  };
-});
-
-const clampActiveIndex = (): void => {
-  const count = activeCount.value;
-  if (count === 0) {
-    activeIndex.value = 0;
-    return;
-  }
-  if (activeIndex.value > count - 1) {
-    activeIndex.value = count - 1;
-  }
-  if (activeIndex.value < 0) {
-    activeIndex.value = 0;
-  }
-};
-
-const moveActive = (delta: number): void => {
-  const count = activeCount.value;
-  if (count === 0) {
-    return;
-  }
-  activeIndex.value = (activeIndex.value + delta + count) % count;
-};
-
-const confirmActive = (): void => {
-  if (props.acp) {
-    const command = filteredCommands.value[activeIndex.value];
-    if (command) {
-      emit('select-command', command.name);
-    }
-    return;
-  }
-  const target = filteredSkills.value[activeIndex.value];
-  if (target) {
-    emit('select-skill', target.slug);
-  }
-};
-
-const onSelectSkill = (slug: string): void => {
-  emit('select-skill', slug);
-};
-
-const onSelectCommand = (name: string): void => {
-  emit('select-command', name);
-};
-
-// 捕获阶段拦截方向键 / 回车 / Esc,避免事件落到输入框造成换行或提交。
-const handleKeydown = (event: KeyboardEvent): void => {
-  if (!props.open) {
-    return;
-  }
-  switch (event.key) {
-    case 'ArrowDown':
-      event.preventDefault();
-      event.stopPropagation();
-      moveActive(1);
-      break;
-    case 'ArrowUp':
-      event.preventDefault();
-      event.stopPropagation();
-      moveActive(-1);
-      break;
-    case 'Enter':
-      if (activeCount.value > 0) {
-        event.preventDefault();
-        event.stopPropagation();
-        confirmActive();
-      }
-      break;
-    case 'Tab':
-      if (activeCount.value > 0) {
-        event.preventDefault();
-        event.stopPropagation();
-        confirmActive();
-      }
-      break;
-    case 'Escape':
-      event.preventDefault();
-      event.stopPropagation();
-      emit('close');
-      break;
-    default:
-      break;
-  }
-};
-
-const bindKeyListener = (): void => {
-  document.addEventListener('keydown', handleKeydown, true);
-};
-
-const unbindKeyListener = (): void => {
-  document.removeEventListener('keydown', handleKeydown, true);
-};
-
-watch(
-  () => props.open,
-  (open) => {
-    if (open) {
-      activeIndex.value = 0;
-      bindKeyListener();
-    } else {
-      unbindKeyListener();
-    }
-  },
-  { immediate: true },
+// A3 新增 ACP 斜杠命令派生量
+prompt = replaceOnce(
+  prompt,
+  'let skillsLoadPromise: Promise<void> | null = null;',
+  'let skillsLoadPromise: Promise<void> | null = null;\n\n' +
+    '// kimi(ACP) 模式下斜杠菜单改用会话公示命令；builtin 仍用自研技能列表。\n' +
+    "const useAcpSlashCommands = computed(() => selectedAgent.value === 'kimi');\n" +
+    'const acpSlashCommands = computed<readonly IAcpAvailableCommand[]>(() => props.acpCommands ?? []);',
+  PROMPT,
 );
 
-watch(
-  () => props.query,
-  () => {
-    activeIndex.value = 0;
-  },
+// A4 仅 builtin 模式才懒加载技能（kimi 模式不拉技能列表）
+prompt = replaceOnce(
+  prompt,
+  '    if (!slashOpen.value) {\n      void ensureSkillsLoaded();\n    }',
+  '    if (!slashOpen.value && !useAcpSlashCommands.value) {\n      void ensureSkillsLoaded();\n    }',
+  PROMPT,
 );
 
-watch(activeCount, () => {
-  clampActiveIndex();
-});
+// A5 新增 命令插入逻辑（纯文本，非技能胶囊）
+prompt = replaceOnce(
+  prompt,
+  'const handleSelectSkill = (slug: string): void => {\n' +
+    '  const summary = skills.value.find((item) => item.slug === slug);\n' +
+    '  const name = summary?.name?.trim() || slug;\n' +
+    '  insertSkillPill({ slug, name });\n' +
+    '};',
+  'const handleSelectSkill = (slug: string): void => {\n' +
+    '  const summary = skills.value.find((item) => item.slug === slug);\n' +
+    '  const name = summary?.name?.trim() || slug;\n' +
+    '  insertSkillPill({ slug, name });\n' +
+    '};\n\n' +
+    '// 选择 Kimi(ACP) 命令：把光标处的 "/查询" 片段整体替换为 "/命令 "（纯文本，不是技能胶囊）。\n' +
+    'const insertSlashCommandText = (name: string): void => {\n' +
+    '  const root = editorRef.value;\n' +
+    '  if (!root) {\n' +
+    '    return;\n' +
+    '  }\n' +
+    "  const normalized = name.startsWith('/') ? name.slice(1) : name;\n" +
+    '  root.focus();\n' +
+    '  const range = getEditorSelectionRange();\n' +
+    '  if (range && range.startContainer.nodeType === Node.TEXT_NODE) {\n' +
+    '    const node = range.startContainer as Text;\n' +
+    "    const value = node.nodeValue ?? '';\n" +
+    '    const before = value.slice(0, range.startOffset);\n' +
+    '    const after = value.slice(range.startOffset);\n' +
+    "    const slashAt = before.lastIndexOf('/');\n" +
+    '    if (slashAt >= 0) {\n' +
+    "      const inserted = '/' + normalized + ' ';\n" +
+    '      node.nodeValue = before.slice(0, slashAt) + inserted + after;\n' +
+    '      const caret = slashAt + inserted.length;\n' +
+    '      range.setStart(node, caret);\n' +
+    '      range.collapse(true);\n' +
+    '      const selection = window.getSelection();\n' +
+    '      if (selection) {\n' +
+    '        selection.removeAllRanges();\n' +
+    '        selection.addRange(range);\n' +
+    '      }\n' +
+    '    }\n' +
+    '  }\n' +
+    '  closeSlashMenu();\n' +
+    '  syncFromEditor();\n' +
+    '};\n\n' +
+    'const handleSelectCommand = (name: string): void => {\n' +
+    '  insertSlashCommandText(name);\n' +
+    '};',
+  PROMPT,
+);
 
-onBeforeUnmount(() => {
-  unbindKeyListener();
-});
-</script>
+// A6 模板：给 <AiSlashCommandMenu> 接上 acp / commands / select-command
+prompt = replaceOnce(
+  prompt,
+  '    <AiSlashCommandMenu\n' +
+    '      :open="slashOpen"\n' +
+    '      :query="slashQuery"\n' +
+    '      :skills="skills"\n' +
+    '      :anchor-rect="slashAnchorRect"\n' +
+    '      @select-skill="handleSelectSkill"\n' +
+    '      @close="closeSlashMenu"\n' +
+    '    />',
+  '    <AiSlashCommandMenu\n' +
+    '      :open="slashOpen"\n' +
+    '      :query="slashQuery"\n' +
+    '      :skills="skills"\n' +
+    '      :anchor-rect="slashAnchorRect"\n' +
+    '      :acp="useAcpSlashCommands"\n' +
+    '      :commands="acpSlashCommands"\n' +
+    '      @select-skill="handleSelectSkill"\n' +
+    '      @select-command="handleSelectCommand"\n' +
+    '      @close="closeSlashMenu"\n' +
+    '    />',
+  PROMPT,
+);
 
-<template>
-  <Teleport to="body">
-    <!-- 透明遮罩:仅用于点击关闭,不阻挡视觉(浮层本体覆盖在对话上方) -->
-    <div v-if="open" class="slash-overlay" @mousedown.self="emit('close')">
-      <div
-        class="slash-menu"
-        role="listbox"
-        aria-label="技能与命令"
-        :style="menuStyle"
-        @mousedown.prevent
-      >
-        <section v-if="acp" class="slash-section">
-          <p class="slash-section__title">命令</p>
-          <p v-if="filteredCommands.length === 0" class="slash-empty">
-            <Terminal aria-hidden="true" />
-            <span v-text="acpEmptyHint" />
-          </p>
-          <button
-            v-for="(command, index) in filteredCommands"
-            :key="command.name"
-            type="button"
-            class="slash-item"
-            :class="{ 'slash-item--active': index === activeIndex }"
-            role="option"
-            :aria-selected="index === activeIndex"
-            @mouseenter="activeIndex = index"
-            @click="onSelectCommand(command.name)"
-          >
-            <Terminal class="slash-item__icon" aria-hidden="true" />
-            <span class="slash-item__text">
-              <span class="slash-item__name" v-text="command.name" />
-              <span
-                v-if="command.description"
-                class="slash-item__desc"
-                v-text="command.description"
-              />
-            </span>
-          </button>
-        </section>
+// ---------- AiAssistantPanel.vue：2 处手术编辑 ----------
 
-        <template v-else>
-          <section class="slash-section">
-            <p class="slash-section__title">命令</p>
-            <button
-              v-for="command in placeholderCommands"
-              :key="command.name"
-              type="button"
-              class="slash-item slash-item--disabled"
-              disabled
-            >
-              <Terminal class="slash-item__icon" aria-hidden="true" />
-              <span class="slash-item__text">
-                <span class="slash-item__name" v-text="command.name" />
-                <span class="slash-item__desc" v-text="command.description" />
-              </span>
-              <span class="slash-item__badge">即将推出</span>
-            </button>
-          </section>
+// B1 kimi 会话向输入框透传 ACP 公示命令
+panel = replaceOnce(
+  panel,
+  "const sessionAgentBackend = ref<TSessionAgentBackend>('kimi');",
+  "const sessionAgentBackend = ref<TSessionAgentBackend>('kimi');\n\n" +
+    '// kimi 会话向输入框透传 ACP 公示命令，供斜杠菜单作为内置命令列表；其它 Agent 不透传（用自研技能）。\n' +
+    'const kimiSlashCommands = computed(() =>\n' +
+    "  sessionAgentBackend.value === 'kimi' ? assistant.acpAvailableCommands.commands.value : undefined,\n" +
+    ');',
+  PANEL,
+);
 
-          <section class="slash-section">
-            <p class="slash-section__title">技能</p>
-            <p v-if="filteredSkills.length === 0" class="slash-empty">
-              <Sparkles aria-hidden="true" />
-              没有匹配的技能
-            </p>
-            <button
-              v-for="(skill, index) in filteredSkills"
-              :key="skill.slug"
-              type="button"
-              class="slash-item"
-              :class="{ 'slash-item--active': index === activeIndex }"
-              role="option"
-              :aria-selected="index === activeIndex"
-              @mouseenter="activeIndex = index"
-              @click="onSelectSkill(skill.slug)"
-            >
-              <Sparkles class="slash-item__icon" aria-hidden="true" />
-              <span class="slash-item__text">
-                <span class="slash-item__name" v-text="skill.name" />
-                <span v-if="skill.description" class="slash-item__desc" v-text="skill.description" />
-              </span>
-            </button>
-          </section>
-        </template>
-      </div>
-    </div>
-  </Teleport>
-</template>
+// B2 模板：把命令传给 <AiPromptInput>
+panel = replaceOnce(
+  panel,
+  '          v-model:agent-backend="sessionAgentBackend"\n' +
+    '          :disabled="composerDisabled" :stop-visible="assistant.isSending.value"',
+  '          v-model:agent-backend="sessionAgentBackend"\n' +
+    '          :acp-commands="kimiSlashCommands"\n' +
+    '          :disabled="composerDisabled" :stop-visible="assistant.isSending.value"',
+  PANEL,
+);
 
-<style scoped>
-.slash-overlay {
-  position: fixed;
-  inset: 0;
-  z-index: var(--z-modal, 50);
-  background: transparent;
+// ---------- 新增测试 ----------
+const specContent = [
+  "import { mount } from '@vue/test-utils';",
+  "import { describe, expect, it } from 'vitest';",
+  "import AiSlashCommandMenu from '@/components/business/ai/skill/AiSlashCommandMenu.vue';",
+  "import type { IAcpAvailableCommand } from '@/types/ai/sidecar';",
+  "import type { ISkillSummary } from '@/types/ai/skill';",
+  '',
+  'const anchorRect = { left: 0, top: 200, width: 320 };',
+  '',
+  'const buildSkill = (slug: string, name: string): ISkillSummary => ({',
+  '  slug,',
+  '  name,',
+  "  description: name + ' 描述',",
+  '  updatedAtMs: 0,',
+  '});',
+  '',
+  'const buildCommand = (name: string, description: string): IAcpAvailableCommand => ({',
+  '  name,',
+  '  description,',
+  '});',
+  '',
+  'const mountMenu = (props: Record<string, unknown>) =>',
+  '  mount(AiSlashCommandMenu, {',
+  "    props: { open: true, query: '', skills: [], anchorRect, ...props },",
+  '    global: { stubs: { teleport: true } },',
+  '  });',
+  '',
+  "describe('AiSlashCommandMenu', () => {",
+  "  it('acp 模式渲染会话命令且不显示「即将推出」徽标', () => {",
+  '    const wrapper = mountMenu({',
+  '      acp: true,',
+  "      commands: [buildCommand('compact', '压缩上下文'), buildCommand('status', '查看状态')],",
+  '    });',
+  '',
+  "    expect(wrapper.findAll('.slash-item')).toHaveLength(2);",
+  "    expect(wrapper.text()).toContain('compact');",
+  "    expect(wrapper.text()).not.toContain('即将推出');",
+  '  });',
+  '',
+  "  it('acp 模式点击命令派发 select-command', async () => {",
+  '    const wrapper = mountMenu({',
+  '      acp: true,',
+  "      commands: [buildCommand('compact', '压缩上下文')],",
+  '    });',
+  '',
+  "    await wrapper.get('.slash-item').trigger('click');",
+  '',
+  "    expect(wrapper.emitted('select-command')?.[0]).toEqual(['compact']);",
+  '  });',
+  '',
+  "  it('acp 模式按查询过滤命令', () => {",
+  '    const wrapper = mountMenu({',
+  "      query: 'stat',",
+  '      acp: true,',
+  "      commands: [buildCommand('compact', '压缩上下文'), buildCommand('status', '查看状态')],",
+  '    });',
+  '',
+  "    expect(wrapper.findAll('.slash-item')).toHaveLength(1);",
+  "    expect(wrapper.text()).toContain('status');",
+  "    expect(wrapper.text()).not.toContain('compact');",
+  '  });',
+  '',
+  "  it('acp 模式无可用命令时显示空态提示', () => {",
+  '    const wrapper = mountMenu({ acp: true, commands: [] });',
+  '',
+  "    expect(wrapper.find('.slash-empty').text()).toContain('会话开始后将出现可用命令');",
+  '  });',
+  '',
+  "  it('builtin 模式点击技能派发 select-skill', async () => {",
+  '    const wrapper = mountMenu({',
+  "      skills: [buildSkill('demo', '演示技能')],",
+  '      acp: false,',
+  '    });',
+  '',
+  '    const enabledItems = wrapper',
+  "      .findAll('.slash-item')",
+  "      .filter((item) => item.attributes('disabled') === undefined);",
+  "    await enabledItems[enabledItems.length - 1].trigger('click');",
+  '',
+  "    expect(wrapper.emitted('select-skill')?.[0]).toEqual(['demo']);",
+  '  });',
+  '});',
+  '',
+].join('\n');
+
+// ---------- 两阶段原子写 ----------
+const writes = [
+  { path: PROMPT, content: prompt },
+  { path: PANEL, content: panel },
+  { path: SPEC, content: specContent },
+];
+
+for (const w of writes) {
+  writeFileSync(w.path, w.content, 'utf8');
+  console.log('written: ' + w.path);
 }
-
-.slash-menu {
-  position: fixed;
-  max-height: min(320px, 50vh);
-  overflow-y: auto;
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-  padding: 8px;
-  border: 1px solid #ececec;
-  border-radius: 14px;
-  background: #ffffff;
-  box-shadow: 0 18px 48px rgb(15 23 42 / 16%);
-  color: #18181b;
-}
-
-.slash-section {
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-}
-
-.slash-section + .slash-section {
-  margin-top: 6px;
-  padding-top: 6px;
-  border-top: 1px solid #f1f1f1;
-}
-
-.slash-section__title {
-  margin: 2px 8px;
-  font-size: 11px;
-  font-weight: 600;
-  letter-spacing: 0.04em;
-  color: #a1a1aa;
-  text-transform: uppercase;
-}
-
-.slash-item {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  width: 100%;
-  padding: 8px 10px;
-  border: none;
-  border-radius: 10px;
-  background: transparent;
-  text-align: left;
-  cursor: pointer;
-  color: inherit;
-  transition: background 0.12s ease;
-}
-
-.slash-item--active {
-  background: #f4f4f5;
-}
-
-.slash-item--disabled {
-  cursor: not-allowed;
-  opacity: 0.55;
-}
-
-.slash-item__icon {
-  flex: none;
-  width: 16px;
-  height: 16px;
-  color: #71717a;
-}
-
-.slash-item__text {
-  display: flex;
-  flex-direction: column;
-  gap: 1px;
-  min-width: 0;
-  flex: 1 1 auto;
-}
-
-.slash-item__name {
-  font-size: 13px;
-  font-weight: 500;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-
-.slash-item__desc {
-  font-size: 12px;
-  color: #71717a;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-
-.slash-item__badge {
-  flex: none;
-  font-size: 10px;
-  color: #a1a1aa;
-  padding: 2px 6px;
-  border-radius: 999px;
-  background: #f4f4f5;
-}
-
-.slash-empty {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  padding: 10px;
-  margin: 0;
-  font-size: 12px;
-  color: #a1a1aa;
-}
-</style>
-`;
-
-writeFileSync(path, content, 'utf8');
-console.log('✓ write ' + path);
-console.log('完成：AiSlashCommandMenu.vue 已修正（空态改用 v-text，去掉被吞的插值）。');
+console.log('done. 共写入 ' + writes.length + ' 个文件。');

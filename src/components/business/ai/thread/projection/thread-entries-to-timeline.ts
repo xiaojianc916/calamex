@@ -121,6 +121,19 @@ export function threadEntriesToTimeline(
       }
       case 'assistant_message': {
         const streaming = streamingMessageId !== null && entry.id === streamingMessageId;
+        // ACP 工具调用（Kimi 等外部 agent）承载于 assistant entry 的 acpToolCalls
+        // （reduce / legacy 均不展开为顶层 tool_call entry，仅此处投影）。
+        // Zed 风格：工具卡排在最终答复之前。
+        for (const toolCall of entry.acpToolCalls ?? []) {
+          timeline.push({
+            kind: 'tool-call',
+            id: toolCall.id,
+            messageId: entry.id,
+            toolCall,
+            terminals: {},
+            awaiting: false,
+          });
+        }
         for (const projected of assistantMessageToEntries(entry, streaming)) {
           timeline.push(projected);
         }
