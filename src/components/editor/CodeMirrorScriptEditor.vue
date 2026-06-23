@@ -991,9 +991,8 @@ const buildLspExtension = (): Extension => {
   return currentLsp.extensions;
 };
 
-// 编辑器底部预留约 5 行空白：替代 scrollPastEnd()（其会预留近一屏空白、
-// 可把最后一行滚到顶部）。改为固定 5 行更贴近常规编辑器手感。
-// CM6 默认行高约为字号的 1.6 倍，故 15 行 = 24em。
+// 编辑器底部预留约 15 行空白：不使用 scrollPastEnd()（它会预留近一屏空白，可把最后一行顶到屏幕最上沿），
+// 固定高度更贴近常规编辑器手感。CM6 默认行高约为字号的 1.6 倍，故 24em ≈ 15 行。
 const editorBottomPaddingTheme = EditorView.theme({
   '.cm-content': { paddingBottom: '24em' },
 });
