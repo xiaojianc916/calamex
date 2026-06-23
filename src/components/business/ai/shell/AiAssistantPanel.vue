@@ -891,6 +891,15 @@ const handlePromptExecutionModeChange = (mode: TAiExecutionMode): void => {
   planStore.value.setExecutionMode(mode);
 };
 
+// kimi(ACP) 会话配置项变更：把输入框选择的 optionId/value 路由到当前会话的 ACP 配置项切换。
+const handleSessionConfigOptionChange = (optionId: string, value: string): void => {
+  void assistant.acpSessionConfigOptions.selectConfigOption(
+    assistant.activeConversationId.value,
+    optionId,
+    value,
+  );
+};
+
 let aiConnectionPrewarmStarted = false;
 
 const handlePromptPrewarm = (): void => {
@@ -1372,6 +1381,9 @@ onMounted(() => {
         <AiPromptInput v-model="assistant.draft.value" v-model:active-mode="assistant.activeMode.value"
           v-model:agent-backend="sessionAgentBackend"
           :acp-commands="kimiSlashCommands"
+          :session-config-options="assistant.acpSessionConfigOptions.state.value"
+          :is-session-config-option-switching="assistant.acpSessionConfigOptions.isSwitching.value"
+          @session-config-option-change="handleSessionConfigOptionChange"
           :disabled="composerDisabled" :stop-visible="assistant.isSending.value"
           :submit-label="submitLabel" :config="assistant.config.value"
           :is-model-saving="isPromptModelSaving" :selected-model-override="activeAgentModelId"

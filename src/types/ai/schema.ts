@@ -278,7 +278,7 @@ export const aiChatRequestSchema = z.object({
    * `ai:sidecar-stream`；后端把本回合 session/update 帧的 session_id 重写为该键，实现逐
    * token 实时渲染。与 threadId 同为 required-nullable（对齐 Rust `Option<String>`）。
    */
-  streamSessionId: z.string().nullable(),
+  streamSessionId: z.string().nullable().optional(),
   messages: z.array(aiChatMessageSchema).min(1),
   references: z.array(aiContextReferenceSchema),
 });

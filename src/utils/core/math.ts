@@ -7,3 +7,7 @@
  */
 export const clamp = (value: number, min: number, max: number): number =>
   Math.min(max, Math.max(min, value));
+
+/** clamp + Math.round, for settings that require integers. */ // [round3] clampInt
+export const clampInt = (value: number, min: number, max: number): number =>
+  Math.round(clamp(value, min, max));

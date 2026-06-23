@@ -7,6 +7,7 @@ import {
   type TErrorSeverity,
 } from '@/types/app-error';
 import { toErrorMessage } from '@/utils/error/error';
+import { stringifyErrorDetail } from '@/utils/error/stringify'; // [round3] stringify
 
 export interface IResolveErrorPresentationOptions {
   title?: string;
@@ -44,25 +45,8 @@ const DEFAULT_SEVERITY_BY_PRESENTATION: Record<TErrorPresentation, TErrorSeverit
   fatal: 'fatal',
 };
 
-const stringifyUnknown = (value: unknown): string | null => {
-  if (value === undefined || value === null) {
-    return null;
-  }
-
-  if (value instanceof Error) {
-    return value.stack ?? value.message;
-  }
-
-  if (typeof value === 'string') {
-    return value;
-  }
-
-  try {
-    return JSON.stringify(value, null, 2);
-  } catch {
-    return String(value);
-  }
-};
+// [round3] stringify: reuse shared module
+const stringifyUnknown = stringifyErrorDetail;
 
 const resolveErrorTechnicalDetails = (error: unknown): string | undefined => {
   if (isAppError(error)) {

@@ -167,8 +167,8 @@ const renderContent = ref(normalizedContent.value);
 //  - 当前组件只要见过 live stream，就保持 smooth-streaming=true，直到组件卸载；final 只触发 finish。
 //  - 历史/恢复消息没有见过 live stream，smooth-streaming=false，完整内容立即渲染，不慢放旧消息。
 //  - typewriter=false 只关闭光标；平滑揭示由 smooth streaming + max-live-nodes=0 负责。
-//  - smooth-streaming-options 不再自定义，沿用官方默认 pacing（开箱即用，避免自调参数把逐字揭示
-//    变成一块一块的 catch-up 突发）。
+//  - smooth-streaming-options 固定 { startDelayMs: 0, flushOnFinish: false }：首屏即开始揭示，
+//    final 不立即 flush，等 visible 追上 source 再定型，避免一块一块的 catch-up 突发。
 const smoothStreaming = computed(() => {
   if (isShellWindowResizing.value) {
     return false;
@@ -177,6 +177,9 @@ const smoothStreaming = computed(() => {
   return hasSeenLiveStream.value;
 });
 const typewriter = false as const;
+// 流式 pacing 选项：startDelayMs=0 让首屏即开始揭示；flushOnFinish=false 让 final 阶段等
+// visible 追上 source 再定型（与 smooth-streaming=true 的 catch-up 行为配套）。
+const smoothStreamingOptions = { startDelayMs: 0, flushOnFinish: false } as const;
 const maxLiveNodes = computed(() =>
   hasSeenLiveStream.value ? 0 : AI_MARKDOWN_HISTORY_MAX_LIVE_NODES,
 );
@@ -358,6 +361,7 @@ onBeforeUnmount(() => {
       mode="chat"
       :defer-nodes-until-visible="false"
       :smooth-streaming="smoothStreaming"
+      :smooth-streaming-options="smoothStreamingOptions"
       :parse-coalesce-ms="AI_MARKDOWN_PARSE_COALESCE_MS"
       :fade="false"
       :max-live-nodes="maxLiveNodes"

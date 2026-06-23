@@ -19,6 +19,7 @@ import {
   type IAppSettings,
   type TAppSettingsSectionKey,
 } from '@/types/settings';
+import { clampInt } from '@/utils/core/math'; // [round3] clampInt
 
 import { APP_STORE_KEY } from './index';
 
@@ -61,8 +62,12 @@ const MAX_ENVIRONMENT_VARIABLES = 20;
 // Pure helpers
 // ---------------------------------------------------------------------------
 
-const isPlainObject = (value: unknown): value is Record<string, unknown> =>
-  Object.prototype.toString.call(value) === '[object Object]';
+// [round3] prototype check: more precise than toString.call, excludes class instances
+const isPlainObject = (value: unknown): value is Record<string, unknown> => {
+  if (typeof value !== 'object' || value === null) return false;
+  const proto = Object.getPrototypeOf(value);
+  return proto === Object.prototype || proto === null;
+};
 
 /** 由有限字符串元组生成 type guard,所有 isKnown* 共用。 */
 const createTupleGuard =
@@ -89,12 +94,12 @@ const coerceEnum = <T>(
  * 没传 fallback 就回到 min。fallback 自身也会被 round + clamp,保证返回值始终合法。
  */
 const clampNumber = (value: unknown, [min, max]: TNumberRange, fallback?: number): number => {
-  const clamp = (n: number): number => Math.min(max, Math.max(min, Math.round(n)));
+  // [round3] clampInt: reuse math.ts unified implementation
   if (typeof value === 'number' && Number.isFinite(value)) {
-    return clamp(value);
+    return clampInt(value, min, max);
   }
   if (typeof fallback === 'number' && Number.isFinite(fallback)) {
-    return clamp(fallback);
+    return clampInt(fallback, min, max);
   }
   return min;
 };

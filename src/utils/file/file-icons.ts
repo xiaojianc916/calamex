@@ -5,12 +5,14 @@ import type {
   IPierreFileIconTheme,
 } from '@/types/file-icon';
 import { fnv1a32Bytes } from '@/utils/core/hash';
+import { getBoundedCacheValue, setBoundedCacheValue } from '@/utils/core/lru-cache'; // [round3] unified LRU
 import { getPathBaseName } from '@/utils/file/path';
 
 const PIERRE_ICON_THEME = pierreIconTheme as IPierreFileIconTheme;
 const PIERRE_MONOCHROME_DARK_FILL = '#adadb1';
 const PIERRE_MONOCHROME_LIGHT_FILL = '#6c6c71';
 const PIERRE_COLOR_CACHE_LIMIT = 256;
+const ICON_CACHE_LIMIT = 512; // [round3] unified LRU
 const PIERRE_COLOR_CACHE = new Map<string, IFileIconAsset>();
 
 const FILE_ICON_ASSET_MODULES = import.meta.glob('../../assets/icons/pierre/*.svg', {
@@ -159,10 +161,8 @@ const resolveColorizedFallbackIconAsset = (key: string): IFileIconAsset | null =
   if (!palettePool || !darkDefinition) return null;
 
   // LRU 缓存：命中即返回。超限时淘汰最旧条目。
-  const cached = PIERRE_COLOR_CACHE.get(key);
+  const cached = getBoundedCacheValue(PIERRE_COLOR_CACHE, key); // [round3] unified LRU
   if (cached) {
-    PIERRE_COLOR_CACHE.delete(key);
-    PIERRE_COLOR_CACHE.set(key, cached);
     return cached;
   }
 
@@ -183,12 +183,7 @@ const resolveColorizedFallbackIconAsset = (key: string): IFileIconAsset | null =
     ),
   };
 
-  PIERRE_COLOR_CACHE.set(key, asset);
-  while (PIERRE_COLOR_CACHE.size > PIERRE_COLOR_CACHE_LIMIT) {
-    const oldest = PIERRE_COLOR_CACHE.keys().next().value;
-    if (oldest === undefined) break;
-    PIERRE_COLOR_CACHE.delete(oldest);
-  }
+  setBoundedCacheValue(PIERRE_COLOR_CACHE, key, asset, PIERRE_COLOR_CACHE_LIMIT); // [round3] unified LRU
 
   return asset;
 };
@@ -222,18 +217,18 @@ const FILE_ICON_ASSET_CACHE = new Map<string, IFileIconAsset>();
 
 const resolveFileIconKeyMemoized = (options: IFileIconResolveOptions): string => {
   const cacheKey = `${options.kind}\u0000${options.expanded ? '1' : '0'}\u0000${options.path ?? ''}`;
-  const cached = FILE_ICON_KEY_CACHE.get(cacheKey);
+  const cached = getBoundedCacheValue(FILE_ICON_KEY_CACHE, cacheKey); // [round3] unified LRU
   if (cached !== undefined) return cached;
   const iconKey = resolveFileIconKey(options);
-  FILE_ICON_KEY_CACHE.set(cacheKey, iconKey);
+  setBoundedCacheValue(FILE_ICON_KEY_CACHE, cacheKey, iconKey, ICON_CACHE_LIMIT);
   return iconKey;
 };
 
 const resolveFileIconAssetByKey = (iconKey: string): IFileIconAsset => {
-  const cached = FILE_ICON_ASSET_CACHE.get(iconKey);
+  const cached = getBoundedCacheValue(FILE_ICON_ASSET_CACHE, iconKey); // [round3] unified LRU
   if (cached) return cached;
   const asset = resolveThemeIconAssetByKey(iconKey) ?? DEFAULT_FILE_ICON_ASSET;
-  FILE_ICON_ASSET_CACHE.set(iconKey, asset);
+  setBoundedCacheValue(FILE_ICON_ASSET_CACHE, iconKey, asset, ICON_CACHE_LIMIT);
   return asset;
 };
 

@@ -90,8 +90,10 @@ export const normalizeInvokeArgs = (value: unknown): Record<string, unknown> | u
   };
 };
 
+// [round3] long key first: sort by key length descending to avoid short keys shadowing more specific ones
 const resolveMappedError = (message: string, errorMap: TErrorMap): IIpcErrorMapping | null => {
-  for (const [needle, mapped] of Object.entries(errorMap)) {
+  const entries = Object.entries(errorMap).sort(([a], [b]) => b.length - a.length);
+  for (const [needle, mapped] of entries) {
     if (message.includes(needle)) {
       return mapped;
     }
