@@ -146,19 +146,23 @@ describe('AI thread entry schema', () => {
     expect(aiThreadToolKindSchema.parse('totally-unknown-kind')).toBe('other');
   });
 
-  it('chunk 判别联合按 type 区分 message / thought', () => {
+  it('chunk 判别联合按 type 区分 message / thought（拒绝 tool_call chunk）', () => {
     const thought = aiThreadAssistantChunkSchema.parse({
       type: 'thought',
       block: { type: 'text', text: '思考中' },
     });
     expect(thought.type).toBe('thought');
+    // 单一表示：工具调用只作为顶层 tool_call entry，chunk 联合不再接受 tool_call
+    expect(() =>
+      aiThreadAssistantChunkSchema.parse({ type: 'tool_call', block: { type: 'text', text: 'x' } }),
+    ).toThrow();
   });
 
   it('entry 联合拒绝未知 type', () => {
     expect(() => aiThreadEntrySchema.parse({ type: 'mystery', id: 'x', createdAt: ISO })).toThrow();
   });
 
-  it('assistant_message 接受可选 stream 快照与 acpToolCalls，tool_call 接受原始 name', () => {
+  it('assistant_message 接受可选 stream 快照，tool_call 接受原始 name', () => {
     const parsed = aiThreadEntrySchema.parse({
       type: 'assistant_message',
       id: 'a1',
@@ -168,22 +172,10 @@ describe('AI thread entry schema', () => {
         status: 'completed',
         usage: { inputTokens: 1, outputTokens: 2, totalTokens: 3 },
       },
-      acpToolCalls: [
-        {
-          type: 'tool_call',
-          id: 'acp-1',
-          createdAt: ISO,
-          title: 'Read',
-          kind: 'read',
-          status: 'completed',
-          content: [],
-        },
-      ],
     });
     expect(parsed.type).toBe('assistant_message');
     if (parsed.type === 'assistant_message') {
       expect(parsed.stream?.status).toBe('completed');
-      expect(parsed.acpToolCalls).toHaveLength(1);
     }
 
     const tool = aiThreadToolCallSchema.parse({

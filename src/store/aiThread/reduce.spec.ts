@@ -88,6 +88,41 @@ describe('reduceThread', () => {
     expect(tool.content).toHaveLength(1);
   });
 
+  it('工具在思考与回答之间到达：回答另起一段，工具不被前置（对标 Zed 段切分）', () => {
+    const events: TAiThreadReduceEvent[] = [
+      {
+        kind: 'assistant_delta',
+        messageId: 'a1',
+        createdAt: ISO,
+        channel: 'thought',
+        text: '先想想',
+      },
+      { kind: 'tool_started', id: 't1', createdAt: ISO, title: 'Read', toolKind: 'read' },
+      {
+        kind: 'assistant_delta',
+        messageId: 'a1',
+        createdAt: ISO,
+        channel: 'message',
+        text: '答案',
+      },
+    ];
+
+    const result = reduceThreadAll(createThread(), events);
+
+    // 思考段在前、工具居中、回答另起一段在后：严格保持真实到达顺序（修复时序错乱）
+    expect(result.entries.map((e) => e.type)).toEqual([
+      'assistant_message',
+      'tool_call',
+      'assistant_message',
+    ]);
+    const first = result.entries[0] as IAiThreadAssistantMessageEntry;
+    const last = result.entries[2] as IAiThreadAssistantMessageEntry;
+    expect(first.id).toBe('a1');
+    expect(first.chunks).toEqual([{ type: 'thought', block: { type: 'text', text: '先想想' } }]);
+    expect(last.id).toBe('a1#1');
+    expect(last.chunks).toEqual([{ type: 'message', block: { type: 'text', text: '答案' } }]);
+  });
+
   it('不突变输入（纯函数 / 结构共享）', () => {
     const base = createThread();
     const next = reduceThread(base, {

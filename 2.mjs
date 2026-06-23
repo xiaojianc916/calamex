@@ -354,3 +354,111 @@ function writeNew(relPath, content) {
   console.log(`✓ ${relPath} — written`);
 }
 // ──────────────────────────────── harness 结束 ────────────────────────────────
+// ── A) reduce.spec：新增"工具夹在思考与回答之间"的回归守卫 ────────────────
+patchFile('src/store/aiThread/reduce.spec.ts', [
+  {
+    sentinel: '工具在思考与回答之间到达：回答另起一段',
+    find:
+      "    const tool = result.entries[2] as IAiThreadToolCall;\n" +
+      "    expect(tool.status).toBe('completed');\n" +
+      "    expect(tool.content).toHaveLength(1);\n  });",
+    replace:
+      "    const tool = result.entries[2] as IAiThreadToolCall;\n" +
+      "    expect(tool.status).toBe('completed');\n" +
+      "    expect(tool.content).toHaveLength(1);\n  });\n\n" +
+      "  it('工具在思考与回答之间到达：回答另起一段，工具不被前置（对标 Zed 段切分）', () => {\n" +
+      "    const events: TAiThreadReduceEvent[] = [\n" +
+      "      {\n        kind: 'assistant_delta',\n        messageId: 'a1',\n        createdAt: ISO,\n" +
+      "        channel: 'thought',\n        text: '先想想',\n      },\n" +
+      "      { kind: 'tool_started', id: 't1', createdAt: ISO, title: 'Read', toolKind: 'read' },\n" +
+      "      {\n        kind: 'assistant_delta',\n        messageId: 'a1',\n        createdAt: ISO,\n" +
+      "        channel: 'message',\n        text: '答案',\n      },\n    ];\n\n" +
+      "    const result = reduceThreadAll(createThread(), events);\n\n" +
+      "    // 思考段在前、工具居中、回答另起一段在后：严格保持真实到达顺序（修复时序错乱）\n" +
+      "    expect(result.entries.map((e) => e.type)).toEqual([\n" +
+      "      'assistant_message',\n      'tool_call',\n      'assistant_message',\n    ]);\n" +
+      "    const first = result.entries[0] as IAiThreadAssistantMessageEntry;\n" +
+      "    const last = result.entries[2] as IAiThreadAssistantMessageEntry;\n" +
+      "    expect(first.id).toBe('a1');\n" +
+      "    expect(first.chunks).toEqual([{ type: 'thought', block: { type: 'text', text: '先想想' } }]);\n" +
+      "    expect(last.id).toBe('a1#1');\n" +
+      "    expect(last.chunks).toEqual([{ type: 'message', block: { type: 'text', text: '答案' } }]);\n  });",
+  },
+]);
+
+// ── B) entry.schema.spec：chunk 守卫 + 删 acpToolCalls 断言 ───────────────
+patchFile('src/types/ai/thread/entry.schema.spec.ts', [
+  {
+    sentinel: '（拒绝 tool_call chunk）',
+    find:
+      "  it('chunk 判别联合按 type 区分 message / thought', () => {\n" +
+      "    const thought = aiThreadAssistantChunkSchema.parse({\n" +
+      "      type: 'thought',\n      block: { type: 'text', text: '思考中' },\n    });\n" +
+      "    expect(thought.type).toBe('thought');\n  });",
+    replace:
+      "  it('chunk 判别联合按 type 区分 message / thought（拒绝 tool_call chunk）', () => {\n" +
+      "    const thought = aiThreadAssistantChunkSchema.parse({\n" +
+      "      type: 'thought',\n      block: { type: 'text', text: '思考中' },\n    });\n" +
+      "    expect(thought.type).toBe('thought');\n" +
+      "    // 单一表示：工具调用只作为顶层 tool_call entry，chunk 联合不再接受 tool_call\n" +
+      "    expect(() =>\n" +
+      "      aiThreadAssistantChunkSchema.parse({ type: 'tool_call', block: { type: 'text', text: 'x' } }),\n" +
+      "    ).toThrow();\n  });",
+  },
+  {
+    sentinel: "  it('assistant_message 接受可选 stream 快照，tool_call 接受原始 name', () => {",
+    find: "  it('assistant_message 接受可选 stream 快照与 acpToolCalls，tool_call 接受原始 name', () => {",
+    replace: "  it('assistant_message 接受可选 stream 快照，tool_call 接受原始 name', () => {",
+  },
+  {
+    sentinel:
+      "        usage: { inputTokens: 1, outputTokens: 2, totalTokens: 3 },\n      },\n    });",
+    find:
+      "        usage: { inputTokens: 1, outputTokens: 2, totalTokens: 3 },\n      },\n" +
+      "      acpToolCalls: [\n        {\n          type: 'tool_call',\n          id: 'acp-1',\n" +
+      "          createdAt: ISO,\n          title: 'Read',\n          kind: 'read',\n" +
+      "          status: 'completed',\n          content: [],\n        },\n      ],\n    });",
+    replace:
+      "        usage: { inputTokens: 1, outputTokens: 2, totalTokens: 3 },\n      },\n    });",
+  },
+  {
+    sentinel: "      expect(parsed.stream?.status).toBe('completed');\n    }",
+    find:
+      "      expect(parsed.stream?.status).toBe('completed');\n" +
+      "      expect(parsed.acpToolCalls).toHaveLength(1);\n    }",
+    replace: "      expect(parsed.stream?.status).toBe('completed');\n    }",
+  },
+]);
+
+// ── C) legacy-adapter.reverse.spec：去掉 acpToolCalls 往返 ────────────────
+patchFile('src/store/aiThread/legacy-adapter.reverse.spec.ts', [
+  {
+    sentinel: "  it('round-trips assistant stream 快照 (Approach B 无损)', () => {",
+    find:
+      "  it('round-trips assistant stream 快照 + acpToolCalls (Approach B 无损)', () => {\n" +
+      "    const streaming: IAiChatMessage = {\n      role: 'assistant',\n      id: 'a2',\n" +
+      "      content: '答案',\n      createdAt: '2026-01-01T00:00:02.000Z',\n      references: [],\n" +
+      "      stream: {\n        status: 'completed',\n        activityText: '正在读取文件',\n" +
+      "        finalAnswerStarted: true,\n        usage: { inputTokens: 12, outputTokens: 34, totalTokens: 46 },\n      },\n" +
+      "      acpToolCalls: [\n        {\n          type: 'tool_call',\n          id: 'acp-1',\n" +
+      "          createdAt: '2026-01-01T00:00:02.000Z',\n          title: 'Read file',\n" +
+      "          kind: 'read',\n          status: 'completed',\n          content: [],\n        },\n      ],\n    };\n" +
+      "    const [message] = threadEntriesToMessages(legacyMessageToEntries(streaming));\n" +
+      "    expect(message?.stream?.status).toBe('completed');\n" +
+      "    expect(message?.stream?.activityText).toBe('正在读取文件');\n" +
+      "    expect(message?.stream?.finalAnswerStarted).toBe(true);\n" +
+      "    expect(message?.stream?.usage?.totalTokens).toBe(46);\n" +
+      "    expect(message?.acpToolCalls?.[0]?.id).toBe('acp-1');\n  });",
+    replace:
+      "  it('round-trips assistant stream 快照 (Approach B 无损)', () => {\n" +
+      "    const streaming: IAiChatMessage = {\n      role: 'assistant',\n      id: 'a2',\n" +
+      "      content: '答案',\n      createdAt: '2026-01-01T00:00:02.000Z',\n      references: [],\n" +
+      "      stream: {\n        status: 'completed',\n        activityText: '正在读取文件',\n" +
+      "        finalAnswerStarted: true,\n        usage: { inputTokens: 12, outputTokens: 34, totalTokens: 46 },\n      },\n    };\n" +
+      "    const [message] = threadEntriesToMessages(legacyMessageToEntries(streaming));\n" +
+      "    expect(message?.stream?.status).toBe('completed');\n" +
+      "    expect(message?.stream?.activityText).toBe('正在读取文件');\n" +
+      "    expect(message?.stream?.finalAnswerStarted).toBe(true);\n" +
+      "    expect(message?.stream?.usage?.totalTokens).toBe(46);\n  });",
+  },
+]);
