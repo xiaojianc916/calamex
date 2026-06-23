@@ -24,6 +24,7 @@ import {
   ContextContentHeader,
   ContextInputUsage,
   ContextOutputUsage,
+  ContextTrigger,
 } from '@/components/ai-elements/context';
 import { PromptInputAttachmentsDisplay } from '@/components/ai-elements/prompt-input';
 import { collectConnectedPlatformIds } from '@/components/business/ai/chat/connected-platforms';
@@ -60,7 +61,11 @@ import { skillsTauriService } from '@/services/tauri.skills';
 import type { IAiAttachedFile, IAiConfigPayload, TAiAgentNetworkPermission } from '@/types/ai';
 import { isAiAssistantMode, type TAiAssistantMode } from '@/types/ai/assistant-mode';
 import type { TAiExecutionMode } from '@/types/ai/execution-mode';
-import type { IAcpAvailableCommand } from '@/types/ai/sidecar';
+import type {
+  IAcpAvailableCommand,
+  IAcpSessionConfigOption,
+  IAcpSessionConfigOptionsState,
+} from '@/types/ai/sidecar';
 import type { ISelectedSkill, ISkillSummary } from '@/types/ai/skill';
 import AiErrorNotice from './AiErrorNotice.vue';
 import { pickAttachmentFilesViaNativeDialog } from './attachment-file-picker';
@@ -169,6 +174,10 @@ const props = defineProps<{
   userQuestions?: readonly IAskUserComposerQuestion[] | null;
   /** Kimi(ACP) 会话公示的可用命令；仅 kimi Agent 时透传给斜杠菜单作为命令列表。 */
   acpCommands?: readonly IAcpAvailableCommand[];
+  /** Kimi(ACP) 会话级配置项（模型 / 思考强度等）；仅 kimi Agent 时渲染为选择器。 */
+  sessionConfigOptions?: IAcpSessionConfigOptionsState | null;
+  /** 配置项切换中（等待 ACP 回执）；为 true 时禁用选择器，避免并发切换。 */
+  isSessionConfigOptionSwitching?: boolean;
 }>();
 
 const emit = defineEmits<{
@@ -183,6 +192,7 @@ const emit = defineEmits<{
   informationSourcesOpen: [];
   personalizationOpen: [];
   prewarm: [];
+  sessionConfigOptionChange: [optionId: string, value: string];
 }>();
 
 const attrs = useAttrs();
@@ -411,6 +421,25 @@ let skillsLoadPromise: Promise<void> | null = null;
 // kimi(ACP) 模式下斜杠菜单改用会话公示命令；builtin 仍用自研技能列表。
 const useAcpSlashCommands = computed(() => selectedAgent.value === 'kimi');
 const acpSlashCommands = computed<readonly IAcpAvailableCommand[]>(() => props.acpCommands ?? []);
+
+// Kimi(ACP) 会话级配置项：父级下传 configOptions，渲染为「每项一个选择器」。
+const sessionConfigOptionList = computed<readonly IAcpSessionConfigOption[]>(
+  () => props.sessionConfigOptions?.configOptions ?? [],
+);
+
+// 入口文案：把 currentValue 映射成对应选项名；找不到时回退原始值。
+const resolveSessionConfigOptionLabel = (option: IAcpSessionConfigOption): string => {
+  const current = option.options.find((choice) => choice.value === option.currentValue);
+  return current?.name ?? option.currentValue;
+};
+
+// 切换配置项：仅上抛 (optionId, value)，由父级落实到 ACP 会话。
+const handleSessionConfigOptionSelect = (optionId: string, value: unknown): void => {
+  if (typeof value !== 'string' || !value.trim()) {
+    return;
+  }
+  emit('sessionConfigOptionChange', optionId, value);
+};
 
 const modeOptions: IAiPromptModeOption[] = [
   { key: 'chat', label: 'chat' },
@@ -1424,6 +1453,39 @@ onMounted(() => {
               </template>
             </SelectContent>
           </Select>
+          <template v-if="selectedAgent === 'kimi'">
+            <Select
+              v-for="option in sessionConfigOptionList"
+              :key="option.id"
+              :model-value="option.currentValue"
+              :disabled="modelSelectDisabled || isSessionConfigOptionSwitching"
+              @update:model-value="(value) => handleSessionConfigOptionSelect(option.id, value)"
+            >
+              <SelectTrigger :aria-label="option.name" class="ai-agent-trigger">
+                <span
+                  class="ai-agent-trigger__label"
+                  v-text="resolveSessionConfigOptionLabel(option)"
+                ></span>
+              </SelectTrigger>
+              <SelectContent
+                side="top"
+                align="end"
+                :side-offset="8"
+                class="ai-agent-content"
+              >
+                <SelectGroup>
+                  <SelectItem
+                    v-for="choice in option.options"
+                    :key="choice.value"
+                    class="ai-agent-item"
+                    :value="choice.value"
+                  >
+                    <span class="ai-agent-item__label" v-text="choice.name"></span>
+                  </SelectItem>
+                </SelectGroup>
+              </SelectContent>
+            </Select>
+          </template>
           <Context v-bind="resolvedTokenContext" :cost="tokenUsageCost">
             <ContextTrigger class="ai-token-trigger" aria-label="Token 消耗" />
             <ContextContent
