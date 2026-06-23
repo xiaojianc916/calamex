@@ -1,7 +1,10 @@
 import { AppError, isAppError } from '@/types/app-error';
 import { createUniqueId } from '@/utils/core/id';
 import { toErrorMessage } from '@/utils/error/error';
-import { assertDesktopRuntime } from '@/utils/platform/desktop-runtime';
+import {
+  assertDesktopRuntime,
+  DesktopRuntimeUnavailableError,
+} from '@/utils/platform/desktop-runtime';
 import { logger } from '@/utils/platform/logger';
 import { buildPayloadMetrics } from './tauri.ipc-metrics';
 import type {
@@ -293,17 +296,17 @@ const normalizeIpcError = (
     return error;
   }
 
-  const baseMessage = toErrorMessage(error, 'IPC 调用失败');
-
-  if (baseMessage.includes('浏览器预览模式')) {
+  if (error instanceof DesktopRuntimeUnavailableError) {
     return new AppError({
-      code: 'ipc.desktop-only',
-      message: baseMessage,
+      code: error.code,
+      message: error.message,
       scope: 'ipc',
       traceId: context.traceId,
       cause: error,
     });
   }
+
+  const baseMessage = toErrorMessage(error, 'IPC 调用失败');
 
   const mapped = resolveMappedError(baseMessage, context.errorMap);
   if (mapped) {

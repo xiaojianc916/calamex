@@ -47,12 +47,23 @@ export const waitForDesktopRuntime = async (
   return syncDesktopRuntime();
 };
 
+/**
+ * 桌面运行时缺失（浏览器预览模式）的类型化错误。
+ * 携带稳定、机器可读的 code，供 IPC 归一层按「类型」判别，
+ * 而非匹配本地化文案（文案一旦改写/国际化即让分类静默失效）。
+ */
+export class DesktopRuntimeUnavailableError extends Error {
+  readonly code = 'ipc.desktop-only';
+  constructor(scene: string) {
+    super(`当前为浏览器预览模式，${scene}仅支持 Tauri 桌面端。请执行 npm run tauri:dev 后重试。`);
+    this.name = 'DesktopRuntimeUnavailableError';
+  }
+}
+
 export const assertDesktopRuntime = async (scene: string): Promise<void> => {
   const ready = await waitForDesktopRuntime();
   if (!ready) {
-    throw new Error(
-      `当前为浏览器预览模式，${scene}仅支持 Tauri 桌面端。请执行 npm run tauri:dev 后重试。`,
-    );
+    throw new DesktopRuntimeUnavailableError(scene);
   }
 };
 

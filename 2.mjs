@@ -1,197 +1,209 @@
-// codemod-2b-1-context-entries-native.mjs
-// Run from repo root:  node codemod-2b-1-context-entries-native.mjs
-import { readFileSync, writeFileSync } from 'node:fs';
-import { resolve } from 'node:path';
+#!/usr/bin/env node
+// @ts-check
+/**
+ * round3-typed-ipc-error.mjs
+ *
+ * 目的：把「桌面运行时缺失」错误从「按本地化中文文案 substring 匹配」
+ *       改造为「按类型(DesktopRuntimeUnavailableError) + 稳定 code 判别」。
+ *
+ * 行为等价（不影响用户体验）：文案不变、code 仍为 'ipc.desktop-only'、
+ *   scope 仍为 'ipc'；仅把分类依据从字符串包含改为错误类型，并补回真实 traceId。
+ *
+ * 特性：默认 dry-run；--apply 才写盘；幂等（已改过自动跳过）；
+ *       严格锚点匹配（锚点缺失或重复出现即报错中止，绝不模糊改写）。
+ *
+ * 用法：
+ *   node round3-typed-ipc-error.mjs                # 预览(dry-run)
+ *   node round3-typed-ipc-error.mjs --apply        # 实际写入
+ *   node round3-typed-ipc-error.mjs --root <repo>  # 指定仓库根(默认 cwd)
+ */
 
-const ROOT = process.cwd();
+import { readFile, writeFile } from 'node:fs/promises';
+import { existsSync } from 'node:fs';
+import path from 'node:path';
+import process from 'node:process';
 
-function patchFile(relPath, edits) {
-  const abs = resolve(ROOT, relPath);
-  let text = readFileSync(abs, 'utf8');
-  const eol = text.includes('\r\n') ? '\r\n' : '\n';
-  const toEol = (s) => (eol === '\r\n' ? s.replace(/\r?\n/g, '\r\n') : s.replace(/\r\n/g, '\n'));
-  edits.forEach((edit, i) => {
-    const find = toEol(edit.find);
-    const replace = toEol(edit.replace);
-    const count = text.split(find).length - 1;
-    if (count !== 1) {
-      throw new Error('[' + relPath + '] 第 ' + (i + 1) + ' 处编辑：期望 find 命中 1 次，实际命中 ' + count + ' 次');
+const argv = process.argv.slice(2);
+const APPLY = argv.includes('--apply');
+const rootIdx = argv.indexOf('--root');
+const ROOT =
+  rootIdx >= 0 && argv[rootIdx + 1] ? path.resolve(argv[rootIdx + 1]) : process.cwd();
+
+const join = (...lines) => lines.join('\n');
+
+// ---- 文件 1: src/utils/platform/desktop-runtime.ts ----
+const RUNTIME_FILE = 'src/utils/platform/desktop-runtime.ts';
+
+const RUNTIME_CLASS_BLOCK = join(
+  '/**',
+  ' * 桌面运行时缺失（浏览器预览模式）的类型化错误。',
+  ' * 携带稳定、机器可读的 code，供 IPC 归一层按「类型」判别，',
+  ' * 而非匹配本地化文案（文案一旦改写/国际化即让分类静默失效）。',
+  ' */',
+  'export class DesktopRuntimeUnavailableError extends Error {',
+  "  readonly code = 'ipc.desktop-only';",
+  '  constructor(scene: string) {',
+  '    super(',
+  '      `当前为浏览器预览模式，${scene}仅支持 Tauri 桌面端。请执行 npm run tauri:dev 后重试。`,',
+  '    );',
+  "    this.name = 'DesktopRuntimeUnavailableError';",
+  '  }',
+  '}',
+);
+
+const RUNTIME_FN_ANCHOR =
+  'export const assertDesktopRuntime = async (scene: string): Promise<void> => {';
+
+// 用正则匹配 throw，容忍本地 biome/prettier 把它格式化成单行或多行
+const RUNTIME_THROW_REGEX =
+  /throw new Error\(\s*`当前为浏览器预览模式，\$\{scene\}仅支持 Tauri 桌面端。请执行 npm run tauri:dev 后重试。`,?\s*\);/;
+const RUNTIME_THROW_REPLACEMENT = 'throw new DesktopRuntimeUnavailableError(scene);';
+
+// ---- 文件 2: src/services/tauri.ipc-runtime.ts ----
+const IPC_FILE = 'src/services/tauri.ipc-runtime.ts';
+
+const IPC_IMPORT_ANCHOR =
+  "import { assertDesktopRuntime } from '@/utils/platform/desktop-runtime';";
+const IPC_IMPORT_REPLACEMENT = join(
+  'import {',
+  '  assertDesktopRuntime,',
+  '  DesktopRuntimeUnavailableError,',
+  "} from '@/utils/platform/desktop-runtime';",
+);
+
+const IPC_BRANCH_ANCHOR = join(
+  "  const baseMessage = toErrorMessage(error, 'IPC 调用失败');",
+  '',
+  "  if (baseMessage.includes('浏览器预览模式')) {",
+  '    return new AppError({',
+  "      code: 'ipc.desktop-only',",
+  '      message: baseMessage,',
+  "      scope: 'ipc',",
+  '      traceId: context.traceId,',
+  '      cause: error,',
+  '    });',
+  '  }',
+  '',
+  '  const mapped = resolveMappedError(baseMessage, context.errorMap);',
+);
+const IPC_BRANCH_REPLACEMENT = join(
+  '  if (error instanceof DesktopRuntimeUnavailableError) {',
+  '    return new AppError({',
+  '      code: error.code,',
+  '      message: error.message,',
+  "      scope: 'ipc',",
+  '      traceId: context.traceId,',
+  '      cause: error,',
+  '    });',
+  '  }',
+  '',
+  "  const baseMessage = toErrorMessage(error, 'IPC 调用失败');",
+  '',
+  '  const mapped = resolveMappedError(baseMessage, context.errorMap);',
+);
+
+const PLAN = [
+  {
+    file: RUNTIME_FILE,
+    ops: [
+      {
+        name: '注入 DesktopRuntimeUnavailableError 类',
+        kind: 'insertBefore',
+        find: RUNTIME_FN_ANCHOR,
+        replace: RUNTIME_CLASS_BLOCK,
+        done: 'class DesktopRuntimeUnavailableError',
+      },
+      {
+        name: '改为抛出类型化错误',
+        kind: 'replace',
+        find: RUNTIME_THROW_REGEX,
+        replace: RUNTIME_THROW_REPLACEMENT,
+        done: 'throw new DesktopRuntimeUnavailableError(scene);',
+      },
+    ],
+  },
+  {
+    file: IPC_FILE,
+    ops: [
+      {
+        name: '导入类型化错误',
+        kind: 'replace',
+        find: IPC_IMPORT_ANCHOR,
+        replace: IPC_IMPORT_REPLACEMENT,
+        done: 'DesktopRuntimeUnavailableError,',
+      },
+      {
+        name: '按类型判别替换 substring 分支',
+        kind: 'replace',
+        find: IPC_BRANCH_ANCHOR,
+        replace: IPC_BRANCH_REPLACEMENT,
+        done: 'if (error instanceof DesktopRuntimeUnavailableError) {',
+      },
+    ],
+  },
+];
+
+const occurrences = (haystack, needle) => {
+  if (needle instanceof RegExp) {
+    const flags = needle.flags.includes('g') ? needle.flags : `${needle.flags}g`;
+    const m = haystack.match(new RegExp(needle.source, flags));
+    return m ? m.length : 0;
+  }
+  return haystack.split(needle).length - 1;
+};
+
+let changedFiles = 0;
+let failures = 0;
+
+for (const { file, ops } of PLAN) {
+  const abs = path.join(ROOT, file);
+  if (!existsSync(abs)) {
+    console.error(`✗ 缺少文件：${file}`);
+    failures++;
+    continue;
+  }
+  const original = await readFile(abs, 'utf8');
+  let content = original;
+  const log = [];
+
+  for (const op of ops) {
+    if (content.includes(op.done)) {
+      log.push(`  • [skip] ${op.name}（已应用）`);
+      continue;
     }
-    text = text.replace(find, replace);
-  });
-  writeFileSync(abs, text, 'utf8');
-  console.log('OK ' + relPath + ' (' + edits.length + ' 处)');
+    const n = occurrences(content, op.find);
+    if (n === 0) {
+      log.push(`  ✗ [fail] ${op.name}：锚点未找到`);
+      failures++;
+      continue;
+    }
+    if (n > 1) {
+      log.push(`  ✗ [fail] ${op.name}：锚点出现 ${n} 次，拒绝模糊改写`);
+      failures++;
+      continue;
+    }
+    const replacement =
+      op.kind === 'insertBefore' ? `${op.replace}\n\n${op.find}` : op.replace;
+    content = content.replace(op.find, replacement);
+    log.push(`  ✓ [edit] ${op.name}`);
+  }
+
+  console.log(`\n${file}`);
+  for (const line of log) console.log(line);
+
+  if (content !== original) {
+    changedFiles++;
+    if (APPLY) {
+      await writeFile(abs, content, 'utf8');
+      console.log('  → 已写入');
+    } else {
+      console.log('  → dry-run（未写入，加 --apply 生效）');
+    }
+  }
 }
 
-// ---------------------------------------------------------------------------
-// 1) src/store/aiAgent.ts — session 基线改 entries（删 baseMessages，无残留字段）
-// ---------------------------------------------------------------------------
-patchFile('src/store/aiAgent.ts', [
-  {
-    find: `  IAiChatMessage,
-  IAiContextReference,`,
-    replace: `  IAiContextReference,`,
-  },
-  {
-    find: `import { aiChatMessageSchema, aiLanguageModelUsageSchema } from '@/types/ai/schema';`,
-    replace: `import { aiLanguageModelUsageSchema } from '@/types/ai/schema';`,
-  },
-  {
-    find: `import { aiToolActivityInlineSchema } from '@/types/ai/stream.schema';`,
-    replace: `import { aiToolActivityInlineSchema } from '@/types/ai/stream.schema';
-import { aiThreadEntrySchema, type IAiThreadEntry } from '@/types/ai/thread';`,
-  },
-  {
-    find: `  threadId: string | null;
-  turnId: string | null;
-  baseMessages: IAiChatMessage[];
-  messageContent: string;
-  references: IAiContextReference[];
-}`,
-    replace: `  threadId: string | null;
-  turnId: string | null;
-  baseEntries: IAiThreadEntry[];
-  messageContent: string;
-  references: IAiContextReference[];
-}`,
-  },
-  {
-    find: `  turnId: z.string().min(1).nullable(),
-  baseMessages: z.array(aiChatMessageSchema).max(20),
-  messageContent: z.string(),`,
-    replace: `  turnId: z.string().min(1).nullable(),
-  // entries 单一真源：续聊/审批 resume 的基线上下文用权威 entries 快照。
-  // default([]) 兼容尚未写入该字段的旧持久化数据（避免整段 agent state 解析失败）。
-  baseEntries: z.array(aiThreadEntrySchema).max(200).default([]),
-  messageContent: z.string(),`,
-  },
-]);
+console.log(
+  `\n汇总：拟修改 ${changedFiles} 个文件，失败 ${failures} 项。${APPLY ? '' : '（dry-run）'}`,
+);
 
-// ---------------------------------------------------------------------------
-// 2) src/composables/ai/useAiAssistant.ts — 上下文投影 entries 化 + 基线快照
-// ---------------------------------------------------------------------------
-patchFile('src/composables/ai/useAiAssistant.ts', [
-  {
-    find: `  const toSidecarMessages = (visibleMessages: IAiChatMessage[]): IAgentSidecarMessage[] => {
-    return visibleMessages
-      .filter((message) => message.role === 'user' || message.role === 'assistant')
-      .map((message) => ({
-        role: message.role,
-        content: message.content.trim(),
-      }))
-      .filter((message) => message.content.length > 0)
-      .slice(-SIDECAR_EXPLICIT_CONTEXT_MESSAGE_LIMIT);
-  };`,
-    replace: `  // 上下文真源 = 权威 entries（对标 Zed AcpThread::to_markdown 由 entries 派生上下文）：
-  // user_message → 文本块以空行衔接；assistant_message → message chunk 文本顺序拼接；
-  // 仅取 user/assistant 文本、去空、保序、截最近 N 条。与旧 messages 投影按构造等价。
-  const toSidecarMessages = (entries: readonly IAiThreadEntry[]): IAgentSidecarMessage[] => {
-    const sidecarMessages: IAgentSidecarMessage[] = [];
-    for (const entry of entries) {
-      if (entry.type === 'user_message') {
-        const content = entry.content
-          .flatMap((block) => (block.type === 'text' ? [block.text] : []))
-          .join('\\n\\n')
-          .trim();
-        if (content.length > 0) {
-          sidecarMessages.push({ role: 'user', content });
-        }
-        continue;
-      }
-      if (entry.type === 'assistant_message') {
-        const content = entry.chunks
-          .flatMap((chunk) =>
-            chunk.type === 'message' && chunk.block.type === 'text' ? [chunk.block.text] : [],
-          )
-          .join('')
-          .trim();
-        if (content.length > 0) {
-          sidecarMessages.push({ role: 'assistant', content });
-        }
-      }
-    }
-    return sidecarMessages.slice(-SIDECAR_EXPLICIT_CONTEXT_MESSAGE_LIMIT);
-  };`,
-  },
-  {
-    find: `    const assistantMessageId = createMessageId('assistant');
-    const targetThreadId = threadId;
-    activeBufferedThreadId.value = targetThreadId;
-    const initialActivityText = buildInitialAgentActivityText();`,
-    replace: `    const assistantMessageId = createMessageId('assistant');
-    const targetThreadId = threadId;
-    activeBufferedThreadId.value = targetThreadId;
-    // 回合基线 = 「发起回合前」的权威 entries 快照（此刻活动线程已含本回合 user_message、
-    // 尚无 assistant 占位）。同时用于本回合 sidecar 上下文与（审批/反向提问）resume 基线。
-    const turnBaseEntries = [...aiThreadStore.authoritativeActiveEntries];
-    const initialActivityText = buildInitialAgentActivityText();`,
-  },
-  {
-    find: `        messages: toSidecarMessages(visibleMessages),`,
-    replace: `        messages: toSidecarMessages(turnBaseEntries),`,
-  },
-  {
-    find: `          persistSidecarToolConfirmation(pendingConfirmation, {
-            sessionId: payload.sessionId,
-            assistantMessageId,
-            threadId: targetThreadId,
-            turnId,
-            baseMessages: visibleMessages,`,
-    replace: `          persistSidecarToolConfirmation(pendingConfirmation, {
-            sessionId: payload.sessionId,
-            assistantMessageId,
-            threadId: targetThreadId,
-            turnId,
-            baseEntries: turnBaseEntries,`,
-  },
-  {
-    find: `          persistSidecarUserQuestion(pendingUserQuestion, {
-            sessionId: payload.sessionId,
-            assistantMessageId,
-            threadId: targetThreadId,
-            turnId,
-            baseMessages: visibleMessages,`,
-    replace: `          persistSidecarUserQuestion(pendingUserQuestion, {
-            sessionId: payload.sessionId,
-            assistantMessageId,
-            threadId: targetThreadId,
-            turnId,
-            baseEntries: turnBaseEntries,`,
-  },
-  {
-    find: `        decision: mapToolConfirmationDecisionToSidecarDecision(decision),
-        goal: session.messageContent,
-        messages: toSidecarMessages(session.baseMessages),`,
-    replace: `        decision: mapToolConfirmationDecisionToSidecarDecision(decision),
-        goal: session.messageContent,
-        messages: toSidecarMessages(session.baseEntries),`,
-  },
-  {
-    find: `        }),
-        goal: session.messageContent,
-        messages: toSidecarMessages(session.baseMessages),`,
-    replace: `        }),
-        goal: session.messageContent,
-        messages: toSidecarMessages(session.baseEntries),`,
-  },
-]);
-
-// ---------------------------------------------------------------------------
-// 3) src/composables/ai/useAiAssistant.spec.ts — 两处持久化 session fixture 改 baseEntries
-// ---------------------------------------------------------------------------
-patchFile('src/composables/ai/useAiAssistant.spec.ts', [
-  {
-    find: `      turnId: 'user-switch-approval',
-      baseMessages: [],`,
-    replace: `      turnId: 'user-switch-approval',
-      baseEntries: [],`,
-  },
-  {
-    find: `      turnId: 'user-persisted-approval',
-      baseMessages: [],`,
-    replace: `      turnId: 'user-persisted-approval',
-      baseEntries: [],`,
-  },
-]);
-
-console.log('done');
+if (failures > 0) process.exitCode = 1;
