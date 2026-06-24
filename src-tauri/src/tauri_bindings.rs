@@ -118,6 +118,7 @@ pub fn builder() -> Builder<tauri::Wry> {
             agent_webview::agent_webview_destroy,
             ai::gateway::ai_get_config,
             ai::gateway::ai_save_config,
+            ai::gateway::ai_set_seeded_models,
             ai::gateway::ai_save_credentials,
             ai::gateway::ai_test_provider_config,
             ai::gateway::ai_connect_provider,

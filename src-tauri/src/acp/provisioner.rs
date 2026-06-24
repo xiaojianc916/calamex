@@ -495,6 +495,16 @@ fn ensure_kimi_managed_config() -> Result<bool, String> {
         push_kimi_entry(&mut providers, &mut models, entry);
     }
 
+    // 全量「可原生切换」清单：前端持久化下发（seeded_models）中、用户有 Key 的模型逐条附加，
+    // 使 Kimi 启动即把整张清单写入 config.toml → 原生 session/set_config_option 覆盖全部模型、
+    // 切换零重启。逐条 best-effort：缺凭证/无默认端点者已在 seeded_sidecar_model_configs /
+    // collect_kimi_model_entry 内跳过；provider 与 model 均按 TOML 键去重，与 main/narrator 重叠者自然合并。
+    for seeded in crate::ai::gateway::seeded_sidecar_model_configs() {
+        if let Some(entry) = collect_kimi_model_entry(&seeded) {
+            push_kimi_entry(&mut providers, &mut models, entry);
+        }
+    }
+
     let rendered = render_kimi_config_toml(&default_model_name, &providers, &models);
 
     fs::create_dir_all(&kimi_dir).map_err(|error| format!("创建托管 KIMI_CODE_HOME 目录失败：{error}"))?;
@@ -677,5 +687,44 @@ mod tests {
         // 同平台 provider 只保留一次；两个不同模型都保留。
         assert_eq!(providers.len(), 1);
         assert_eq!(models.len(), 2);
+    }
+
+    #[test]
+    fn render_kimi_config_toml_emits_all_seeded_models_and_dedup_providers() {
+        // 模拟「整张清单 seed」：多模型跨两个厂商，provider 去重为 2、model 全保留为 3。
+        let providers = vec![
+            KimiProviderEntry {
+                name: "deepseek".to_string(),
+                base_url: "https://api.deepseek.com/v1".to_string(),
+                api_key: "sk-d".to_string(),
+            },
+            KimiProviderEntry {
+                name: "zhipuai".to_string(),
+                base_url: "https://open.bigmodel.cn/api/paas/v4".to_string(),
+                api_key: "sk-z".to_string(),
+            },
+        ];
+        let models = vec![
+            KimiModelEntry {
+                name: "deepseek-deepseek-v4-pro".to_string(),
+                provider: "deepseek".to_string(),
+                model_id: "deepseek/deepseek-v4-pro".to_string(),
+            },
+            KimiModelEntry {
+                name: "deepseek-deepseek-chat".to_string(),
+                provider: "deepseek".to_string(),
+                model_id: "deepseek/deepseek-chat".to_string(),
+            },
+            KimiModelEntry {
+                name: "zhipuai-glm-4-7-flash".to_string(),
+                provider: "zhipuai".to_string(),
+                model_id: "zhipuai/glm-4.7-flash".to_string(),
+            },
+        ];
+        let rendered = render_kimi_config_toml("deepseek-deepseek-v4-pro", &providers, &models);
+        assert_eq!(rendered.matches("[providers.").count(), 2);
+        assert_eq!(rendered.matches("[models.").count(), 3);
+        assert!(rendered.contains("deepseek/deepseek-chat"));
+        assert!(rendered.contains("zhipuai/glm-4.7-flash"));
     }
 }

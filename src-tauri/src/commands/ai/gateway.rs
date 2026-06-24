@@ -6,8 +6,9 @@ use crate::commands::contracts::{
     AiGetSessionModesRequest, AiInlineCompletionRangePayload, AiInlineCompletionRequest,
     AiInlineCompletionResult, AiProviderConnectionPayload, AiProviderConnectionRequest,
     AiProviderTestPayload, AiResolveApprovalRequest, AiSaveConfigRequest, AiSaveCredentialsRequest,
-    AiSessionConfigOptionsPayload, AiSessionModesPayload, AiSetSessionConfigOptionRequest,
-    AiSetSessionModeRequest, AiSuggestionPoolPayload, AiSuggestionPoolRequest,
+    AiSetSeededModelsRequest, AiSessionConfigOptionsPayload, AiSessionModesPayload,
+    AiSetSessionConfigOptionRequest, AiSetSessionModeRequest, AiSuggestionPoolPayload,
+    AiSuggestionPoolRequest,
 };
 use tauri::AppHandle;
 
@@ -113,6 +114,26 @@ pub fn ai_save_config(
     )?;
 
     // 配置已落盘：让正在运行的外部后端（Kimi）即时应用新模型/厂商（详见函数文档）。
+    reconfigure_running_external_backends(&app);
+
+    Ok(config)
+}
+
+/// 下发「全量可原生切换模型清单」（seeded_models）并即时生效。
+///
+/// 前端把项目内置的可扩展模型目录（MASTRA_PROVIDER_PRESET.models）整体下发，后端落盘 ai.json
+/// 后，作为 Kimi 启动时 seed 进 config.toml 的候选模型全集——使 Kimi 原生 session/set_config_option
+/// 的切换候选池覆盖整张清单、零重启切换。与 ai_save_config 同构：清单变更可能新增/移除可切换模型，
+/// 故落盘后 reconfigure_running_external_backends 重启运行中的 Kimi 以即时刷新候选池。
+#[tauri::command]
+#[specta::specta]
+pub fn ai_set_seeded_models(
+    app: AppHandle,
+    payload: AiSetSeededModelsRequest,
+) -> Result<AiConfigPayload, String> {
+    let config = gateway::set_seeded_models(payload.models)?;
+
+    // 候选池变更：让正在运行的 Kimi 重新 seed config.toml 并即时生效（详见 reconfigure 文档）。
     reconfigure_running_external_backends(&app);
 
     Ok(config)
