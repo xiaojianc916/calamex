@@ -42,8 +42,10 @@ const KIMI_DEFAULT_BASE_URL: &str = "https://api.moonshot.ai/v1";
 const KIMI_CODE_HOME_ENV: &str = "KIMI_CODE_HOME";
 const KIMI_MANAGED_HOME_DIR: &str = "kimi-home";
 
-// 托管 config.toml 的归属标记：仅在文件不存在或含此 marker(本程序所写)时才覆盖，
-// 绝不动用户手动维护 / OAuth 登录得到的 config.toml(无 marker 即视为用户自管)。
+// 托管 config.toml 的归属标记：写在文件首行，标明该 config.toml 由 calamex 完全接管。
+// 自 KIMI_CODE_HOME 指向 calamex 自管目录(kimi-home，非全局 ~/.kimi)后，托管目录下的
+// config.toml 恒由本程序覆盖写入(完全接管)；marker 仅作归属戳记与排查用途，不再用于
+// 「是否跳过写入」的判断。
 const KIMI_MANAGED_MARKER: &str = "# managed-by: calamex (ACP gateway bridge)";
 
 /// 外部(及内置)ACP 后端的「自我准备」抽象:凭证预置 + stdio 启动配置。
@@ -90,11 +92,11 @@ impl ExternalAgentProvisioner for KimiProvisioner {
         match ensure_kimi_managed_config() {
             Ok(true) => log::info!(
                 target: "acp",
-                "已用项目网关配置写入托管 KIMI_CODE_HOME 的 config.toml（Kimi 复用项目内既有 Key）。"
+                "已用项目网关配置完全接管覆盖托管 KIMI_CODE_HOME 的 config.toml（Kimi 复用项目内既有 Key）。"
             ),
             Ok(false) => log::info!(
                 target: "acp",
-                "跳过写入托管 KIMI_CODE_HOME 的 config.toml（用户自管配置已存在，或项目未配置网关地址）；沿用 Kimi 既有登录。"
+                "跳过写入托管 KIMI_CODE_HOME 的 config.toml（项目尚无可桥接的网关模型：主模型缺 Key 或其厂商无默认端点）；沿用 Kimi 既有登录。"
             ),
             Err(error) => log::warn!(
                 target: "acp",
@@ -253,8 +255,9 @@ fn build_codex_client_config() -> AcpClientConfig {
 // 兼容（`openai`）provider 写入托管 KIMI_CODE_HOME 的 config.toml，免去用户在终端 `/login`，
 // 直接复用项目内既有 Key——解决「acp protocol error: Authentication required」。
 //
-// 安全：仅在该文件「不存在」或「由本程序托管（含 KIMI_MANAGED_MARKER）」时才写，绝不覆盖用户
-// 手动维护 / OAuth 登录得到的 config.toml（无 marker 即视为用户自管，跳过并保留其既有登录）。
+// 接管策略：KIMI_CODE_HOME 指向 calamex 自管目录（kimi-home，非全局 ~/.kimi），该托管目录下的
+// config.toml 由本程序「完全接管」——每次拉起前恒以项目网关配置覆盖写入（用户在此托管目录内的手动
+// `/login` 会被清掉）。要用 Kimi 托管模型，请在 AI 设置里选 moonshotai 厂商 + 填 Key，走同一份 seed。
 
 /// 解析「calamex 托管」的 Kimi 配置目录。优先外部显式 KIMI_CODE_HOME(逃生舱：用户/CI 可强制
 /// 指向自管目录)，否则用 calamex 自管目录(品牌存储根下 kimi-home，如 ~/.calamex/kimi-home)。
@@ -457,22 +460,16 @@ max_context_size = 262144
 
 /// 在拉起 `kimi acp` 前确保托管 KIMI_CODE_HOME 的 `config.toml` 含可用凭证（复用项目已存网关配置）。
 ///
-/// 返回 `Ok(true)`：已写入/刷新托管配置；`Ok(false)`：有意跳过（用户自管配置已存在，或项目
-/// 尚无可桥接的网关地址）；`Err`：IO / 配置获取失败（调用方仅记录，不阻断启动）。
+/// 返回 `Ok(true)`：已写入/刷新托管配置；`Ok(false)`：有意跳过（项目尚无可桥接的网关模型——
+/// 主模型缺 Key 或其厂商无默认端点）；`Err`：IO / 配置获取失败（调用方仅记录，不阻断启动）。
+///
+/// 完全接管：托管 KIMI_CODE_HOME 下的 config.toml 恒被覆盖写入，不再因「已存在且无 marker」而跳过——
+/// 托管目录是 calamex 自管的 kimi-home（非全局 ~/.kimi），用户在该目录内的手动 `/login` 会被清掉。
 fn ensure_kimi_managed_config() -> Result<bool, String> {
     let Some(kimi_dir) = kimi_home_dir() else {
         return Err("无法定位托管 KIMI_CODE_HOME 目录。".to_string());
     };
     let config_path = kimi_dir.join("config.toml");
-
-    // 已存在且非本程序托管 → 视为用户自管（含 OAuth / 手动 Key），保留不动。
-    if config_path.is_file() {
-        let existing = fs::read_to_string(&config_path)
-            .map_err(|error| format!("读取托管 KIMI_CODE_HOME 的 config.toml 失败：{error}"))?;
-        if !existing.contains(KIMI_MANAGED_MARKER) {
-            return Ok(false);
-        }
-    }
 
     // 收集可桥接的网关模型：主模型必备（缺网关地址且无默认端点则整体跳过，交回 Kimi 登录），
     // Narrator 为尽力而为的附加模型（解析失败仅跳过该条，不影响主模型 seed）。
