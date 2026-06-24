@@ -142,9 +142,6 @@ const selectedAgent = defineModel<TAiPromptAgentKind>('agentBackend', {
   default: 'kimi',
 });
 
-// Kimi Code 当前选中的内置模式（普通 / Plan / Auto / YOLO），与 builtin 的 activeMode 解耦。
-const kimiMode = defineModel<string>('kimiMode', { default: 'normal' });
-
 const props = defineProps<{
   disabled: boolean;
   stopVisible?: boolean;
@@ -154,12 +151,6 @@ const props = defineProps<{
   hasAttachments: boolean;
   tokenContext?: IAiTokenContextProps;
   config: IAiConfigPayload;
-  /**
-   * 当前 Agent 的会话级模型覆盖值。父级按 Agent 维护各自的模型记忆并下传；
-   * 为空（undefined / 空串）时回退到 props.config.selectedModel（全局 / 当前选中模型）。
-   * 让模型选择器在不同 Agent 间互不串用，同时完全复用既有 UI。
-   */
-  selectedModelOverride?: string;
   isModelSaving?: boolean;
   networkPermission: TAiAgentNetworkPermission;
   isNetworkPermissionSaving?: boolean;
@@ -422,9 +413,36 @@ let skillsLoadPromise: Promise<void> | null = null;
 const useAcpSlashCommands = computed(() => selectedAgent.value === 'kimi');
 const acpSlashCommands = computed<readonly IAcpAvailableCommand[]>(() => props.acpCommands ?? []);
 
-// Kimi(ACP) 会话级配置项：父级下传 configOptions，渲染为「每项一个选择器」。
+// Kimi(ACP) 会话级配置项：父级下传 configOptions。
 const sessionConfigOptionList = computed<readonly IAcpSessionConfigOption[]>(
   () => props.sessionConfigOptions?.configOptions ?? [],
+);
+
+// 识别「模型」配置项：Kimi 经 ACP config_options 公示的可切换模型项（id/name 含 model/模型）。
+const MODEL_CONFIG_OPTION_PATTERN = /model|\u6a21\u578b/i;
+const isModelConfigOption = (option: IAcpSessionConfigOption): boolean =>
+  MODEL_CONFIG_OPTION_PATTERN.test(option.id) || MODEL_CONFIG_OPTION_PATTERN.test(option.name);
+
+// 当前 Agent 为 kimi 且公示了模型配置项时，主模型选择器直接驱动它
+// （set_config_option 零重启实时切换）；否则为 null。
+const kimiModelConfigOption = computed<IAcpSessionConfigOption | null>(() => {
+  if (selectedAgent.value !== 'kimi') {
+    return null;
+  }
+  return sessionConfigOptionList.value.find(isModelConfigOption) ?? null;
+});
+
+// 非模型配置项（思考强度等）：模型项已上移到主选择器，这里只渲染其余项，避免重复入口。
+const nonModelSessionConfigOptionList = computed<readonly IAcpSessionConfigOption[]>(() =>
+  sessionConfigOptionList.value.filter((option) => !isModelConfigOption(option)),
+);
+
+// kimi 已公示模型项 → 主选择器走 ACP 实时切换；否则（builtin 或 kimi 未公示）走原有逻辑。
+const isKimiModelSelector = computed(() => kimiModelConfigOption.value !== null);
+
+// kimi 但未公示任何可切换模型 → 锁定主选择器并明示，避免「选了没反应」的无声失败。
+const isKimiModelLocked = computed(
+  () => selectedAgent.value === 'kimi' && kimiModelConfigOption.value === null,
 );
 
 // 入口文案：把 currentValue 映射成对应选项名；找不到时回退原始值。
@@ -441,18 +459,12 @@ const handleSessionConfigOptionSelect = (optionId: string, value: unknown): void
   emit('sessionConfigOptionChange', optionId, value);
 };
 
+// 模式选择器仅服务 builtin（自研 Agent）的执行模式 chat / agent / plan，驱动既有发送路由。
+// kimi 等外部 Agent 不在此处切模式（其模型经 ACP config_options 公示并由主选择器驱动）。
 const modeOptions: IAiPromptModeOption[] = [
   { key: 'chat', label: 'chat' },
   { key: 'agent', label: 'agent' },
   { key: 'plan', label: 'plan' },
-];
-
-// Kimi Code 官方内置模式（固定集合，非 ACP 动态公示）。
-const KIMI_MODES: { key: string; label: string }[] = [
-  { key: 'default', label: 'Default' },
-  { key: 'plan', label: 'Plan' },
-  { key: 'auto', label: 'Auto' },
-  { key: 'yolo', label: 'YOLO' },
 ];
 
 const emptyTokenContext: IAiTokenContextProps = {
@@ -486,10 +498,13 @@ const formatModelLabel = (label: string): string =>
     .replace(/\s+/gu, ' ')
     .trim();
 
+// 当前用于展示 / 计费估算的模型 id：
+// - kimi 且公示了模型项 → 该项的 currentValue（Kimi 实际在用的模型）。
+// - 否则 → 全局 selectedModel（builtin 的 mastra 运行时模型，或锁定态的回退展示）。
 const selectedModel = computed(() => {
-  const overridden = props.selectedModelOverride?.trim();
-  if (overridden) {
-    return overridden;
+  const modelOption = kimiModelConfigOption.value;
+  if (modelOption) {
+    return modelOption.currentValue;
   }
   return props.config.selectedModel?.trim() ?? '';
 });
@@ -516,9 +531,16 @@ const tokenUsageCost = computed(() => {
 const selectedPlatform = computed(() => findAiServicePlatformByModel(selectedModel.value));
 
 const selectedModelLabel = computed(() => {
+  const modelOption = kimiModelConfigOption.value;
+  if (modelOption) {
+    return resolveSessionConfigOptionLabel(modelOption);
+  }
+  if (isKimiModelLocked.value) {
+    return 'Kimi \u672a\u516c\u793a\u53ef\u5207\u6362\u6a21\u578b';
+  }
   const modelId = selectedModel.value;
   if (!modelId) {
-    return '未选择模型';
+    return '\u672a\u9009\u62e9\u6a21\u578b';
   }
   const matched = selectedPlatform.value.models.find((model) => model.id === modelId);
   if (matched) {
@@ -529,13 +551,18 @@ const selectedModelLabel = computed(() => {
 
 const selectedPlatformId = computed<TAiServicePlatformId>(() => selectedPlatform.value.id);
 
+// 主选择器触发器图标：kimi 固定用 moonshotai 标识；builtin 按所选模型解析所属平台。
+const modelTriggerPlatformId = computed<TAiServicePlatformId>(() =>
+  selectedAgent.value === 'kimi' ? 'moonshotai' : selectedPlatformId.value,
+);
+
 const connectedPlatformIds = computed(() => collectConnectedPlatformIds(props.config.credentials));
 
 const modelSections = computed<IAiPromptModelSection[]>(() =>
   AI_SERVICE_PLATFORM_PRESETS.map((platform) => ({
     key: platform.id,
     label: platform.label,
-    badge: connectedPlatformIds.value.has(platform.id) ? '已接入' : null,
+    badge: connectedPlatformIds.value.has(platform.id) ? '\u5df2\u63a5\u5165' : null,
     models: platform.models.map((model) => ({
       id: model.id,
       label: formatModelLabel(model.label),
@@ -576,41 +603,21 @@ const networkPermissionEnabled = computed(() => props.networkPermission === 'all
 // 默认 interactive = 逐步门控。对标 Cline Auto-approve / Cursor Auto-run。
 const executionAutonomous = computed(() => props.executionMode === 'autonomous');
 
-// 模式选择器（统一实现）：按当前 Agent 决定可选模式集。
-// - builtin：执行模式 chat / agent / plan，绑定 activeMode（驱动既有发送路由）。
-// - kimi：Kimi 官方内置模式 普通 / Plan / Auto / YOLO，绑定 kimiMode（静态表，非 ACP 动态）。
-const modeSelectItems = computed<{ key: string; label: string }[]>(() =>
-  selectedAgent.value === 'kimi' ? KIMI_MODES : modeOptions,
-);
-
-// 当前模式 key：若原始值（如 kimiMode 默认 'normal'）不在可选集中，回退到首项，
-// 保证子菜单入口文案与勾选状态始终有效、不为空。
+// 当前模式 key：若原始值不在可选集中，回退到首项，保证子菜单入口文案与勾选状态始终有效。
 const modeSelectValue = computed(() => {
-  const raw = selectedAgent.value === 'kimi' ? kimiMode.value : activeMode.value;
-  const items = modeSelectItems.value;
-  return items.some((mode) => mode.key === raw) ? raw : (items[0]?.key ?? raw);
+  const raw = activeMode.value;
+  return modeOptions.some((mode) => mode.key === raw) ? raw : (modeOptions[0]?.key ?? raw);
 });
-
-const handleModeSelect = (value: unknown): void => {
-  if (typeof value !== 'string' || !value.trim()) {
-    return;
-  }
-  if (selectedAgent.value === 'kimi') {
-    kimiMode.value = value;
-    return;
-  }
-  handleModeChange(value);
-};
 
 // 二级菜单入口左侧展示的当前模式文案。
 const modeSelectValueLabel = computed(() => {
-  const current = modeSelectItems.value.find((mode) => mode.key === modeSelectValue.value);
+  const current = modeOptions.find((mode) => mode.key === modeSelectValue.value);
   return current?.label ?? '';
 });
 
-const networkPermissionLabel = computed(() => (networkPermissionEnabled.value ? '已允许' : '询问'));
+const networkPermissionLabel = computed(() => (networkPermissionEnabled.value ? '\u5df2\u5141\u8bb8' : '\u8be2\u95ee'));
 
-const executionModeLabel = computed(() => (executionAutonomous.value ? '已开启' : '已关闭'));
+const executionModeLabel = computed(() => (executionAutonomous.value ? '\u5df2\u5f00\u542f' : '\u5df2\u5173\u95ed'));
 
 const normalizePendingAttachmentName = (file: File): string => {
   const normalizedName = file.name.trim();
@@ -630,14 +637,14 @@ const createPendingAttachment = (file: File): IAiAttachedFile => {
     sizeLabel: '',
     kind,
     status: 'processing',
-    detailLabel: '处理中…',
+    detailLabel: '\u5904\u7406\u4e2d\u2026',
     reference: {
       id,
       kind: kind === 'image' ? 'image-attachment' : 'search-result',
-      label: `${kind === 'image' ? '图片附件' : '附件'} · ${name}`,
+      label: `${kind === 'image' ? '\u56fe\u7247\u9644\u4ef6' : '\u9644\u4ef6'} \u00b7 ${name}`,
       path: name,
       range: null,
-      contentPreview: '附件正在处理中，完成后会作为 AI 上下文发送。',
+      contentPreview: '\u9644\u4ef6\u6b63\u5728\u5904\u7406\u4e2d\uff0c\u5b8c\u6210\u540e\u4f1a\u4f5c\u4e3a AI \u4e0a\u4e0b\u6587\u53d1\u9001\u3002',
       redacted: false,
     },
   };
@@ -660,7 +667,7 @@ const queueAttachmentFile = async (file: File): Promise<void> => {
   }
   pendingAttachmentDrafts.value = pendingAttachmentDrafts.value.map((attachment) =>
     attachment.id === draft.id
-      ? { ...attachment, status: 'failed', detailLabel: '处理失败' }
+      ? { ...attachment, status: 'failed', detailLabel: '\u5904\u7406\u5931\u8d25' }
       : attachment,
   );
 };
@@ -934,7 +941,7 @@ const openSkillsManager = (): void => {
   skillsManagerOpen.value = true;
 };
 
-// 选择技能：在光标处插入胶囊并去重，技能本身随 selectedSkills 上抩由发送时附加指令。
+// 选择技能：在光标处插入胶囊并去重，技能本身随 selectedSkills 上抛由发送时附加指令。
 const handleSelectSkill = (slug: string): void => {
   const summary = skills.value.find((item) => item.slug === slug);
   const name = summary?.name?.trim() || slug;
@@ -1009,6 +1016,24 @@ const handleModelChange = (value: unknown): void => {
   emit('modelChange', value);
 };
 
+// 主模型选择器变更分流：
+// - kimi 且公示了模型项 → 经 ACP config_options 实时切换（set_config_option，零重启）。
+// - 否则（builtin）→ 切 mastra 全局模型（持久化到 ai.json）。
+const handleModelSelectorChange = (value: unknown): void => {
+  if (typeof value !== 'string' || !value.trim()) {
+    return;
+  }
+  const modelOption = kimiModelConfigOption.value;
+  if (modelOption) {
+    if (value === modelOption.currentValue) {
+      return;
+    }
+    emit('sessionConfigOptionChange', modelOption.id, value);
+    return;
+  }
+  handleModelChange(value);
+};
+
 const toggleNetworkPermission = (): void => {
   if (props.disabled || props.isNetworkPermissionSaving) {
     return;
@@ -1016,7 +1041,7 @@ const toggleNetworkPermission = (): void => {
   emit('networkPermissionChange', networkPermissionEnabled.value ? 'ask' : 'allowed-this-run');
 };
 
-// 切换自主 plan 模式:interactive(逐步门控) ⇄ autonomous(无人值守闭环)。
+// 切换自主 plan 模式:interactive(逐步门控) \u21c4 autonomous(无人值守闭环)。
 // executionMode 是本地同步状态,无需 saving 态。
 const toggleExecutionMode = (): void => {
   if (props.disabled) {
@@ -1047,7 +1072,7 @@ const handleRemoveAttachment = (id: string): void => {
   emit('removeFile', id);
 };
 
-// 📎 附件选择：调用系统原生文件对话框（记忆上次目录、首次回退工作区根 / home）。
+// \ud83d\udcce 附件选择：调用系统原生文件对话框（记忆上次目录、首次回退工作区根 / home）。
 // 仅桌面运行时可用；已移除向隐藏 <input type=file> 的降级。
 const handleOpenFileDialog = async (): Promise<void> => {
   if (props.disabled) {
@@ -1176,7 +1201,7 @@ onMounted(() => {
                     type="button"
                     class="ai-question-pager-btn"
                     :disabled="questionIndex === 0"
-                    aria-label="上一个问题"
+                    aria-label="\u4e0a\u4e00\u4e2a\u95ee\u9898"
                     @click="goToPrevQuestion"
                   >
                     <ChevronLeft class="size-4" />
@@ -1186,7 +1211,7 @@ onMounted(() => {
                     type="button"
                     class="ai-question-pager-btn"
                     :disabled="questionIndex === questionTotal - 1"
-                    aria-label="下一个问题"
+                    aria-label="\u4e0b\u4e00\u4e2a\u95ee\u9898"
                     @click="goToNextQuestion"
                   >
                     <ChevronRight class="size-4" />
@@ -1195,7 +1220,7 @@ onMounted(() => {
                 <button
                   type="button"
                   class="ai-question-close"
-                  aria-label="取消提问"
+                  aria-label="\u53d6\u6d88\u63d0\u95ee"
                   @click="handleQuestionCancel"
                 >
                   <X class="size-4" />
@@ -1235,7 +1260,7 @@ onMounted(() => {
                 <button
                   type="button"
                   class="ai-question-free-check"
-                  aria-label="选择自定义回答"
+                  aria-label="\u9009\u62e9\u81ea\u5b9a\u4e49\u56de\u7b54"
                   @click="toggleFreeOption"
                 >
                   <span class="ai-question-checkbox" aria-hidden="true">
@@ -1245,7 +1270,7 @@ onMounted(() => {
                 <textarea
                   class="ai-question-free"
                   rows="1"
-                  :placeholder="currentQuestion?.placeholder || '或者，请描述你的要求……'"
+                  :placeholder="currentQuestion?.placeholder || '\u6216\u8005\uff0c\u8bf7\u63cf\u8ff0\u4f60\u7684\u8981\u6c42\u2026\u2026'"
                   :value="currentDraft.text"
                   @input="onQuestionTextInput"
                   @focus="focusFreeOption"
@@ -1261,7 +1286,7 @@ onMounted(() => {
             data-slot="ai-prompt-editor"
             role="textbox"
             aria-multiline="true"
-            aria-label="输入消息"
+            aria-label="\u8f93\u5165\u6d88\u606f"
             :contenteditable="disabled ? 'false' : 'true'"
             @input="onEditorInput"
             @keydown="handleKeyDown"
@@ -1276,7 +1301,7 @@ onMounted(() => {
             v-if="isEditorEmpty"
             class="ai-prompt-placeholder"
             aria-hidden="true"
-            >使用 AI 处理各种任务...</span
+            >\u4f7f\u7528 AI \u5904\u7406\u5404\u79cd\u4efb\u52a1...</span
           >
         </div>
         <InputGroupAddon align="block-end" class="ai-toolbar-row">
@@ -1287,7 +1312,7 @@ onMounted(() => {
               class="ai-icon-action ai-attachment-button"
               size="icon-xs"
               :disabled="disabled"
-              aria-label="提供背景信息"
+              aria-label="\u63d0\u4f9b\u80cc\u666f\u4fe1\u606f"
               @click="handleOpenFileDialog"
             >
               <Paperclip class="size-4" :stroke-width="1.5" />
@@ -1300,7 +1325,7 @@ onMounted(() => {
                   class="ai-icon-action ai-mode-trigger"
                   size="icon-xs"
                   :disabled="disabled"
-                  aria-label="打开 AI 模式设置"
+                  aria-label="\u6253\u5f00 AI \u6a21\u5f0f\u8bbe\u7f6e"
                 >
                   <Settings2 class="size-4" :stroke-width="1.5" />
                 </InputGroupButton>
@@ -1311,36 +1336,38 @@ onMounted(() => {
                 :side-offset="8"
                 class="ai-settings-menu"
               >
-                <DropdownMenuSub>
-                  <DropdownMenuSubTrigger class="ai-settings-menu-item ai-settings-submenu-trigger">
-                    <Route class="ai-settings-menu-icon" />
-                    <span class="ai-settings-menu-label" v-text="modeSelectValueLabel"></span>
-                    <ChevronRight class="ai-settings-menu-chevron" />
-                  </DropdownMenuSubTrigger>
-                  <DropdownMenuSubContent
-                    :side-offset="4"
-                    class="ai-settings-submenu"
-                  >
-                    <DropdownMenuItem
-                      v-for="mode in modeSelectItems"
-                      :key="mode.key"
-                      class="ai-settings-menu-item ai-settings-mode-item"
-                      :data-active="modeSelectValue === mode.key ? '' : undefined"
-                      @select.prevent="handleModeSelect(mode.key)"
+                <template v-if="selectedAgent === 'builtin'">
+                  <DropdownMenuSub>
+                    <DropdownMenuSubTrigger class="ai-settings-menu-item ai-settings-submenu-trigger">
+                      <Route class="ai-settings-menu-icon" />
+                      <span class="ai-settings-menu-label" v-text="modeSelectValueLabel"></span>
+                      <ChevronRight class="ai-settings-menu-chevron" />
+                    </DropdownMenuSubTrigger>
+                    <DropdownMenuSubContent
+                      :side-offset="4"
+                      class="ai-settings-submenu"
                     >
-                      <span class="ai-settings-menu-label" v-text="mode.label"></span>
-                      <Check v-if="modeSelectValue === mode.key" class="ai-settings-menu-check" />
-                    </DropdownMenuItem>
-                  </DropdownMenuSubContent>
-                </DropdownMenuSub>
-                <div class="ai-settings-menu-separator" aria-hidden="true"></div>
+                      <DropdownMenuItem
+                        v-for="mode in modeOptions"
+                        :key="mode.key"
+                        class="ai-settings-menu-item ai-settings-mode-item"
+                        :data-active="modeSelectValue === mode.key ? '' : undefined"
+                        @select.prevent="handleModeChange(mode.key)"
+                      >
+                        <span class="ai-settings-menu-label" v-text="mode.label"></span>
+                        <Check v-if="modeSelectValue === mode.key" class="ai-settings-menu-check" />
+                      </DropdownMenuItem>
+                    </DropdownMenuSubContent>
+                  </DropdownMenuSub>
+                  <div class="ai-settings-menu-separator" aria-hidden="true"></div>
+                </template>
                 <DropdownMenuItem
                   class="ai-settings-menu-item"
                   :disabled="disabled"
                   @select.prevent="toggleNetworkPermission"
                 >
                   <Globe class="ai-settings-menu-icon" />
-                  <span class="ai-settings-menu-label">网络访问权限</span>
+                  <span class="ai-settings-menu-label">\u7f51\u7edc\u8bbf\u95ee\u6743\u9650</span>
                   <button
                     type="button"
                     class="ai-network-switch"
@@ -1358,7 +1385,7 @@ onMounted(() => {
                   @select="handleOpenInformationSources"
                 >
                   <Network class="ai-settings-menu-icon" />
-                  <span class="ai-settings-menu-label">我的信息源</span>
+                  <span class="ai-settings-menu-label">\u6211\u7684\u4fe1\u606f\u6e90</span>
                   <ChevronRight class="ai-settings-menu-chevron" />
                 </DropdownMenuItem>
                 <DropdownMenuItem
@@ -1366,7 +1393,7 @@ onMounted(() => {
                   @select="openSkillsManager"
                 >
                   <Plus class="ai-settings-menu-icon" />
-                  <span class="ai-settings-menu-label">添加skill</span>
+                  <span class="ai-settings-menu-label">\u6dfb\u52a0skill</span>
                 </DropdownMenuItem>
 
                 <DropdownMenuItem
@@ -1376,7 +1403,7 @@ onMounted(() => {
                   @select.prevent="toggleExecutionMode"
                 >
                   <Bot class="ai-settings-menu-icon" />
-                  <span class="ai-settings-menu-label">自主plan模式</span>
+                  <span class="ai-settings-menu-label">\u81ea\u4e3bplan\u6a21\u5f0f</span>
                   <button
                     type="button"
                     class="ai-network-switch"
@@ -1394,7 +1421,7 @@ onMounted(() => {
                   @select="handleOpenPersonalization"
                 >
                   <Paintbrush class="ai-settings-menu-icon" />
-                  <span class="ai-settings-menu-label">个性化</span>
+                  <span class="ai-settings-menu-label">\u4e2a\u6027\u5316</span>
                 </DropdownMenuItem>
               </DropdownMenuContent>
             </DropdownMenu>
@@ -1402,13 +1429,13 @@ onMounted(() => {
           <div class="ai-toolbar-spacer" aria-hidden="true"></div>
           <Select
             :model-value="selectedModel"
-            :disabled="modelSelectDisabled"
-            @update:model-value="handleModelChange"
+            :disabled="modelSelectDisabled || isKimiModelLocked"
+            @update:model-value="handleModelSelectorChange"
           >
-            <SelectTrigger aria-label="选择模型" class="ai-model-trigger">
+            <SelectTrigger aria-label="\u9009\u62e9\u6a21\u578b" class="ai-model-trigger">
               <AiProviderIcon
                 class="ai-model-trigger__icon"
-                :platform-id="selectedPlatformId"
+                :platform-id="modelTriggerPlatformId"
                 decorative
               />
               <span class="ai-model-trigger__label" v-text="selectedModelLabel"></span>
@@ -1419,43 +1446,62 @@ onMounted(() => {
               :side-offset="8"
               class="ai-model-content"
             >
-              <template
-                v-for="(section, sectionIndex) in modelSections"
-                :key="section.key"
-              >
-                <SelectLabel class="ai-model-section-label">
-                  <span v-text="section.label"></span>
-                  <span
-                    v-if="section.badge"
-                    class="ai-model-beta"
-                    v-text="section.badge"
-                  ></span>
-                </SelectLabel>
+              <template v-if="isKimiModelSelector">
                 <SelectGroup>
                   <SelectItem
-                    v-for="model in section.models"
-                    :key="model.id"
+                    v-for="choice in kimiModelConfigOption?.options ?? []"
+                    :key="choice.value"
                     class="ai-model-item"
-                    :value="model.id"
+                    :value="choice.value"
                   >
                     <AiProviderIcon
                       class="ai-model-item__icon"
-                      :platform-id="section.key"
+                      platform-id="moonshotai"
                       decorative
                     />
-                    <span class="ai-model-item__label" v-text="model.label"></span>
+                    <span class="ai-model-item__label" v-text="choice.name"></span>
                   </SelectItem>
                 </SelectGroup>
-                <SelectSeparator
-                  v-if="sectionIndex < modelSections.length - 1"
-                  class="ai-model-separator"
-                />
+              </template>
+              <template v-else>
+                <template
+                  v-for="(section, sectionIndex) in modelSections"
+                  :key="section.key"
+                >
+                  <SelectLabel class="ai-model-section-label">
+                    <span v-text="section.label"></span>
+                    <span
+                      v-if="section.badge"
+                      class="ai-model-beta"
+                      v-text="section.badge"
+                    ></span>
+                  </SelectLabel>
+                  <SelectGroup>
+                    <SelectItem
+                      v-for="model in section.models"
+                      :key="model.id"
+                      class="ai-model-item"
+                      :value="model.id"
+                    >
+                      <AiProviderIcon
+                        class="ai-model-item__icon"
+                        :platform-id="section.key"
+                        decorative
+                      />
+                      <span class="ai-model-item__label" v-text="model.label"></span>
+                    </SelectItem>
+                  </SelectGroup>
+                  <SelectSeparator
+                    v-if="sectionIndex < modelSections.length - 1"
+                    class="ai-model-separator"
+                  />
+                </template>
               </template>
             </SelectContent>
           </Select>
           <template v-if="selectedAgent === 'kimi'">
             <Select
-              v-for="option in sessionConfigOptionList"
+              v-for="option in nonModelSessionConfigOptionList"
               :key="option.id"
               :model-value="option.currentValue"
               :disabled="modelSelectDisabled || isSessionConfigOptionSwitching"
@@ -1487,7 +1533,7 @@ onMounted(() => {
             </Select>
           </template>
           <Context v-bind="resolvedTokenContext" :cost="tokenUsageCost">
-            <ContextTrigger class="ai-token-trigger" aria-label="Token 消耗" />
+            <ContextTrigger class="ai-token-trigger" aria-label="Token \u6d88\u8017" />
             <ContextContent
               side="top"
               align="end"
@@ -1508,7 +1554,7 @@ onMounted(() => {
             variant="outline"
             class="ai-send-button"
             size="icon-xs"
-            aria-label="停止"
+            aria-label="\u505c\u6b62"
             @click="handleStop"
           >
             <Square class="size-4" />
