@@ -34,6 +34,11 @@ const AI_COMMAND_META = {
     guardHint: '保存 AI 配置',
     audit: 'sensitive',
   },
+  aiSetSeededModels: {
+    command: 'ai_set_seeded_models',
+    guardHint: '下发可切换模型清单',
+    audit: 'sensitive',
+  },
   aiSaveCredentials: {
     command: 'ai_save_credentials',
     guardHint: '保存 AI 凭证',
@@ -198,6 +203,7 @@ type TAiTauriService = Pick<
   ITauriService,
   | 'aiGetConfig'
   | 'aiSaveConfig'
+  | 'aiSetSeededModels'
   | 'aiSaveCredentials'
   | 'aiClearCredentials'
   | 'aiTestProvider'
@@ -245,6 +251,10 @@ export const aiTauriService: TAiTauriService = {
 
   aiSaveConfig: payloadCommand(AI_COMMAND_META.aiSaveConfig, (payload) =>
     commands.aiSaveConfig(payload),
+  ),
+
+  aiSetSeededModels: payloadCommand(AI_COMMAND_META.aiSetSeededModels, (payload) =>
+    commands.aiSetSeededModels(payload),
   ),
 
   aiSaveCredentials: payloadCommand(AI_COMMAND_META.aiSaveCredentials, (payload) =>

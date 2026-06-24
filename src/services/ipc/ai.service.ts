@@ -6,6 +6,7 @@ import type {
   AiConfigPayload,
   AiInlineCompletionResult,
   AiProviderConnectionPayload,
+  AiSetSeededModelsRequest,
   AiWebSearchInput,
   AiWebSearchPayload,
 } from '@/bindings/tauri';
@@ -270,6 +271,9 @@ export const aiService = {
   },
   saveConfig(payload: IAiSaveConfigRequest): Promise<AiConfigPayload> {
     return tauriService.aiSaveConfig(payload);
+  },
+  setSeededModels(payload: AiSetSeededModelsRequest): Promise<AiConfigPayload> {
+    return tauriService.aiSetSeededModels(payload);
   },
   saveCredentials(payload: IAiSaveCredentialsRequest): Promise<AiConfigPayload> {
     return tauriService.aiSaveCredentials(payload);

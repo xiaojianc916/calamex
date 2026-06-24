@@ -6,6 +6,7 @@ import type {
   AiConfigPayload,
   AiInlineCompletionResult,
   AiProviderConnectionPayload,
+  AiSetSeededModelsRequest,
   AiWebSearchInput,
   AiWebSearchPayload,
 } from '@/bindings/tauri';
@@ -390,6 +391,7 @@ export interface ITauriService {
   createSshDirectory(payload: ISshDirectoryCreateRequest): Promise<ISshDirectoryCreatePayload>;
   aiGetConfig(): Promise<AiConfigPayload>;
   aiSaveConfig(payload: IAiSaveConfigRequest): Promise<AiConfigPayload>;
+  aiSetSeededModels(payload: AiSetSeededModelsRequest): Promise<AiConfigPayload>;
   aiSaveCredentials(payload: IAiSaveCredentialsRequest): Promise<AiConfigPayload>;
   aiClearCredentials(): Promise<void>;
   aiTestProvider(): Promise<IAiProviderTestPayload>;
