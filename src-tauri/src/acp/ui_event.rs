@@ -22,11 +22,6 @@
 //! 其余 session/update 变体（`plan` 等）
 //! 暂未投影：plan 经信封回宿主，会话元数据待后续 slice 接入，故此处显式返回 None
 //! 作为可扩展接入点。
-//!
-//! `done` / `error` 不是 session/update 通知：ACP prompt 回合不流式发 done，最终答案经
-//! agent_message_chunk 增量送达、信封（result+usage）回到宿主（见 turn-egress.ts）。故终态
-//! 由宿主侧 chat_stream 在 host.chat() 返回后用 build_done_ui_event / build_error_ui_event
-//! 合成并补发。本模块纯函数、无 I/O、无状态，便于单测。
 
 // 过渡期：终态合成 helper（build_done_ui_event / build_error_ui_event）尚未接线到宿主
 // chat_stream 补发点（接线在后续 slice）。接线后移除该 allow。
@@ -96,6 +91,17 @@ fn current_mode_update_ui_event(current_mode_id: &Value) -> Value {
     json!({ "type": "current_mode_update", "currentModeId": current_mode_id.clone() })
 }
 
+/// 构造会话配置项变更 `TAgentUiEvent`（`type` 为 `config_option_update`）。
+///
+/// 投影 ACP `config_option_update`（外部 agent 公示/更新本会话可配置项，含模型 / 模式 / 推理强度
+/// 等，见 agentclientprotocol.com/protocol/v1/session-config-options）：整份透传 ACP `configOptions`
+/// 原始数组（逐字透传，不解读其结构、不伪造默认项），交前端 ACL 归一到配置项选择器 VM（见
+/// src/types/ai/sidecar.ts 的 TAgentUiEventConfigOptionUpdate 与 from-acp-session-config-options.ts）。
+/// 该通知携带完整配置状态快照，前端整体替换（见 applyAcpConfigOptionUpdate）。
+fn config_option_update_ui_event(config_options: &Value) -> Value {
+    json!({ "type": "config_option_update", "configOptions": config_options.clone() })
+}
+
 /// 将单条 ACP `SessionNotification` JSON 投影为 0..1 条 `TAgentUiEvent` JSON。
 ///
 /// 入参为 client 层 `AcpStreamFrame.event`（官方 `SessionNotification` 的 camelCase JSON：
@@ -134,6 +140,13 @@ pub fn session_notification_to_ui_event(notification: &Value) -> Option<Value> {
         "current_mode_update" => {
             let current_mode_id = update.get("currentModeId")?;
             Some(current_mode_update_ui_event(current_mode_id))
+        }
+        // 外部 agent 公示/更新本会话可配置项（标准 config_option_update，模型选择器即走此通道）：
+        // 整份透传 configOptions 原始数组（完整快照），交前端 ACL 归一到配置项选择器 VM。Kimi 等
+        // 在 session/new 后经一次性通知下发模型清单，缺此投影则该帧被丢弃、模型选择器恒空。
+        "config_option_update" => {
+            let config_options = update.get("configOptions")?;
+            Some(config_option_update_ui_event(config_options))
         }
         // 其余变体暂未投影（plan 经信封回宿主，待后续 slice）。显式 None 作为接入点。
         _ => None,
@@ -286,6 +299,35 @@ mod tests {
     #[test]
     fn current_mode_update_without_field_yields_none() {
         let n = notif(json!({ "sessionUpdate": "current_mode_update" }));
+        assert!(session_notification_to_ui_event(&n).is_none());
+    }
+
+    #[test]
+    fn config_option_update_passes_through_raw_config_options() {
+        let config_options = json!([
+            {
+                "id": "model",
+                "name": "Model",
+                "type": "select",
+                "currentValue": "kimi-k2",
+                "options": [
+                    { "value": "kimi-k2", "name": "Kimi K2" },
+                    { "value": "kimi-k2-turbo", "name": "Kimi K2 Turbo" }
+                ]
+            }
+        ]);
+        let n = notif(json!({
+            "sessionUpdate": "config_option_update",
+            "configOptions": config_options.clone()
+        }));
+        let ui = session_notification_to_ui_event(&n).unwrap();
+        assert_eq!(ui["type"], "config_option_update");
+        assert_eq!(ui["configOptions"], config_options);
+    }
+
+    #[test]
+    fn config_option_update_without_field_yields_none() {
+        let n = notif(json!({ "sessionUpdate": "config_option_update" }));
         assert!(session_notification_to_ui_event(&n).is_none());
     }
 
