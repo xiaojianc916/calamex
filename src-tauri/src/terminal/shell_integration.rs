@@ -71,6 +71,17 @@ impl ShellIntegrationFilter {
     pub fn filter(&mut self, input: &str) -> (String, Vec<ShellIntegrationMark>) {
         let mut out = String::with_capacity(input.len());
         let mut marks = Vec::new();
+        // 快路径：Normal 态且无半截序列缓存时，本段不含 ESC 即不可能存在任何 OSC/转义
+        // 序列，输出必然逐字节等同输入。整段拷贝，避免对最常见的纯文本输出（构建日志/
+        // 程序 stdout，占绝大多数）逐字符 push，把每批 O(n) 次 push 降为一次 memcpy。
+        if self.state == FilterState::Normal
+            && self.pending.is_empty()
+            && !input.contains(ESC)
+        {
+            out.push_str(input);
+            return (out, marks);
+        }
+
         for c in input.chars() {
             match self.state {
                 FilterState::Normal => {
