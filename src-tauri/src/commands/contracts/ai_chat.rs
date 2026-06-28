@@ -132,15 +132,17 @@ pub struct AiSetSessionConfigOptionRequest {
     pub(crate) value_id: String,
 }
 
-/// ACP 会话可用配置项清单的查询请求（契约层）。
+/// ACP 会话握手请求（契约层，v3 · 唯一标准管线）。
 ///
-/// 对齐 acp::AcpRuntime::session_config_options(thread_id)：thread_id 定位目标会话（宿主持有
-/// thread_id ↔ SessionId 映射，并在会话建立时登记 agent 公示的可用配置项）。必填且非空，
-/// 空白校验由接线层负责。
+/// 对齐 ai_ensure_acp_session：thread_id 定位/复用会话；backend 指定后端（builtin/kimi/codex）；
+/// workspace_root_path 为新建会话的 cwd。握手仅建立/复用会话（触发外部 agent 在 session/new
+/// 之后下发一次性 config_option_update 通知），不返回快照——配置项发现统一走事件通道。
 #[derive(Debug, Clone, Deserialize, Type)]
 #[serde(rename_all = "camelCase")]
-pub struct AiGetSessionConfigOptionsRequest {
+pub struct AiEnsureAcpSessionRequest {
     pub(crate) thread_id: String,
+    pub(crate) backend: String,
+    pub(crate) workspace_root_path: Option<String>,
 }
 
 /// ACP 会话可用配置项清单的响应载荷（契约层）。

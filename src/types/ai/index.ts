@@ -298,16 +298,17 @@ export interface IAiResolveApprovalRequest {
 }
 
 /**
- * ACP 会话配置项查询 / 切换请求与负载（ADR-20260617 · D7-③，对齐 D7-③-c 的会话模式管线）。
+ * ACP 会话握手请求（v3 · 唯一标准管线）。
  *
- * thread 维度；与生成绑定 AiGetSessionConfigOptionsRequest / AiSetSessionConfigOptionRequest /
- * AiSessionConfigOptionsPayload 结构一致（全 camelCase、全必填）。configId / valueId 为 ACP
- * SessionConfigOption.id / SessionConfigValueId 原值逐字透传，跨层不做语义映射。configOptions
- * 为 ACP NewSessionResponse.config_options（Vec<SessionConfigOption>）原始负载逐字透传（形状
- * unknown），由前端 ACL（from-acp-session-config-options）解析为选择器 VM。
+ * thread 维度；与生成绑定 AiEnsureAcpSessionRequest 结构一致（全 camelCase）。backend 指定后端
+ * （builtin / kimi / codex），workspaceRootPath 为新建会话的 cwd。握手仅建立/复用会话（触发
+ * agent 在 session/new 之后下发一次性 config_option_update 通知），不返回快照——配置项发现统一
+ * 走 config_option_update 事件通道（取代旧 ai_get_session_config_options get-工作区）。
  */
-export interface IAiGetSessionConfigOptionsRequest {
+export interface IAiEnsureAcpSessionRequest {
   threadId: string;
+  backend: 'builtin' | 'kimi' | 'codex';
+  workspaceRootPath?: string | null;
 }
 
 export interface IAiSetSessionConfigOptionRequest {

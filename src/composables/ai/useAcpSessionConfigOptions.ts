@@ -3,56 +3,107 @@ import { computed, ref } from 'vue';
 
 import {
   applyAcpConfigOptionUpdate,
-  parseAcpSessionConfigOptionsState,
+  parseAcpSessionConfigOptions,
 } from '@/components/business/ai/thread/projection/from-acp-session-config-options';
 import { aiService } from '@/services/ipc/ai.service';
-import type { IAcpSessionConfigOption, IAcpSessionConfigOptionsState } from '@/types/ai/sidecar';
+import type {
+  IAcpSessionConfigOption,
+  TAcpSessionConfigOptions,
+  TAgentBackendKind,
+} from '@/types/ai/sidecar';
+import { toErrorMessage } from '@/utils/error/error';
+
+/** 握手后短等 agent 首帧 config_option_update 的宽限窗口（ms）：到期判定为「已公示、空」。 */
+const READY_GRACE_MS = 1200;
 
 export interface IUseAcpSessionConfigOptionsReturn {
-  state: Ref<IAcpSessionConfigOptionsState | null>;
+  state: Ref<TAcpSessionConfigOptions>;
   configOptions: ComputedRef<IAcpSessionConfigOption[]>;
   hasConfigOptions: ComputedRef<boolean>;
   isSwitching: Ref<boolean>;
-  loadConfigOptions: (threadId: string) => Promise<void>;
+  ensureAcpSession: (
+    threadId: string,
+    backend: TAgentBackendKind,
+    workspaceRootPath?: string | null,
+  ) => Promise<void>;
   selectConfigOption: (threadId: string, configId: string, valueId: string) => Promise<boolean>;
   applyConfigOptionUpdate: (raw: unknown) => void;
   reset: () => void;
 }
 
 /**
- * ACP config_options 选择器 composable（镜像 useAcpSessionModes 的加载/乐观切换/回滚结构）。
- * - loadConfigOptions：拉取并解析，await 期间 thread 切换则丢弃过期结果。
- * - selectConfigOption：乐观更新 currentValue，IPC 返回 false 或抛错则回滚。
- * - applyConfigOptionUpdate：config_option_update 事件（完整快照）整体替换。
+ * ACP config_options 选择器 composable（v3 · 唯一标准管线 / 判别式状态机）。
+ *
+ * 取代 v2 的 get-工作区 + 乐观切换/回滚：
+ * - ensureAcpSession：握手建立会话（void），置 discovering 并武装宽限计时器；配置项发现统一
+ *   走事件通道（config_option_update）。
+ * - applyConfigOptionUpdate：唯一写入点——完整快照整体替换为 ready；坏帧保留旧态。
+ * - selectConfigOption：仅触发 set；权威新值由 agent 的 config_option_update 回推，不乐观、不回滚；
+ *   set 响应若携带即时快照则并入（best-effort），最终仍以事件为准。
  */
 export function useAcpSessionConfigOptions(): IUseAcpSessionConfigOptionsReturn {
-  const state = ref<IAcpSessionConfigOptionsState | null>(null);
+  const state = ref<TAcpSessionConfigOptions>({ kind: 'idle' });
   const isSwitching = ref(false);
 
-  // 最近一次 loadConfigOptions 的目标 thread：用于丢弃过期（thread 已切换）的异步结果。
   let activeThreadId: string | null = null;
+  let readyGraceTimer: ReturnType<typeof setTimeout> | null = null;
 
-  const configOptions = computed<IAcpSessionConfigOption[]>(() => state.value?.configOptions ?? []);
+  const configOptions = computed<IAcpSessionConfigOption[]>(() =>
+    state.value.kind === 'ready' ? state.value.configOptions : [],
+  );
   const hasConfigOptions = computed(() => configOptions.value.length > 0);
 
-  function withCurrentValue(
-    current: IAcpSessionConfigOptionsState,
-    configId: string,
-    valueId: string,
-  ): IAcpSessionConfigOptionsState {
-    return {
-      configOptions: current.configOptions.map((option) =>
-        option.id === configId ? { ...option, currentValue: valueId } : option,
-      ),
-    };
+  function clearReadyGrace(): void {
+    if (readyGraceTimer !== null) {
+      clearTimeout(readyGraceTimer);
+      readyGraceTimer = null;
+    }
   }
 
-  async function loadConfigOptions(threadId: string): Promise<void> {
+  function armReadyGrace(threadId: string): void {
+    clearReadyGrace();
+    readyGraceTimer = setTimeout(() => {
+      readyGraceTimer = null;
+      // 宽限到期仍停在 discovering（未收到任何 config_option_update）：判定无可切换配置项。
+      if (activeThreadId === threadId && state.value.kind === 'discovering') {
+        state.value = { kind: 'ready', configOptions: [] };
+      }
+    }, READY_GRACE_MS);
+  }
+
+  function applyConfigOptionUpdate(raw: unknown): void {
+    clearReadyGrace();
+    state.value = applyAcpConfigOptionUpdate(state.value, raw);
+  }
+
+  async function ensureAcpSession(
+    threadId: string,
+    backend: TAgentBackendKind,
+    workspaceRootPath?: string | null,
+  ): Promise<void> {
     activeThreadId = threadId;
-    const payload = await aiService.getSessionConfigOptions({ threadId });
-    // thread 在 await 期间被切换：丢弃过期结果。
-    if (activeThreadId !== threadId) return;
-    state.value = payload ? parseAcpSessionConfigOptionsState(payload.configOptions) : null;
+    clearReadyGrace();
+    state.value = { kind: 'discovering' };
+    try {
+      await aiService.ensureAcpSession({
+        threadId,
+        backend,
+        ...(workspaceRootPath ? { workspaceRootPath } : {}),
+      });
+      if (activeThreadId !== threadId) return;
+      // 握手只确保会话建立；配置项发现走事件通道，短等首帧 config_option_update 兜底。
+      if (state.value.kind === 'discovering') {
+        armReadyGrace(threadId);
+      }
+    } catch (error) {
+      if (activeThreadId !== threadId) return;
+      clearReadyGrace();
+      state.value = {
+        kind: 'unavailable',
+        reason: 'handshake_failed',
+        message: toErrorMessage(error, 'ACP 会话握手失败'),
+      };
+    }
   }
 
   async function selectConfigOption(
@@ -60,40 +111,30 @@ export function useAcpSessionConfigOptions(): IUseAcpSessionConfigOptionsReturn 
     configId: string,
     valueId: string,
   ): Promise<boolean> {
-    const current = state.value;
-    if (current === null) return false;
-    const target = current.configOptions.find((option) => option.id === configId);
+    if (state.value.kind !== 'ready') return false;
+    const target = state.value.configOptions.find((option) => option.id === configId);
     if (target === undefined) return false;
     if (target.currentValue === valueId) return true;
     // 越界保护：valueId 必须是该选择器的合法候选值。
     if (!target.options.some((option) => option.value === valueId)) return false;
 
-    const previous = current;
-    state.value = withCurrentValue(current, configId, valueId);
     isSwitching.value = true;
     try {
-      const ok = await aiService.setSessionConfigOption({ threadId, configId, valueId });
-      if (!ok) {
-        state.value = previous;
-        return false;
+      const payload = await aiService.setSessionConfigOption({ threadId, configId, valueId });
+      if (activeThreadId === threadId && payload) {
+        applyConfigOptionUpdate(payload.configOptions);
       }
       return true;
-    } catch (error) {
-      state.value = previous;
-      throw error;
     } finally {
       isSwitching.value = false;
     }
   }
 
-  function applyConfigOptionUpdate(raw: unknown): void {
-    state.value = applyAcpConfigOptionUpdate(state.value, raw);
-  }
-
   function reset(): void {
-    state.value = null;
-    isSwitching.value = false;
+    clearReadyGrace();
     activeThreadId = null;
+    isSwitching.value = false;
+    state.value = { kind: 'idle' };
   }
 
   return {
@@ -101,7 +142,7 @@ export function useAcpSessionConfigOptions(): IUseAcpSessionConfigOptionsReturn 
     configOptions,
     hasConfigOptions,
     isSwitching,
-    loadConfigOptions,
+    ensureAcpSession,
     selectConfigOption,
     applyConfigOptionUpdate,
     reset,

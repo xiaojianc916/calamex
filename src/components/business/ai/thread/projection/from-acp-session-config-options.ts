@@ -1,7 +1,7 @@
 import type {
   IAcpSessionConfigOption,
-  IAcpSessionConfigOptionsState,
   IAcpSessionConfigSelectOption,
+  TAcpSessionConfigOptions,
 } from '@/types/ai/sidecar';
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -16,10 +16,6 @@ function readOptionalString(value: unknown): string | undefined {
   return typeof value === 'string' && value.length > 0 ? value : undefined;
 }
 
-/**
- * 解析单个 select 候选值（Ungrouped 元素，或 Grouped 组内元素）。
- * group 透传分组标签（顶层未分组时为 undefined）。
- */
 function parseSelectOption(raw: unknown, group?: string): IAcpSessionConfigSelectOption | null {
   if (!isRecord(raw)) return null;
   const value = readString(raw.value);
@@ -32,17 +28,12 @@ function parseSelectOption(raw: unknown, group?: string): IAcpSessionConfigSelec
   return option;
 }
 
-/**
- * 解析 SessionConfigSelectOptions 联合（Ungrouped | Grouped），拍平为单一列表。
- * 非数组 => null；逐元素探测：带 options 数组的视为 Grouped，否则视为 Ungrouped。
- */
 function parseSelectOptions(raw: unknown): IAcpSessionConfigSelectOption[] | null {
   if (!Array.isArray(raw)) return null;
   const options: IAcpSessionConfigSelectOption[] = [];
   for (const entry of raw) {
     if (!isRecord(entry)) continue;
     if (Array.isArray(entry.options)) {
-      // Grouped 变体：{ group, name, options[] } —— 拍平并保留分组名。
       const groupName = readString(entry.name) ?? readString(entry.group) ?? undefined;
       for (const child of entry.options) {
         const option = parseSelectOption(child, groupName);
@@ -50,17 +41,12 @@ function parseSelectOptions(raw: unknown): IAcpSessionConfigSelectOption[] | nul
       }
       continue;
     }
-    // Ungrouped 变体：{ value, name, description? }
     const option = parseSelectOption(entry);
     if (option !== null) options.push(option);
   }
   return options;
 }
 
-/**
- * 解析单个 SessionConfigOption。仅支持 select 型（schema 中 boolean 型为 unstable，未启用）。
- * 缺 id/name/currentValue 或无有效候选值时返回 null（被上层过滤）。
- */
 function parseConfigOption(raw: unknown): IAcpSessionConfigOption | null {
   if (!isRecord(raw)) return null;
   if (raw.type !== 'select') return null;
@@ -78,7 +64,6 @@ function parseConfigOption(raw: unknown): IAcpSessionConfigOption | null {
   return option;
 }
 
-/** 解析 SessionConfigOption[]。非数组 => null；逐项过滤无效与重复 id。 */
 function parseConfigOptionList(raw: unknown): IAcpSessionConfigOption[] | null {
   if (!Array.isArray(raw)) return null;
   const configOptions: IAcpSessionConfigOption[] = [];
@@ -94,25 +79,26 @@ function parseConfigOptionList(raw: unknown): IAcpSessionConfigOption[] | null {
 }
 
 /**
- * 从 ai_get_session_config_options 的原始 configOptions（ACP SessionConfigOption[]）解析为 VM。
- * 非数组（含 null）=> null；合法但为空 => { configOptions: [] }（已加载、无可用选择器）。
+ * 解析 ACP configOptions（SessionConfigOption[]）为 v3 判别式「ready」态。
+ * 非数组（含 null）=> null（坏帧 / 非法负载，由调用方决定保留旧态）；
+ * 合法但为空 => { kind: 'ready', configOptions: [] }（已公示、无可选项）。
  */
-export function parseAcpSessionConfigOptionsState(
+export function parseAcpSessionConfigOptions(
   raw: unknown,
-): IAcpSessionConfigOptionsState | null {
+): Extract<TAcpSessionConfigOptions, { kind: 'ready' }> | null {
   const configOptions = parseConfigOptionList(raw);
   if (configOptions === null) return null;
-  return { configOptions };
+  return { kind: 'ready', configOptions };
 }
 
 /**
- * 应用 config_option_update：该事件携带完整 configOptions 快照，整体替换。
- * 解析失败（坏帧 / 非数组）时保留旧状态，避免单帧异常清空 UI。
+ * 应用 config_option_update（完整快照）：成功解析则整体替换为 ready 态；
+ * 坏帧（非数组）保留旧状态，避免单帧异常清空 UI。唯一标准事件入口。
  */
 export function applyAcpConfigOptionUpdate(
-  state: IAcpSessionConfigOptionsState | null,
+  state: TAcpSessionConfigOptions,
   raw: unknown,
-): IAcpSessionConfigOptionsState | null {
-  const next = parseAcpSessionConfigOptionsState(raw);
+): TAcpSessionConfigOptions {
+  const next = parseAcpSessionConfigOptions(raw);
   return next ?? state;
 }

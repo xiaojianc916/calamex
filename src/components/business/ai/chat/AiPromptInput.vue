@@ -64,7 +64,7 @@ import type { TAiExecutionMode } from '@/types/ai/execution-mode';
 import type {
   IAcpAvailableCommand,
   IAcpSessionConfigOption,
-  IAcpSessionConfigOptionsState,
+  TAcpSessionConfigOptions,
 } from '@/types/ai/sidecar';
 import type { ISelectedSkill, ISkillSummary } from '@/types/ai/skill';
 import AiErrorNotice from './AiErrorNotice.vue';
@@ -166,7 +166,7 @@ const props = defineProps<{
   /** Kimi(ACP) 会话公示的可用命令；仅 kimi Agent 时透传给斜杠菜单作为命令列表。 */
   acpCommands?: readonly IAcpAvailableCommand[];
   /** Kimi(ACP) 会话级配置项（模型 / 思考强度等）；仅 kimi Agent 时渲染为选择器。 */
-  sessionConfigOptions?: IAcpSessionConfigOptionsState | null;
+  sessionConfigOptions?: TAcpSessionConfigOptions | null;
   /** 配置项切换中（等待 ACP 回执）；为 true 时禁用选择器，避免并发切换。 */
   isSessionConfigOptionSwitching?: boolean;
 }>();
@@ -413,9 +413,9 @@ let skillsLoadPromise: Promise<void> | null = null;
 const useAcpSlashCommands = computed(() => selectedAgent.value === 'kimi');
 const acpSlashCommands = computed<readonly IAcpAvailableCommand[]>(() => props.acpCommands ?? []);
 
-// Kimi(ACP) 会话级配置项：父级下传 configOptions。
-const sessionConfigOptionList = computed<readonly IAcpSessionConfigOption[]>(
-  () => props.sessionConfigOptions?.configOptions ?? [],
+// Kimi(ACP) 会话级配置项：父级下传判别式状态，仅 ready 态有 configOptions。
+const sessionConfigOptionList = computed<readonly IAcpSessionConfigOption[]>(() =>
+  props.sessionConfigOptions?.kind === 'ready' ? props.sessionConfigOptions.configOptions : [],
 );
 
 // 识别「模型」配置项：Kimi 经 ACP config_options 公示的可切换模型项（id/name 含 model/模型）。
@@ -440,9 +440,12 @@ const nonModelSessionConfigOptionList = computed<readonly IAcpSessionConfigOptio
 // kimi 已公示模型项 → 主选择器走 ACP 实时切换；否则（builtin 或 kimi 未公示）走原有逻辑。
 const isKimiModelSelector = computed(() => kimiModelConfigOption.value !== null);
 
-// kimi 但未公示任何可切换模型 → 锁定主选择器并明示，避免「选了没反应」的无声失败。
+// kimi 已就绪（ready）但未公示任何可切换模型 → 锁定主选择器并明示；discovering/unavailable 不锁。
 const isKimiModelLocked = computed(
-  () => selectedAgent.value === 'kimi' && kimiModelConfigOption.value === null,
+  () =>
+    selectedAgent.value === 'kimi' &&
+    kimiModelConfigOption.value === null &&
+    props.sessionConfigOptions?.kind === 'ready',
 );
 
 // 入口文案：把 currentValue 映射成对应选项名；找不到时回退原始值。

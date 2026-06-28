@@ -18,7 +18,7 @@ import type {
   IAiChatRequest,
   IAiConversationTitlePayload,
   IAiConversationTitleRequest,
-  IAiGetSessionConfigOptionsRequest,
+  IAiEnsureAcpSessionRequest,
   IAiGetSessionModesRequest,
   IAiInlineCompletionRequest,
   IAiProposePatchPayload,
@@ -405,10 +405,10 @@ export interface ITauriService {
   aiChatStream(payload: IAiChatRequest): Promise<AiChatStreamPayload>;
   aiCancel(payload: IAiCancelRequest): Promise<void>;
   aiResolveApproval(payload: IAiResolveApprovalRequest): Promise<boolean>;
-  aiGetSessionConfigOptions(
-    payload: IAiGetSessionConfigOptionsRequest,
+  aiEnsureAcpSession(payload: IAiEnsureAcpSessionRequest): Promise<void>;
+  aiSetSessionConfigOption(
+    payload: IAiSetSessionConfigOptionRequest,
   ): Promise<IAiSessionConfigOptionsPayload | null>;
-  aiSetSessionConfigOption(payload: IAiSetSessionConfigOptionRequest): Promise<boolean>;
   aiGetSessionModes(payload: IAiGetSessionModesRequest): Promise<IAiSessionModesPayload | null>;
   aiSetSessionMode(payload: IAiSetSessionModeRequest): Promise<boolean>;
   aiInlineComplete(payload: IAiInlineCompletionRequest): Promise<AiInlineCompletionResult>;

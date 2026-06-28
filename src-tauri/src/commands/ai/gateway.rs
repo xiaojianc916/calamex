@@ -2,7 +2,7 @@ use crate::ai::audit::{self, AiAuditEventKind};
 use crate::ai::gateway;
 use crate::commands::contracts::{
     AiCancelRequest, AiChatRequest, AiChatStreamPayload, AiConfigPayload,
-    AiConversationTitlePayload, AiConversationTitleRequest, AiGetSessionConfigOptionsRequest,
+    AiConversationTitlePayload, AiConversationTitleRequest, AiEnsureAcpSessionRequest,
     AiGetSessionModesRequest, AiInlineCompletionRangePayload, AiInlineCompletionRequest,
     AiInlineCompletionResult, AiProviderConnectionPayload, AiProviderConnectionRequest,
     AiProviderTestPayload, AiResolveApprovalRequest, AiSaveConfigRequest, AiSaveCredentialsRequest,
@@ -317,7 +317,7 @@ pub fn ai_resolve_approval(
 pub async fn ai_set_session_config_option(
     app: AppHandle,
     payload: AiSetSessionConfigOptionRequest,
-) -> Result<bool, String> {
+) -> Result<Option<AiSessionConfigOptionsPayload>, String> {
     let thread_id = payload.thread_id.trim();
     if thread_id.is_empty() {
         return Err("AI_SET_SESSION_CONFIG_OPTION_INVALID: threadId 不能为空。".to_string());
@@ -332,38 +332,60 @@ pub async fn ai_set_session_config_option(
     }
 
     use tauri::Manager as _;
-    let applied = app
-        .state::<crate::acp::AcpRuntime>()
+    let runtime = app.state::<crate::acp::AcpRuntime>();
+    let applied = runtime
         .set_session_config_option(thread_id, config_id, value_id)
         .await
         .map_err(|error| format!("AI_SET_SESSION_CONFIG_OPTION_FAILED: {error}"))?;
-    Ok(applied)
+    // v3：权威新值由 agent 的 config_option_update 帧回推前端 ACL；此处命中已绑定会话时回传
+    // 当前缓存的配置项全集作为即时快照（未命中则 None）。
+    if !applied {
+        return Ok(None);
+    }
+    Ok(runtime
+        .session_config_options(thread_id)
+        .map(|config_options| AiSessionConfigOptionsPayload { config_options }))
 }
 
-/// 取某线程会话建立时 agent 公示的可用配置项清单（ACP session/new 的
-/// NewSessionResponse.config_options 原样 JSON：Vec SessionConfigOption），供前端配置项选择器在
-/// 会话建立后填充候选项。
+/// 握手并复用/建立某线程在指定后端上的 ACP 会话（v3 · 唯一标准管线）。
 ///
-/// 与 ai_get_session_modes 同构地委托给 Tauri 托管的 AcpRuntime：由 runtime 向全部已建立宿主
-/// 查询并返回首个命中。thread_id 先行空白校验；返回 None 表示尚无该线程会话或 agent 未公示
-/// 配置项（前端据此隐藏选择器）。config_options 为最小透传的原样 JSON（导出 TS 为 unknown）。
+/// 取代 ai_get_session_config_options：配置项发现统一走事件通道，握手不再返回快照。经
+/// get_or_spawn_backend 懒建立目标后端宿主后 ensure_session 建立/复用会话——这会触发外部 agent
+/// （如 Kimi）在 session/new 之后下发一次性 config_option_update 通知（宿主缓存、回合发起时以
+/// 前端键重放），前端据此填充选择器。thread_id / backend 先行校验；未知 backend 报错。
 #[tauri::command]
 #[specta::specta]
-pub fn ai_get_session_config_options(
+pub async fn ai_ensure_acp_session(
     app: AppHandle,
-    payload: AiGetSessionConfigOptionsRequest,
-) -> Result<Option<AiSessionConfigOptionsPayload>, String> {
+    payload: AiEnsureAcpSessionRequest,
+) -> Result<(), String> {
     let thread_id = payload.thread_id.trim();
     if thread_id.is_empty() {
-        return Err("AI_GET_SESSION_CONFIG_OPTIONS_INVALID: threadId 不能为空。".to_string());
+        return Err("AI_ENSURE_ACP_SESSION_INVALID: threadId 不能为空。".to_string());
     }
+    let backend = match payload.backend.trim() {
+        "builtin" => crate::acp::AcpBackendId::Builtin,
+        "kimi" => crate::acp::AcpBackendId::Kimi,
+        "codex" => crate::acp::AcpBackendId::Codex,
+        other => {
+            return Err(format!("AI_ENSURE_ACP_SESSION_INVALID: 未知 backend：{other}"));
+        }
+    };
+    let workspace_root_path = payload
+        .workspace_root_path
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty());
 
     use tauri::Manager as _;
-    let config_options = app
+    let host = app
         .state::<crate::acp::AcpRuntime>()
-        .session_config_options(thread_id)
-        .map(|config_options| AiSessionConfigOptionsPayload { config_options });
-    Ok(config_options)
+        .get_or_spawn_backend(&app, backend)
+        .map_err(|error| format!("AI_ENSURE_ACP_SESSION_FAILED: {error}"))?;
+    host.ensure_session(thread_id, workspace_root_path)
+        .await
+        .map_err(|error| format!("AI_ENSURE_ACP_SESSION_FAILED: {error}"))?;
+    Ok(())
 }
 
 /// 切换 ACP 会话的当前模式（标准 session/set_mode），令外部 agent（Kimi Code / Codex 等）在

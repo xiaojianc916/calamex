@@ -167,10 +167,9 @@ const AI_COMMAND_META = {
     timeoutMs: 30_000,
     measureInput: measureAiChatInput,
   },
-  aiGetSessionConfigOptions: {
-    command: 'ai_get_session_config_options',
-    guardHint: '读取 ACP 会话可用配置项',
-    idempotent: true,
+  aiEnsureAcpSession: {
+    command: 'ai_ensure_acp_session',
+    guardHint: '握手并建立 ACP 会话',
     audit: 'info',
     timeoutMs: 15_000,
     measureInput: buildPayloadMetrics,
@@ -215,7 +214,7 @@ type TAiTauriService = Pick<
   | 'aiChatStream'
   | 'aiCancel'
   | 'aiResolveApproval'
-  | 'aiGetSessionConfigOptions'
+  | 'aiEnsureAcpSession'
   | 'aiSetSessionConfigOption'
   | 'aiGetSessionModes'
   | 'aiSetSessionMode'
@@ -300,9 +299,9 @@ export const aiTauriService: TAiTauriService = {
     commands.aiResolveApproval(payload),
   ),
 
-  aiGetSessionConfigOptions: payloadCommand(AI_COMMAND_META.aiGetSessionConfigOptions, (payload) =>
-    commands.aiGetSessionConfigOptions(payload),
-  ),
+  aiEnsureAcpSession: payloadCommand(AI_COMMAND_META.aiEnsureAcpSession, async (payload) => {
+    await commands.aiEnsureAcpSession(payload);
+  }),
 
   aiSetSessionConfigOption: payloadCommand(AI_COMMAND_META.aiSetSessionConfigOption, (payload) =>
     commands.aiSetSessionConfigOption(payload),
