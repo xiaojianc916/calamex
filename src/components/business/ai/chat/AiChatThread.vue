@@ -497,9 +497,9 @@ onBeforeUnmount(() => {
               />
 
               <slot
-                v-if="afterMessageByEntryId.get(item.id)"
+                v-if="afterMessageIdByEntryId.has(item.id)"
                 name="after-message"
-                :message="afterMessageByEntryId.get(item.id)"
+                :message-id="afterMessageIdByEntryId.get(item.id)"
               />
             </template>
 

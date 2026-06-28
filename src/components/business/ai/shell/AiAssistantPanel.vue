@@ -1288,11 +1288,11 @@ onMounted(() => {
           <AiAssistantSuggestionEmpty :suggestion-rows="suggestionRows" :disabled="composerDisabled"
             @select="handleSuggestionSelect" />
         </template>
-        <template #after-message="{ message }">
-          <AiAssistantCheckpointEntry v-if="getConversationCheckpoint(message.id)"
-            :label="getConversationCheckpointLabel(message.id)" :disabled="isConversationCheckpointDisabled"
-            :restoring="isConversationCheckpointRestoring(message.id)"
-            @restore="handleRestoreConversationCheckpoint(message.id)" />
+        <template #after-message="{ messageId }">
+          <AiAssistantCheckpointEntry v-if="getConversationCheckpoint(messageId)"
+            :label="getConversationCheckpointLabel(messageId)" :disabled="isConversationCheckpointDisabled"
+            :restoring="isConversationCheckpointRestoring(messageId)"
+            @restore="handleRestoreConversationCheckpoint(messageId)" />
         </template>
         <template #after-messages>
           <AiErrorNotice :message="assistant.error.value" />
