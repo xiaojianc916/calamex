@@ -1,310 +1,76 @@
-#!/usr/bin/env node
-/**
- * P6/P8 渲染收口 · commit 3（幂等版：可反复运行）
- * 编排器写路径全面 entries-native。无需 git restore。
- * find 命中则改；已是目标态则跳过；真正不一致才报错（原子，不写盘）。
- * 在 repo 根目录：node 3.mjs   完成后：pnpm typecheck && pnpm lint && pnpm test（+ pnpm guard）
- */
-import { readFileSync, writeFileSync } from 'node:fs';
+// rename-eta-engine.mjs
+// 把 handlebars-engine.* 彻底改名为 eta-engine.*，并清掉注释里残留的 "Handlebars" 字样。
+// 先决条件：git pull origin main（本地须为已迁移到 eta 的版本），且工作区干净。
+// 用法：在仓库根目录运行  node rename-eta-engine.mjs
 
-const files = [
-  {
-    file: 'src/composables/ai/useAiAssistant.ts',
-    replacements: [
-      {
-        find: "import { useAiThreadStore } from '@/store/aiThread';",
-        replace: "import { legacyMessageToEntries, useAiThreadStore } from '@/store/aiThread';",
-        doneToken: 'legacyMessageToEntries, useAiThreadStore',
-        hint: "from '@/store/aiThread'",
-      },
-      {
-        find:
-          '  const messages = computed<IAiChatMessage[]>({\n' +
-          '    // 读真源 = 权威 entries（activeMessages）；影子缓冲已退役。\n' +
-          '    get: () => unref(conversationStore.activeMessages),\n' +
-          '    set: (nextMessages: IAiChatMessage[]) => {\n' +
-          '      // 写真源单写者 = 权威 store，无条件提交（reduce / overlay 幂等）。\n' +
-          '      const activeThreadId = unref(conversationStore.activeThreadId);\n' +
-          '      if (activeThreadId) {\n' +
-          '        conversationStore.replaceThreadMessages(activeThreadId, nextMessages);\n' +
-          '      } else {\n' +
-          '        conversationStore.replaceMessages(nextMessages);\n' +
-          '      }\n' +
-          '    },\n' +
-          '  });',
-        replace:
-          '  // 读真源 = 权威 entries（activeMessages）。写路径已全面 entries-native\n' +
-          '  // （patchActiveThreadEntries），故本计算属性退化为只读投影，仅供续聊 requestMessages / token 估算。\n' +
-          '  const messages = computed<IAiChatMessage[]>(() => unref(conversationStore.activeMessages));',
-        doneToken: 'computed<IAiChatMessage[]>(() => unref(conversationStore.activeMessages))',
-        hint: 'const messages = computed',
-      },
-      {
-        count: 3,
-        find: '    messages.value = [...visibleMessages, placeholderMessage];',
-        replace:
-          '    aiThreadStore.patchActiveThreadEntries((entries) => [\n' +
-          '      ...entries,\n' +
-          '      ...legacyMessageToEntries(placeholderMessage),\n' +
-          '    ]);',
-        doneToken: '...legacyMessageToEntries(placeholderMessage),',
-        hint: '[...visibleMessages, placeholderMessage]',
-      },
-      {
-        find:
-          '  const executeSidecarAgentRequest = async (\n' +
-          '    visibleMessages: IAiChatMessage[],\n' +
-          '    messageContent: string,',
-        replace: '  const executeSidecarAgentRequest = async (\n    messageContent: string,',
-        doneToken: 'executeSidecarAgentRequest = async (\n    messageContent: string,',
-        hint: 'const executeSidecarAgentRequest',
-      },
-      {
-        find:
-          '  const executeExternalAgentRequest = async (\n' +
-          '    backend: TAgentBackendKind,\n' +
-          '    visibleMessages: IAiChatMessage[],\n' +
-          '    messageContent: string,',
-        replace:
-          '  const executeExternalAgentRequest = async (\n' +
-          '    backend: TAgentBackendKind,\n' +
-          '    messageContent: string,',
-        doneToken:
-          'executeExternalAgentRequest = async (\n    backend: TAgentBackendKind,\n    messageContent: string,',
-        hint: 'const executeExternalAgentRequest',
-      },
-      {
-        find:
-          '  const executeAiRequest = async (\n' +
-          '    requestMessages: IAiChatMessage[],\n' +
-          '    visibleMessages: IAiChatMessage[],\n' +
-          '    references: IAiContextReference[],',
-        replace:
-          '  const executeAiRequest = async (\n' +
-          '    requestMessages: IAiChatMessage[],\n' +
-          '    references: IAiContextReference[],',
-        doneToken:
-          'executeAiRequest = async (\n    requestMessages: IAiChatMessage[],\n    references: IAiContextReference[],',
-        hint: 'const executeAiRequest',
-      },
-      {
-        find:
-          '    const visibleMessages = [...messages.value, userMessage];\n' +
-          '\n' +
-          '    messages.value = visibleMessages;\n' +
-          "    draft.value = '';",
-        replace:
-          '    aiThreadStore.patchActiveThreadEntries((entries) => [\n' +
-          '      ...entries,\n' +
-          '      ...legacyMessageToEntries(userMessage),\n' +
-          '    ]);\n' +
-          "    draft.value = '';",
-        doneToken: '...legacyMessageToEntries(userMessage),',
-        hint: 'const visibleMessages = [...messages.value, userMessage]',
-      },
-      {
-        find:
-          '      errorMessage.value = message;\n' +
-          '      messages.value = [\n' +
-          '        ...visibleMessages,\n' +
-          '        {\n' +
-          "          id: createMessageId('assistant'),\n" +
-          "          role: 'assistant',\n" +
-          '          content: `AI 上下文收集失败：${message}`,\n' +
-          '          createdAt: new Date().toISOString(),\n' +
-          '          references: [],\n' +
-          '        },\n' +
-          '      ];\n' +
-          '      clearActiveBufferedThread(titleThreadId);',
-        replace:
-          '      errorMessage.value = message;\n' +
-          '      aiThreadStore.patchActiveThreadEntries((entries) => [\n' +
-          '        ...entries,\n' +
-          '        ...legacyMessageToEntries({\n' +
-          "          id: createMessageId('assistant'),\n" +
-          "          role: 'assistant',\n" +
-          '          content: `AI 上下文收集失败：${message}`,\n' +
-          '          createdAt: new Date().toISOString(),\n' +
-          '          references: [],\n' +
-          '        }),\n' +
-          '      ]);\n' +
-          '      clearActiveBufferedThread(titleThreadId);',
-        goneToken: 'messages.value = [\n        ...visibleMessages,',
-        hint: 'AI 上下文收集失败',
-      },
-      {
-        find:
-          '    const nextMessages = visibleMessages.map((message) =>\n' +
-          '      message.id === userMessage.id\n' +
-          '        ? {\n' +
-          '            ...message,\n' +
-          '            references,\n' +
-          '          }\n' +
-          '        : message,\n' +
-          '    );\n' +
-          '\n' +
-          '    messages.value = nextMessages;\n' +
-          '    clearAttachedFiles({ revokePreviews: false });',
-        replace:
-          '    aiThreadStore.patchActiveThreadEntries((entries) =>\n' +
-          '      entries.map((entry) =>\n' +
-          "        entry.type === 'user_message' && entry.id === userMessage.id\n" +
-          '          ? { ...entry, references }\n' +
-          '          : entry,\n' +
-          '      ),\n' +
-          '    );\n' +
-          '    clearAttachedFiles({ revokePreviews: false });\n' +
-          '\n' +
-          '    const nextMessages = unref(conversationStore.activeMessages);',
-        doneToken: 'const nextMessages = unref(conversationStore.activeMessages);',
-        hint: 'const nextMessages = visibleMessages.map',
-      },
-      {
-        find:
-          '        messages.value = nextMessages;\n' +
-          '        clearAttachedFiles({ revokePreviews: false });\n' +
-          '        planSucceeded = true;',
-        replace:
-          '        clearAttachedFiles({ revokePreviews: false });\n' +
-          '        planSucceeded = true;',
-        goneToken:
-          '        messages.value = nextMessages;\n        clearAttachedFiles({ revokePreviews: false });\n        planSucceeded',
-        hint: 'planSucceeded = true',
-      },
-      {
-        find:
-          '        messages.value = [\n' +
-          '          ...nextMessages,\n' +
-          '          {\n' +
-          "            id: createMessageId('assistant'),\n" +
-          "            role: 'assistant',\n" +
-          '            content: `计划生成失败：${message}`,\n' +
-          '            createdAt: new Date().toISOString(),\n' +
-          '            references: [],\n' +
-          '          },\n' +
-          '        ];',
-        replace:
-          '        aiThreadStore.patchActiveThreadEntries((entries) => [\n' +
-          '          ...entries,\n' +
-          '          ...legacyMessageToEntries({\n' +
-          "            id: createMessageId('assistant'),\n" +
-          "            role: 'assistant',\n" +
-          '            content: `计划生成失败：${message}`,\n' +
-          '            createdAt: new Date().toISOString(),\n' +
-          '            references: [],\n' +
-          '          }),\n' +
-          '        ]);',
-        goneToken: 'messages.value = [\n          ...nextMessages,',
-        hint: '计划生成失败',
-      },
-      {
-        find:
-          '      await executeSidecarAgentRequest(\n' +
-          '        nextMessages,\n' +
-          '        messageContent,\n' +
-          '        references,\n' +
-          '        userMessage.id,\n' +
-          '        titleThreadId,\n' +
-          '      );',
-        replace:
-          '      await executeSidecarAgentRequest(\n' +
-          '        messageContent,\n' +
-          '        references,\n' +
-          '        userMessage.id,\n' +
-          '        titleThreadId,\n' +
-          '      );',
-        goneToken: 'executeSidecarAgentRequest(\n        nextMessages,',
-        hint: 'await executeSidecarAgentRequest',
-      },
-      {
-        find:
-          '      await executeExternalAgentRequest(\n' +
-          '        externalBackend,\n' +
-          '        nextMessages,\n' +
-          '        messageContent,\n' +
-          '        titleThreadId,\n' +
-          '      );',
-        replace:
-          '      await executeExternalAgentRequest(\n' +
-          '        externalBackend,\n' +
-          '        messageContent,\n' +
-          '        titleThreadId,\n' +
-          '      );',
-        goneToken: 'executeExternalAgentRequest(\n        externalBackend,\n        nextMessages,',
-        hint: 'await executeExternalAgentRequest',
-      },
-      {
-        find: '        await executeAiRequest(nextMessages, nextMessages, references, titleThreadId);',
-        replace: '        await executeAiRequest(nextMessages, references, titleThreadId);',
-        goneToken: 'executeAiRequest(nextMessages, nextMessages,',
-        hint: 'await executeAiRequest',
-      },
-    ],
-  },
-];
+import { readFileSync, writeFileSync, existsSync } from 'node:fs';
+import { execSync } from 'node:child_process';
 
-applyIdempotent('commit 3', files);
+const BASE = 'builtin-agent/src/engines/prompts';
+const RENDER = `${BASE}/render`;
 
-function isDone(src, r) {
-  if (r.doneToken) return src.includes(r.doneToken);
-  if (r.goneToken) return !src.includes(r.goneToken);
-  return false;
+const OLD_ENGINE = `${RENDER}/handlebars-engine.ts`;
+const NEW_ENGINE = `${RENDER}/eta-engine.ts`;
+const OLD_SPEC = `${RENDER}/handlebars-engine.spec.ts`;
+const NEW_SPEC = `${RENDER}/eta-engine.spec.ts`;
+const TEMPLATE = `${BASE}/templates/system-prompt.template.ts`;
+const SYS_PROMPT = `${BASE}/system-prompt.ts`;
+const CONTEXT = `${BASE}/domain/system-prompt-context.ts`;
+
+const git = (cmd) => execSync(`git ${cmd}`, { stdio: 'pipe' }).toString().trim();
+
+// 替换且校验：找不到目标就报错（多半是没 pull，本地还不是 eta 版本）。
+const must = (content, find, repl, file) => {
+    if (!content.includes(find)) {
+        throw new Error(`× 在 ${file} 找不到待替换片段，请先 git pull origin main：\n   ${find}`);
+    }
+    return content.split(find).join(repl);
+};
+
+const edit = (file, edits) => {
+    let content = readFileSync(file, 'utf8');
+    for (const [find, repl] of edits) content = must(content, find, repl, file);
+    writeFileSync(file, content);
+    console.log(`✓ 已更新 ${file}`);
+};
+
+if (!existsSync(OLD_ENGINE)) {
+    throw new Error(`× 找不到 ${OLD_ENGINE}；请在仓库根目录运行，且已 git pull。`);
 }
 
-function applyIdempotent(label, fileList) {
-  const loaded = [];
-  let ok = true;
-  for (const { file, replacements } of fileList) {
-    let src = null;
-    try {
-      src = readFileSync(file, 'utf8');
-    } catch (err) {
-      console.error(`✗ 读取失败: ${file} (${err.message})`);
-      ok = false;
-    }
-    const actions = [];
-    if (src !== null) {
-      for (const r of replacements) {
-        const want = r.count ?? 1;
-        const hits = src.split(r.find).length - 1;
-        if (hits === want) {
-          actions.push('apply');
-        } else if (hits === 0 && isDone(src, r)) {
-          actions.push('skip');
-        } else {
-          actions.push('error');
-          ok = false;
-          console.error(`✗ ${file}: 锚点命中 ${hits} 次（期望 ${want}）且非已完成态`);
-          console.error(`   find: ${JSON.stringify(r.find.length > 80 ? r.find.slice(0, 80) + '…' : r.find)}`);
-          if (r.hint) {
-            const rows = src.split('\n').map((l, i) => [i + 1, l]).filter(([, l]) => l.includes(r.hint));
-            console.error(`   —— 本地包含 "${r.hint}" 的行：`);
-            if (!rows.length) console.error('     （未找到）');
-            for (const [n, l] of rows.slice(0, 12)) console.error(`     ${n}: ${l}`);
-          }
-        }
-      }
-    }
-    loaded.push({ file, src, replacements, actions });
-  }
-  if (!ok) {
-    console.error(`\n[${label}] 校验未通过：未写入任何文件（原子保护）。请把上面"本地包含…的行"发给我。`);
-    process.exit(1);
-  }
-  for (const { file, src, replacements, actions } of loaded) {
-    let out = src;
-    let applied = 0;
-    let skipped = 0;
-    replacements.forEach((r, i) => {
-      if (actions[i] === 'apply') {
-        out = out.split(r.find).join(r.replace);
-        applied += 1;
-      } else {
-        skipped += 1;
-      }
-    });
-    writeFileSync(file, out);
-    console.log(`✓ ${file}：改 ${applied} 处，跳过 ${skipped} 处（已完成）`);
-  }
-  console.log(`\n[${label}] 完成。请运行：pnpm typecheck && pnpm lint && pnpm test（+ pnpm guard）`);
-}
+// 1) git mv 两个文件（保留 git 改名历史）
+git(`mv "${OLD_ENGINE}" "${NEW_ENGINE}"`);
+git(`mv "${OLD_SPEC}" "${NEW_SPEC}"`);
+console.log('✓ 已重命名 handlebars-engine.* → eta-engine.*');
+
+// 2) 引擎文件：删掉注释里所有 "Handlebars" 旧实现字样
+edit(NEW_ENGINE, [
+    ['提示词模板引擎（基于 eta，替代原先的 Handlebars 实现）。', '提示词模板引擎（eta）。'],
+    ['，复刻 Handlebars `strict: true` 的语义', ''],
+    ['，等价于 Handlebars 的 `noEscape: true`', ''],
+    ['用 Proxy 复刻 Handlebars strict 行为：', '用 Proxy 实现严格上下文：'],
+]);
+
+// 3) 引擎测试：改 import 路径
+edit(NEW_SPEC, [
+    ["from './handlebars-engine.js'", "from './eta-engine.js'"],
+]);
+
+// 4) 模板文件：改 import 路径 + 清注释
+edit(TEMPLATE, [
+    ["from '../render/handlebars-engine.js'", "from '../render/eta-engine.js'"],
+    ['标题 + 各条消息按行拼接，等价于原 Handlebars each 块的输出。', '标题 + 各条消息按行拼接。'],
+    ['，等价旧模板 each 块的首行空行', ''],
+]);
+
+// 5) 入口与上下文：清注释里的 "Handlebars" 字样
+edit(SYS_PROMPT, [['（Handlebars 严格模板）', '（eta 严格模板）']]);
+edit(CONTEXT, [['以满足 Handlebars 严格模式：', '以满足模板严格模式：']]);
+
+// 6) 暂存改动
+git('add -A');
+console.log('\n全部完成 ✅  已 git add。建议接着执行：');
+console.log('  pnpm --dir builtin-agent test   # 验证 eta 引擎用例');
+console.log('  pnpm lint && pnpm typecheck');
+console.log('  git commit -m "refactor(prompts): 重命名 handlebars-engine -> eta-engine"');
+console.log('  git push');

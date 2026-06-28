@@ -4,7 +4,7 @@ import { assembleSystemPromptContext, UNSPECIFIED_MODEL_LABEL } from './domain/s
 import { renderSystemPrompt } from './templates/system-prompt.template.js';
 
 /**
- * 构建系统提示词。装配（strong-typed context）与渲染（Handlebars 严格模板）分离，
+ * 构建系统提示词。装配（strong-typed context）与渲染（eta 严格模板）分离，
  * 实现见 ./domain 与 ./templates；本文件保留为稳定的对外入口，调用方无需改动。
  */
 export const buildSystemPrompt = (

@@ -2,7 +2,7 @@ import type {
     ISystemPromptContext,
     ISystemPromptContextReferenceView,
 } from '../domain/system-prompt-context.js';
-import { compilePromptTemplate } from '../render/handlebars-engine.js';
+import { compilePromptTemplate } from '../render/eta-engine.js';
 
 // -----------------------------------------------------------------------------
 // Static sections (no dynamic variables -> plain constants, joined verbatim)
@@ -86,12 +86,12 @@ const goalTemplate = compilePromptTemplate<ISystemPromptContext>([
     '<%~ it.goal %>',
 ].join('\n'));
 
-// 额外系统消息：标题 + 各条消息按行拼接，等价于原 Handlebars each 块的输出。
+// 额外系统消息：标题 + 各条消息按行拼接。
 const renderExtraSystemSection = (context: ISystemPromptContext): string =>
     ['## 额外系统消息', ...context.extraSystemMessages].join('\n');
 
 // 单条 UI 上下文引用：技能与普通引用走 if/else 两个分支。不可信预览正文已在装配阶段
-// 截断 + 选好围栏，此处仅做结构化渲染。每条以前导空行起始，等价旧模板 each 块的首行空行。
+// 截断 + 选好围栏，此处仅做结构化渲染。每条以前导空行起始。
 const renderContextReference = (
     reference: ISystemPromptContextReferenceView,
 ): string => {

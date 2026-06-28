@@ -48,7 +48,7 @@ const inferModelProviderLabel = (modelId: string): string => {
 
 /**
  * 单条 UI 上下文引用在提示词中的展示视图。所有字段恒存在（无可选字段），
- * 以满足 Handlebars 严格模式：模板任一分支引用的字段都必须就位。
+ * 以满足模板严格模式：模板任一分支引用的字段都必须就位。
  */
 export interface ISystemPromptContextReferenceView {
     readonly index: number;

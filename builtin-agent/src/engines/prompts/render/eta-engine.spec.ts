@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import { compilePromptTemplate } from './handlebars-engine.js';
+import { compilePromptTemplate } from './eta-engine.js';
 
 test('compilePromptTemplate interpolates provided fields', () => {
     const template = compilePromptTemplate<{ name: string }>('Hi <%~ it.name %>');
