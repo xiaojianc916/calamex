@@ -264,22 +264,6 @@ pub struct GitStashEntryPayload {
     branch_name: Option<String>,
     commit_short_id: Option<String>,
     created_at: String,
-    #[specta(type = u32)]
-    file_count: usize,
-    additions: u32,
-    deletions: u32,
-    files: Vec<GitStashFilePayload>,
-}
-
-#[derive(Debug, Serialize, Clone, specta::Type)]
-#[serde(rename_all = "camelCase")]
-pub struct GitStashFilePayload {
-    relative_path: String,
-    file_name: String,
-    previous_relative_path: Option<String>,
-    status: String,
-    additions: u32,
-    deletions: u32,
 }
 
 #[derive(Debug, Serialize, Clone, specta::Type)]

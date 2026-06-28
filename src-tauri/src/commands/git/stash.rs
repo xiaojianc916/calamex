@@ -338,28 +338,10 @@ fn build_git_stash_entry_payload(
     summary: &str,
     oid: gix::ObjectId,
 ) -> Result<GitStashEntryPayload, String> {
-    let details = build_git_stash_details(repository, oid)?;
     let (branch_name, commit_short_id) = parse_git_stash_name(summary);
-    Ok(GitStashEntryPayload {
-        index,
-        // stash@{N}：用字符串拼接构造字面花括号。
-        stash_id: ["stash@{", &index.to_string(), "}"].concat(),
-        summary: summary.to_string(),
-        branch_name,
-        commit_short_id: commit_short_id.or_else(|| Some(short_commit_id(oid))),
-        created_at: details.created_at,
-        file_count: details.file_count,
-        additions: details.additions,
-        deletions: details.deletions,
-        files: details.files,
-    })
-}
-
-/// 通过 gix 解析贮藏提交的差异，构建明细（增删行数 + 文件列表），避免依赖系统安装的 git。
-fn build_git_stash_details(
-    repository: &Repository,
-    oid: gix::ObjectId,
-) -> Result<GitStashDetails, String> {
+    // 列表项只取廉价的提交时间。原先对每条 stash 都跑 rev_parse 三棵树 + 逐文件行级 diff
+    // 统计增删/文件列表，但前端 stash 面板从不消费这些字段，纯属死计算（stash 多/改动大时
+    // 拖慢面板首屏首次渲染），故移除；created_at 仅读提交时间，不含任何 diff。
     let created_at = repository
         .find_commit(oid)
         .ok()
@@ -367,73 +349,15 @@ fn build_git_stash_details(
         .and_then(|time| jiff::Timestamp::from_second(time.seconds).ok())
         .unwrap_or_else(jiff::Timestamp::now)
         .to_string();
-
-    let stash = oid.to_string();
-    let worktree_tree_id = repository
-        .rev_parse_single([stash.as_str(), "^{tree}"].concat().as_str())
-        .map_err(|error| format!("解析贮藏树失败：{error}"))?
-        .detach();
-    let base_tree_id = repository
-        .rev_parse_single([stash.as_str(), "^1^{tree}"].concat().as_str())
-        .ok()
-        .map(|id| id.detach());
-    let untracked_tree_id = repository
-        .rev_parse_single([stash.as_str(), "^3^{tree}"].concat().as_str())
-        .ok()
-        .map(|id| id.detach());
-
-    let mut files = Vec::new();
-    if let Some(base_id) = base_tree_id {
-        collect_stash_tree_changes(repository, base_id, worktree_tree_id, &mut files)?;
-    }
-    if let Some(untracked_id) = untracked_tree_id {
-        let empty_tree_id = repository.empty_tree().id().detach();
-        collect_stash_tree_changes(repository, empty_tree_id, untracked_id, &mut files)?;
-    }
-
-    let file_count = files.len();
-    let additions = files
-        .iter()
-        .fold(0u32, |acc, file| acc.saturating_add(file.additions));
-    let deletions = files
-        .iter()
-        .fold(0u32, |acc, file| acc.saturating_add(file.deletions));
-
-    Ok(GitStashDetails {
+    Ok(GitStashEntryPayload {
+        index,
+        // stash@{N}：用字符串拼接构造字面花括号。
+        stash_id: ["stash@{", &index.to_string(), "}"].concat(),
+        summary: summary.to_string(),
+        branch_name,
+        commit_short_id: commit_short_id.or_else(|| Some(short_commit_id(oid))),
         created_at,
-        file_count,
-        additions,
-        deletions,
-        files,
     })
-}
-
-/// 将 base→target 树差异收集为贮藏文件明细，复用 super::worktree_io 的统一实现。
-fn collect_stash_tree_changes(
-    repository: &Repository,
-    old_tree_id: gix::ObjectId,
-    new_tree_id: gix::ObjectId,
-    files: &mut Vec<GitStashFilePayload>,
-) -> Result<(), String> {
-    for change in collect_tree_file_changes(repository, old_tree_id, new_tree_id)? {
-        files.push(GitStashFilePayload {
-            relative_path: change.relative_path,
-            file_name: change.file_name,
-            previous_relative_path: change.previous_relative_path,
-            status: change.status,
-            additions: change.additions,
-            deletions: change.deletions,
-        });
-    }
-    Ok(())
-}
-
-struct GitStashDetails {
-    created_at: String,
-    file_count: usize,
-    additions: u32,
-    deletions: u32,
-    files: Vec<GitStashFilePayload>,
 }
 
 fn parse_git_stash_name(name: &str) -> (Option<String>, Option<String>) {

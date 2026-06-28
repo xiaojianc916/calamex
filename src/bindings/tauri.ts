@@ -1760,19 +1760,6 @@ export type GitStashEntryPayload = {
 	branchName: string | null,
 	commitShortId: string | null,
 	createdAt: string,
-	fileCount: number,
-	additions: number,
-	deletions: number,
-	files: GitStashFilePayload[],
-};
-
-export type GitStashFilePayload = {
-	relativePath: string,
-	fileName: string,
-	previousRelativePath: string | null,
-	status: string,
-	additions: number,
-	deletions: number,
 };
 
 export type GitStashListPayload = {
