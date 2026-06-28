@@ -6,7 +6,7 @@ pub mod patch;
 pub mod security;
 
 use self::history::{edit_journal, pins, revert, snapshot, timeline};
-use self::io::file_transaction;
+use self::io::{self, file_transaction, storage_lock};
 use self::security::path_security;
 
 use crate::ai::audit::{self, AiAuditEventKind};
@@ -265,33 +265,49 @@ fn apply_retention_policy_with_policy(
     storage_root: &Path,
     snapshot_policy: snapshot::SnapshotRetentionPolicy,
 ) -> Result<Option<AiEditRetentionOutcome>, String> {
-    let stored_operations = edit_journal::list_operations(storage_root)?;
-    let pin_records = pins::list_pin_records(storage_root)?;
-    let pin_index = pins::build_pin_index(&pin_records);
-    let metadata_cutoff =
-        snapshot_policy.now - jiff::SignedDuration::from_secs(OPERATION_METADATA_TTL_DAYS * 86400);
-    let retained_operations = stored_operations
-        .iter()
-        .filter(|operation| {
-            operation_is_pinned(operation, &pin_index)
-                || parse_rfc3339_utc(&operation.applied_at)
-                    .map(|applied_at| applied_at >= metadata_cutoff)
-                    .unwrap_or(true)
-        })
-        .cloned()
-        .collect::<Vec<_>>();
-    let retained_operation_ids = retained_operations
-        .iter()
-        .map(|operation| operation.id.clone())
-        .collect::<HashSet<_>>();
-    let referenced_snapshot_ids = retained_operations
-        .iter()
-        .filter_map(|operation| operation.source_snapshot_id.clone())
-        .collect::<HashSet<_>>();
+    // 单写锁 + 单句柄：list_operations / list_pin_records / prune_operations /
+    // apply_snapshot_retention 共享一把 journal.lock 写锁与一个 Database，把单次
+    // retention 的 4 次「开库 + 加锁」收敛为 1 次；同时消除 list 与 prune 之间的
+    // TOCTOU 窗口（读-改-写在同一临界区内完成）。时间线裁剪改用内存锁、置于存储锁外。
+    let (journal_outcome, snapshot_outcome, referenced_snapshot_ids) =
+        storage_lock::with_storage_write_lock(storage_root, "执行 AED 保留策略", || {
+            let db = io::open_aed_database(storage_root)?;
 
-    let journal_outcome = edit_journal::prune_operations(storage_root, &retained_operation_ids)?;
-    let snapshot_outcome =
-        snapshot::apply_snapshot_retention(storage_root, &pin_index, snapshot_policy)?;
+            let stored_operations = edit_journal::list_operations_with_db(&db)?;
+            let pin_records = pins::list_pin_records_with_db(&db)?;
+            let pin_index = pins::build_pin_index(&pin_records);
+            let metadata_cutoff = snapshot_policy.now
+                - jiff::SignedDuration::from_secs(OPERATION_METADATA_TTL_DAYS * 86400);
+            let retained_operations = stored_operations
+                .iter()
+                .filter(|operation| {
+                    operation_is_pinned(operation, &pin_index)
+                        || parse_rfc3339_utc(&operation.applied_at)
+                            .map(|applied_at| applied_at >= metadata_cutoff)
+                            .unwrap_or(true)
+                })
+                .cloned()
+                .collect::<Vec<_>>();
+            let retained_operation_ids = retained_operations
+                .iter()
+                .map(|operation| operation.id.clone())
+                .collect::<HashSet<_>>();
+            let referenced_snapshot_ids = retained_operations
+                .iter()
+                .filter_map(|operation| operation.source_snapshot_id.clone())
+                .collect::<HashSet<_>>();
+
+            let journal_outcome =
+                edit_journal::prune_operations_with_db(&db, &retained_operation_ids)?;
+            let snapshot_outcome = snapshot::apply_snapshot_retention_with_db(
+                &db,
+                storage_root,
+                &pin_index,
+                snapshot_policy,
+            )?;
+
+            Ok((journal_outcome, snapshot_outcome, referenced_snapshot_ids))
+        })?;
 
     if journal_outcome.removed_operation_ids.is_empty()
         && snapshot_outcome.removed_snapshot_ids.is_empty()

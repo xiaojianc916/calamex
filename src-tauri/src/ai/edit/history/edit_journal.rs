@@ -89,15 +89,28 @@ pub fn merge_operation_pins(operations: &mut [AiEditOperationPayload], pin_index
 
 fn list_operations_locked(storage_root: &Path) -> Result<Vec<AiEditOperationPayload>, String> {
     let store = open_store(storage_root)?;
-    let mut operations = Vec::new();
+    list_operations_with_db(&store.db)
+}
 
-    for item in store.operations.iter() {
+/// 复用调用方已打开的 fjall 句柄读取操作日志（lock-free 变体）。
+///
+/// 不变量：调用方须已持有 `journal.lock`（读或写锁），且 `db` 为同一存储目录上
+/// 唯一存活句柄；供 retention 在单锁单句柄内复用。
+pub fn list_operations_with_db(db: &Database) -> Result<Vec<AiEditOperationPayload>, String> {
+    let operations = db
+        .keyspace(OPERATIONS_KEYSPACE, KeyspaceCreateOptions::default)
+        .map_err(|error| {
+            errors::journal_failed(format!("打开 operations keyspace 失败：{error}"))
+        })?;
+    let mut result = Vec::new();
+
+    for item in operations.iter() {
         let (_key, value) = item
             .into_inner()
             .map_err(|error| errors::journal_failed(format!("读取 fjall 操作日志失败：{error}")))?;
 
         match serde_json::from_slice::<AiEditOperationPayload>(&value) {
-            Ok(operation) => operations.push(operation),
+            Ok(operation) => result.push(operation),
             Err(error) => {
                 tracing::warn!(
                     target: "ai.edit",
@@ -108,7 +121,7 @@ fn list_operations_locked(storage_root: &Path) -> Result<Vec<AiEditOperationPayl
         }
     }
 
-    Ok(operations)
+    Ok(result)
 }
 
 pub fn prune_operations(
@@ -125,10 +138,25 @@ fn prune_operations_locked(
     retained_operation_ids: &HashSet<String>,
 ) -> Result<JournalPruneOutcome, String> {
     let store = open_store(storage_root)?;
+    prune_operations_with_db(&store.db, retained_operation_ids)
+}
+
+/// 复用调用方已打开的 fjall 句柄裁剪操作日志（lock-free 变体）。
+///
+/// 不变量：调用方须已持有 `journal.lock` 写锁，且 `db` 为同一存储目录上唯一存活句柄。
+pub fn prune_operations_with_db(
+    db: &Database,
+    retained_operation_ids: &HashSet<String>,
+) -> Result<JournalPruneOutcome, String> {
+    let operations = db
+        .keyspace(OPERATIONS_KEYSPACE, KeyspaceCreateOptions::default)
+        .map_err(|error| {
+            errors::journal_failed(format!("打开 operations keyspace 失败：{error}"))
+        })?;
     let mut outcome = JournalPruneOutcome::default();
     let mut keys_to_remove = Vec::new();
 
-    for item in store.operations.iter() {
+    for item in operations.iter() {
         let (key, value) = item
             .into_inner()
             .map_err(|error| errors::journal_failed(format!("读取 fjall 操作日志失败：{error}")))?;
@@ -158,14 +186,14 @@ fn prune_operations_locked(
         return Ok(outcome);
     }
 
-    let mut batch = store.db.batch();
+    let mut batch = db.batch();
     for key in keys_to_remove {
-        batch.remove(&store.operations, key);
+        batch.remove(&operations, key);
     }
     batch
         .commit()
         .map_err(|error| errors::journal_failed(format!("裁剪 fjall 操作日志失败：{error}")))?;
-    persist(&store.db)?;
+    persist(db)?;
 
     Ok(outcome)
 }

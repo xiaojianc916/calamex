@@ -110,9 +110,19 @@ fn set_pin_locked(
 
 fn list_pin_records_locked(storage_root: &Path) -> Result<Vec<PinRecord>, String> {
     let store = open_store(storage_root)?;
+    list_pin_records_with_db(&store.db)
+}
+
+/// 复用调用方已打开的 fjall 句柄读取 Pin 记录（lock-free 变体）。
+///
+/// 不变量：调用方须已持有 `journal.lock`，且 `db` 为同一存储目录上唯一存活句柄。
+pub fn list_pin_records_with_db(db: &Database) -> Result<Vec<PinRecord>, String> {
+    let pins = db
+        .keyspace(PINS_KEYSPACE, KeyspaceCreateOptions::default)
+        .map_err(|error| errors::journal_failed(format!("打开 pins keyspace 失败：{error}")))?;
     let mut records = Vec::new();
 
-    for item in store.pins.iter() {
+    for item in pins.iter() {
         let (_key, value) = item
             .into_inner()
             .map_err(|error| errors::journal_failed(format!("读取 AED Pin 状态失败：{error}")))?;

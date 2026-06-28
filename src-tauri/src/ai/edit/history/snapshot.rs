@@ -383,9 +383,33 @@ fn apply_snapshot_retention_locked(
     policy: SnapshotRetentionPolicy,
 ) -> Result<SnapshotPruneOutcome, String> {
     let store = open_store(storage_root)?;
-    let mut manifests = list_manifests(&store.snapshots)?;
+    apply_snapshot_retention_with_db(&store.db, storage_root, pin_index, policy)
+}
+
+/// 复用调用方已打开的 fjall 句柄执行快照 GC（lock-free 变体）。
+///
+/// 不变量：调用方须已持有 `journal.lock` 写锁，且 `db` 为同一存储目录上唯一存活句柄；
+/// 供 retention 在单锁单句柄内复用，避免单次 GC 重复开库。
+pub fn apply_snapshot_retention_with_db(
+    db: &Database,
+    storage_root: &Path,
+    pin_index: &PinIndex,
+    policy: SnapshotRetentionPolicy,
+) -> Result<SnapshotPruneOutcome, String> {
+    let snapshots = db
+        .keyspace(SNAPSHOTS_KEYSPACE, KeyspaceCreateOptions::default)
+        .map_err(|error| {
+            errors::snapshot_store_failed(format!("打开 snapshots keyspace 失败：{error}"))
+        })?;
+    let snapshot_blobs = db
+        .keyspace(SNAPSHOT_BLOBS_KEYSPACE, KeyspaceCreateOptions::default)
+        .map_err(|error| {
+            errors::snapshot_store_failed(format!("打开 snapshot_blobs keyspace 失败：{error}"))
+        })?;
+
+    let mut manifests = list_manifests(&snapshots)?;
     let mut outcome = SnapshotPruneOutcome::default();
-    let mut batch = store.db.batch();
+    let mut batch = db.batch();
     let mut blob_ref_counts = build_blob_ref_counts(&manifests);
     let mut active_blob_bytes = build_active_blob_bytes(&manifests);
 
@@ -403,7 +427,7 @@ fn apply_snapshot_retention_locked(
 
         strip_manifest_blobs(
             storage_root,
-            &store,
+            &snapshot_blobs,
             &mut batch,
             manifest,
             &mut blob_ref_counts,
@@ -426,7 +450,7 @@ fn apply_snapshot_retention_locked(
             let before_total = current_total;
             strip_manifest_blobs(
                 storage_root,
-                &store,
+                &snapshot_blobs,
                 &mut batch,
                 manifest,
                 &mut blob_ref_counts,
@@ -449,7 +473,7 @@ fn apply_snapshot_retention_locked(
             errors::snapshot_store_failed(format!("序列化快照清单失败：{error}"))
         })?;
         batch.insert(
-            &store.snapshots,
+            &snapshots,
             manifest.id.as_bytes().to_vec(),
             manifest_json,
         );
@@ -458,7 +482,7 @@ fn apply_snapshot_retention_locked(
     batch.commit().map_err(|error| {
         errors::snapshot_store_failed(format!("执行 AED 快照 GC 失败：{error}"))
     })?;
-    persist(&store.db)?;
+    persist(db)?;
 
     Ok(outcome)
 }
@@ -753,7 +777,7 @@ fn parse_rfc3339_utc(value: &str) -> Option<Timestamp> {
 
 fn strip_manifest_blobs(
     storage_root: &Path,
-    store: &SnapshotStore,
+    snapshot_blobs: &Keyspace,
     batch: &mut fjall::OwnedWriteBatch,
     manifest: &mut SnapshotManifest,
     blob_ref_counts: &mut HashMap<String, usize>,
@@ -786,7 +810,7 @@ fn strip_manifest_blobs(
 
         blob_ref_counts.remove(&blob_key);
         active_blob_bytes.remove(&blob_key);
-        let removed_bytes = remove_blob(storage_root, store, batch, &blob_key)?;
+        let removed_bytes = remove_blob(storage_root, snapshot_blobs, batch, &blob_key)?;
         if removed_bytes > 0 {
             outcome.removed_blob_count += 1;
             outcome.reclaimed_bytes += removed_bytes;
@@ -800,19 +824,18 @@ fn strip_manifest_blobs(
 
 fn remove_blob(
     storage_root: &Path,
-    store: &SnapshotStore,
+    snapshot_blobs: &Keyspace,
     batch: &mut fjall::OwnedWriteBatch,
     blob_key: &str,
 ) -> Result<u64, String> {
     if let Some(fjall_key) = blob_key.strip_prefix("fjall:") {
-        let removed_bytes = store
-            .snapshot_blobs
+        let removed_bytes = snapshot_blobs
             .size_of(fjall_key)
             .map_err(|error| {
                 errors::snapshot_store_failed(format!("读取 fjall blob 大小失败：{error}"))
             })?
             .unwrap_or_default() as u64;
-        batch.remove(&store.snapshot_blobs, fjall_key.as_bytes().to_vec());
+        batch.remove(snapshot_blobs, fjall_key.as_bytes().to_vec());
         return Ok(removed_bytes);
     }
 
