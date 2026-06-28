@@ -12,11 +12,11 @@ import { parsePlanSteps } from './update-plan.js';
  * - 形态/语义 ← Claude Code `ExitPlanMode`：呈现已成形的计划、标记规划完成并请求从
  *   plan 切到执行（act）。Claude 的 ExitPlanMode 入参即 plan 文本；本仓 plan 已落在
  *   living PLAN.md，故此处只带可选 summary，计划本体由 PLAN.md 承载。
- * - 不自带审批 ← 复用本仓 Tier 2 已硬化的 orchestration approvalGateStep（suspend/resume
- *   审批门）：exit_plan 仅作为「planning agent 循环」的终止信号，真正的 approve→act 由
- *   既有审批门处理，杜绝双重审批与新旧杂糳。
+ * - 不自带审批 ← 复用本仓既有审批门（approval_required 事件 → 前端确认 → sidecarResolveApproval
+ *   续跑）：exit_plan 仅作为「planning agent 循环」的终止信号，真正的 approve→act 由
+ *   既有审批门处理，杜绝双重审批与新旧杂簅。
  * - 交接校验：exit_plan 校验 PLAN.md 已落地且能解析出 ≥1 个 stepId（共用 update-plan 的
- *   parsePlanSteps），保证交给执行编排时是有效计划；否则报错引导模型先 update_plan 补全。
+ *   parsePlanSteps），保证交给执行阶段时是有效计划；否则报错引导模型先 update_plan 补全。
  * - 编写范式 ← 本仓 ask-user.ts / update-plan.ts。
  */
 
