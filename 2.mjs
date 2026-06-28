@@ -1,133 +1,249 @@
 #!/usr/bin/env node
 /**
- * P6/P8 渲染收口 · commit 2（幂等版：可反复运行）
- * 无需 git restore。每条编辑：find 命中则改；已是目标态则跳过；真正不一致才报错（原子，不写盘）。
- * 在 repo 根目录：node 2.mjs   完成后：pnpm typecheck && pnpm lint && pnpm test
+ * P6/P8 渲染收口 · commit 3（幂等版：可反复运行）
+ * 编排器写路径全面 entries-native。无需 git restore。
+ * find 命中则改；已是目标态则跳过；真正不一致才报错（原子，不写盘）。
+ * 在 repo 根目录：node 3.mjs   完成后：pnpm typecheck && pnpm lint && pnpm test（+ pnpm guard）
  */
 import { readFileSync, writeFileSync } from 'node:fs';
 
 const files = [
   {
-    file: 'src/components/business/ai/chat/AiChatThread.vue',
+    file: 'src/composables/ai/useAiAssistant.ts',
     replacements: [
       {
-        find: "import type { IAiChatMessage } from '@/types/ai';\nimport type { IAiThreadEntry } from '@/types/ai/thread';",
-        replace: "import type { IAiThreadEntry } from '@/types/ai/thread';",
-        goneToken: 'IAiChatMessage',
-        hint: 'IAiChatMessage',
-      },
-      {
-        find: '    messages: IAiChatMessage[];\n    isTyping: boolean;',
-        replace: '    isTyping: boolean;',
-        goneToken: 'messages: IAiChatMessage',
-        hint: 'messages: IAiChatMessage',
+        find: "import { useAiThreadStore } from '@/store/aiThread';",
+        replace: "import { legacyMessageToEntries, useAiThreadStore } from '@/store/aiThread';",
+        doneToken: 'legacyMessageToEntries, useAiThreadStore',
+        hint: "from '@/store/aiThread'",
       },
       {
         find:
-          'const messagesById = computed(() => {\n' +
-          '  const map = new Map<string, IAiChatMessage>();\n' +
-          '  for (const message of props.messages) {\n' +
-          '    map.set(message.id, message);\n' +
-          '  }\n' +
-          '  return map;\n' +
-          '});\n\n',
-        replace: '',
-        goneToken: 'messagesById',
-        hint: 'messagesById',
-      },
-      {
-        find:
-          'const afterMessageByEntryId = computed(() => {\n' +
-          '  const lastEntryIdByMessageId = new Map<string, string>();\n' +
-          '  for (const entry of entryTimeline.value) {\n' +
-          '    lastEntryIdByMessageId.set(entry.messageId, entry.id);\n' +
-          '  }\n' +
-          '\n' +
-          '  const resolved = new Map<string, IAiChatMessage>();\n' +
-          '  lastEntryIdByMessageId.forEach((entryId, messageId) => {\n' +
-          '    const message = messagesById.value.get(messageId);\n' +
-          '    if (message) {\n' +
-          '      resolved.set(entryId, message);\n' +
-          '    }\n' +
-          '  });\n' +
-          '\n' +
-          '  return resolved;\n' +
-          '});',
+          '  const messages = computed<IAiChatMessage[]>({\n' +
+          '    // 读真源 = 权威 entries（activeMessages）；影子缓冲已退役。\n' +
+          '    get: () => unref(conversationStore.activeMessages),\n' +
+          '    set: (nextMessages: IAiChatMessage[]) => {\n' +
+          '      // 写真源单写者 = 权威 store，无条件提交（reduce / overlay 幂等）。\n' +
+          '      const activeThreadId = unref(conversationStore.activeThreadId);\n' +
+          '      if (activeThreadId) {\n' +
+          '        conversationStore.replaceThreadMessages(activeThreadId, nextMessages);\n' +
+          '      } else {\n' +
+          '        conversationStore.replaceMessages(nextMessages);\n' +
+          '      }\n' +
+          '    },\n' +
+          '  });',
         replace:
-          'const afterMessageIdByEntryId = computed(() => {\n' +
-          '  const lastEntryIdByMessageId = new Map<string, string>();\n' +
-          '  for (const entry of entryTimeline.value) {\n' +
-          '    lastEntryIdByMessageId.set(entry.messageId, entry.id);\n' +
-          '  }\n' +
+          '  // 读真源 = 权威 entries（activeMessages）。写路径已全面 entries-native\n' +
+          '  // （patchActiveThreadEntries），故本计算属性退化为只读投影，仅供续聊 requestMessages / token 估算。\n' +
+          '  const messages = computed<IAiChatMessage[]>(() => unref(conversationStore.activeMessages));',
+        doneToken: 'computed<IAiChatMessage[]>(() => unref(conversationStore.activeMessages))',
+        hint: 'const messages = computed',
+      },
+      {
+        count: 3,
+        find: '    messages.value = [...visibleMessages, placeholderMessage];',
+        replace:
+          '    aiThreadStore.patchActiveThreadEntries((entries) => [\n' +
+          '      ...entries,\n' +
+          '      ...legacyMessageToEntries(placeholderMessage),\n' +
+          '    ]);',
+        doneToken: '...legacyMessageToEntries(placeholderMessage),',
+        hint: '[...visibleMessages, placeholderMessage]',
+      },
+      {
+        find:
+          '  const executeSidecarAgentRequest = async (\n' +
+          '    visibleMessages: IAiChatMessage[],\n' +
+          '    messageContent: string,',
+        replace: '  const executeSidecarAgentRequest = async (\n    messageContent: string,',
+        doneToken: 'executeSidecarAgentRequest = async (\n    messageContent: string,',
+        hint: 'const executeSidecarAgentRequest',
+      },
+      {
+        find:
+          '  const executeExternalAgentRequest = async (\n' +
+          '    backend: TAgentBackendKind,\n' +
+          '    visibleMessages: IAiChatMessage[],\n' +
+          '    messageContent: string,',
+        replace:
+          '  const executeExternalAgentRequest = async (\n' +
+          '    backend: TAgentBackendKind,\n' +
+          '    messageContent: string,',
+        doneToken:
+          'executeExternalAgentRequest = async (\n    backend: TAgentBackendKind,\n    messageContent: string,',
+        hint: 'const executeExternalAgentRequest',
+      },
+      {
+        find:
+          '  const executeAiRequest = async (\n' +
+          '    requestMessages: IAiChatMessage[],\n' +
+          '    visibleMessages: IAiChatMessage[],\n' +
+          '    references: IAiContextReference[],',
+        replace:
+          '  const executeAiRequest = async (\n' +
+          '    requestMessages: IAiChatMessage[],\n' +
+          '    references: IAiContextReference[],',
+        doneToken:
+          'executeAiRequest = async (\n    requestMessages: IAiChatMessage[],\n    references: IAiContextReference[],',
+        hint: 'const executeAiRequest',
+      },
+      {
+        find:
+          '    const visibleMessages = [...messages.value, userMessage];\n' +
           '\n' +
-          '  const resolved = new Map<string, string>();\n' +
-          '  lastEntryIdByMessageId.forEach((entryId, messageId) => {\n' +
-          '    resolved.set(entryId, messageId);\n' +
-          '  });\n' +
+          '    messages.value = visibleMessages;\n' +
+          "    draft.value = '';",
+        replace:
+          '    aiThreadStore.patchActiveThreadEntries((entries) => [\n' +
+          '      ...entries,\n' +
+          '      ...legacyMessageToEntries(userMessage),\n' +
+          '    ]);\n' +
+          "    draft.value = '';",
+        doneToken: '...legacyMessageToEntries(userMessage),',
+        hint: 'const visibleMessages = [...messages.value, userMessage]',
+      },
+      {
+        find:
+          '      errorMessage.value = message;\n' +
+          '      messages.value = [\n' +
+          '        ...visibleMessages,\n' +
+          '        {\n' +
+          "          id: createMessageId('assistant'),\n" +
+          "          role: 'assistant',\n" +
+          '          content: `AI 上下文收集失败：${message}`,\n' +
+          '          createdAt: new Date().toISOString(),\n' +
+          '          references: [],\n' +
+          '        },\n' +
+          '      ];\n' +
+          '      clearActiveBufferedThread(titleThreadId);',
+        replace:
+          '      errorMessage.value = message;\n' +
+          '      aiThreadStore.patchActiveThreadEntries((entries) => [\n' +
+          '        ...entries,\n' +
+          '        ...legacyMessageToEntries({\n' +
+          "          id: createMessageId('assistant'),\n" +
+          "          role: 'assistant',\n" +
+          '          content: `AI 上下文收集失败：${message}`,\n' +
+          '          createdAt: new Date().toISOString(),\n' +
+          '          references: [],\n' +
+          '        }),\n' +
+          '      ]);\n' +
+          '      clearActiveBufferedThread(titleThreadId);',
+        goneToken: 'messages.value = [\n        ...visibleMessages,',
+        hint: 'AI 上下文收集失败',
+      },
+      {
+        find:
+          '    const nextMessages = visibleMessages.map((message) =>\n' +
+          '      message.id === userMessage.id\n' +
+          '        ? {\n' +
+          '            ...message,\n' +
+          '            references,\n' +
+          '          }\n' +
+          '        : message,\n' +
+          '    );\n' +
           '\n' +
-          '  return resolved;\n' +
-          '});',
-        doneToken: 'const afterMessageIdByEntryId = computed',
-        hint: 'afterMessageId',
+          '    messages.value = nextMessages;\n' +
+          '    clearAttachedFiles({ revokePreviews: false });',
+        replace:
+          '    aiThreadStore.patchActiveThreadEntries((entries) =>\n' +
+          '      entries.map((entry) =>\n' +
+          "        entry.type === 'user_message' && entry.id === userMessage.id\n" +
+          '          ? { ...entry, references }\n' +
+          '          : entry,\n' +
+          '      ),\n' +
+          '    );\n' +
+          '    clearAttachedFiles({ revokePreviews: false });\n' +
+          '\n' +
+          '    const nextMessages = unref(conversationStore.activeMessages);',
+        doneToken: 'const nextMessages = unref(conversationStore.activeMessages);',
+        hint: 'const nextMessages = visibleMessages.map',
       },
       {
-        find: 'v-if="afterMessageByEntryId.get(item.id)"',
-        replace: 'v-if="afterMessageIdByEntryId.has(item.id)"',
-        doneToken: 'v-if="afterMessageIdByEntryId.has(item.id)"',
-        hint: 'v-if="afterMessage',
+        find:
+          '        messages.value = nextMessages;\n' +
+          '        clearAttachedFiles({ revokePreviews: false });\n' +
+          '        planSucceeded = true;',
+        replace:
+          '        clearAttachedFiles({ revokePreviews: false });\n' +
+          '        planSucceeded = true;',
+        goneToken:
+          '        messages.value = nextMessages;\n        clearAttachedFiles({ revokePreviews: false });\n        planSucceeded',
+        hint: 'planSucceeded = true',
       },
       {
-        find: ':message="afterMessageByEntryId.get(item.id)"',
-        replace: ':message-id="afterMessageIdByEntryId.get(item.id)"',
-        doneToken: ':message-id="afterMessageIdByEntryId.get(item.id)"',
-        hint: ':message',
-      },
-    ],
-  },
-  {
-    file: 'src/components/business/ai/shell/AiAssistantPanel.vue',
-    replacements: [
-      {
-        find: '<AiChatThread :messages="assistant.messages.value" :is-typing=',
-        replace: '<AiChatThread :is-typing=',
-        doneToken: '<AiChatThread :is-typing=',
-        hint: '<AiChatThread',
-      },
-      {
-        find: '#after-message="{ message }"',
-        replace: '#after-message="{ messageId }"',
-        doneToken: '#after-message="{ messageId }"',
-        hint: 'after-message',
-      },
-      {
-        find: 'getConversationCheckpoint(message.id)',
-        replace: 'getConversationCheckpoint(messageId)',
-        doneToken: 'getConversationCheckpoint(messageId)',
-        hint: 'getConversationCheckpoint(',
+        find:
+          '        messages.value = [\n' +
+          '          ...nextMessages,\n' +
+          '          {\n' +
+          "            id: createMessageId('assistant'),\n" +
+          "            role: 'assistant',\n" +
+          '            content: `计划生成失败：${message}`,\n' +
+          '            createdAt: new Date().toISOString(),\n' +
+          '            references: [],\n' +
+          '          },\n' +
+          '        ];',
+        replace:
+          '        aiThreadStore.patchActiveThreadEntries((entries) => [\n' +
+          '          ...entries,\n' +
+          '          ...legacyMessageToEntries({\n' +
+          "            id: createMessageId('assistant'),\n" +
+          "            role: 'assistant',\n" +
+          '            content: `计划生成失败：${message}`,\n' +
+          '            createdAt: new Date().toISOString(),\n' +
+          '            references: [],\n' +
+          '          }),\n' +
+          '        ]);',
+        goneToken: 'messages.value = [\n          ...nextMessages,',
+        hint: '计划生成失败',
       },
       {
-        find: 'getConversationCheckpointLabel(message.id)',
-        replace: 'getConversationCheckpointLabel(messageId)',
-        doneToken: 'getConversationCheckpointLabel(messageId)',
-        hint: 'getConversationCheckpointLabel(',
+        find:
+          '      await executeSidecarAgentRequest(\n' +
+          '        nextMessages,\n' +
+          '        messageContent,\n' +
+          '        references,\n' +
+          '        userMessage.id,\n' +
+          '        titleThreadId,\n' +
+          '      );',
+        replace:
+          '      await executeSidecarAgentRequest(\n' +
+          '        messageContent,\n' +
+          '        references,\n' +
+          '        userMessage.id,\n' +
+          '        titleThreadId,\n' +
+          '      );',
+        goneToken: 'executeSidecarAgentRequest(\n        nextMessages,',
+        hint: 'await executeSidecarAgentRequest',
       },
       {
-        find: 'isConversationCheckpointRestoring(message.id)',
-        replace: 'isConversationCheckpointRestoring(messageId)',
-        doneToken: 'isConversationCheckpointRestoring(messageId)',
-        hint: 'isConversationCheckpointRestoring(',
+        find:
+          '      await executeExternalAgentRequest(\n' +
+          '        externalBackend,\n' +
+          '        nextMessages,\n' +
+          '        messageContent,\n' +
+          '        titleThreadId,\n' +
+          '      );',
+        replace:
+          '      await executeExternalAgentRequest(\n' +
+          '        externalBackend,\n' +
+          '        messageContent,\n' +
+          '        titleThreadId,\n' +
+          '      );',
+        goneToken: 'executeExternalAgentRequest(\n        externalBackend,\n        nextMessages,',
+        hint: 'await executeExternalAgentRequest',
       },
       {
-        find: 'handleRestoreConversationCheckpoint(message.id)',
-        replace: 'handleRestoreConversationCheckpoint(messageId)',
-        doneToken: 'handleRestoreConversationCheckpoint(messageId)',
-        hint: 'handleRestoreConversationCheckpoint(',
+        find: '        await executeAiRequest(nextMessages, nextMessages, references, titleThreadId);',
+        replace: '        await executeAiRequest(nextMessages, references, titleThreadId);',
+        goneToken: 'executeAiRequest(nextMessages, nextMessages,',
+        hint: 'await executeAiRequest',
       },
     ],
   },
 ];
 
-applyIdempotent('commit 2', files);
+applyIdempotent('commit 3', files);
 
 function isDone(src, r) {
   if (r.doneToken) return src.includes(r.doneToken);
@@ -190,5 +306,5 @@ function applyIdempotent(label, fileList) {
     writeFileSync(file, out);
     console.log(`✓ ${file}：改 ${applied} 处，跳过 ${skipped} 处（已完成）`);
   }
-  console.log(`\n[${label}] 完成。请运行：pnpm typecheck && pnpm lint && pnpm test`);
+  console.log(`\n[${label}] 完成。请运行：pnpm typecheck && pnpm lint && pnpm test（+ pnpm guard）`);
 }

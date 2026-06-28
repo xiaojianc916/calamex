@@ -39,7 +39,7 @@ import { aiService } from '@/services/ipc/ai.service';
 import { buildCurrentFileReference } from '@/services/ipc/ai-context.service';
 import { aiEditService } from '@/services/ipc/ai-edit.service';
 import { type IAiPersistedSidecarAgentSession, useAiAgentStore } from '@/store/aiAgent';
-import { useAiThreadStore } from '@/store/aiThread';
+import { legacyMessageToEntries, useAiThreadStore } from '@/store/aiThread';
 import type {
   IAiAgentPatchSummary,
   IAiApplyPatchMetadata,
@@ -477,19 +477,9 @@ export const useAiAssistant = (options: IUseAiAssistantOptions) => {
     }
   };
 
-  const messages = computed<IAiChatMessage[]>({
-    // 读真源 = 权威 entries（activeMessages）；影子缓冲已退役。
-    get: () => unref(conversationStore.activeMessages),
-    set: (nextMessages: IAiChatMessage[]) => {
-      // 写真源单写者 = 权威 store，无条件提交（reduce / overlay 幂等）。
-      const activeThreadId = unref(conversationStore.activeThreadId);
-      if (activeThreadId) {
-        conversationStore.replaceThreadMessages(activeThreadId, nextMessages);
-      } else {
-        conversationStore.replaceMessages(nextMessages);
-      }
-    },
-  });
+  // 读真源 = 权威 entries（activeMessages）。写路径已全面 entries-native
+  // （patchActiveThreadEntries），故本计算属性退化为只读投影，仅供续聊 requestMessages / token 估算。
+  const messages = computed<IAiChatMessage[]>(() => unref(conversationStore.activeMessages));
 
   const historyThreads = computed(() => aiThreadStore.authoritativeHistoryThreads);
   const activeConversationId = computed(() => unref(conversationStore.activeThreadId));
@@ -1192,7 +1182,6 @@ export const useAiAssistant = (options: IUseAiAssistantOptions) => {
   };
 
   const executeSidecarAgentRequest = async (
-    visibleMessages: IAiChatMessage[],
     messageContent: string,
     references: IAiContextReference[],
     turnId: string,
@@ -1226,7 +1215,10 @@ export const useAiAssistant = (options: IUseAiAssistantOptions) => {
       },
     };
 
-    messages.value = [...visibleMessages, placeholderMessage];
+    aiThreadStore.patchActiveThreadEntries((entries) => [
+      ...entries,
+      ...legacyMessageToEntries(placeholderMessage),
+    ]);
     activeAgentMessageId.value = assistantMessageId;
     activeAbortController.value = new AbortController();
     const sidecarSessionId = `sidecar:${assistantMessageId}`;
@@ -1767,7 +1759,6 @@ export const useAiAssistant = (options: IUseAiAssistantOptions) => {
   // token 实时渲染；prompt 返回即整轮结束，flush 后把消息状态收口为 completed。
   const executeExternalAgentRequest = async (
     backend: TAgentBackendKind,
-    visibleMessages: IAiChatMessage[],
     messageContent: string,
     threadId: string | null,
   ): Promise<void> => {
@@ -1793,7 +1784,10 @@ export const useAiAssistant = (options: IUseAiAssistantOptions) => {
       },
     };
 
-    messages.value = [...visibleMessages, placeholderMessage];
+    aiThreadStore.patchActiveThreadEntries((entries) => [
+      ...entries,
+      ...legacyMessageToEntries(placeholderMessage),
+    ]);
     activeAgentMessageId.value = assistantMessageId;
     activeAbortController.value = new AbortController();
     const requestAbortController = activeAbortController.value;
@@ -1876,7 +1870,6 @@ export const useAiAssistant = (options: IUseAiAssistantOptions) => {
 
   const executeAiRequest = async (
     requestMessages: IAiChatMessage[],
-    visibleMessages: IAiChatMessage[],
     references: IAiContextReference[],
     threadId: string | null,
   ): Promise<void> => {
@@ -1899,7 +1892,10 @@ export const useAiAssistant = (options: IUseAiAssistantOptions) => {
       },
     };
 
-    messages.value = [...visibleMessages, placeholderMessage];
+    aiThreadStore.patchActiveThreadEntries((entries) => [
+      ...entries,
+      ...legacyMessageToEntries(placeholderMessage),
+    ]);
     activeAgentMessageId.value = assistantMessageId;
     activeAbortController.value = new AbortController();
     const requestAbortController = activeAbortController.value;
@@ -2084,9 +2080,10 @@ export const useAiAssistant = (options: IUseAiAssistantOptions) => {
       references: [],
     };
 
-    const visibleMessages = [...messages.value, userMessage];
-
-    messages.value = visibleMessages;
+    aiThreadStore.patchActiveThreadEntries((entries) => [
+      ...entries,
+      ...legacyMessageToEntries(userMessage),
+    ]);
     draft.value = '';
     errorMessage.value = '';
     isSending.value = true;
@@ -2099,16 +2096,16 @@ export const useAiAssistant = (options: IUseAiAssistantOptions) => {
     } catch (error) {
       const message = toErrorMessage(error, MSG_CALL_FAILED);
       errorMessage.value = message;
-      messages.value = [
-        ...visibleMessages,
-        {
+      aiThreadStore.patchActiveThreadEntries((entries) => [
+        ...entries,
+        ...legacyMessageToEntries({
           id: createMessageId('assistant'),
           role: 'assistant',
           content: `AI 上下文收集失败：${message}`,
           createdAt: new Date().toISOString(),
           references: [],
-        },
-      ];
+        }),
+      ]);
       clearActiveBufferedThread(titleThreadId);
       isSending.value = false;
       return;
@@ -2116,28 +2113,22 @@ export const useAiAssistant = (options: IUseAiAssistantOptions) => {
 
     currentReferences.value = references;
 
-    const nextMessages = visibleMessages.map((message) =>
-      message.id === userMessage.id
-        ? {
-            ...message,
-            references,
-          }
-        : message,
+    aiThreadStore.patchActiveThreadEntries((entries) =>
+      entries.map((entry) =>
+        entry.type === 'user_message' && entry.id === userMessage.id
+          ? { ...entry, references }
+          : entry,
+      ),
     );
-
-    messages.value = nextMessages;
     clearAttachedFiles({ revokePreviews: false });
+
+    const nextMessages = unref(conversationStore.activeMessages);
 
     // 外部 ACP 编码 agent（Kimi / Codex）走独立发送链路，与 activeMode（chat/agent/plan）无关：
     // 外部 agent 自管会话与运行循环，不复用自研边车的 mode 分流。
     const externalBackend = sendOptions?.agentBackend;
     if (externalBackend && externalBackend !== 'builtin') {
-      await executeExternalAgentRequest(
-        externalBackend,
-        nextMessages,
-        messageContent,
-        titleThreadId,
-      );
+      await executeExternalAgentRequest(externalBackend, messageContent, titleThreadId);
 
       if (!errorMessage.value) {
         void maybeGenerateConversationTitle(titleThreadId);
@@ -2147,13 +2138,7 @@ export const useAiAssistant = (options: IUseAiAssistantOptions) => {
     }
 
     if (activeMode.value === 'agent') {
-      await executeSidecarAgentRequest(
-        nextMessages,
-        messageContent,
-        references,
-        userMessage.id,
-        titleThreadId,
-      );
+      await executeSidecarAgentRequest(messageContent, references, userMessage.id, titleThreadId);
 
       if (!errorMessage.value) {
         void maybeGenerateConversationTitle(titleThreadId);
@@ -2180,23 +2165,22 @@ export const useAiAssistant = (options: IUseAiAssistantOptions) => {
           status: step.status,
         }));
 
-        messages.value = nextMessages;
         clearAttachedFiles({ revokePreviews: false });
         planSucceeded = true;
       } catch (error) {
         const message = toErrorMessage(error, '生成计划失败。');
         errorMessage.value = message;
         agentSteps.value = [];
-        messages.value = [
-          ...nextMessages,
-          {
+        aiThreadStore.patchActiveThreadEntries((entries) => [
+          ...entries,
+          ...legacyMessageToEntries({
             id: createMessageId('assistant'),
             role: 'assistant',
             content: `计划生成失败：${message}`,
             createdAt: new Date().toISOString(),
             references: [],
-          },
-        ];
+          }),
+        ]);
       } finally {
         clearActiveBufferedThread(titleThreadId);
         isSending.value = false;
@@ -2209,7 +2193,7 @@ export const useAiAssistant = (options: IUseAiAssistantOptions) => {
     }
     if (activeMode.value === 'chat') {
       try {
-        await executeAiRequest(nextMessages, nextMessages, references, titleThreadId);
+        await executeAiRequest(nextMessages, references, titleThreadId);
         if (!errorMessage.value) {
           void maybeGenerateConversationTitle(titleThreadId);
         }
