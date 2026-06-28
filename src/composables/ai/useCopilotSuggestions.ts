@@ -1,9 +1,20 @@
-import type { Suggestion } from '@copilotkit/core';
-import { useConfigureSuggestions, useSuggestions } from '@copilotkit/vue';
 import { computed, onBeforeUnmount, onMounted, type Ref, ref } from 'vue';
 import { aiService } from '@/services/ipc/ai.service';
 import { logger } from '@/utils/platform/logger';
 import { computeBackoffDelayMs, SUGGESTION_POOL_MAX_ATTEMPTS } from './suggestionPoolBackoff';
+
+/**
+ * 空态建议项视图模型。
+ *
+ * 历史上此类型借用 @copilotkit/core 的 `Suggestion`；移除 CopilotKit 第二管线后，
+ * 这里内联一个等价的最小自有类型，彻底切断对该依赖的耦合（建议生成本就走自建
+ * pipeline：静态兜底池 + narrator 词池缓存，从不经过 CopilotKit 运行时）。
+ */
+export interface Suggestion {
+  title: string;
+  message: string;
+  isLoading: boolean;
+}
 
 /**
  * 兜底建议池：免费小模型(narrator)不可用时使用。
@@ -179,21 +190,6 @@ export const useCopilotSuggestions = (): IUseCopilotSuggestionsResult => {
   // 静态兜底：抽取一次，作为缓存未就绪时的一次性兜底来源（永不重抽）。
   const fallbackPool = pickFromPool(STATIC_POOL);
 
-  // CopilotKit 运行时提供的建议 ref。我们走自建 pipeline 时它通常为空，
-  // 仅在提交决策时作为静态兜底之前的候选来源参与一次。
-  let ckSuggestions: Ref<Suggestion[]> = ref<Suggestion[]>([]);
-
-  try {
-    useConfigureSuggestions({
-      suggestions: fallbackPool,
-      available: 'before-first-message',
-    });
-    const result = useSuggestions({ agentId: 'default' });
-    ckSuggestions = result.suggestions as unknown as Ref<Suggestion[]>;
-  } catch {
-    // Provider absent — 保持空 ref，后面会回退到静态兜底。
-  }
-
   // 唯一对外暴露的展示集合：挂载时预取，决定后只提交一次，之后绝不替换，
   // 从根上杜绝“先显示一批、再被动态池刷新成另一批”的视觉跳变。
   const displayed = ref<Suggestion[]>([]);
@@ -232,10 +228,9 @@ export const useCopilotSuggestions = (): IUseCopilotSuggestionsResult => {
     displayed.value = [...next];
   };
 
-  // 兜底提交：缓存未就绪 / 短超时到点时，用 CopilotKit 池或静态池一次性铺出。
+  // 兜底提交：缓存未就绪 / 短超时到点时，用静态兜底池一次性铺出。
   const commitFallback = (): void => {
-    const fromCopilotKit = withContent(ckSuggestions.value);
-    commit(fromCopilotKit.length > 0 ? fromCopilotKit : fallbackPool);
+    commit(fallbackPool);
   };
 
   // 后台补偿：仅用于把动态词池写入缓存以温暖“下次启动”，
@@ -268,7 +263,7 @@ export const useCopilotSuggestions = (): IUseCopilotSuggestionsResult => {
       if (nextAttempt >= SUGGESTION_POOL_MAX_ATTEMPTS) {
         // 耗尽重试：不再静默吞错，记 error 暴露真实失败原因；UI 继续用已提交内容。
         logger.error({
-          event: 'copilotkit.suggestion_pool_generate_exhausted',
+          event: 'ai.suggestion_pool_generate_exhausted',
           attempts: nextAttempt,
           err,
         });
@@ -276,7 +271,7 @@ export const useCopilotSuggestions = (): IUseCopilotSuggestionsResult => {
       }
 
       logger.warn({
-        event: 'copilotkit.suggestion_pool_load_failed',
+        event: 'ai.suggestion_pool_load_failed',
         attempt: nextAttempt,
         err,
       });
@@ -296,7 +291,7 @@ export const useCopilotSuggestions = (): IUseCopilotSuggestionsResult => {
       const cached = await aiService.getSuggestionPoolCache();
       cachedSuggestions = cached?.suggestions ?? undefined;
     } catch (err) {
-      logger.warn({ event: 'copilotkit.suggestion_pool_cache_failed', err });
+      logger.warn({ event: 'ai.suggestion_pool_cache_failed', err });
     }
 
     if (disposed || committed) {
