@@ -19,7 +19,7 @@ import type {
   IAiChatRequest,
   IAiConversationTitlePayload,
   IAiConversationTitleRequest,
-  IAiGetSessionConfigOptionsRequest,
+  IAiEnsureAcpSessionRequest,
   IAiGetSessionModesRequest,
   IAiInlineCompletionRequest,
   IAiProposePatchPayload,
@@ -252,12 +252,12 @@ export const aiService = {
   resolveAcpApproval(payload: IAiResolveApprovalRequest): Promise<boolean> {
     return tauriService.aiResolveApproval(payload);
   },
-  getSessionConfigOptions(
-    payload: IAiGetSessionConfigOptionsRequest,
-  ): Promise<IAiSessionConfigOptionsPayload | null> {
-    return tauriService.aiGetSessionConfigOptions(payload);
+  ensureAcpSession(payload: IAiEnsureAcpSessionRequest): Promise<void> {
+    return tauriService.aiEnsureAcpSession(payload);
   },
-  setSessionConfigOption(payload: IAiSetSessionConfigOptionRequest): Promise<boolean> {
+  setSessionConfigOption(
+    payload: IAiSetSessionConfigOptionRequest,
+  ): Promise<IAiSessionConfigOptionsPayload | null> {
     return tauriService.aiSetSessionConfigOption(payload);
   },
   getSessionModes(payload: IAiGetSessionModesRequest): Promise<IAiSessionModesPayload | null> {

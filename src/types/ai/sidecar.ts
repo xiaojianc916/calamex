@@ -704,9 +704,22 @@ export interface IAcpSessionConfigOption {
   options: IAcpSessionConfigSelectOption[];
 }
 
-export interface IAcpSessionConfigOptionsState {
-  configOptions: IAcpSessionConfigOption[];
-}
+/**
+ * ACP 会话配置项发现状态(v3 · 唯一标准管线 / 判别式状态机)。
+ *
+ * 取代旧 `IAcpSessionConfigOptionsState`。配置项发现归一为单一事件驱动管线:
+ * `ensure_session` 握手 + 统一 `config_option_update` 事件通道(握手快照 / 延迟通知 /
+ * set 响应全集都汇入同一 sink),不再有 get 工作区与 host 轮询。UI 按此判别式渲染:
+ * - idle:尚未发起握手。
+ * - discovering:已握手,短等首帧 configOptions。
+ * - unavailable:该 backend 不公示 configOptions(或握手失败);选择器锁定并给原因。
+ * - ready:已拿到 configOptions 全集(可能为空数组 = 已公示但无可选项)。
+ */
+export type TAcpSessionConfigOptions =
+  | { kind: 'idle' }
+  | { kind: 'discovering' }
+  | { kind: 'unavailable'; reason: string; message?: string }
+  | { kind: 'ready'; configOptions: IAcpSessionConfigOption[] };
 
 export type TAgentUiEventConfigOptionUpdate = {
   type: 'config_option_update';
