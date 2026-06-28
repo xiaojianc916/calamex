@@ -799,6 +799,13 @@ function gitClean() {
 const count = (hay, needle) => hay.split(needle).length - 1;
 
 function main() {
+  // ── CRLF 兼容：Windows 下 .mjs 本身可能保存为 CRLF，模板字面量里含 \r\n ──
+const normalize = (s) => s.replace(/\r\n/g, '\n').replace(/\r/g, '\n');
+for (const op of OPS) {
+  if (op.find)    op.find    = normalize(op.find);
+  if (op.replace) op.replace = normalize(op.replace);
+  if (op.requireIncludes) op.requireIncludes = op.requireIncludes.map(normalize);
+}
   if (!gitClean() && !FORCE) {
     console.error('✗ 工作区不干净。请先提交/暂存，或加 --force（不推荐）。');
     process.exit(2);
@@ -813,7 +820,7 @@ function main() {
   for (const [file, ops] of byFile) {
     let content;
     try {
-      content = readFileSync(resolve(file), 'utf8');
+      content = normalize(readFileSync(resolve(file), 'utf8'));
     } catch {
       console.error(`✗ 读不到文件：${file}`);
       errors++;
