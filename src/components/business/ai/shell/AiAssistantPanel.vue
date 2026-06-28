@@ -1251,7 +1251,7 @@ onMounted(() => {
                         <strong class="ai-history-title" v-text="thread.title"></strong>
                         <time v-text="getHistoryTimestampLabel(thread.updatedAt)"></time>
                       </div>
-                      <div class="ai-history-subtitle" v-text="getHistoryMessageCountLabel(thread.messages)"></div>
+                      <div class="ai-history-subtitle" v-text="getHistoryMessageCountLabel(thread)"></div>
                     </button>
                     <button type="button" class="ai-history-delete-button" aria-label="删除这条对话记录"
                       @click.stop="openDeleteConversationDialog(thread.id)">

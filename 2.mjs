@@ -1,64 +1,89 @@
 #!/usr/bin/env node
-// 3.mjs — 迁移收尾补丁(仓库根运行: node 3.mjs)
-import { execFileSync } from 'node:child_process';
-import fs from 'node:fs';
-import path from 'node:path';
+/**
+ * P6/P8 渲染收口 · commit 1：会话历史浮层改 entries-native，退掉 message 桥读侧（历史分支）。
+ * 在 repo 根目录运行：node p6-1-history-entries-native.mjs
+ * 完成后务必本地跑闸门：pnpm typecheck && pnpm lint && pnpm test
+ */
+import { readFileSync, writeFileSync } from 'node:fs';
 
-const ROOT = process.cwd();
-const abs = (p) => path.join(ROOT, p);
-const exists = (p) => fs.existsSync(abs(p));
-const sh = (args) => execFileSync('git', args, { cwd: ROOT, stdio: 'inherit' });
-const log = (...a) => console.log(...a);
+const edits = [
+  {
+    file: 'src/composables/ai/useAiAssistant.ts',
+    replacements: [
+      {
+        find: '  const historyThreads = computed(() => unref(conversationStore.conversationHistoryThreads));',
+        replace: '  const historyThreads = computed(() => aiThreadStore.authoritativeHistoryThreads);',
+      },
+    ],
+  },
+  {
+    file: 'src/composables/ai/useAiConversationHistory.ts',
+    replacements: [
+      {
+        find: "import type { IAiChatMessage } from '@/types/ai';",
+        replace: "import type { IAiThread } from '@/types/ai/thread';",
+      },
+      {
+        find:
+          '  const getHistoryMessageCountLabel = (messages: IAiChatMessage[]): string =>\n' +
+          '    `${messages.length} 条消息`;',
+        replace:
+          '  // entries-native 计数：统计映射为可见消息的条目（user_message / assistant_message），\n' +
+          '  // 取代依赖 message 桥（thread.messages）的 length；其余条目（tool_call / changed_files 等）\n' +
+          '  // 是消息的子条目，不计入「N 条消息」。\n' +
+          '  const countThreadMessages = (thread: IAiThread): number =>\n' +
+          '    thread.entries.reduce(\n' +
+          '      (count, entry) =>\n' +
+          "        entry.type === 'user_message' || entry.type === 'assistant_message' ? count + 1 : count,\n" +
+          '      0,\n' +
+          '    );\n' +
+          '\n' +
+          '  const getHistoryMessageCountLabel = (thread: IAiThread): string =>\n' +
+          '    `${countThreadMessages(thread)} 条消息`;',
+      },
+      {
+        find: "    const messageCountLabel = thread ? getHistoryMessageCountLabel(thread.messages) : '这条记录';",
+        replace: "    const messageCountLabel = thread ? getHistoryMessageCountLabel(thread) : '这条记录';",
+      },
+    ],
+  },
+  {
+    file: 'src/components/business/ai/shell/AiAssistantPanel.vue',
+    replacements: [
+      {
+        find: 'getHistoryMessageCountLabel(thread.messages)',
+        replace: 'getHistoryMessageCountLabel(thread)',
+      },
+    ],
+  },
+];
 
-// 1) 重命名漏掉的 2 个 Rust 模块文件(否则 `mod builtin_agent;` 找不到文件 → E0583)
-for (const [from, to] of [
-  ['src-tauri/src/commands/agent_sidecar.rs', 'src-tauri/src/commands/builtin_agent.rs'],
-  ['src-tauri/src/commands/contracts/agent_sidecar.rs', 'src-tauri/src/commands/contracts/builtin_agent.rs'],
-]) {
-  if (exists(from)) { log(`• git mv ${from} → ${to}`); try { sh(['mv', from, to]); } catch { fs.renameSync(abs(from), abs(to)); } }
-  else if (exists(to)) log(`• 已是 ${to}(跳过)`);
-  else log(`⚠️ 未找到 ${from}(请手动核对 git ls-files src-tauri | findstr agent_sidecar)`);
-}
-
-// 2) 加回 ai(非死依赖:ai-elements 用了官方 UI 类型);只保留移除 @ai-sdk/deepseek
-{
-  const p = abs('package.json');
-  let t = fs.readFileSync(p, 'utf8');
-  const depsBlock = t.match(/"dependencies"\s*:\s*\{[\s\S]*?\n\s*\}/)?.[0] ?? '';
-  if (!/"ai"\s*:/.test(depsBlock)) {
-    if (/(\n)(\s*)"bash-language-server":/.test(t)) {
-      t = t.replace(/(\n)(\s*)"bash-language-server":/, `$1$2"ai": "7.0.4",$1$2"bash-language-server":`); // 还原字母序原位
-    } else {
-      t = t.replace(/("dependencies"\s*:\s*\{)/, `$1\n    "ai": "7.0.4",`);
-    }
-    fs.writeFileSync(p, t);
-    log('• package.json: 加回 ai@7.0.4(仅清退 @ai-sdk/deepseek)');
-  } else log('• ai 已在依赖中(跳过)');
-}
-
-// 3) 还原 specta 生成物,交回构建再生
-if (exists('src/bindings/tauri.ts')) { log('• git checkout src/bindings/tauri.ts(交回 tauri-specta 再生)'); try { sh(['checkout', '--', 'src/bindings/tauri.ts']); } catch {} }
-
-// 4) 修 .gitignore(脚本因无扩展名跳过)
-{
-  const p = abs('.gitignore');
-  if (fs.existsSync(p)) {
-    const b = fs.readFileSync(p, 'utf8');
-    const t = b.split('agent-sidecar').join('builtin-agent');
-    if (t !== b) { fs.writeFileSync(p, t); log('• .gitignore: agent-sidecar → builtin-agent'); }
+let ok = true;
+for (const { file, replacements } of edits) {
+  let src;
+  try {
+    src = readFileSync(file, 'utf8');
+  } catch (err) {
+    console.error(`✗ 读取失败: ${file} (${err.message})`);
+    ok = false;
+    continue;
   }
+  for (const { find, replace } of replacements) {
+    const count = src.split(find).length - 1;
+    if (count !== 1) {
+      console.error(`✗ ${file}: 锚点命中 ${count} 次（期望 1）:\n    ${find.slice(0, 80)}...`);
+      ok = false;
+      continue;
+    }
+    src = src.replace(find, replace);
+  }
+  writeFileSync(file, src);
+  console.log(`✓ 已改写: ${file}`);
 }
 
-// 5) 删除陈旧的、被 ignore 的打包暂存目录(prepare-bundle-resources 会按 builtin-agent 重生)
-if (exists('src-tauri/resources-bundle/agent-sidecar')) {
-  fs.rmSync(abs('src-tauri/resources-bundle/agent-sidecar'), { recursive: true, force: true });
-  log('• 删除陈旧 src-tauri/resources-bundle/agent-sidecar(非提交内容)');
+if (!ok) {
+  console.error('\n有锚点未按预期命中，未保证全部改写。请检查文件是否与基线一致后重试。');
+  process.exit(1);
 }
-
-log('\n收尾完成。按序过闸:');
-log('  1) pnpm install');
-log('  2) 再生绑定:pnpm tauri:dev 跑一次(debug 下 tauri-specta 重写 src/bindings/tauri.ts),确认命令名变 builtin_agent_*');
-log('  3) pnpm typecheck && pnpm lint && pnpm test');
-log('  4) cargo clippy --manifest-path src-tauri/Cargo.toml && cargo test --manifest-path src-tauri/Cargo.toml');
-log('  5) pnpm guard && pnpm tauri:build   (验证打包路径 resources-bundle/builtin-agent)');
-log('  6) git status 复核(.mastra / resources-bundle 应为 ignored,不进暂存)→ squash 提交 main');
+console.log('\n完成。请运行：pnpm typecheck && pnpm lint && pnpm test');
+console.log('提示：useAiAssistant.spec.ts / AiAssistantPanel.spec.ts 可能断言旧的 historyThreads(.messages) 形状，需同步更新断言为 entries 形状。');

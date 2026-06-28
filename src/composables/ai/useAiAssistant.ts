@@ -491,7 +491,7 @@ export const useAiAssistant = (options: IUseAiAssistantOptions) => {
     },
   });
 
-  const historyThreads = computed(() => unref(conversationStore.conversationHistoryThreads));
+  const historyThreads = computed(() => aiThreadStore.authoritativeHistoryThreads);
   const activeConversationId = computed(() => unref(conversationStore.activeThreadId));
   const activeConversationScrollState = computed<IAiConversationScrollState | null>(
     () => conversationStore.activeConversationThread?.scrollState ?? null,

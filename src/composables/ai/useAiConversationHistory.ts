@@ -3,7 +3,7 @@ import { computed, ref } from 'vue';
 
 import { formatHistoryTimestamp } from '@/components/business/ai/shell/history-format';
 import type { useAiAssistant } from '@/composables/ai/useAiAssistant';
-import type { IAiChatMessage } from '@/types/ai';
+import type { IAiThread } from '@/types/ai/thread';
 
 type AiAssistantApi = ReturnType<typeof useAiAssistant>;
 
@@ -44,8 +44,18 @@ export const useAiConversationHistory = (assistant: AiAssistantApi) => {
       null,
   );
 
-  const getHistoryMessageCountLabel = (messages: IAiChatMessage[]): string =>
-    `${messages.length} 条消息`;
+  // entries-native 计数：统计映射为可见消息的条目（user_message / assistant_message），
+  // 取代依赖 message 桥（thread.messages）的 length；其余条目（tool_call / changed_files 等）
+  // 是消息的子条目，不计入「N 条消息」。
+  const countThreadMessages = (thread: IAiThread): number =>
+    thread.entries.reduce(
+      (count, entry) =>
+        entry.type === 'user_message' || entry.type === 'assistant_message' ? count + 1 : count,
+      0,
+    );
+
+  const getHistoryMessageCountLabel = (thread: IAiThread): string =>
+    `${countThreadMessages(thread)} 条消息`;
 
   const resetHistoryPagination = (): void => {
     visibleHistoryLimit.value = HISTORY_PAGE_SIZE;
@@ -81,7 +91,7 @@ export const useAiConversationHistory = (assistant: AiAssistantApi) => {
 
   const deleteDialogDescription = computed<string>(() => {
     const thread = pendingDeleteThread.value;
-    const messageCountLabel = thread ? getHistoryMessageCountLabel(thread.messages) : '这条记录';
+    const messageCountLabel = thread ? getHistoryMessageCountLabel(thread) : '这条记录';
 
     return `只会删除这条对话记录（${messageCountLabel}），不会删除文件或其他对话。`;
   });
