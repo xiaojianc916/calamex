@@ -4,9 +4,6 @@ settings:
   autoInstallPeers: true
   excludeLinksFromLockfile: false
 
-overrides:
-  rxjs: ^7.8.2
-
 importers:
 
   .:
@@ -197,9 +194,6 @@ importers:
       reka-ui:
         specifier: ^2.10.1
         version: 2.10.1(vue@3.6.0-beta.16(typescript@6.0.3))
-      rxjs:
-        specifier: ^7.8.2
-        version: 7.8.2
       shiki:
         specifier: ^4.3.0
         version: 4.3.0
@@ -5501,7 +5495,7 @@ packages:
     resolution: {integrity: sha512-Sm2mCAa9/lTTYppnKyy0AhQrriq8fOd8B2vwd3EE/9uihyIx9qkJ1xGYbvADxQJlF7HqM1/TIFCKsI0JvF8gjQ==}
     engines: {node: ^20.20.0 || >=22.22.0}
     peerDependencies:
-      rxjs: ^7.8.2
+      rxjs: ^7.0.0
     peerDependenciesMeta:
       rxjs:
         optional: true
@@ -12660,6 +12654,7 @@ snapshots:
   rxjs@7.8.2:
     dependencies:
       tslib: 2.8.1
+    optional: true
 
   safaridriver@1.0.1: {}
 
