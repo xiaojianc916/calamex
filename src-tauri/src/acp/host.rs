@@ -122,6 +122,12 @@ pub struct AcpHost {
     /// 命令面板恒空。sink 无条件按 ACP 会话 id 缓存，回合发起时以前端键重放，使面板稳定填充（与
     /// modes_by_thread / config_options_by_thread 的会话级缓存同构）。
     available_commands_by_session: Arc<Mutex<HashMap<String, serde_json::Value>>>,
+    /// ACP 会话 id ↔ 该会话最近一次 config_option_update 的 configOptions 原始数组（含模型选择器）。
+    /// 与 available_commands_by_session 同构：Kimi 等外部 agent 在 session/new 后经一次性通知下发模型
+    /// 清单（标准 config_option_update），该 one-shot 早于/竞争本回合 stream_key 重写登记、且会话复用后
+    /// 不再重发，仅靠回合内自然转发会被前端按键过滤丢弃 → 模型选择器恒空。sink 无条件按 ACP 会话 id
+    /// 缓存，回合发起时以前端键重放，使选择器稳定填充。
+    config_options_by_session: Arc<Mutex<HashMap<String, serde_json::Value>>>,
     /// 流式帧下沉口克隆：供回合发起时主动以前端键重放缓存的可用命令（sink 内重写表只在帧自然到达
     /// 时生效，重放是宿主侧主动构造帧，故宿主直接持 emit）。
     emit: StreamEmitter,
@@ -146,6 +152,11 @@ impl AcpHost {
             Arc::new(Mutex::new(HashMap::new()));
         let commands_cache_for_sink = available_commands_by_session.clone();
 
+        // 与可用命令同构：外部 agent 一次性下发的可配置项缓存（按 ACP 会话 id）：sink 无条件捕获，重放于回合发起。
+        let config_options_by_session: Arc<Mutex<HashMap<String, serde_json::Value>>> =
+            Arc::new(Mutex::new(HashMap::new()));
+        let config_options_cache_for_sink = config_options_by_session.clone();
+
         // emit 克隆留给宿主侧主动重放（sink 内的重写表只在帧自然到达时生效）。
         let emit_for_host = emit.clone();
 
@@ -163,6 +174,16 @@ impl AcpHost {
                     commands_cache_for_sink
                         .lock()
                         .insert(acp_session_id, commands);
+                }
+            }
+
+            // 与可用命令同构：按原始 ACP 会话 id 捕获 config_option_update 的 configOptions 原始数组，
+            // 缓存供回合发起时以前端键重放（取键须在重写 session_id 之前）。
+            if let Some(acp_session_id) = frame.session_id.clone() {
+                if let Some(config_options) = extract_config_option_update(&frame.event) {
+                    config_options_cache_for_sink
+                        .lock()
+                        .insert(acp_session_id, config_options);
                 }
             }
 
@@ -185,6 +206,7 @@ impl AcpHost {
             config_options_by_thread: Arc::new(Mutex::new(HashMap::new())),
             stream_key_overrides,
             available_commands_by_session,
+            config_options_by_session,
             emit: emit_for_host,
         })
     }
@@ -206,12 +228,13 @@ impl AcpHost {
         let cwd = workspace_cwd(workspace_root_path);
         let outcome = self.handle.new_session(cwd).await?;
         let session_id = outcome.session_id;
-        // 诊断：打印 agent 在 session/new 公示的可切换项（含模型 / 模式），用于确认外部 agent
-        // （如 Kimi）是否通过 ACP modes 暴露模型切换——决定走 set_session_mode 无感切换还是兜底。
+        // 诊断：打印 agent 在 session/new 公示的可切换项（含模型 / 模式 / 配置项），用于确认外部 agent
+        // （如 Kimi）是否通过 ACP modes / config_options 暴露模型切换——决定走哪条通道还是兑底。
         log::info!(
             target: "acp",
-            "ACP session/new 完成（thread={thread_id}）：session_id={session_id}，agent 公示 modes={:?}",
-            outcome.modes
+            "ACP session/new 完成（thread={thread_id}）：session_id={session_id}，agent 公示 modes={:?}，config_options={:?}",
+            outcome.modes,
+            outcome.config_options
         );
         if !thread_key.is_empty() {
             self.sessions
@@ -278,8 +301,9 @@ impl AcpHost {
             self.stream_key_overrides
                 .lock()
                 .insert(acp_session_id.clone(), key.to_string());
-            // 重写已登记 + 前端回合订阅已建立：以前端键重放缓存的可用命令，命令面板即时填充。
+            // 重写已登记 + 前端回合订阅已建立：以前端键重放缓存的可用命令与可配置项，面板/选择器即时填充。
             self.replay_available_commands(&acp_session_id, key);
+            self.replay_config_options(&acp_session_id, key);
             true
         } else {
             false
@@ -313,6 +337,28 @@ impl AcpHost {
             session_id: Some(stream_key.to_string()),
             seq: 0,
             event: build_available_commands_event(stream_key, &commands),
+        });
+    }
+
+    /// 把某 ACP 会话已缓存的 config_options 以前端流式键重放一帧 config_option_update。
+    ///
+    /// 与 replay_available_commands 同构：Kimi 等外部 agent 的可配置项（含模型选择器）是 session/new 后
+    /// 经一次性通知下发，会话复用后不再重发，且其到达时序早于/竞争本回合 stream_key 重写登记，
+    /// 仅靠自然转发会被前端按键过滤丢弃 → 模型选择器恒空。此处登记重写后主动以前端键补发一帧，使
+    /// 选择器在每个回合订阅建立后稳定填充。无缓存则空操作。
+    fn replay_config_options(&self, acp_session_id: &str, stream_key: &str) {
+        let config_options = self
+            .config_options_by_session
+            .lock()
+            .get(acp_session_id)
+            .cloned();
+        let Some(config_options) = config_options else {
+            return;
+        };
+        (self.emit)(AcpStreamFrame {
+            session_id: Some(stream_key.to_string()),
+            seq: 0,
+            event: build_config_option_update_event(stream_key, &config_options),
         });
     }
 
@@ -589,8 +635,9 @@ impl AcpHost {
             self.stream_key_overrides
                 .lock()
                 .insert(acp_session_id.to_string(), key.to_string());
-            // 同 prompt_with_stream_key：登记重写后立即以前端键重放缓存的可用命令。
+            // 同 prompt_with_stream_key：登记重写后立即以前端键重放缓存的可用命令与可配置项。
             self.replay_available_commands(acp_session_id, key);
+            self.replay_config_options(acp_session_id, key);
             true
         } else {
             false
@@ -704,6 +751,36 @@ fn build_available_commands_event(
     })
 }
 
+/// 从一帧 session/update 事件 JSON 中提取 config_option_update 的 configOptions 数组。
+/// 仅当 update.sessionUpdate 为 "config_option_update" 且存在 configOptions 时返回其克隆，
+/// 否则返回 None（其余变体或字段缺失）。纯函数，便于单测。与 extract_available_commands_update 同构。
+fn extract_config_option_update(event: &serde_json::Value) -> Option<serde_json::Value> {
+    let update = event.get("update")?;
+    if update
+        .get("sessionUpdate")
+        .and_then(serde_json::Value::as_str)
+        != Some("config_option_update")
+    {
+        return None;
+    }
+    update.get("configOptions").cloned()
+}
+
+/// 构造一帧以前端流式键标记的 config_option_update 事件 JSON（与 ui_event 投影同形：
+/// sessionId + update.sessionUpdate + update.configOptions）。纯函数，便于单测。
+fn build_config_option_update_event(
+    stream_key: &str,
+    config_options: &serde_json::Value,
+) -> serde_json::Value {
+    serde_json::json!({
+        "sessionId": stream_key,
+        "update": {
+            "sessionUpdate": "config_option_update",
+            "configOptions": config_options.clone(),
+        }
+    })
+}
+
 /// 修剪并过滤空白可选字符串：`None` / 空 / 全空白 → `None`，否则返回修剪后切片。
 fn non_empty(value: Option<&str>) -> Option<&str> {
     value.map(str::trim).filter(|s| !s.is_empty())
@@ -765,6 +842,59 @@ mod tests {
         assert_eq!(event["sessionId"], "sidecar:assistant-1");
         assert_eq!(event["update"]["sessionUpdate"], "available_commands_update");
         assert_eq!(event["update"]["availableCommands"][0]["name"], "status");
+    }
+
+    #[test]
+    fn extract_config_option_update_returns_options_for_matching_frame() {
+        let event = serde_json::json!({
+            "sessionId": "acp-uuid",
+            "update": {
+                "sessionUpdate": "config_option_update",
+                "configOptions": [
+                    {
+                        "id": "model",
+                        "name": "Model",
+                        "type": "select",
+                        "currentValue": "kimi-k2",
+                        "options": [
+                            { "value": "kimi-k2", "name": "Kimi K2" }
+                        ]
+                    }
+                ]
+            }
+        });
+        let config_options = extract_config_option_update(&event).unwrap();
+        assert_eq!(config_options.as_array().unwrap().len(), 1);
+        assert_eq!(config_options[0]["id"], "model");
+    }
+
+    #[test]
+    fn extract_config_option_update_ignores_other_session_updates() {
+        let event = serde_json::json!({
+            "sessionId": "acp-uuid",
+            "update": {
+                "sessionUpdate": "available_commands_update",
+                "availableCommands": []
+            }
+        });
+        assert!(extract_config_option_update(&event).is_none());
+    }
+
+    #[test]
+    fn extract_config_option_update_none_when_field_absent() {
+        let event = serde_json::json!({
+            "update": { "sessionUpdate": "config_option_update" }
+        });
+        assert!(extract_config_option_update(&event).is_none());
+    }
+
+    #[test]
+    fn build_config_option_update_event_targets_stream_key() {
+        let config_options = serde_json::json!([{ "id": "model", "name": "Model" }]);
+        let event = build_config_option_update_event("sidecar:assistant-1", &config_options);
+        assert_eq!(event["sessionId"], "sidecar:assistant-1");
+        assert_eq!(event["update"]["sessionUpdate"], "config_option_update");
+        assert_eq!(event["update"]["configOptions"][0]["id"], "model");
     }
 
     #[test]
