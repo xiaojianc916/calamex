@@ -12,7 +12,7 @@ import {
   skillDetailSchema,
   skillListSchema,
 } from '@/types/ai/skill.schema';
-import { type ICommandMeta, runCommand } from './tauri.ipc-define';
+import { type ICommandMeta, runCommand } from './core/ipc-define';
 
 /**
  * 技能库 IPC 服务。

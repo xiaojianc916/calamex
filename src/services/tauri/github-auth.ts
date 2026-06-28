@@ -1,7 +1,7 @@
 import { invoke } from '@tauri-apps/api/core';
 import { commands } from '@/bindings/tauri';
-import { type ICommandMeta, runCommand } from './tauri.ipc-define';
-import type { IIpcCallOptions } from './tauri.ipc-types';
+import { type ICommandMeta, runCommand } from './core/ipc-define';
+import type { IIpcCallOptions } from './core/ipc-types';
 
 export interface IGitHubAuthRequest {
   repositoryRootPath: string;

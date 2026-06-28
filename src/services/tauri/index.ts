@@ -1,13 +1,13 @@
 import type { ITauriService } from '@/types/tauri';
-import { aiTauriService } from './tauri.ai';
-import { aiEditTauriService } from './tauri.ai-edit';
-import { gitTauriService } from './tauri.git';
-import { sidecarTauriService } from './tauri.sidecar';
-import { sshTauriService } from './tauri.ssh';
-import { terminalTauriService } from './tauri.terminal';
-import { workspaceTauriService } from './tauri.workspace';
+import { aiTauriService } from './ai';
+import { aiEditTauriService } from './ai-edit';
+import { gitTauriService } from './git';
+import { sidecarTauriService } from './sidecar';
+import { sshTauriService } from './ssh';
+import { terminalTauriService } from './terminal';
+import { workspaceTauriService } from './workspace';
 
-export type { IIpcCallOptions, TIpcAuditLevel } from './tauri.ipc-types';
+export type { IIpcCallOptions, TIpcAuditLevel } from './core/ipc-types';
 
 /**
  * Tauri IPC 服务门面。

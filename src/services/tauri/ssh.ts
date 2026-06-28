@@ -2,9 +2,9 @@ import { commands } from '@/bindings/tauri';
 import { useDialog } from '@/composables/useDialog';
 import { type AppError, isAppError } from '@/types/app-error';
 import type { ITauriService } from '@/types/tauri';
-import { type ICommandMeta, runCommand } from './tauri.ipc-define';
-import { buildPayloadMetricsOmittingTextFields } from './tauri.ipc-metrics';
-import type { IIpcCallOptions } from './tauri.ipc-types';
+import { type ICommandMeta, runCommand } from './core/ipc-define';
+import { buildPayloadMetricsOmittingTextFields } from './core/ipc-metrics';
+import type { IIpcCallOptions } from './core/ipc-types';
 
 /**
  * SSH invoke 层：从手写 Zod 契约迁入 tauri-specta 生成绑定（commands.*）。

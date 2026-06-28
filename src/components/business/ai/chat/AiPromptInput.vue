@@ -57,7 +57,7 @@ import {
   AI_SERVICE_PLATFORM_PRESETS,
   findAiServicePlatformByModel,
 } from '@/constants/ai/providers';
-import { skillsTauriService } from '@/services/tauri.skills';
+import { skillsTauriService } from '@/services/tauri/skills';
 import type { IAiAttachedFile, IAiConfigPayload, TAiAgentNetworkPermission } from '@/types/ai';
 import { isAiAssistantMode, type TAiAssistantMode } from '@/types/ai/assistant-mode';
 import type { TAiExecutionMode } from '@/types/ai/execution-mode';

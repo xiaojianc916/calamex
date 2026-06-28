@@ -9,7 +9,7 @@ import {
   commands,
   events,
 } from '@/bindings/tauri';
-import { type ICommandMeta, runCommand } from '@/services/tauri.ipc-define';
+import { type ICommandMeta, runCommand } from '@/services/tauri/core/ipc-define';
 
 /**
  * agent 内置浏览器的 CDP 远程调试端口(默认绑 127.0.0.1)。

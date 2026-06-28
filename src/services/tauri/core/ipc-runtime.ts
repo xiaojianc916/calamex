@@ -6,7 +6,7 @@ import {
   DesktopRuntimeUnavailableError,
 } from '@/utils/platform/desktop-runtime';
 import { logger } from '@/utils/platform/logger';
-import { buildPayloadMetrics } from './tauri.ipc-metrics';
+import { buildPayloadMetrics } from './ipc-metrics';
 import type {
   IIpcErrorMapping,
   IIpcInstrumentationContext,
@@ -14,7 +14,7 @@ import type {
   IIpcLogRecord,
   ISpectaCommandOptions,
   TErrorMap,
-} from './tauri.ipc-types';
+} from './ipc-types';
 
 type TauriCoreModule = typeof import('@tauri-apps/api/core');
 type TauriDialogModule = typeof import('@tauri-apps/plugin-dialog');

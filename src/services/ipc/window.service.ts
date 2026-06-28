@@ -1,5 +1,5 @@
 import { commands, type SetWindowBackgroundInput, type WindowStage } from '@/bindings/tauri';
-import { type ICommandMeta, runCommand } from '@/services/tauri.ipc-define';
+import { type ICommandMeta, runCommand } from '@/services/tauri/core/ipc-define';
 
 export type TSetWindowBackgroundRequest = Omit<SetWindowBackgroundInput, 'label' | 'a'> &
   Partial<Pick<SetWindowBackgroundInput, 'a'>> & {

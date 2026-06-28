@@ -1,7 +1,7 @@
 import { invoke } from '@tauri-apps/api/core';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { AppError } from '@/types/app-error';
-import { tauriService } from './tauri';
+import { tauriService } from './index';
 
 declare global {
   interface Window {

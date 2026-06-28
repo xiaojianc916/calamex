@@ -1,7 +1,7 @@
 import { commands } from '@/bindings/tauri';
 import type { ITauriService } from '@/types/tauri';
-import { type ICommandMeta, runCommand } from './tauri.ipc-define';
-import { measureScriptContentInput } from './tauri.ipc-metrics';
+import { type ICommandMeta, runCommand } from './core/ipc-define';
+import { measureScriptContentInput } from './core/ipc-metrics';
 
 // 终端冷启动 IPC 预算：ensure_terminal_session 在 WSL 冷启动（首次 / Windows 重启后发行版 VM 冷）
 // 时可能阻塞十余秒等待 wsl.exe 拉起发行版，远超通用命令的 10s 默认超时。给它单独的宽裕预算，

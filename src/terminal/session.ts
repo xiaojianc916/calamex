@@ -18,7 +18,7 @@ import { FitAddon } from '@xterm/addon-fit';
 import { Terminal } from '@xterm/xterm';
 import { consola } from 'consola';
 import { markRaw, nextTick, type Ref, ref, shallowRef } from 'vue';
-import { loadTauriEvent } from '@/services/tauri.ipc-runtime';
+import { loadTauriEvent } from '@/services/tauri/core/ipc-runtime';
 import type { TThemeMode } from '@/types/app';
 import type { ITerminalSettings } from '@/types/settings';
 import type {

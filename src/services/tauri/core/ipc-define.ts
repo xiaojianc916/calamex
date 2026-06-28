@@ -1,10 +1,5 @@
-import { callSpectaCommand } from './tauri.ipc-runtime';
-import type {
-  IIpcCallOptions,
-  IPayloadMetrics,
-  TErrorMap,
-  TIpcAuditLevel,
-} from './tauri.ipc-types';
+import { callSpectaCommand } from './ipc-runtime';
+import type { IIpcCallOptions, IPayloadMetrics, TErrorMap, TIpcAuditLevel } from './ipc-types';
 
 /**
  * 单条 Tauri 命令的声明式包装元数据：把 command / guardHint / timeout / audit /

@@ -4,7 +4,7 @@ import {
   beginGithubBrowserAuth,
   completeGithubBrowserAuth,
   getGithubAuthStatus,
-} from '@/services/tauri.github-auth';
+} from '@/services/tauri/github-auth';
 import type { IGitHubAuthStatusPayload } from '@/types/git';
 import { openExternalUrl } from '@/utils/platform/browser';
 

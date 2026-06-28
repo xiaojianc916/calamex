@@ -2,10 +2,10 @@ import { commands } from '@/bindings/tauri';
 import type { IWorkspaceSearchStreamEvent } from '@/types/search';
 import type { ITauriService } from '@/types/tauri';
 import { assertDesktopRuntime } from '@/utils/platform/desktop-runtime';
-import { type ICommandMeta, runCommand } from './tauri.ipc-define';
-import { measureScriptContentInput } from './tauri.ipc-metrics';
-import { loadTauriEvent, pickDialogPath } from './tauri.ipc-runtime';
-import type { IIpcCallOptions } from './tauri.ipc-types';
+import { type ICommandMeta, runCommand } from './core/ipc-define';
+import { measureScriptContentInput } from './core/ipc-metrics';
+import { loadTauriEvent, pickDialogPath } from './core/ipc-runtime';
+import type { IIpcCallOptions } from './core/ipc-types';
 
 const openFileFilters = [
   {

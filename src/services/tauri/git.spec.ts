@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { measureGitCommitHistoryOutput } from './tauri.git';
+import { measureGitCommitHistoryOutput } from './git';
 
 const sampleEntry = () => ({
   id: 'a'.repeat(40),

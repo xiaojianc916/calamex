@@ -1,5 +1,5 @@
 import type { z } from 'zod';
-import type { IPayloadMetrics } from './tauri.ipc-types';
+import type { IPayloadMetrics } from './ipc-types';
 
 const textEncoder = new TextEncoder();
 

@@ -10,7 +10,16 @@ import { dirname, join, relative, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const APPLY = process.argv.includes('--apply');
-const REPO_ROOT = resolve(fileURLToPath(new URL('..', import.meta.url))); // 脚本位于 scripts/
+const findRepoRoot = (start) => {
+  let dir = start;
+  for (;;) {
+    if (existsSync(join(dir, 'package.json')) && existsSync(join(dir, 'src'))) return dir;
+    const parent = dirname(dir);
+    if (parent === dir) return start;
+    dir = parent;
+  }
+};
+const REPO_ROOT = findRepoRoot(process.cwd()); // 从当前工作目录向上找含 package.json + src 的目录
 const SRC = join(REPO_ROOT, 'src');
 const SCAN_ROOTS = ['src'];                 // 需要时可加 'scripts' 等
 const SCAN_EXT = new Set(['.ts', '.tsx', '.mts', '.cts', '.vue', '.js', '.mjs']);
