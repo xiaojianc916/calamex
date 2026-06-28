@@ -27,7 +27,7 @@ import { toNonEmptyString } from '../../engines/shared/utils.js';
  * - 采用「整篇覆盖」而非 str_replace 文件编辑：plan 文档体量小、整体重写确定性更高，
  *   且规避大 payload str_replace 的截断脆弱性；仍保留 view 以便模型读取当前 PLAN.md。
  * - 强制一个 canonical Steps 区：其有序列表项 = 后续 exit_plan 解析出的 stepIds，是
- *   「living 文本计划」与既有结构化编排（plan-store / orchestration）之间的桥。
+ *   「living 文本计划」与结构化执行（plan-store / 执行阶段 agent 回合）之间的桥。
  * - 结构校验取「软校验」：缺章节时在工具结果里回传明确告警让模型自纠，而非硬失败中断
  *   规划循环（对模型更鲁棒）。
  *
