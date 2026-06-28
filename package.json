@@ -36,8 +36,6 @@
     "prepare": "lefthook install"
   },
   "dependencies": {
-    "@ag-ui/client": "^0.0.57",
-    "@ag-ui/core": "^0.0.57",
     "@agentclientprotocol/sdk": "^1.0.0",
     "@ai-sdk/deepseek": "3.0.1",
     "@codemirror/autocomplete": "^6.20.3",
@@ -62,8 +60,6 @@
     "@codemirror/search": "^6.7.1",
     "@codemirror/state": "^6.7.0",
     "@codemirror/view": "^6.43.4",
-    "@copilotkit/core": "^1.61.2",
-    "@copilotkit/vue": "^1.61.2",
     "@lezer/highlight": "^1.2.3",
     "@lucide/vue": "^1.21.0",
     "@medv/finder": "^4.0.2",

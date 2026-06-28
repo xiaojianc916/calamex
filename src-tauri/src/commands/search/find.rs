@@ -704,20 +704,23 @@ fn search_one_file_content(
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    fn make_result(score: i32, relative_path: &str) -> WorkspaceSearchResult {
-        WorkspaceSearchResult {
-            path: relative_path.to_string(),
-            relative_path: relative_path.to_string(),
-            name: relative_path.to_string(),
-            kind: WorkspaceSearchResultKind::FileName,
-            line_number: None,
-            line_text: None,
-            match_start: None,
-            match_end: None,
-            score,
-        }
+    
+fn make_result(score: i32, relative_path: &str) -> WorkspaceSearchResult {
+    WorkspaceSearchResult {
+        path: relative_path.to_string(),
+        relative_path: relative_path.to_string(),
+        name: relative_path.to_string(),
+        kind: WorkspaceSearchResultKind::FileName,
+        line_number: None,
+        line_text: None,
+        match_start: None,
+        match_end: None,
+        window_start: None,
+        truncated_left: false,
+        truncated_right: false,
+        score,
     }
+}
 
     #[test]
     fn sort_and_truncate_results_orders_by_score_then_path_and_caps() {

@@ -45,20 +45,19 @@
       <div class="@container/main workbench-content-stage">
         <div class="workbench-content-dock">
           <div class="workbench-content-frame flex min-h-0 flex-1 flex-col workbench-content-card">
-            <DeferredCopilotKitProvider v-if="isAiMode || hasPinnedAiWorkspace">
-              <DeferredAiWorkspaceSurface
-                v-show="isAiMode"
-                class="min-w-0 flex-1"
-                :aria-hidden="!isAiMode"
-                :document="editorStore.document"
-                :active-run="editorStore.activeRunSummary"
-                :analysis="editorStore.activeScriptAnalysis"
-                :selection="editorStore.activeSelectionSummary"
-                :git-status="gitStore.status"
-                :workspace-root-path="editorStore.workspaceRootPath"
-                @open-patch-diff="openGitDiffPreviewPayload"
-              />
-            </DeferredCopilotKitProvider>
+            <DeferredAiWorkspaceSurface
+              v-if="isAiMode || hasPinnedAiWorkspace"
+              v-show="isAiMode"
+              class="min-w-0 flex-1"
+              :aria-hidden="!isAiMode"
+              :document="editorStore.document"
+              :active-run="editorStore.activeRunSummary"
+              :analysis="editorStore.activeScriptAnalysis"
+              :selection="editorStore.activeSelectionSummary"
+              :git-status="gitStore.status"
+              :workspace-root-path="editorStore.workspaceRootPath"
+              @open-patch-diff="openGitDiffPreviewPayload"
+            />
 
             <Card
               v-show="!isAiMode"
@@ -288,28 +287,17 @@ const DeferredSmartScriptEditor = defineAsyncComponent({
   suspensible: false,
 });
 
-// CopilotKit 运行时（含 @copilotkit/vue）改为按需懒加载：仅当进入/固定 AI 工作区时
-// 才加载，并作为 AI 子树的上下文 Provider 挂载，使「首屏为编辑器」时彻底不进入启动关键路径。
-const DeferredCopilotKitProvider = defineAsyncComponent({
-  loader: () => import('@/copilotkit/provider/CopilotKitProvider.vue'),
-  suspensible: false,
-});
-
 const DeferredRunPanel = defineAsyncComponent({
   loader: () => import('@/components/workbench/RunPanel.vue'),
   suspensible: false,
 });
 
-// AI 工作区与 CopilotKit 运行时：改为「浏览器空闲时」后台预热，既保留首次切到 AI 模式
-// 时无空白帧的体验，又不在启动关键路径上与首帧争抢主线程/带宽（原先是模块求值期同步
-// 触发的 import，会和首屏渲染竞争）。
 const prefetchAiSurfaceWhenIdle = (): void => {
   if (typeof window === 'undefined') {
     return;
   }
 
   const prefetch = (): void => {
-    void import('@/copilotkit/provider/CopilotKitProvider.vue');
     void import('@/components/business/ai/shell/AiWorkspaceSurface.vue');
   };
 

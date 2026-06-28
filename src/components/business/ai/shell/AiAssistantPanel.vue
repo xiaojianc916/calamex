@@ -1,9 +1,7 @@
 <script setup lang="ts">
-import { useFrontendTool } from '@copilotkit/vue';
 import { Bot, SquarePen, Trash2 } from '@lucide/vue';
 import { AnimatePresence, Motion } from 'motion-v';
 import { computed, defineAsyncComponent, onMounted, ref } from 'vue';
-import { z } from 'zod';
 import {
   ApprovalPrompt,
   resolveAcpDecisionFromAskUserResult,
@@ -33,7 +31,6 @@ import { useAiConversationCheckpoints } from '@/composables/ai/useAiConversation
 import { useAiConversationHistory } from '@/composables/ai/useAiConversationHistory';
 import { useAiTokenContext } from '@/composables/ai/useAiTokenContext';
 import { useAiWebSources } from '@/composables/ai/useAiWebSources';
-import { useCopilotContext } from '@/composables/ai/useCopilotContext';
 import { useCopilotSuggestions } from '@/composables/ai/useCopilotSuggestions';
 import { findAiServicePlatformByModel } from '@/constants/ai/providers';
 import { aiService } from '@/services/ipc/ai.service';
@@ -118,21 +115,6 @@ const suggestionPool = useCopilotSuggestions();
 const suggestionRows = computed(() =>
   splitSuggestionsIntoRows(suggestionPool.suggestions.value, 3),
 );
-
-useCopilotContext({
-  document: documentRef,
-  activeRun: activeRunRef,
-  analysis: analysisRef,
-  selection: selectionRef,
-  gitStatus: gitStatusRef,
-  workspaceRootPath: workspaceRootPathRef,
-});
-
-try {
-  useFrontendTool({ name: '*', parameters: z.looseObject({}), handler: async () => 'ok' });
-} catch {
-  /* provider not ready */
-}
 
 const settingsDraft = ref<IAiConfigPayload>(cloneAiConfigPayload(assistant.config.value));
 const settingsApiKey = ref('');

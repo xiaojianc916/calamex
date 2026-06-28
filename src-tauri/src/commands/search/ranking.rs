@@ -129,24 +129,28 @@ fn normalize(value: &str, match_case: bool) -> String {
 mod tests {
     use super::*;
 
-    fn result(
-        kind: WorkspaceSearchResultKind,
-        relative_path: &str,
-        name: &str,
-        score: i32,
-    ) -> WorkspaceSearchResult {
-        WorkspaceSearchResult {
-            path: relative_path.to_string(),
-            relative_path: relative_path.to_string(),
-            name: name.to_string(),
-            kind,
-            line_number: None,
-            line_text: None,
-            match_start: None,
-            match_end: None,
-            score,
-        }
+    
+fn result(
+    kind: WorkspaceSearchResultKind,
+    relative_path: &str,
+    name: &str,
+    score: i32,
+) -> WorkspaceSearchResult {
+    WorkspaceSearchResult {
+        path: relative_path.to_string(),
+        relative_path: relative_path.to_string(),
+        name: name.to_string(),
+        kind,
+        line_number: None,
+        line_text: None,
+        match_start: None,
+        match_end: None,
+        window_start: None,
+        truncated_left: false,
+        truncated_right: false,
+        score,
     }
+}
 
     #[test]
     fn hybrid_ranking_prefers_exact_file_name_over_deep_path_match() {
