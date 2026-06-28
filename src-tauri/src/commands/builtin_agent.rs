@@ -238,7 +238,7 @@ fn external_chat_error_message(
     error.to_string()
 }
 
-/// 外部后端的用户可读名称（用于错误提示）。match 穷尽：新增后端会触发编译错误。
+/// 外部后端的用户可读名称（用于错误提示）。match 穷尽：新增后端会触发编误错误。
 fn external_backend_label(backend: crate::acp::AcpBackendId) -> &'static str {
     match backend {
         crate::acp::AcpBackendId::Builtin => "自研",
@@ -311,7 +311,7 @@ pub async fn builtin_agent_restore_checkpoint(
     mut payload: AgentSidecarCheckpointRestoreRequest,
 ) -> Result<AgentSidecarResponsePayload, String> {
     // 与 chat / resolve_* 同源：检查点恢复会驱动续跑回合，缺省时也需补齐主模型配置，
-    // 否则 sidecar 退回未注入的环境兜底并报"AI 模型未配置"。
+    // 否则 sidecar 退回未注入的环境兜底并报\"AI 模型未配置\"。
     ensure_model_config(&mut payload.model_config)?;
 
     acp_host(&app)?
@@ -367,6 +367,26 @@ pub async fn builtin_agent_orchestrate_resume(
         })
         .await
         .map_err(|error| error.to_string())
+}
+
+/// 读取 Tavily（信息源）API Key：直连 OS keyring 的独立 Tavily 账户（见 ai::credential）。
+///
+/// 与各 LLM 厂商凭证同源落 keyring，前端 / store 不持有明文。未配置 / 为空时回传空串
+/// （web 工具未启用即视为无 Key），由前端按空值处理。
+#[tauri::command]
+#[specta::specta]
+pub async fn get_tavily_api_key() -> Result<String, String> {
+    Ok(crate::ai::credential::CredentialStore::get_tavily().unwrap_or_default())
+}
+
+/// 写入 Tavily API Key 到 OS keyring（trim 后为空即清除）。
+///
+/// 写入后不自动重启 ACP 子进程：由前端在保存后显式调用 builtin_agent_restart，使其在下次
+/// 启动时从 keyring 读出并注入子进程环境（见 acp::launch::build_builtin_agent_env）。
+#[tauri::command]
+#[specta::specta]
+pub async fn set_tavily_api_key(api_key: String) -> Result<(), String> {
+    crate::ai::credential::CredentialStore::set_tavily(&api_key)
 }
 
 #[cfg(test)]

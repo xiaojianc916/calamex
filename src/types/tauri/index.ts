@@ -394,6 +394,8 @@ export interface ITauriService {
   aiSetSeededModels(payload: AiSetSeededModelsRequest): Promise<AiConfigPayload>;
   aiSaveCredentials(payload: IAiSaveCredentialsRequest): Promise<AiConfigPayload>;
   aiClearCredentials(): Promise<void>;
+  getTavilyApiKey(): Promise<string>;
+  setTavilyApiKey(payload: { apiKey: string }): Promise<void>;
   aiTestProvider(): Promise<IAiProviderTestPayload>;
   aiTestProviderConfig(payload: IAiProviderConnectionRequest): Promise<IAiProviderTestPayload>;
   aiConnectProvider(payload: IAiProviderConnectionRequest): Promise<AiProviderConnectionPayload>;

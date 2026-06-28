@@ -68,6 +68,18 @@ const AI_COMMAND_META = {
     guardHint: '清除 AI 凭证',
     audit: 'sensitive',
   },
+  getTavilyApiKey: {
+    command: 'get_tavily_api_key',
+    guardHint: '读取 Tavily API Key',
+    idempotent: true,
+    audit: 'sensitive',
+  },
+  setTavilyApiKey: {
+    command: 'set_tavily_api_key',
+    guardHint: '保存 Tavily API Key',
+    audit: 'sensitive',
+    measureInput: (value) => buildPayloadMetricsOmittingTextFields(value, ['apiKey']),
+  },
   aiTestProvider: {
     command: 'ai_test_provider',
     guardHint: '测试 AI Provider',
@@ -205,6 +217,8 @@ type TAiTauriService = Pick<
   | 'aiSetSeededModels'
   | 'aiSaveCredentials'
   | 'aiClearCredentials'
+  | 'getTavilyApiKey'
+  | 'setTavilyApiKey'
   | 'aiTestProvider'
   | 'aiTestProviderConfig'
   | 'aiConnectProvider'
@@ -263,6 +277,12 @@ export const aiTauriService: TAiTauriService = {
   aiClearCredentials: voidCommand(AI_COMMAND_META.aiClearCredentials, async () => {
     await commands.aiClearCredentials();
   }),
+
+  getTavilyApiKey: voidCommand(AI_COMMAND_META.getTavilyApiKey, () => commands.getTavilyApiKey()),
+
+  setTavilyApiKey: payloadCommand(AI_COMMAND_META.setTavilyApiKey, (payload) =>
+    commands.setTavilyApiKey(payload.apiKey),
+  ),
 
   aiTestProvider: voidCommand(AI_COMMAND_META.aiTestProvider, () => commands.aiTestProvider()),
 
