@@ -1,4 +1,7 @@
-import type { ISystemPromptContext } from '../domain/system-prompt-context.js';
+import type {
+    ISystemPromptContext,
+    ISystemPromptContextReferenceView,
+} from '../domain/system-prompt-context.js';
 import { compilePromptTemplate } from '../render/handlebars-engine.js';
 
 // -----------------------------------------------------------------------------
@@ -63,60 +66,70 @@ const AGENT_MODE_SECTION = [
 ].join('\n');
 
 // -----------------------------------------------------------------------------
-// Dynamic section templates (Handlebars, strict + noEscape)
+// Dynamic sections（eta 插值用于纯变量段；迭代/分支在 TS 内完成以获得确定的换行排版）
 // -----------------------------------------------------------------------------
 
 const identityTemplate = compilePromptTemplate<ISystemPromptContext>([
     '## 身份',
     '你是 Calamex 桌面应用内置的 AI 助手',
-    '当前运行模型：{{modelLabel}}（{{providerLabel}}）。',
+    '当前运行模型：<%~ it.modelLabel %>（<%~ it.providerLabel %>）。',
     '你的目标：用最少的工具调用与最简洁的输出，把用户当前的问题或任务解决到位',
 ].join('\n'));
 
 const workspaceTemplate = compilePromptTemplate<ISystemPromptContext>([
     '## 工作区',
-    '- 根路径：`{{workspaceRootPath}}`',
+    '- 根路径：`<%~ it.workspaceRootPath %>`',
 ].join('\n'));
 
 const goalTemplate = compilePromptTemplate<ISystemPromptContext>([
     '## 用户目标',
-    '{{goal}}',
+    '<%~ it.goal %>',
 ].join('\n'));
 
-const extraSystemTemplate = compilePromptTemplate<ISystemPromptContext>([
-    '## 额外系统消息',
-    '{{#each extraSystemMessages}}',
-    '{{this}}',
-    '{{/each}}',
-].join('\n'));
+// 额外系统消息：标题 + 各条消息按行拼接，等价于原 Handlebars each 块的输出。
+const renderExtraSystemSection = (context: ISystemPromptContext): string =>
+    ['## 额外系统消息', ...context.extraSystemMessages].join('\n');
 
-// 上下文块：UI 提供的文件/选区/技能引用。不可信预览正文已在装配阶段截断 + 选好围栏，
-// 此处仅做结构化渲染。技能与普通引用走 if/else 两个分支。
-const contextTemplate = compilePromptTemplate<ISystemPromptContext>([
-    '## UI 提供的上下文',
-    '以下内容由用户当前界面提供，可能与本次问题相关。要不要利用、利用多少由你判断；不代表必须读取完整文件。',
-    '{{#each contextReferences}}',
-    '',
-    '{{#if this.isSkill}}',
-    '### 技能调用 #{{this.index}} — {{this.label}}',
-    '- 用户已显式调用此技能{{#if this.skillSlug}}（slug：{{this.skillSlug}}）{{/if}}。',
-    '- 请先调用 skill_read 工具按上述 slug 读取该技能的完整内容，再据此执行用户的任务。',
-    '- 不要凭名称臆测技能内容；以 skill_read 返回的正文为准。',
-    '{{else}}',
-    '### 引用 #{{this.index}} — {{this.label}}',
-    '- 类型：{{this.kind}}',
-    '- 路径：{{this.pathLabel}}',
-    '- 范围：{{this.rangeLabel}}',
-    '- 已脱敏：{{this.redactedLabel}}',
-    '{{#if this.truncated}}',
-    '- 备注：内容已截断，仅展示前若干字符',
-    '{{/if}}',
-    '{{this.fence}}text',
-    '{{this.previewText}}',
-    '{{this.fence}}',
-    '{{/if}}',
-    '{{/each}}',
-].join('\n'));
+// 单条 UI 上下文引用：技能与普通引用走 if/else 两个分支。不可信预览正文已在装配阶段
+// 截断 + 选好围栏，此处仅做结构化渲染。每条以前导空行起始，等价旧模板 each 块的首行空行。
+const renderContextReference = (
+    reference: ISystemPromptContextReferenceView,
+): string => {
+    if (reference.isSkill) {
+        const slugSuffix = reference.skillSlug
+            ? `（slug：${reference.skillSlug}）`
+            : '';
+        const lines = [
+            `### 技能调用 #${reference.index} — ${reference.label}`,
+            `- 用户已显式调用此技能${slugSuffix}。`,
+            '- 请先调用 skill_read 工具按上述 slug 读取该技能的完整内容，再据此执行用户的任务。',
+            '- 不要凭名称臆测技能内容；以 skill_read 返回的正文为准。',
+        ];
+        return `\n${lines.join('\n')}\n`;
+    }
+
+    const lines = [
+        `### 引用 #${reference.index} — ${reference.label}`,
+        `- 类型：${reference.kind}`,
+        `- 路径：${reference.pathLabel}`,
+        `- 范围：${reference.rangeLabel}`,
+        `- 已脱敏：${reference.redactedLabel}`,
+    ];
+    if (reference.truncated) {
+        lines.push('- 备注：内容已截断，仅展示前若干字符');
+    }
+    lines.push(`${reference.fence}text`, reference.previewText, reference.fence);
+    return `\n${lines.join('\n')}\n`;
+};
+
+const renderContextSection = (context: ISystemPromptContext): string => {
+    const intro = [
+        '## UI 提供的上下文',
+        '以下内容由用户当前界面提供，可能与本次问题相关。要不要利用、利用多少由你判断；不代表必须读取完整文件。',
+    ].join('\n');
+    const body = context.contextReferences.map(renderContextReference).join('');
+    return `${intro}\n${body}`;
+};
 
 // -----------------------------------------------------------------------------
 // Composition
@@ -136,9 +149,9 @@ export const renderSystemPrompt = (context: ISystemPromptContext): string => {
         context.isPlanMode ? PLAN_MODE_SECTION : AGENT_MODE_SECTION,
         TOOL_POLICY_SHARED,
         context.hasWorkspace ? workspaceTemplate.render(context) : '',
-        context.hasContext ? contextTemplate.render(context) : '',
+        context.hasContext ? renderContextSection(context) : '',
         context.hasGoal ? goalTemplate.render(context) : '',
-        context.hasExtraSystemMessages ? extraSystemTemplate.render(context) : '',
+        context.hasExtraSystemMessages ? renderExtraSystemSection(context) : '',
     ];
 
     return sections

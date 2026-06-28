@@ -1,33 +1,43 @@
-import Handlebars from 'handlebars';
+import { Eta } from 'eta';
 
 /**
- * 一个已编译、可复用的提示词模板。渲染输入受 TContext 静态约束，
- * 渲染行为对齐 Zed `agent::Templates` 的 Handlebars strict_mode：
- * 模板中引用了 TContext 未提供的字段时直接抛错，而不是静默渲染为空串，
- * 从而避免提示词段落被悄悄改残却无人察觉。
+ * 提示词模板引擎（基于 eta，替代原先的 Handlebars 实现）。
+ * 渲染行为对齐 Zed `agent::Templates` 的 strict_mode：
+ *
+ * - **严格模式**：模板引用了上下文未提供的字段时直接抛错，而非静默渲染成空串——
+ *   用 Proxy 包裹上下文实现，复刻 Handlebars `strict: true` 的语义。
+ * - **原样输出**：提示词是 Markdown 纯文本而非 HTML，统一用 eta 的 `<%~` 原始标签并
+ *   关闭 autoEscape，等价于 Handlebars 的 `noEscape: true`。
+ *
+ * 使用独立的 eta 实例，避免与进程内其他用途的配置互相污染。
  */
-export interface IPromptTemplate<TContext> {
-    render(context: TContext): string;
+
+export interface ICompiledPromptTemplate<TContext> {
+    render: (context: TContext) => string;
 }
 
-// 使用隔离的 Handlebars 环境，避免污染全局注册表、也不被全局注册表污染——
-// 对齐 Zed 为 agent 模板单独建一个 registry 的做法。
-const environment = Handlebars.create();
+const eta = new Eta({
+    autoEscape: false,
+    autoTrim: false,
+});
 
 /**
- * 编译一个严格模式的提示词模板。
- *
- * - `strict`：缺字段即抛错（strict_mode 对齐）。
- * - `noEscape`：提示词是 Markdown 纯文本而非 HTML，关闭 Handlebars 默认的
- *   HTML 转义；不可信内容的防注入处理交由 `render/escape.ts` 在装配阶段完成。
+ * 用 Proxy 复刻 Handlebars strict 行为：访问上下文上不存在的字符串字段即抛错；
+ * Symbol 及已存在的字段照常返回。
  */
-export const compilePromptTemplate = <TContext>(source: string): IPromptTemplate<TContext> => {
-    const delegate = environment.compile<TContext>(source, {
-        strict: true,
-        noEscape: true,
+const createStrictContext = <TContext extends object>(context: TContext): TContext =>
+    new Proxy(context, {
+        get(target, property, receiver) {
+            if (typeof property === 'string' && !Reflect.has(target, property)) {
+                throw new Error(`提示词模板引用了未提供的字段：${property}`);
+            }
+            return Reflect.get(target, property, receiver);
+        },
     });
 
-    return {
-        render: (context: TContext): string => delegate(context),
-    };
-};
+export const compilePromptTemplate = <TContext extends object>(
+    source: string,
+): ICompiledPromptTemplate<TContext> => ({
+    render: (context: TContext): string =>
+        eta.renderString(source, createStrictContext(context)) as string,
+});
