@@ -1270,7 +1270,7 @@ onMounted(() => {
     </template>
 
     <template #body>
-      <AiChatThread :messages="assistant.messages.value" :is-typing="assistant.isSending.value"
+      <AiChatThread :is-typing="assistant.isSending.value"
         :thread-entries="visibleThreadEntries"
         :streaming-message-id="assistant.activeAgentMessageId.value"
         :platform-id="aiIconPlatformId" :provider-label="aiIconTitle"

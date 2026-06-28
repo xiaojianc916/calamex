@@ -22,7 +22,6 @@ import {
 import type { IAiThreadPlanDetails } from '@/components/business/ai/thread/types';
 import { useThreadEntryExpansion } from '@/components/business/ai/thread/useThreadEntryExpansion';
 import type { TAiServicePlatformId } from '@/constants/ai/providers';
-import type { IAiChatMessage } from '@/types/ai';
 import type { IAiThreadEntry } from '@/types/ai/thread';
 import AiThinkingStatus from './AiThinkingStatus.vue';
 import { AI_MARKDOWN_VIRTUAL_SCROLL_KEY } from './markstream-virtual-scroll';
@@ -47,7 +46,6 @@ type TAiThreadVirtualItem =
 
 const props = withDefaults(
   defineProps<{
-    messages: IAiChatMessage[];
     isTyping: boolean;
     platformId: TAiServicePlatformId;
     providerLabel: string;
@@ -130,29 +128,18 @@ const entryTimeline = computed<TAiThreadEntry[]>(() =>
 
 const entryExpansion = useThreadEntryExpansion(entryTimeline);
 
-const messagesById = computed(() => {
-  const map = new Map<string, IAiChatMessage>();
-  for (const message of props.messages) {
-    map.set(message.id, message);
-  }
-  return map;
-});
-
 // entries 路径下,checkpoint 等 after-message 内容按“来源消息边界”挂载:取每个 messageId
 // 在平铺时间线中最后一条 entry 作为边界;仅当该消息存在于 messages 时才产出(否则不渲染,
 // 与收敛前 entries 模式行为一致,不臆造数据)。
-const afterMessageByEntryId = computed(() => {
+const afterMessageIdByEntryId = computed(() => {
   const lastEntryIdByMessageId = new Map<string, string>();
   for (const entry of entryTimeline.value) {
     lastEntryIdByMessageId.set(entry.messageId, entry.id);
   }
 
-  const resolved = new Map<string, IAiChatMessage>();
+  const resolved = new Map<string, string>();
   lastEntryIdByMessageId.forEach((entryId, messageId) => {
-    const message = messagesById.value.get(messageId);
-    if (message) {
-      resolved.set(entryId, message);
-    }
+    resolved.set(entryId, messageId);
   });
 
   return resolved;
