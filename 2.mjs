@@ -1,80 +1,78 @@
-#!/usr/bin/env node
-// 清理 src-tauri/src/acp/host.rs 中对「已删除」的 orchestrate / orchestrate_resume
-// 扩展方法的陈旧注释引用（命中残留门禁 /orchestrat(?!or)/i）。
-// 原则：仅改注释，不动逻辑；中文「编排」不被门禁正则命中，保持不动。
-// 幂等：每条替换要求恰好命中一次；已是目标态则跳过；命中多次则报错。终态硬校验在写文件之前。
-// 用法：在仓库根目录执行 node <此文件>
+// 修复 read-excel-file@9.x 在 vite/rolldown 生产构建下 `"." is not exported`。
+// 整段替换 extractSpreadsheetText（对 CRLF / 缩进 / 格式不敏感）。
+// 用法：node 2.mjs [可选:目标文件] [--dry] [--show]
 
-import { readFileSync, writeFileSync } from 'node:fs'
-import { resolve } from 'node:path'
+import { readFileSync, writeFileSync } from 'node:fs';
+import { resolve } from 'node:path';
 
-const repoRoot = process.cwd()
-const targetPath = resolve(repoRoot, 'src-tauri/src/acp/host.rs')
+const args = process.argv.slice(2);
+const dryRun = args.includes('--dry');
+const showOnly = args.includes('--show');
+const targetArg = args.find((a) => !a.startsWith('--'));
+const target = resolve(
+  process.cwd(),
+  targetArg ?? 'src/composables/ai/attachment-document-text.ts',
+);
 
-/** @type {Array<{ from: string; to: string }>} */
-const replacements = [
-  {
-    from: '//!     warmup / health / orchestrate / orchestrate_resume / agent_chat /',
-    to: '//!     warmup / health / agent_chat /',
-  },
-  {
-    from: '//!   * **编排/对话即带外**：`orchestrate` / `orchestrate_resume` / `agent_chat` /',
-    to: '//!   * **对话即带外**：`agent_chat` /',
-  },
-  {
-    from: '//!     单点负责（见 `ui_event`），本层不投影。权威结果由各扩展方法（agent_chat /',
-    to: '//!     单点负责（见 `ui_event`），本层不投影。权威结果由各扩展方法（agent_chat',
-  },
-  {
-    from: '//!     orchestrate 等）的返回信封承载。',
-    to: '//!     等）的返回信封承载。',
-  },
-  // prompt() docstring：去掉「/ `orchestrate`」
-  {
-    from: '    /// 与带外的 `agent_chat` / `orchestrate`（自家 sidecar 扩展方法）不同，本方法走的是',
-    to: '    /// 与带外的 `agent_chat`（自家 sidecar 扩展方法）不同，本方法走的是',
-  },
-  // agent_chat() docstring：「同 `orchestrate` 不在此累积回合」→「本方法 不在此累积回合」
-  {
-    from: '    /// 的富事件（结构化补丁/检查点/回滚/富审批/plan_ready 等）由返回信封承载。同',
-    to: '    /// 的富事件（结构化补丁/检查点/回滚/富审批/plan_ready 等）由返回信封承载。本方法',
-  },
-  {
-    from: '    /// `orchestrate` 不在此累积回合，帧仅经 `EventSink` 转发 webview。入参为已构造的',
-    to: '    /// 不在此累积回合，帧仅经 `EventSink` 转发 webview。入参为已构造的',
-  },
-]
+// 整个函数：从签名开始，惰性匹配到行首的 "};"
+const FN_RE =
+  /const extractSpreadsheetText = async \(buffer: ArrayBuffer\): Promise<string> => \{[\s\S]*?\r?\n\};/;
 
-const original = readFileSync(targetPath, 'utf8')
-let next = original
-let applied = 0
-let skipped = 0
+let src;
+try {
+  src = readFileSync(target, 'utf8');
+} catch (err) {
+  console.error(`✗ 读不到文件：${target}\n  ${err.message}`);
+  process.exit(1);
+}
 
-for (const { from, to } of replacements) {
-  const count = next.split(from).length - 1
-  if (count === 0) {
-    if (next.includes(to)) {
-      skipped += 1
-      continue
+const eol = src.includes('\r\n') ? '\r\n' : '\n';
+
+const NEW = [
+  'const extractSpreadsheetText = async (buffer: ArrayBuffer): Promise<string> => {',
+  "  const { default: readExcelFile } = await import('read-excel-file/browser');",
+  '  const blob = new Blob([buffer]);',
+  '  const sheets = await readExcelFile(blob);',
+  '',
+  '  return sheets',
+  '    .map(({ sheet, data }) => {',
+  "      const csv = data.map((row) => row.map(toCsvCell).join(',')).join('\\n');",
+  '      return `# ${sheet}\\n${csv}`;',
+  '    })',
+  "    .join('\\n\\n');",
+  '};',
+].join(eol);
+
+const match = src.match(FN_RE);
+
+if (showOnly) {
+  console.log(match ? match[0] : '（未匹配到 extractSpreadsheetText 函数）');
+  process.exit(0);
+}
+
+if (src.includes("await import('read-excel-file/browser')")) {
+  console.log('• 已经是修复后的状态，无需改动：' + target);
+  process.exit(0);
+}
+
+if (!match) {
+  console.error('✗ 没匹配到 extractSpreadsheetText 函数。把下面这段贴给我核对：\n');
+  for (const line of src.split(/\r?\n/)) {
+    if (/extractSpreadsheetText|read-excel-file|getSheets|readXlsxFile/.test(line)) {
+      console.error('  | ' + line);
     }
-    throw new Error(`未命中且无目标态，疑似源码已漂移，请人工核对：\n  ${from}`)
   }
-  if (count > 1) {
-    throw new Error(`命中 ${count} 次（要求唯一），拒绝模糊替换：\n  ${from}`)
-  }
-  next = next.replace(from, to)
-  applied += 1
+  process.exit(1);
 }
 
-const stale = next.match(/orchestrat(?!or)/gi)
-if (stale) {
-  throw new Error(`host.rs 仍残留 ${stale.length} 处 orchestrate 引用，请人工核对。`)
+const next = src.replace(FN_RE, () => NEW); // 函数式替换，避免 $ 被特殊解释
+
+if (dryRun) {
+  console.log('— DRY RUN，仅预览，未写盘 —\n');
+  console.log(NEW);
+  process.exit(0);
 }
 
-if (next === original) {
-  console.log('[p5c-host] 无改动：已是目标态。')
-} else {
-  writeFileSync(targetPath, next, 'utf8')
-  console.log(`[p5c-host] 已更新 ${targetPath}`)
-}
-console.log(`[p5c-host] 应用 ${applied} 处，跳过 ${skipped} 处，残留校验通过。`)
+writeFileSync(target, next, 'utf8');
+console.log('✓ 已修复：' + target);
+console.log('  下一步：pnpm build 验证');

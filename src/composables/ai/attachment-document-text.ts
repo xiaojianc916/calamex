@@ -54,19 +54,16 @@ const toCsvCell = (cell: unknown): string => {
 };
 
 const extractSpreadsheetText = async (buffer: ArrayBuffer): Promise<string> => {
-  const { default: readXlsxFile } = await import('read-excel-file');
+  const { default: readExcelFile } = await import('read-excel-file/browser');
   const blob = new Blob([buffer]);
-  const sheets = await readXlsxFile(blob, { getSheets: true });
+  const sheets = await readExcelFile(blob);
 
-  const sections = await Promise.all(
-    sheets.map(async ({ name }): Promise<string> => {
-      const rows = await readXlsxFile(blob, { sheet: name });
-      const csv = rows.map((row) => row.map(toCsvCell).join(',')).join('\n');
-      return `# ${name}\n${csv}`;
-    }),
-  );
-
-  return sections.join('\n\n');
+  return sheets
+    .map(({ sheet, data }) => {
+      const csv = data.map((row) => row.map(toCsvCell).join(',')).join('\n');
+      return `# ${sheet}\n${csv}`;
+    })
+    .join('\n\n');
 };
 
 export const extractDocumentText = async (file: File): Promise<string | null> => {
