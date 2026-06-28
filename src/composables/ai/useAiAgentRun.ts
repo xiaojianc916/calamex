@@ -1,13 +1,14 @@
 import { unref } from 'vue';
 import {
+  type IAgentSidecarExecuteProjection,
   mapSidecarEventsToToolCalls,
   mapSidecarToolNameToAiToolName,
+  projectSidecarExecuteResponse,
+  resolveSidecarOfficialUsage,
 } from '@/composables/ai/sidecar-events';
-import {
-  type IOrchestrateProjection,
-  resumeOrchestration,
-} from '@/composables/ai/sidecar-orchestrate';
+import { mapToolConfirmationDecisionToSidecarDecision } from '@/composables/ai/useAiAssistant.stream';
 import { useSidecarChangedDocumentRefresh } from '@/composables/useSidecarChangedDocumentRefresh';
+import { aiService } from '@/services/ipc/ai.service';
 import { type TAiAgentPanelMode, useAiAgentStore } from '@/store/aiAgent';
 import type {
   IAiAgentRun,
@@ -18,13 +19,21 @@ import type {
   IAiToolCall,
   TAiToolConfirmationDecision,
 } from '@/types/ai';
-import type { TAgentSidecarOrchestrateDecision, TAgentUiEvent } from '@/types/ai/sidecar';
+import type { TAgentUiEvent } from '@/types/ai/sidecar';
 import { toErrorMessage } from '@/utils/error/error';
 
 interface ISidecarStepLoopOptions {
   goal?: string;
   context?: IAiContextReference[];
   workspaceRootPath?: string | null;
+}
+
+// resume(续跑)一个被工具审批挂起的回合所需的上下文。
+interface ISidecarConfirmationEntry {
+  runId: string;
+  sessionId: string;
+  requestId: string;
+  options: ISidecarStepLoopOptions;
 }
 
 const TERMINAL_RUN_STATUSES = new Set<IAiAgentRun['status']>(['completed', 'failed', 'cancelled']);
@@ -34,23 +43,9 @@ const isTerminalRunStatus = (status: IAiAgentRun['status']): boolean =>
 
 const createSidecarRunId = (): string => `sidecar-plan:${crypto.randomUUID()}`;
 
-const mapToolConfirmationDecisionToOrchestrateDecision = (
-  decision: TAiToolConfirmationDecision,
-): TAgentSidecarOrchestrateDecision => {
-  switch (decision) {
-    case 'allow-once':
-    case 'allow-run':
-      return 'approve';
-    case 'skip':
-      return 'reject';
-    case 'stop':
-      return 'cancel';
-    default: {
-      const exhaustive: never = decision;
-      return exhaustive;
-    }
-  }
-};
+// 原生 agent 回合的会话键:同一 run 的 start / resolve 复用同一 sessionId,
+// 让后端 session/prompt 在审批续跑时衔接到同一回合。
+const createRunSessionId = (runId: string): string => `sidecar-run:${runId}`;
 
 const mapToolCallStatusToActivityState = (
   status: IAiToolCall['status'],
@@ -110,25 +105,19 @@ const toStepFinalAnswer = (
   createdAt,
 });
 
-type TSegmentOutcome = {
-  kind: 'gate' | 'awaiting' | 'done' | 'error' | 'stale';
-  run: IAiAgentRun;
-};
-
 export const useAiAgentRun = () => {
   const store = useAiAgentStore();
   const { refreshSidecarChangedDocuments } = useSidecarChangedDocumentRefresh();
 
   // confirmationId -> 恢复该 run 所需的上下文。
-  const toolConfirmations = new Map<
-    string,
-    { runId: string; orchestrationRunId: string; options: ISidecarStepLoopOptions }
-  >();
-  // 协作式暂停 / 已放行计划门标记。
+  const toolConfirmations = new Map<string, ISidecarConfirmationEntry>();
+  // runId -> 原生回合的会话键。
+  const runSessions = new Map<string, string>();
+  // 协作式暂停 / 已启动标记。
   const pausedRuns = new Set<string>();
   const startedRuns = new Set<string>();
-  // runId -> 当前前端生命周期 token。暂停/取消/重新执行会递增或清除 token，
-  // 让已经在途的 resume 结果和迟到流事件无法覆盖新的本地终态。
+  // runId -> 当前前端生命周期 token。暂停/取消/重新执行会递增或清除 token,
+  // 让已经在途的回合结果无法覆盖新的本地终态。
   const runLifecycleTokens = new Map<string, number>();
 
   const getRuns = (): IAiAgentRun[] => unref(store.runs);
@@ -187,6 +176,17 @@ export const useAiAgentRun = () => {
     pausedRuns.delete(runId);
     startedRuns.delete(runId);
     runLifecycleTokens.delete(runId);
+    runSessions.delete(runId);
+  };
+
+  const getRunSessionId = (runId: string): string => {
+    const existing = runSessions.get(runId);
+    if (existing) {
+      return existing;
+    }
+    const sessionId = createRunSessionId(runId);
+    runSessions.set(runId, sessionId);
+    return sessionId;
   };
 
   const createLocalRun = (goal: string, steps: IAiTaskPlanStep[]): IAiAgentRun => {
@@ -209,32 +209,6 @@ export const useAiAgentRun = () => {
     };
   };
 
-  // 一个 step_gate 放行后:当前步标 done,下一个 pending 步标 running。
-  const advanceStepCursor = (runId: string): IAiAgentRun =>
-    updateRun(runId, (run) => {
-      const now = new Date().toISOString();
-      const currentIdx = run.steps.findIndex((step) => step.id === run.currentStepId);
-      const afterDone = run.steps.map((step, index) =>
-        index === currentIdx
-          ? { ...step, status: 'done' as const, isActive: false }
-          : { ...step, isActive: false },
-      );
-      const nextIdx = afterDone.findIndex((step) => step.status === 'pending');
-      const nextSteps =
-        nextIdx >= 0
-          ? afterDone.map((step, index) =>
-              index === nextIdx ? { ...step, status: 'running' as const, isActive: true } : step,
-            )
-          : afterDone;
-      return {
-        ...run,
-        steps: nextSteps,
-        currentStepId: nextIdx >= 0 ? (nextSteps[nextIdx]?.id ?? null) : null,
-        status: 'running-step',
-        updatedAt: now,
-      };
-    });
-
   const setRunWaiting = (runId: string): IAiAgentRun =>
     updateRun(runId, (run) => ({
       ...run,
@@ -242,7 +216,7 @@ export const useAiAgentRun = () => {
       updatedAt: new Date().toISOString(),
     }));
 
-  const completeRun = (runId: string, projection: IOrchestrateProjection): IAiAgentRun => {
+  const completeRun = (runId: string, finalAnswer: string): IAiAgentRun => {
     const run = updateRun(runId, (current) => {
       const now = new Date().toISOString();
       return {
@@ -257,14 +231,14 @@ export const useAiAgentRun = () => {
         ),
       };
     });
-    if (projection.finalAnswer && run.steps.length > 0) {
+    if (finalAnswer.trim() && run.steps.length > 0) {
       const last = run.steps[run.steps.length - 1];
       if (last) {
         store.appendStepFinalAnswer(
           toStepFinalAnswer(
             runId,
             last.id,
-            projection.finalAnswer,
+            finalAnswer,
             new Date().toISOString(),
             run.steps.length,
           ),
@@ -338,7 +312,7 @@ export const useAiAgentRun = () => {
   };
 
   const refreshChangedDocs = async (
-    projection: IOrchestrateProjection,
+    projection: IAgentSidecarExecuteProjection,
     workspaceRootPath: string | null | undefined,
   ): Promise<void> => {
     const refreshResult = await refreshSidecarChangedDocuments({
@@ -348,44 +322,56 @@ export const useAiAgentRun = () => {
     });
     if (refreshResult.skippedDirtyNames.length > 0) {
       setErrorMessage(
-        `Agent 已修改文件，但 ${refreshResult.skippedDirtyNames.join('、')} 有未保存改动，已跳过自动刷新。`,
+        `Agent 已修改文件,但 ${refreshResult.skippedDirtyNames.join('、')} 有未保存改动,已跳过自动刷新。`,
       );
       return;
     }
     if (refreshResult.failedNames.length > 0) {
       setErrorMessage(
-        `Agent 已修改文件，但刷新 ${refreshResult.failedNames.join('、')} 失败，请手动重新打开。`,
+        `Agent 已修改文件,但刷新 ${refreshResult.failedNames.join('、')} 失败,请手动重新打开。`,
       );
     }
   };
 
-  // 单段:resume 一次,跑到下一个挂起点 / 终态,并把结果落到 store。
-  const runOrchestrationSegment = async (
+  // 单次原生 agent 回合:start = sidecarChat(mode='agent');resolve = sidecarResolveApproval。
+  // 后端在一次调用里自动跑到完成 / 工具审批挂起 / 出错,无需前端逐步 continue。
+  const executeNativeTurn = async (
     runId: string,
-    orchestrationRunId: string,
-    decision: TAgentSidecarOrchestrateDecision,
-    advanceOnGate: boolean,
+    turn:
+      | { kind: 'start' }
+      | { kind: 'resolve'; requestId: string; decision: 'approve' | 'reject' | 'cancel' },
     options: ISidecarStepLoopOptions,
     lifecycleToken: number,
-  ): Promise<TSegmentOutcome> => {
-    const { projection } = await resumeOrchestration({
-      runId: orchestrationRunId,
-      decision,
-      onLiveEvents: (events) => {
-        if (isRunLifecycleCurrent(runId, lifecycleToken)) {
-          appendLiveActivities(runId, events);
-        }
-      },
-    });
+  ): Promise<IAiAgentRun> => {
+    const run = getRunOrThrow(runId);
+    const sessionId = getRunSessionId(runId);
+    const baseRequest = {
+      sessionId,
+      goal: options.goal ?? run.goal,
+      messages: [],
+      context: options.context ?? [],
+      workspaceRootPath: options.workspaceRootPath ?? null,
+    };
+    const response =
+      turn.kind === 'start'
+        ? await aiService.sidecarChat({ mode: 'agent', ...baseRequest })
+        : await aiService.sidecarResolveApproval({
+            ...baseRequest,
+            requestId: turn.requestId,
+            decision: turn.decision,
+          });
 
     if (!isRunLifecycleCurrent(runId, lifecycleToken)) {
-      return { kind: 'stale', run: getRunOrThrow(runId) };
+      return getRunOrThrow(runId);
     }
 
-    if (projection.usage) {
-      store.setLatestOfficialUsage(projection.usage);
+    const projection = projectSidecarExecuteResponse(response);
+    const officialUsage = resolveSidecarOfficialUsage(response);
+    if (officialUsage.usage) {
+      store.setLatestOfficialUsage(officialUsage.usage);
     }
-    const stepId = getRuns().find((run) => run.id === runId)?.currentStepId ?? null;
+    appendLiveActivities(runId, response.events);
+    const stepId = getRuns().find((item) => item.id === runId)?.currentStepId ?? null;
     if (stepId) {
       store.appendStepToolResults(
         runId,
@@ -396,62 +382,28 @@ export const useAiAgentRun = () => {
     await refreshChangedDocs(projection, options.workspaceRootPath);
 
     if (!isRunLifecycleCurrent(runId, lifecycleToken)) {
-      return { kind: 'stale', run: getRunOrThrow(runId) };
+      return getRunOrThrow(runId);
     }
 
     if (projection.errorMessage) {
-      return { kind: 'error', run: failRun(runId, projection.errorMessage) };
-    }
-    if (projection.isDone) {
-      return { kind: 'done', run: completeRun(runId, projection) };
+      return failRun(runId, projection.errorMessage);
     }
     if (projection.pendingConfirmation) {
       const confirmationId = projection.pendingConfirmation.id;
-      toolConfirmations.set(confirmationId, { runId, orchestrationRunId, options });
+      toolConfirmations.set(confirmationId, {
+        runId,
+        sessionId,
+        requestId: confirmationId,
+        options,
+      });
       store.setPendingToolConfirmation({
         ...projection.pendingConfirmation,
         runId,
         ...(stepId ? { stepId } : {}),
       });
-      return { kind: 'awaiting', run: setRunWaiting(runId) };
+      return setRunWaiting(runId);
     }
-    // step_gate:仅在「本段确实执行了一个 step」时推进游标。
-    const run = advanceOnGate ? advanceStepCursor(runId) : getRunOrThrow(runId);
-    return { kind: 'gate', run };
-  };
-
-  // 自动跑到底:每个 step_gate 自动 continue,直到终态 / 工具审批 / 暂停。
-  const driveToCompletion = async (
-    runId: string,
-    orchestrationRunId: string,
-    firstDecision: TAgentSidecarOrchestrateDecision,
-    firstAdvance: boolean,
-    options: ISidecarStepLoopOptions,
-    lifecycleToken: number,
-  ): Promise<IAiAgentRun> => {
-    let decision = firstDecision;
-    let advance = firstAdvance;
-    for (;;) {
-      if (!isRunLifecycleCurrent(runId, lifecycleToken)) {
-        return getRunOrThrow(runId);
-      }
-      const outcome = await runOrchestrationSegment(
-        runId,
-        orchestrationRunId,
-        decision,
-        advance,
-        options,
-        lifecycleToken,
-      );
-      if (outcome.kind !== 'gate') {
-        return outcome.run;
-      }
-      if (pausedRuns.has(runId)) {
-        return outcome.run;
-      }
-      decision = 'continue';
-      advance = true;
-    }
+    return completeRun(runId, projection.assistantContent);
   };
 
   const runPlan = async (
@@ -477,20 +429,14 @@ export const useAiAgentRun = () => {
     steps: IAiTaskPlanStep[],
     options: Omit<ISidecarStepLoopOptions, 'goal'> = {},
   ): Promise<IAiAgentRun> => {
-    const orchestrationRunId = store.orchestrationRunId;
-    if (!orchestrationRunId) {
-      throw new Error('当前没有可执行的编排 run，请先生成并批准计划。');
-    }
     const run = await runPlan(goal, steps, options.context ?? []);
     startedRuns.add(run.id);
     const lifecycleToken = bumpRunLifecycleToken(run.id);
-    // 第一段 = resume('approve'):清掉计划审批门,不执行 step(故 advance=false)。
-    return driveToCompletion(
+    return executeNativeTurn(
       run.id,
-      orchestrationRunId,
-      'approve',
-      false,
+      { kind: 'start' },
       {
+        goal,
         ...(options.context ? { context: options.context } : {}),
         workspaceRootPath: options.workspaceRootPath ?? null,
       },
@@ -502,18 +448,14 @@ export const useAiAgentRun = () => {
     runId: string,
     options: ISidecarStepLoopOptions,
   ): Promise<IAiAgentRun> => {
-    const orchestrationRunId = store.orchestrationRunId;
-    if (!orchestrationRunId) {
-      throw new Error('当前没有可继续的编排 run。');
-    }
     pausedRuns.delete(runId);
+    startedRuns.add(runId);
     const lifecycleToken = bumpRunLifecycleToken(runId);
-    return driveToCompletion(
+    return executeNativeTurn(
       runId,
-      orchestrationRunId,
-      'continue',
-      true,
+      { kind: 'start' },
       {
+        ...(options.goal ? { goal: options.goal } : {}),
         ...(options.context ? { context: options.context } : {}),
         workspaceRootPath: options.workspaceRootPath ?? null,
       },
@@ -550,35 +492,25 @@ export const useAiAgentRun = () => {
     }
   };
 
-  // 单步(手动 mode):resume 一次执行一个 step,然后停。
+  // 单步(手动 mode):跑一次原生 agent 回合,然后停。
   const runStepWithSidecar = async (
     runId: string,
     options: ISidecarStepLoopOptions,
   ): Promise<IAiAgentRun> => {
     try {
-      const orchestrationRunId = store.orchestrationRunId;
-      if (!orchestrationRunId) {
-        throw new Error('当前没有可执行的编排 run。');
-      }
-      const alreadyStarted = startedRuns.has(runId);
-      const firstDecision: TAgentSidecarOrchestrateDecision = alreadyStarted
-        ? 'continue'
-        : 'approve';
       startedRuns.add(runId);
       const lifecycleToken = bumpRunLifecycleToken(runId);
       setPlanStatus('executing', store.approvedAt);
-      const outcome = await runOrchestrationSegment(
+      return executeNativeTurn(
         runId,
-        orchestrationRunId,
-        firstDecision,
-        alreadyStarted,
+        { kind: 'start' },
         {
+          ...(options.goal ? { goal: options.goal } : {}),
           ...(options.context ? { context: options.context } : {}),
           workspaceRootPath: options.workspaceRootPath ?? null,
         },
         lifecycleToken,
       );
-      return outcome.run;
     } catch (error) {
       setErrorMessage(toErrorMessage(error, '执行 Agent step 失败。'));
       throw error;
@@ -599,23 +531,29 @@ export const useAiAgentRun = () => {
     toolConfirmations.delete(confirmationId);
     store.clearPendingToolConfirmation(confirmationId);
 
-    const orchestrateDecision = mapToolConfirmationDecisionToOrchestrateDecision(decision);
-    // 拒绝并中止(stop):resume('cancel') 拆掉 workflow,本地标记取消。
-    if (orchestrateDecision === 'cancel') {
+    const sidecarDecision = mapToolConfirmationDecisionToSidecarDecision(decision);
+    // 拒绝并中止(stop -> cancel):回投 cancel 决策拆掉回合,本地标记取消。
+    if (sidecarDecision === 'cancel') {
       try {
-        await resumeOrchestration({ runId: entry.orchestrationRunId, decision: 'cancel' });
+        await aiService.sidecarResolveApproval({
+          sessionId: entry.sessionId,
+          requestId: entry.requestId,
+          decision: 'cancel',
+          messages: [],
+          context: entry.options.context ?? [],
+          ...(entry.options.goal ? { goal: entry.options.goal } : {}),
+          workspaceRootPath: entry.options.workspaceRootPath ?? null,
+        });
       } catch (error) {
         setErrorMessage(toErrorMessage(error, '取消 Agent run 失败。'));
       }
       return cancelRunLocal(entry.runId);
     }
-    // 允许(approve)/ 跳过(reject):续跑被工具审批挂起的那一步,然后自动跑到底。
+    // 允许(approve)/ 跳过(reject):回投决策续跑同一回合,直到完成 / 下一个审批门。
     const lifecycleToken = bumpRunLifecycleToken(entry.runId);
-    return driveToCompletion(
+    return executeNativeTurn(
       entry.runId,
-      entry.orchestrationRunId,
-      orchestrateDecision,
-      true,
+      { kind: 'resolve', requestId: entry.requestId, decision: sidecarDecision },
       entry.options,
       lifecycleToken,
     );
@@ -630,7 +568,7 @@ export const useAiAgentRun = () => {
     if (hasSidecarStepToolConfirmation(confirmationId)) {
       return resolveSidecarStepToolConfirmation(confirmationId, decision);
     }
-    throw new Error('未找到对应的工具确认，请重试或重新发起。');
+    throw new Error('未找到对应的工具确认,请重试或重新发起。');
   };
 
   const pauseRun = async (runId: string): Promise<IAiAgentRun> => {
@@ -668,15 +606,7 @@ export const useAiAgentRun = () => {
       return resolveSidecarStepToolConfirmation(confirmation.id, 'stop');
     }
     try {
-      const orchestrationRunId = store.orchestrationRunId;
       runLifecycleTokens.delete(runId);
-      if (orchestrationRunId) {
-        try {
-          await resumeOrchestration({ runId: orchestrationRunId, decision: 'cancel' });
-        } catch {
-          // best-effort:即使服务端 run 已不存在,也要把本地状态收成 cancelled。
-        }
-      }
       return cancelRunLocal(runId);
     } catch (error) {
       setErrorMessage(toErrorMessage(error, '取消 Agent run 失败。'));
