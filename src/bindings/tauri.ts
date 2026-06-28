@@ -216,19 +216,18 @@ export const commands = {
 	 *  透明，由 runtime 向全部已建立宿主广播下发。三字段先行空白校验；返回是否命中某已绑定会话——
 	 *  false 表示无匹配（多为会话尚未建立/已结束的良性竞态，命令层不视作错误）。
 	 */
-	aiSetSessionConfigOption: (payload: AiSetSessionConfigOptionRequest) => __TAURI_INVOKE<boolean>("ai_set_session_config_option", { payload }),
-	/**
-	 *  取某线程会话建立时 agent 公示的可用配置项清单（ACP session/new 的
-	 *  NewSessionResponse.config_options 原样 JSON：Vec SessionConfigOption），供前端配置项选择器在
-	 *  会话建立后填充候选项。
-	 * 
-	 *  与 ai_get_session_modes 同构地委托给 Tauri 托管的 AcpRuntime：由 runtime 向全部已建立宿主
-	 *  查询并返回首个命中。thread_id 先行空白校验；返回 None 表示尚无该线程会话或 agent 未公示
-	 *  配置项（前端据此隐藏选择器）。config_options 为最小透传的原样 JSON（导出 TS 为 unknown）。
-	 */
-	aiGetSessionConfigOptions: (payload: AiGetSessionConfigOptionsRequest) => __TAURI_INVOKE<{
+	aiSetSessionConfigOption: (payload: AiSetSessionConfigOptionRequest) => __TAURI_INVOKE<{
 	configOptions: unknown,
-} | null>("ai_get_session_config_options", { payload }),
+} | null>("ai_set_session_config_option", { payload }),
+	/**
+	 *  握手并复用/建立某线程在指定后端上的 ACP 会话（v3 · 唯一标准管线）。
+	 * 
+	 *  取代 ai_get_session_config_options：配置项发现统一走事件通道，握手不再返回快照。经
+	 *  get_or_spawn_backend 懒建立目标后端宿主后 ensure_session 建立/复用会话——这会触发外部 agent
+	 *  （如 Kimi）在 session/new 之后下发一次性 config_option_update 通知（宿主缓存、回合发起时以
+	 *  前端键重放），前端据此填充选择器。thread_id / backend 先行校验；未知 backend 报错。
+	 */
+	aiEnsureAcpSession: (payload: AiEnsureAcpSessionRequest) => __TAURI_INVOKE<null>("ai_ensure_acp_session", { payload }),
 	/**
 	 *  切换 ACP 会话的当前模式（标准 session/set_mode），令外部 agent（Kimi Code / Codex 等）在
 	 *  agent 公示的模式（如 Auto / Plan / …）间真实切换。当 Agent 为 Kimi 时，前端模式选择器直接
@@ -1004,14 +1003,16 @@ export type AiEditUndoOperationRequest = {
 };
 
 /**
- *  ACP 会话可用配置项清单的查询请求（契约层）。
+ *  ACP 会话握手请求（契约层，v3 · 唯一标准管线）。
  * 
- *  对齐 acp::AcpRuntime::session_config_options(thread_id)：thread_id 定位目标会话（宿主持有
- *  thread_id ↔ SessionId 映射，并在会话建立时登记 agent 公示的可用配置项）。必填且非空，
- *  空白校验由接线层负责。
+ *  对齐 ai_ensure_acp_session：thread_id 定位/复用会话；backend 指定后端（builtin/kimi/codex）；
+ *  workspace_root_path 为新建会话的 cwd。握手仅建立/复用会话（触发外部 agent 在 session/new
+ *  之后下发一次性 config_option_update 通知），不返回快照——配置项发现统一走事件通道。
  */
-export type AiGetSessionConfigOptionsRequest = {
+export type AiEnsureAcpSessionRequest = {
 	threadId: string,
+	backend: string,
+	workspaceRootPath: string | null,
 };
 
 /**

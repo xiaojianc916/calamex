@@ -134,6 +134,7 @@
     "@vue/test-utils": "^2.4.11",
     "@vue/tsconfig": "^0.9.1",
     "dependency-cruiser": "^18.0.0",
+    "esbuild": "^0.28.1",
     "happy-dom": "^20.10.6",
     "knip": "^6.22.0",
     "lefthook": "^2.1.9",
