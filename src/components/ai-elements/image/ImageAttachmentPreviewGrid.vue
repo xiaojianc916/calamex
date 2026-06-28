@@ -1,6 +1,6 @@
 <script setup lang="ts">
+import { Fancybox } from '@fancyapps/ui/dist/fancybox/';
 import { LoaderCircle, TriangleAlert } from '@lucide/vue';
-import PhotoSwipeLightbox from 'photoswipe/lightbox';
 import type { TAttachmentData, TAttachmentVariant } from '@/components/ai-elements/attachments';
 import {
   Attachment,
@@ -15,8 +15,8 @@ import {
   getMediaCategory,
 } from '@/components/ai-elements/attachments';
 import type { IAiImageAttachmentPreview, TAiAttachmentStatus } from '@/types/ai';
-import 'photoswipe/style.css';
-import { computed, nextTick, onBeforeUnmount, onMounted, ref, type StyleValue, watch } from 'vue';
+import '@fancyapps/ui/dist/fancybox/fancybox.css';
+import { computed, nextTick, onBeforeUnmount, type StyleValue, useId, watch } from 'vue';
 
 type TAiImageAttachmentPreviewVariant = 'composer' | 'message';
 
@@ -45,28 +45,6 @@ interface IInternalAttachmentItem {
   openable: boolean;
 }
 
-interface IPhotoSwipeZoomLevelView {
-  fit: number;
-  elementSize: { x: number; y: number } | null;
-}
-
-interface IPhotoSwipeDataSourceItem {
-  src: string;
-  width: number;
-  height: number;
-  alt: string;
-}
-
-const LIGHTBOX_INITIAL_MAX_WIDTH = 960;
-const LIGHTBOX_INITIAL_MAX_HEIGHT = 640;
-const LIGHTBOX_VERTICAL_PADDING = 72;
-const LIGHTBOX_COMPACT_HORIZONTAL_PADDING = 24;
-const LIGHTBOX_DESKTOP_HORIZONTAL_PADDING = 160;
-const LIGHTBOX_DESKTOP_MIN_WIDTH = 960;
-const LIGHTBOX_SHOW_ANIMATION_DURATION = 0;
-const LIGHTBOX_HIDE_ANIMATION_DURATION = 120;
-const LIGHTBOX_ZOOM_ANIMATION_DURATION = 160;
-const PRELOAD_LIMIT = 4;
 const ATTACHMENT_PREVIEW_POINTER_PATTERN = /^idb:\/\/ai-conversation-attachment-preview\//u;
 
 const props = withDefaults(
@@ -87,11 +65,15 @@ const emit = defineEmits<{
   remove: [id: string];
 }>();
 
-const galleryRef = ref<HTMLElement | null>(null);
-let lightbox: PhotoSwipeLightbox | null = null;
-let prefersReducedMotion = false;
-const imagePreloadHandles = new Map<string, HTMLImageElement>();
-const preloadedImageSources = new Set<string>();
+// 每个组件实例独立分组：保证多个网格各自成廊，Fancybox 之间互不串台。
+const galleryGroup = `ai-attachment-preview-${useId()}`;
+const fancyboxSelector = `[data-fancybox="${galleryGroup}"]`;
+
+// 在 setup 阶段一次性读取动效偏好，避免首帧绑定时拿不到。
+const prefersReducedMotion =
+  typeof window !== 'undefined' &&
+  typeof window.matchMedia === 'function' &&
+  window.matchMedia('(prefers-reduced-motion: reduce)').matches;
 
 const isAttachmentBusy = (item: IAiAttachmentPreviewItem): boolean => item.status === 'processing';
 const isAttachmentFailed = (item: IAiAttachmentPreviewItem): boolean => item.status === 'failed';
@@ -129,28 +111,18 @@ const attachmentItems = computed<IInternalAttachmentItem[]>(() =>
   })),
 );
 
-const openableItems = computed<IOpenableAttachmentPreviewItem[]>(() =>
-  props.items.filter(canOpenItem),
+const openableEntries = computed<IInternalAttachmentItem[]>(() =>
+  attachmentItems.value.filter((entry) => entry.openable),
 );
 
-const openableIndexes = computed<number[]>(() =>
-  attachmentItems.value.reduce<number[]>((indexes, entry) => {
-    if (entry.openable) indexes.push(entry.index);
-    return indexes;
-  }, []),
-);
-
-const lightboxDataSource = computed<IPhotoSwipeDataSourceItem[]>(() =>
-  openableItems.value.map((item) => ({
-    src: item.preview.src,
-    width: item.preview.width,
-    height: item.preview.height,
-    alt: item.name,
-  })),
-);
-
-const lightboxSignature = computed<string>(() =>
-  lightboxDataSource.value.map((d) => `${d.src}|${d.width}x${d.height}`).join('||'),
+// 仅在可打开图片集合变化时重新绑定；签名为空表示当前没有可放大的图片，不挂载灯箱。
+const gallerySignature = computed<string>(() =>
+  openableEntries.value
+    .map((entry) => {
+      const preview = entry.item.preview;
+      return preview ? `${preview.src}|${preview.width}x${preview.height}` : '';
+    })
+    .join('||'),
 );
 
 const resolveSecondaryMetaLabel = (entry: IInternalAttachmentItem): string => {
@@ -192,145 +164,46 @@ const resolveMessageCardStyle = (entry: IInternalAttachmentItem): StyleValue | u
     : undefined;
 };
 
-const destroyLightbox = (): void => {
-  lightbox?.destroy();
-  lightbox = null;
+// 直接使用 Fancybox 官方能力：声明式绑定锚点(data-fancybox 分组 + href 指向原图)，
+// 缩放 / 平移 / 键盘 / 手势 / 相邻预载全部交给内置的 Images + Panzoom，无需自定义数学与预加载。
+const buildFancyboxOptions = (): Record<string, unknown> => ({
+  Hash: false,
+  mainClass: 'fancybox--ai-attachment-preview',
+  ...(prefersReducedMotion ? { showClass: false, hideClass: false } : {}),
+});
+
+const bindLightbox = (): void => {
+  Fancybox.bind(fancyboxSelector, buildFancyboxOptions());
 };
 
-const releasePreloadHandle = (src: string, image: HTMLImageElement): void => {
-  if (imagePreloadHandles.get(src) !== image) return;
-  image.onload = null;
-  image.onerror = null;
-  imagePreloadHandles.delete(src);
-};
-
-const completeImagePreload = (src: string, image: HTMLImageElement): void => {
-  preloadedImageSources.add(src);
-  releasePreloadHandle(src, image);
-};
-
-const preloadImagePreview = (src: string): void => {
-  if (preloadedImageSources.has(src) || imagePreloadHandles.has(src)) return;
-
-  const image = new Image();
-  image.decoding = 'async';
-  image.onload = () => completeImagePreload(src, image);
-  image.onerror = () => releasePreloadHandle(src, image);
-  imagePreloadHandles.set(src, image);
-  image.src = src;
-
-  if (typeof image.decode === 'function') {
-    void image
-      .decode()
-      .then(() => completeImagePreload(src, image))
-      .catch(() => {
-        /* decode reject 不视为加载失败 */
-      });
-  }
-};
-
-const clearImagePreloads = (): void => {
-  imagePreloadHandles.forEach((image, src) => {
-    releasePreloadHandle(src, image);
-  });
-  preloadedImageSources.clear();
-};
-
-const resolveLightboxHorizontalPadding = (viewportWidth: number): number => {
-  const vw =
-    viewportWidth ||
-    (typeof window !== 'undefined' ? window.innerWidth : LIGHTBOX_DESKTOP_MIN_WIDTH);
-  if (vw < LIGHTBOX_DESKTOP_MIN_WIDTH) return LIGHTBOX_COMPACT_HORIZONTAL_PADDING;
-  return LIGHTBOX_DESKTOP_HORIZONTAL_PADDING;
-};
-
-const resolveInitialLightboxZoom = (zoomLevel: IPhotoSwipeZoomLevelView): number => {
-  if (!zoomLevel.elementSize) return zoomLevel.fit;
-  const widthZoom = LIGHTBOX_INITIAL_MAX_WIDTH / zoomLevel.elementSize.x;
-  const heightZoom = LIGHTBOX_INITIAL_MAX_HEIGHT / zoomLevel.elementSize.y;
-  return Math.min(zoomLevel.fit, widthZoom, heightZoom);
-};
-
-const initLightbox = (): void => {
-  if (lightbox || !galleryRef.value) return;
-  if (lightboxDataSource.value.length === 0) return;
-
-  const showDuration = prefersReducedMotion ? 0 : LIGHTBOX_SHOW_ANIMATION_DURATION;
-  const hideDuration = prefersReducedMotion ? 0 : LIGHTBOX_HIDE_ANIMATION_DURATION;
-  const zoomDuration = prefersReducedMotion ? 0 : LIGHTBOX_ZOOM_ANIMATION_DURATION;
-
-  lightbox = new PhotoSwipeLightbox({
-    gallery: galleryRef.value,
-    children: 'a[data-ai-attachment-preview="image"]',
-    pswpModule: () => import('photoswipe'),
-    showHideAnimationType: 'none',
-    showAnimationDuration: showDuration,
-    hideAnimationDuration: hideDuration,
-    zoomAnimationDuration: zoomDuration,
-    paddingFn: (viewportSize) => {
-      const horizontalPadding = resolveLightboxHorizontalPadding(viewportSize.x);
-      return {
-        top: LIGHTBOX_VERTICAL_PADDING,
-        right: horizontalPadding,
-        bottom: LIGHTBOX_VERTICAL_PADDING,
-        left: horizontalPadding,
-      };
-    },
-    initialZoomLevel: resolveInitialLightboxZoom,
-    secondaryZoomLevel: (zoomLevel) => Math.min(zoomLevel.fit, 1),
-    maxZoomLevel: (zoomLevel) => Math.max(1, zoomLevel.fit),
-    bgOpacity: 0.78,
-    mainClass: 'pswp--ai-attachment-preview',
-  });
-  lightbox.init();
-};
-
-const openImagePreview = (item: IAiAttachmentPreviewItem, index: number): void => {
-  if (!canOpenItem(item) || !lightbox) return;
-  const openableIndex = openableIndexes.value.indexOf(index);
-  if (openableIndex < 0) return;
-  lightbox.loadAndOpen(openableIndex, lightboxDataSource.value);
+const unbindLightbox = (): void => {
+  Fancybox.unbind(fancyboxSelector);
+  Fancybox.close();
 };
 
 const handleRemove = (id: string): void => {
   emit('remove', id);
 };
 
-onMounted(() => {
-  if (typeof window !== 'undefined' && typeof window.matchMedia === 'function') {
-    prefersReducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
-  }
-});
-
 watch(
-  lightboxSignature,
+  gallerySignature,
   async (signature) => {
-    destroyLightbox();
+    unbindLightbox();
     if (!signature) return;
     await nextTick();
-    initLightbox();
-  },
-  { immediate: true },
-);
-
-watch(
-  () => lightboxDataSource.value.slice(0, PRELOAD_LIMIT).map((d) => d.src),
-  (sources) => {
-    sources.forEach(preloadImagePreview);
+    bindLightbox();
   },
   { immediate: true },
 );
 
 onBeforeUnmount(() => {
-  destroyLightbox();
-  clearImagePreloads();
+  unbindLightbox();
 });
 </script>
 
 <template>
   <div
     v-if="items.length"
-    ref="galleryRef"
     class="ai-image-attachment-preview-grid"
     :data-variant="variant"
     :aria-label="ariaLabel"
@@ -351,15 +224,15 @@ onBeforeUnmount(() => {
                 v-if="entry.openable && entry.item.preview"
                 class="ai-image-attachment-preview-link ai-attachment-preview-frame is-openable"
                 :href="entry.item.preview.src"
-                :data-pswp-src="entry.item.preview.src"
-                :data-pswp-width="entry.item.preview.width"
-                :data-pswp-height="entry.item.preview.height"
+                :data-fancybox="galleryGroup"
+                :data-caption="entry.item.name"
+                :data-width="entry.item.preview.width"
+                :data-height="entry.item.preview.height"
                 data-ai-attachment-preview="image"
                 role="button"
                 aria-haspopup="dialog"
                 :aria-label="`查看图片附件 ${entry.item.name}`"
                 :title="entry.item.name"
-                @click.prevent="openImagePreview(entry.item, entry.index)"
               >
                 <AttachmentPreview class="ai-attachment-preview-media" />
               </a>
@@ -414,15 +287,15 @@ onBeforeUnmount(() => {
             v-if="entry.openable && entry.item.preview"
             class="ai-image-attachment-preview-link ai-attachment-preview-frame is-openable"
             :href="entry.item.preview.src"
-            :data-pswp-src="entry.item.preview.src"
-            :data-pswp-width="entry.item.preview.width"
-            :data-pswp-height="entry.item.preview.height"
+            :data-fancybox="galleryGroup"
+            :data-caption="entry.item.name"
+            :data-width="entry.item.preview.width"
+            :data-height="entry.item.preview.height"
             data-ai-attachment-preview="image"
             role="button"
             aria-haspopup="dialog"
             :aria-label="`查看图片附件 ${entry.item.name}`"
             :title="entry.item.name"
-            @click.prevent="openImagePreview(entry.item, entry.index)"
           >
             <AttachmentPreview class="ai-attachment-preview-media" />
           </a>
@@ -729,19 +602,8 @@ onBeforeUnmount(() => {
   line-height: 16px;
 }
 
-:global(.pswp--ai-attachment-preview .pswp__img),
-:global(.pswp--ai-attachment-preview .pswp__img--placeholder) {
+:global(.fancybox--ai-attachment-preview .f-image) {
   border-radius: var(--image-attachment-preview-radius, 12px);
-  background: var(--image-preview-frame-surface);
-  box-shadow: var(--image-attachment-preview-shadow, var(--image-preview-frame-shadow));
-}
-
-:global(.pswp--ai-attachment-preview .pswp__img--placeholder) {
-  object-fit: cover;
-}
-
-:global(.pswp--ai-attachment-preview) {
-  --pswp-transition-duration: 180ms;
 }
 
 @media (prefers-reduced-motion: reduce) {
@@ -750,10 +612,6 @@ onBeforeUnmount(() => {
   .ai-attachment-processing-spinner {
     transition: none !important;
     animation: none !important;
-  }
-
-  :global(.pswp--ai-attachment-preview) {
-    --pswp-transition-duration: 0ms;
   }
 }
 </style>

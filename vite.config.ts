@@ -53,7 +53,7 @@ const CHUNK_RULES: ReadonlyArray<{ name: string; patterns: string[] }> = [
     patterns: [
       '/node_modules/reka-ui/',
       '/node_modules/motion-v/',
-      '/node_modules/photoswipe/',
+      '/node_modules/@fancyapps/',
       '/node_modules/@lucide/',
     ],
   },
