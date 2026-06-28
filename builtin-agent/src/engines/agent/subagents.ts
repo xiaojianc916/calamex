@@ -187,7 +187,7 @@ export const buildCodingSubAgents = (
 
 /**
  * 读取 `AGENT_SUBAGENTS` 开关。默认关闭；'1' / 'true' / 'on' 开启官方 Supervisor 子 agent。
- * 与既有 `AGENT_ORCHESTRATION_WORKFLOW` 一致采用「默认关、可随时回退」的灰度策略。
+ * 采用「默认关、可随时回退」的灰度策略。
  */
 export const isSubAgentsEnabled = (
     env: NodeJS.ProcessEnv = process.env,
