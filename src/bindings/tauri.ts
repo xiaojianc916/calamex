@@ -176,6 +176,15 @@ export const commands = {
 	agentWebviewDestroy: (traceId: string | null) => __TAURI_INVOKE<null>("agent_webview_destroy", { traceId }),
 	aiGetConfig: () => __TAURI_INVOKE<AiConfigPayload>("ai_get_config"),
 	aiSaveConfig: (payload: AiSaveConfigRequest) => __TAURI_INVOKE<AiConfigPayload>("ai_save_config", { payload }),
+	/**
+	 *  下发「全量可原生切换模型清单」（seeded_models）并即时生效。
+	 * 
+	 *  前端把项目内置的可扩展模型目录（MASTRA_PROVIDER_PRESET.models）整体下发，后端落盘 ai.json
+	 *  后，作为 Kimi 启动时 seed 进 config.toml 的候选模型全集——使 Kimi 原生 session/set_config_option
+	 *  的切换候选池覆盖整张清单、零重启切换。与 ai_save_config 同构：清单变更可能新增/移除可切换模型，
+	 *  故落盘后 reconfigure_running_external_backends 重启运行中的 Kimi 以即时刷新候选池。
+	 */
+	aiSetSeededModels: (payload: AiSetSeededModelsRequest) => __TAURI_INVOKE<AiConfigPayload>("ai_set_seeded_models", { payload }),
 	aiSaveCredentials: (payload: AiSaveCredentialsRequest) => __TAURI_INVOKE<AiConfigPayload>("ai_save_credentials", { payload }),
 	aiTestProviderConfig: (payload: AiProviderConnectionRequest) => __TAURI_INVOKE<AiProviderTestPayload>("ai_test_provider_config", { payload }),
 	aiConnectProvider: (payload: AiProviderConnectionRequest) => __TAURI_INVOKE<AiProviderConnectionPayload>("ai_connect_provider", { payload }),
@@ -1179,6 +1188,18 @@ export type AiSessionConfigOptionsPayload = {
  */
 export type AiSessionModesPayload = {
 	modes: unknown,
+};
+
+/**
+ *  「全量可原生切换模型清单」的下发请求。
+ * 
+ *  前端把项目内置的可扩展模型目录（MASTRA_PROVIDER_PRESET.models）整体下发，后端落盘
+ *  ai.json 的 seeded_models，供 Kimi 启动时把整张清单 seed 进 config.toml——使原生
+ *  session/set_config_option 的候选池覆盖全清单（详见 gateway::set_seeded_models /
+ *  acp::provisioner）。`models` 缺省为空清单（回退仅 seed 主模型 + Narrator 的旧行为）。
+ */
+export type AiSetSeededModelsRequest = {
+	models?: string[],
 };
 
 /**
