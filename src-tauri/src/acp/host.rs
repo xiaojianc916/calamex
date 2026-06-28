@@ -8,7 +8,7 @@
 //! 不自创协议语义：
 //!   * `client`   —— 常驻 stdio 连接 + 命令句柄（new_session / prompt /
 //!     set_session_mode / restore_checkpoint / model_chat / web_search / web_fetch /
-//!     warmup / health / orchestrate / orchestrate_resume / agent_chat /
+//!     warmup / health / agent_chat /
 //!     agent_chat_resolve / agent_ask_user_resume / cancel / shutdown）；
 //!   * `approval` —— 回合内反向 `session/request_permission` 的挂起登记表。
 //!
@@ -21,9 +21,9 @@
 //!     挂起，`resolve_approval` 经登记表唤醒同一回合续跑。
 //!   * **流式即转发**：单一 `EventSink` 把每条 `session/update` 帧原样转发给接线层的
 //!     emit（`runtime::stream_emitter`）；帧 → 前端 `TAgentUiEvent` 的投影由该 emit
-//!     单点负责（见 `ui_event`），本层不投影。权威结果由各扩展方法（agent_chat /
-//!     orchestrate 等）的返回信封承载。
-//!   * **编排/对话即带外**：`orchestrate` / `orchestrate_resume` / `agent_chat` /
+//!     单点负责（见 `ui_event`），本层不投影。权威结果由各扩展方法（agent_chat
+//!     等）的返回信封承载。
+//!   * **对话即带外**：`agent_chat` /
 //!     `agent_chat_resolve` 是标准会话回合（`prompt`）之外的「带外」能力，经
 //!     sidecar 公示的扩展方法通道下发（标准客户端不识别会安全忽略）。agent_chat
 //!     承载 agent 模式富对话回合：原生 `session/prompt` 的 `session/update` 投影有损
@@ -230,7 +230,7 @@ impl AcpHost {
     /// 驱动一轮**标准 ACP 回合**（`session/prompt`）：解析/复用 thread 的会话后，把内容块
     /// 直接交给标准 `prompt`，返回回合终止原因 `StopReason`。
     ///
-    /// 与带外的 `agent_chat` / `orchestrate`（自家 sidecar 扩展方法）不同，本方法走的是
+    /// 与带外的 `agent_chat`（自家 sidecar 扩展方法）不同，本方法走的是
     /// ACP 标准回合通道，供**外部 ACP 编码 agent**（Kimi Code / Codex 等，见 ADR-0015）使用——
     /// 它们不认识 `calamex.dev/*` 扩展方法，只实现标准 `prompt`。过程增量（文本/思考/工具
     /// 调用/计划等）经 `session/update` 帧由 `EventSink` 转发（投影见 `ui_event`），本方法仅
@@ -517,8 +517,8 @@ impl AcpHost {
     ///
     /// 标准会话回合（`prompt`）之外的「带外」能力，承载 agent 模式富对话回合：
     /// run-to-gate（跑到审批门或终态），过程增量经 `session/update` 仅作实时预览，权威
-    /// 的富事件（结构化补丁/检查点/回滚/富审批/plan_ready 等）由返回信封承载。同
-    /// `orchestrate` 不在此累积回合，帧仅经 `EventSink` 转发 webview。入参为已构造的
+    /// 的富事件（结构化补丁/检查点/回滚/富审批/plan_ready 等）由返回信封承载。本方法
+    /// 不在此累积回合，帧仅经 `EventSink` 转发 webview。入参为已构造的
     /// 扩展请求（与 contract 的转换、及 `ensure_session(thread_id)` 的会话连续性由接线层
     /// 负责，同 restore_checkpoint / model_chat 的薄宿主方法 + 命令层组装划分）。sidecar 把
     /// 响应投影为与 chat 同构的信封（`toAgentChatExtResult = toAgentSidecarResponse`，

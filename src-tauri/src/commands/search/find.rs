@@ -110,16 +110,14 @@ impl FuzzyLinePrefilter {
     /// 在已解码的行文本上检查 query 要求的全部非 ASCII（无大小写之分，如 CJK）字符是否都出现。
     /// 仅对解码后的文本调用；文件级原始字节阶段不做此检查，以免对非 UTF-8 编码误杀。
     fn all_required_non_ascii_present(&self, line: &str) -> bool {
-        let mut missing = self.required_non_ascii.clone();
-        for ch in line.chars() {
-            if let Some(index) = missing.iter().position(|candidate| *candidate == ch) {
-                missing.swap_remove(index);
-                if missing.is_empty() {
-                    return true;
-                }
-            }
+        // 不可变子串存在性检查：不再为 swap_remove 每行 clone 一份 required_non_ascii。
+        // required 通常 1–3 个字符，all/any 双层遍历代价可忽略，且零堆分配。
+        if self.required_non_ascii.is_empty() {
+            return true;
         }
-        missing.is_empty()
+        self.required_non_ascii
+            .iter()
+            .all(|required| line.chars().any(|ch| ch == *required))
     }
 
     fn may_match(&self, line: &str) -> bool {
