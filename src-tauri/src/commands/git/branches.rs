@@ -425,13 +425,13 @@ fn apply_checkout_change(
                 Mode::FILE
             };
             let path = location.to_str_lossy().into_owned();
-            checkout_restore_worktree_blob(repository, repository_root, &path, id, mode)?;
-            checkout_upsert_index_entry(index, &path, id, mode);
+            super::worktree_io::restore_worktree_from_index_blob(repository, repository_root, &path, id, mode)?;
+            super::worktree_io::upsert_index_entry(index, &path, id, mode);
         }
         Change::Deletion { location, .. } => {
             let path = location.to_str_lossy().into_owned();
-            checkout_remove_worktree_path(repository_root, &path);
-            checkout_remove_index_path(index, &path);
+            super::worktree_io::remove_worktree_path(repository_root, &path);
+            super::worktree_io::remove_index_path(index, &path);
         }
         Change::Rewrite {
             source_location,
@@ -441,8 +441,8 @@ fn apply_checkout_change(
             ..
         } => {
             let source = source_location.to_str_lossy().into_owned();
-            checkout_remove_worktree_path(repository_root, &source);
-            checkout_remove_index_path(index, &source);
+            super::worktree_io::remove_worktree_path(repository_root, &source);
+            super::worktree_io::remove_index_path(index, &source);
             if !(entry_mode.is_tree() || entry_mode.is_commit()) {
                 let mode = if entry_mode.is_link() {
                     Mode::SYMLINK
@@ -452,8 +452,8 @@ fn apply_checkout_change(
                     Mode::FILE
                 };
                 let path = location.to_str_lossy().into_owned();
-                checkout_restore_worktree_blob(repository, repository_root, &path, id, mode)?;
-                checkout_upsert_index_entry(index, &path, id, mode);
+                super::worktree_io::restore_worktree_from_index_blob(repository, repository_root, &path, id, mode)?;
+                super::worktree_io::upsert_index_entry(index, &path, id, mode);
             }
         }
     }
@@ -490,83 +490,4 @@ fn write_git_head_atomically(git_dir: &Path, content: &str) -> Result<(), String
         .map_err(|error| format!("更新 HEAD 失败：{error}"))?;
     file.commit()
         .map_err(|error| format!("更新 HEAD 失败：{error}"))
-}
-
-/// 从工作区删除某路径（忽略不存在的情况）。
-fn checkout_remove_worktree_path(repository_root: &Path, relative_path: &str) {
-    let target_path = repository_root.join(Path::new(relative_path));
-    if fs::symlink_metadata(&target_path).is_ok() {
-        let _ = fs::remove_file(&target_path);
-    }
-}
-
-/// 将对象库中的 blob 写回工作区文件（含符号链接与可执行位处理）。
-fn checkout_restore_worktree_blob(
-    repository: &Repository,
-    repository_root: &Path,
-    relative_path: &str,
-    object_id: gix::ObjectId,
-    mode: gix::index::entry::Mode,
-) -> Result<(), String> {
-    use gix::index::entry::Mode;
-    let object = repository
-        .find_object(object_id)
-        .map_err(|error| format!("读取 Git 对象失败：{error}"))?;
-    let bytes = object.data.as_slice();
-    let target_path = repository_root.join(Path::new(relative_path));
-    if let Some(parent) = target_path.parent() {
-        fs::create_dir_all(parent).map_err(|error| format!("创建目录失败：{error}"))?;
-    }
-    if mode == Mode::SYMLINK {
-        let link_target = String::from_utf8_lossy(bytes).into_owned();
-        checkout_recreate_symlink(&target_path, &link_target)?;
-    } else {
-        if fs::symlink_metadata(&target_path).is_ok() {
-            let _ = fs::remove_file(&target_path);
-        }
-        fs::write(&target_path, bytes).map_err(|error| format!("写入工作区文件失败：{error}"))?;
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::PermissionsExt;
-            if mode == Mode::FILE_EXECUTABLE {
-                let _ = fs::set_permissions(&target_path, fs::Permissions::from_mode(0o755));
-            }
-        }
-    }
-    Ok(())
-}
-
-/// 插入或替换 stage-0 的索引条目（先移除同路径旧条目）。
-fn checkout_upsert_index_entry(
-    index: &mut gix::index::File,
-    relative_path: &str,
-    object_id: gix::ObjectId,
-    mode: gix::index::entry::Mode,
-) {
-    use gix::index::entry::{Flags, Stat};
-    checkout_remove_index_path(index, relative_path);
-    let path = gix::bstr::BStr::new(relative_path.as_bytes());
-    // path-length 存放于 flags 低 12 位（上限 0xFFF），stage 为 0。
-    let flags = Flags::from_bits_retain(relative_path.len().min(0xFFF) as _);
-    index.dangerously_push_entry(Stat::default(), object_id, flags, mode, path);
-}
-
-/// 从索引移除某路径的所有条目（含各冲突阶段）。
-fn checkout_remove_index_path(index: &mut gix::index::File, relative_path: &str) {
-    index.remove_entries(|_, entry_path, _| entry_path.to_str_lossy().as_ref() == relative_path);
-}
-
-#[cfg(unix)]
-fn checkout_recreate_symlink(target_path: &Path, link_target: &str) -> Result<(), String> {
-    let _ = fs::remove_file(target_path);
-    std::os::unix::fs::symlink(link_target, target_path)
-        .map_err(|error| format!("创建符号链接失败：{error}"))
-}
-
-#[cfg(windows)]
-fn checkout_recreate_symlink(target_path: &Path, link_target: &str) -> Result<(), String> {
-    // Windows 下退化为写入链接目标文本，避免符号链接权限问题。
-    let _ = fs::remove_file(target_path);
-    fs::write(target_path, link_target.as_bytes())
-        .map_err(|error| format!("写入符号链接占位失败：{error}"))
 }
