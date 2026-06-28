@@ -216,37 +216,38 @@ fn capture_checkpoint_snapshots(
     let snapshot_sources = build_snapshot_sources(plans);
     let task_id = resolve_task_id(metadata);
 
-    if ai_edit::mark_snapshot_scope(state, format!("task-start:{task_id}"))? {
-        let snapshot = snapshot::store_task_start_snapshot(
-            storage_root,
-            &snapshot_sources,
-            metadata,
-            summary,
-        )?;
-        ai_edit::append_snapshot(state, storage_root, snapshot)?;
-    }
+    // 先做幂等去重判定（仅操作内存中的 scope 标记），再在「单锁单句柄」内一次性
+    // 写入全部检查点快照，最后按原顺序把快照登记到内存时间线。
+    // 把原先一次应用最多 3 次「开库 + 加锁」收敛为 1 次。
+    let capture_task_start =
+        ai_edit::mark_snapshot_scope(state, format!("task-start:{task_id}"))?;
 
-    if let Some(turn_id) = resolve_turn_id(metadata)
-        && ai_edit::mark_snapshot_scope(state, format!("turn-start:{turn_id}"))?
-    {
-        let snapshot = snapshot::store_turn_start_snapshot(
-            storage_root,
-            &snapshot_sources,
-            metadata,
-            summary,
-        )?;
-        ai_edit::append_snapshot(state, storage_root, snapshot)?;
-    }
+    let capture_turn_start = match resolve_turn_id(metadata) {
+        Some(turn_id) => ai_edit::mark_snapshot_scope(state, format!("turn-start:{turn_id}"))?,
+        None => false,
+    };
 
     let confirmed_by_user = metadata
         .and_then(|value| value.confirmed_by_user)
         .unwrap_or(false);
 
-    let source_snapshot = if confirmed_by_user {
-        snapshot::store_manual_snapshot(storage_root, &snapshot_sources, metadata, summary)?
-    } else {
-        snapshot::store_pre_tool_snapshot(storage_root, &snapshot_sources, metadata, summary)?
-    };
+    let (task_start_snapshot, turn_start_snapshot, source_snapshot) =
+        snapshot::store_checkpoint_snapshots(
+            storage_root,
+            &snapshot_sources,
+            metadata,
+            summary,
+            capture_task_start,
+            capture_turn_start,
+            confirmed_by_user,
+        )?;
+
+    if let Some(snapshot) = task_start_snapshot {
+        ai_edit::append_snapshot(state, storage_root, snapshot)?;
+    }
+    if let Some(snapshot) = turn_start_snapshot {
+        ai_edit::append_snapshot(state, storage_root, snapshot)?;
+    }
 
     let source_snapshot_id = source_snapshot.id.clone();
     ai_edit::append_snapshot(state, storage_root, source_snapshot)?;

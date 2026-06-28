@@ -24,6 +24,11 @@ pub const FULL_BLOB_TTL_DAYS: i64 = 14;
 pub const PINNED_FULL_BLOB_TTL_DAYS: i64 = 30;
 pub const DEFAULT_TOTAL_BLOB_QUOTA_BYTES: u64 = 1024 * 1024 * 1024;
 
+/// 进程内单调递增序列：与纳秒时间戳组合，确保同一把写锁内连续创建的多个快照
+/// （task-start / turn-start / manual|pre-tool）即使纳秒时间戳相同也不会发生
+/// snapshot_id 冲突、互相覆盖。
+static SNAPSHOT_SEQ: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
 #[derive(Debug, Default)]
 pub struct SnapshotPruneOutcome {
     pub removed_snapshot_ids: HashSet<String>,
@@ -100,11 +105,25 @@ pub fn store_pre_tool_snapshot(
     metadata: Option<&AiApplyPatchMetadataRequest>,
     summary: &str,
 ) -> Result<AiSnapshotPayload, String> {
+    storage_lock::with_storage_write_lock(storage_root, "写入 AED 快照", || {
+        let store = open_store(storage_root)?;
+        store_pre_tool_snapshot_with_store(storage_root, &store, files, metadata, summary)
+    })
+}
+
+fn store_pre_tool_snapshot_with_store(
+    storage_root: &Path,
+    store: &SnapshotStore,
+    files: &[SnapshotSourceFile<'_>],
+    metadata: Option<&AiApplyPatchMetadataRequest>,
+    summary: &str,
+) -> Result<AiSnapshotPayload, String> {
     let task_id = resolve_task_id(metadata);
     let label = resolve_label(metadata, summary, "Patch 前快照");
 
-    store_snapshot(
+    store_snapshot_with_store(
         storage_root,
+        store,
         SNAPSHOT_SCOPE_PRE_TOOL,
         &task_id,
         &label,
@@ -118,12 +137,26 @@ pub fn store_task_start_snapshot(
     metadata: Option<&AiApplyPatchMetadataRequest>,
     summary: &str,
 ) -> Result<AiSnapshotPayload, String> {
+    storage_lock::with_storage_write_lock(storage_root, "写入 AED 快照", || {
+        let store = open_store(storage_root)?;
+        store_task_start_snapshot_with_store(storage_root, &store, files, metadata, summary)
+    })
+}
+
+fn store_task_start_snapshot_with_store(
+    storage_root: &Path,
+    store: &SnapshotStore,
+    files: &[SnapshotSourceFile<'_>],
+    metadata: Option<&AiApplyPatchMetadataRequest>,
+    summary: &str,
+) -> Result<AiSnapshotPayload, String> {
     let task_id = resolve_task_id(metadata);
     let fallback_label = format!("任务起点：{}", summary.trim());
     let label = resolve_label(metadata, &fallback_label, "任务起点快照");
 
-    store_snapshot(
+    store_snapshot_with_store(
         storage_root,
+        store,
         SNAPSHOT_SCOPE_TASK_START,
         &task_id,
         &label,
@@ -137,6 +170,19 @@ pub fn store_turn_start_snapshot(
     metadata: Option<&AiApplyPatchMetadataRequest>,
     summary: &str,
 ) -> Result<AiSnapshotPayload, String> {
+    storage_lock::with_storage_write_lock(storage_root, "写入 AED 快照", || {
+        let store = open_store(storage_root)?;
+        store_turn_start_snapshot_with_store(storage_root, &store, files, metadata, summary)
+    })
+}
+
+fn store_turn_start_snapshot_with_store(
+    storage_root: &Path,
+    store: &SnapshotStore,
+    files: &[SnapshotSourceFile<'_>],
+    metadata: Option<&AiApplyPatchMetadataRequest>,
+    summary: &str,
+) -> Result<AiSnapshotPayload, String> {
     let task_id = resolve_task_id(metadata);
     let turn_id = metadata
         .and_then(|value| value.turn_id.as_deref())
@@ -145,8 +191,9 @@ pub fn store_turn_start_snapshot(
     let fallback_label = format!("回合起点：{turn_id} · {}", summary.trim());
     let label = resolve_label(metadata, &fallback_label, "回合起点快照");
 
-    store_snapshot(
+    store_snapshot_with_store(
         storage_root,
+        store,
         SNAPSHOT_SCOPE_TURN_START,
         &task_id,
         &label,
@@ -160,6 +207,19 @@ pub fn store_manual_snapshot(
     metadata: Option<&AiApplyPatchMetadataRequest>,
     summary: &str,
 ) -> Result<AiSnapshotPayload, String> {
+    storage_lock::with_storage_write_lock(storage_root, "写入 AED 快照", || {
+        let store = open_store(storage_root)?;
+        store_manual_snapshot_with_store(storage_root, &store, files, metadata, summary)
+    })
+}
+
+fn store_manual_snapshot_with_store(
+    storage_root: &Path,
+    store: &SnapshotStore,
+    files: &[SnapshotSourceFile<'_>],
+    metadata: Option<&AiApplyPatchMetadataRequest>,
+    summary: &str,
+) -> Result<AiSnapshotPayload, String> {
     let task_id = resolve_task_id(metadata);
     let fallback_label = format!("手动确认：{}", summary.trim());
     let label = resolve_label(metadata, &fallback_label, "手动确认前快照");
@@ -169,7 +229,69 @@ pub fn store_manual_snapshot(
         label
     };
 
-    store_snapshot(storage_root, SNAPSHOT_SCOPE_MANUAL, &task_id, &label, files)
+    store_snapshot_with_store(storage_root, store, SNAPSHOT_SCOPE_MANUAL, &task_id, &label, files)
+}
+
+/// 在单一写锁 + 单一 fjall 句柄内创建本次应用所需的全部检查点快照
+/// （task-start / turn-start / manual|pre-tool）。
+///
+/// 原实现为每个快照各自获取一次写锁并重新打开 `Database`，一次应用最多 3 次
+/// 「开库 + 加锁」。这里收敛为 1 次，句柄生命周期严格 ⊆ 写锁临界区。
+///
+/// 返回 `(task_start, turn_start, source)`，其中 `source` 为 manual 或 pre-tool
+/// 快照，调用方据此回填 operation.source_snapshot_id。
+#[allow(clippy::type_complexity)]
+pub fn store_checkpoint_snapshots(
+    storage_root: &Path,
+    files: &[SnapshotSourceFile<'_>],
+    metadata: Option<&AiApplyPatchMetadataRequest>,
+    summary: &str,
+    capture_task_start: bool,
+    capture_turn_start: bool,
+    confirmed_by_user: bool,
+) -> Result<
+    (
+        Option<AiSnapshotPayload>,
+        Option<AiSnapshotPayload>,
+        AiSnapshotPayload,
+    ),
+    String,
+> {
+    storage_lock::with_storage_write_lock(storage_root, "写入 AED 检查点快照", || {
+        let store = open_store(storage_root)?;
+
+        let task_start = if capture_task_start {
+            Some(store_task_start_snapshot_with_store(
+                storage_root,
+                &store,
+                files,
+                metadata,
+                summary,
+            )?)
+        } else {
+            None
+        };
+
+        let turn_start = if capture_turn_start {
+            Some(store_turn_start_snapshot_with_store(
+                storage_root,
+                &store,
+                files,
+                metadata,
+                summary,
+            )?)
+        } else {
+            None
+        };
+
+        let source = if confirmed_by_user {
+            store_manual_snapshot_with_store(storage_root, &store, files, metadata, summary)?
+        } else {
+            store_pre_tool_snapshot_with_store(storage_root, &store, files, metadata, summary)?
+        };
+
+        Ok((task_start, turn_start, source))
+    })
 }
 
 pub fn store_pre_revert_snapshot(
@@ -361,8 +483,23 @@ fn store_snapshot_locked(
     files: &[SnapshotSourceFile<'_>],
 ) -> Result<AiSnapshotPayload, String> {
     let store = open_store(storage_root)?;
+    store_snapshot_with_store(storage_root, &store, scope, task_id, label, files)
+}
+
+fn store_snapshot_with_store(
+    storage_root: &Path,
+    store: &SnapshotStore,
+    scope: &str,
+    task_id: &str,
+    label: &str,
+    files: &[SnapshotSourceFile<'_>],
+) -> Result<AiSnapshotPayload, String> {
     let timestamp = Timestamp::now();
-    let snapshot_id = format!("ai-edit-snapshot-{}", timestamp.as_nanosecond());
+    let snapshot_id = format!(
+        "ai-edit-snapshot-{}-{}",
+        timestamp.as_nanosecond(),
+        SNAPSHOT_SEQ.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+    );
 
     let mut manifest_files = Vec::with_capacity(files.len());
     let mut file_refs = Vec::with_capacity(files.len());
