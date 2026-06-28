@@ -1,14 +1,13 @@
-// fix-filter-fastpath.mjs
-// 用途：给 shell_integration.rs 的 filter() 增加“无 ESC 快路径”。
-// 健壮性：只锚定单行 `for c in input.chars() {`（容忍缩进），插入自包含代码块；
-//        幂等（已应用则跳过）；锚点缺失则跳过并报告，不破坏文件。
-// 运行：在仓库根目录执行  node fix-filter-fastpath.mjs
+// fix-workspace-fs-stat.mjs
+// 用途：消除目录列举对每个普通文件的多余 stat 系统调用，只对符号链接 follow metadata。
+// 健壮性：正则容忍缩进/空白漂移；幂等（已应用则跳过）；锚点缺失则跳过并报告，不破坏文件。
+// 运行：在仓库根目录执行  node fix-workspace-fs-stat.mjs
 
 import { readFile, writeFile } from 'node:fs/promises';
 import { resolve } from 'node:path';
 
-const FILE = 'src-tauri/src/terminal/shell_integration.rs';
-const GUARD = '!input.contains(ESC)';
+const FILE = 'src-tauri/src/commands/workspace_fs.rs';
+const GUARD = 'file_type.is_symlink()';
 const path = resolve(process.cwd(), FILE);
 
 let src;
@@ -20,40 +19,39 @@ try {
 }
 
 if (src.includes(GUARD)) {
-  console.log('• 跳过（已应用）: filter() 无 ESC 快路径');
+  console.log('• 跳过（已应用）: is_workspace_directory_entry 仅对符号链接 stat');
   process.exit(0);
 }
 
-// 容忍缩进，定位 filter() 主循环这一行。
-const loopRe = /^([ \t]*)for c in input\.chars\(\) \{/m;
-const match = src.match(loopRe);
+// 只锚定那一行布尔表达式（容忍缩进），把它替换为按 file_type 分流的函数体。
+const bodyRe =
+  /^([ \t]*)file_type\.is_dir\(\) \|\| fs::metadata\(path\)\.is_ok_and\(\|metadata\| metadata\.is_dir\(\)\)\n/m;
+const match = src.match(bodyRe);
 if (!match) {
-  console.error('✗ 锚点未匹配：未找到 `for c in input.chars() {`。');
-  console.error('  请把本地 filter() 函数体贴出来，我据实重排锚点（避免猜测）。');
+  console.error('✗ 锚点未匹配：未找到 is_workspace_directory_entry 的布尔表达式行。');
+  console.error('  请把本地该函数贴出来，我据实重排锚点（避免猜测）。');
   process.exit(1);
 }
 
-const indent = match[1]; // 该行实际缩进
-const block =
-  `${indent}// 快路径：Normal 态且无半截序列缓存时，本段不含 ESC 即不可能存在任何 OSC/转义\n` +
-  `${indent}// 序列，输出必然逐字节等同输入。整段拷贝，避免对最常见的纯文本输出（构建日志/\n` +
-  `${indent}// 程序 stdout，占绝大多数）逐字符 push，把每批 O(n) 次 push 降为一次 memcpy。\n` +
-  `${indent}if self.state == FilterState::Normal\n` +
-  `${indent}    && self.pending.is_empty()\n` +
-  `${indent}    && !input.contains(ESC)\n` +
-  `${indent}{\n` +
-  `${indent}    out.push_str(input);\n` +
-  `${indent}    return (out, marks);\n` +
+const indent = match[1]; // 函数体缩进（应为 4 空格）
+const replacement =
+  `${indent}// 普通文件 / 目录直接信任 read_dir 返回的类型，零额外 syscall；\n` +
+  `${indent}// 仅符号链接才需 follow 一次 metadata，判断其目标是否为目录。\n` +
+  `${indent}if file_type.is_dir() {\n` +
+  `${indent}    return true;\n` +
   `${indent}}\n` +
-  `\n`;
+  `${indent}if file_type.is_symlink() {\n` +
+  `${indent}    return fs::metadata(path).is_ok_and(|metadata| metadata.is_dir());\n` +
+  `${indent}}\n` +
+  `${indent}false\n`;
 
-const next = src.replace(loopRe, block + match[0]);
+const next = src.replace(bodyRe, replacement);
 if (next === src) {
   console.error('✗ 未发生替换（异常），未写入。');
   process.exit(1);
 }
 
 await writeFile(path, next, 'utf8');
-console.log('✓ 已应用: filter() 无 ESC 快路径');
+console.log('✓ 已应用: is_workspace_directory_entry 仅对符号链接 stat');
 console.log('\n建议验证：');
-console.log('  cargo test -p <crate> shell_integration   # 行为回归（剥离/保留语义不变）');
+console.log('  cargo test -p <crate> workspace_fs   # 现有 symlink/dir 分类用例应全绿');

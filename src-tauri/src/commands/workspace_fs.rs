@@ -602,7 +602,15 @@ fn resolve_image_mime_type(path: &Path) -> Result<String, String> {
 }
 
 fn is_workspace_directory_entry(path: &Path, file_type: &fs::FileType) -> bool {
-    file_type.is_dir() || fs::metadata(path).is_ok_and(|metadata| metadata.is_dir())
+    // 普通文件 / 目录直接信任 read_dir 返回的类型，零额外 syscall；
+    // 仅符号链接才需 follow 一次 metadata，判断其目标是否为目录。
+    if file_type.is_dir() {
+        return true;
+    }
+    if file_type.is_symlink() {
+        return fs::metadata(path).is_ok_and(|metadata| metadata.is_dir());
+    }
+    false
 }
 
 fn read_workspace_entries(directory: &Path) -> Result<Vec<WorkspaceEntry>, String> {
