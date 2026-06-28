@@ -1,125 +1,195 @@
 #!/usr/bin/env node
-// scripts/migrate-tauri-services.mjs
-// 将 src/services 下扁平的 Tauri IPC 绑定层迁入 src/services/tauri/ 领域目录,并全量重写 import。
-//   node scripts/migrate-tauri-services.mjs          # dry-run：只打印移动与改写，不落盘
-//   node scripts/migrate-tauri-services.mjs --apply  # 实际执行(git mv + 重写)
-// 幂等：--apply 后再次运行为 no-op。
+// acp-refactor.mjs — ACP 重构编解码器(安全引擎,按域喂入逐字核对过的补丁)
+//
+// 安全约束(吸取上一次 unicode 脚本误伤 17 文件的教训):
+//   1) git 工作区必须干净,否则拒绝运行(--force 可绕过,自负风险)——保证可一键回滚。
+//   2) 默认 dry-run,只预览;加 --write 才落盘。
+//   3) 原子 + fail-loud:任一锚点「命中次数 ≠ 期望次数」即整体中止,一个文件都不写。
+//      绝不模糊匹配、绝不部分写入。锚点对不上 = 你本地文件与基线不一致,先停下来看。
+//
+// 用法:
+//   node acp-refactor.mjs            # 预览(dry-run)
+//   node acp-refactor.mjs --write    # 全部锚点命中才落盘
+//
+// 落盘后务必:pnpm biome check --write(修 import 排序) → 继续域②(Rust/specta) → vue-tsc/cargo。
+
+import { readFile, writeFile } from 'node:fs/promises';
 import { execSync } from 'node:child_process';
-import { existsSync, mkdirSync, readdirSync, readFileSync, renameSync, statSync, writeFileSync } from 'node:fs';
-import { dirname, join, relative, resolve, sep } from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { resolve } from 'node:path';
+import process from 'node:process';
 
-const APPLY = process.argv.includes('--apply');
-const findRepoRoot = (start) => {
-  let dir = start;
-  for (;;) {
-    if (existsSync(join(dir, 'package.json')) && existsSync(join(dir, 'src'))) return dir;
-    const parent = dirname(dir);
-    if (parent === dir) return start;
-    dir = parent;
+/* ============================================================================
+ * 补丁清单(按域)。每条 op:
+ *   { file, find, replace, expect }  —— find 必须在 file 中恰好出现 expect 次。
+ * find/replace 为逐字字符串(含缩进),不做正则。
+ * ========================================================================== */
+const OPS = [
+  // —— 域①-a:src/services/ipc/ai.service.ts ——
+  {
+    file: 'src/services/ipc/ai.service.ts',
+    expect: 1,
+    find:
+      '  IAiGetSessionConfigOptionsRequest,\n' +
+      '  IAiGetSessionModesRequest,\n',
+    replace:
+      '  IAiEnsureAcpSessionRequest,\n' +
+      '  IAiGetSessionModesRequest,\n',
+  },
+  {
+    file: 'src/services/ipc/ai.service.ts',
+    expect: 1,
+    find:
+      '  getSessionConfigOptions(\n' +
+      '    payload: IAiGetSessionConfigOptionsRequest,\n' +
+      '  ): Promise<IAiSessionConfigOptionsPayload | null> {\n' +
+      '    return tauriService.aiGetSessionConfigOptions(payload);\n' +
+      '  },\n' +
+      '  setSessionConfigOption(payload: IAiSetSessionConfigOptionRequest): Promise<boolean> {\n' +
+      '    return tauriService.aiSetSessionConfigOption(payload);\n' +
+      '  },\n',
+    replace:
+      '  ensureAcpSession(payload: IAiEnsureAcpSessionRequest): Promise<void> {\n' +
+      '    return tauriService.aiEnsureAcpSession(payload);\n' +
+      '  },\n' +
+      '  setSessionConfigOption(\n' +
+      '    payload: IAiSetSessionConfigOptionRequest,\n' +
+      '  ): Promise<IAiSessionConfigOptionsPayload | null> {\n' +
+      '    return tauriService.aiSetSessionConfigOption(payload);\n' +
+      '  },\n',
+  },
+
+  // —— 域①-b:src/types/ai/sidecar.ts ——
+  {
+    file: 'src/types/ai/sidecar.ts',
+    expect: 1,
+    find:
+      'export interface IAcpSessionConfigOptionsState {\n' +
+      '  configOptions: IAcpSessionConfigOption[];\n' +
+      '}\n',
+    replace:
+      '/**\n' +
+      ' * ACP 会话配置项发现状态(v3 · 唯一标准管线 / 判别式状态机)。\n' +
+      ' *\n' +
+      ' * 取代旧 `IAcpSessionConfigOptionsState`。配置项发现归一为单一事件驱动管线:\n' +
+      ' * `ensure_session` 握手 + 统一 `config_option_update` 事件通道(握手快照 / 延迟通知 /\n' +
+      ' * set 响应全集都汇入同一 sink),不再有 get 工作区与 host 轮询。UI 按此判别式渲染:\n' +
+      ' * - idle:尚未发起握手。\n' +
+      ' * - discovering:已握手,短等首帧 configOptions。\n' +
+      ' * - unavailable:该 backend 不公示 configOptions(或握手失败);选择器锁定并给原因。\n' +
+      ' * - ready:已拿到 configOptions 全集(可能为空数组 = 已公示但无可选项)。\n' +
+      ' */\n' +
+      'export type TAcpSessionConfigOptions =\n' +
+      "  | { kind: 'idle' }\n" +
+      "  | { kind: 'discovering' }\n" +
+      "  | { kind: 'unavailable'; reason: string; message?: string }\n" +
+      "  | { kind: 'ready'; configOptions: IAcpSessionConfigOption[] };\n",
+  },
+];
+
+/* ========================================================================== */
+
+function assertGitClean(force) {
+  let status = '';
+  try {
+    status = execSync('git status --porcelain', { encoding: 'utf8' });
+  } catch {
+    console.error('✖ 不是 git 仓库或 git 不可用。中止。');
+    process.exit(2);
   }
-};
-const REPO_ROOT = findRepoRoot(process.cwd()); // 从当前工作目录向上找含 package.json + src 的目录
-const SRC = join(REPO_ROOT, 'src');
-const SCAN_ROOTS = ['src'];                 // 需要时可加 'scripts' 等
-const SCAN_EXT = new Set(['.ts', '.tsx', '.mts', '.cts', '.vue', '.js', '.mjs']);
-const toPosix = (p) => p.split(sep).join('/');
-
-// 移动映射(repo 相对路径)
-const MOVES = {
-  'src/services/tauri.ts':                 'src/services/tauri/index.ts',
-  'src/services/tauri.git.ts':             'src/services/tauri/git.ts',
-  'src/services/tauri.terminal.ts':        'src/services/tauri/terminal.ts',
-  'src/services/tauri.ssh.ts':             'src/services/tauri/ssh.ts',
-  'src/services/tauri.ai.ts':              'src/services/tauri/ai.ts',
-  'src/services/tauri.ai-edit.ts':         'src/services/tauri/ai-edit.ts',
-  'src/services/tauri.sidecar.ts':         'src/services/tauri/sidecar.ts',
-  'src/services/tauri.workspace.ts':       'src/services/tauri/workspace.ts',
-  'src/services/tauri.github-auth.ts':     'src/services/tauri/github-auth.ts',
-  'src/services/tauri.skills.ts':          'src/services/tauri/skills.ts',
-  'src/services/tauri.ipc-define.ts':      'src/services/tauri/core/ipc-define.ts',
-  'src/services/tauri.ipc-metrics.ts':     'src/services/tauri/core/ipc-metrics.ts',
-  'src/services/tauri.ipc-runtime.ts':     'src/services/tauri/core/ipc-runtime.ts',
-  'src/services/tauri.ipc-types.ts':       'src/services/tauri/core/ipc-types.ts',
-  'src/services/tauri.spec.ts':            'src/services/tauri/index.spec.ts',
-  'src/services/tauri.git.spec.ts':        'src/services/tauri/git.spec.ts',
-  'src/services/tauri.ipc-runtime.spec.ts':'src/services/tauri/core/ipc-runtime.spec.ts',
-};
-const movesAbs = new Map(Object.entries(MOVES).map(([o, n]) => [join(REPO_ROOT, o), join(REPO_ROOT, n)]));
-
-const walk = (absDir, out = []) => {
-  for (const name of readdirSync(absDir)) {
-    const abs = join(absDir, name);
-    const st = statSync(abs);
-    if (st.isDirectory()) { if (name !== 'node_modules') walk(abs, out); }
-    else if (SCAN_EXT.has(name.slice(name.lastIndexOf('.')))) out.push(abs);
-  }
-  return out;
-};
-
-// 把说明符解析到「正在被移动的旧绝对路径」,否则返回 null(无需改写)
-const resolveMovedTarget = (importerOldAbs, spec) => {
-  let base;
-  if (spec.startsWith('@/')) base = join(SRC, spec.slice(2));
-  else if (spec.startsWith('.')) base = resolve(dirname(importerOldAbs), spec);
-  else return null;
-  const cands = [base, base + '.ts', base + '.tsx', base + '.mts', base + '.cts', base + '.vue', join(base, 'index.ts')];
-  for (const c of cands) if (movesAbs.has(c)) return c;
-  return null;
-};
-
-const emitSpecifier = (importerNewAbs, newTargetAbs, wasAlias) => {
-  const noExt = newTargetAbs.replace(/\.(ts|tsx|mts|cts|vue)$/, '');
-  const isIndex = /(^|\/)index$/.test(toPosix(noExt));
-  if (wasAlias) {
-    let p = '@/' + toPosix(relative(SRC, noExt));
-    if (isIndex) p = p.replace(/\/index$/, '');     // @/services/tauri 保持原样 → 该引用零改动
-    return p;
-  }
-  let rel = toPosix(relative(dirname(importerNewAbs), noExt));
-  if (!rel.startsWith('.')) rel = './' + rel;
-  return rel;
-};
-
-const IMPORT_RE = /(from\s*|import\s*\(\s*|import\s+|require\s*\(\s*)(['"])([^'"]+)\2/g;
-
-// 先按旧位置计算所有内容改写
-const edits = new Map(); // oldAbs -> newContent
-const changeLog = [];    // 用于 dry-run 打印
-for (const root of SCAN_ROOTS) {
-  for (const fileAbs of walk(join(REPO_ROOT, root))) {
-    const importerNewAbs = movesAbs.get(fileAbs) ?? fileAbs;
-    const src = readFileSync(fileAbs, 'utf8');
-    const changes = [];
-    const next = src.replace(IMPORT_RE, (whole, lead, q, spec) => {
-      const movedOld = resolveMovedTarget(fileAbs, spec);
-      if (!movedOld) return whole;
-      const newSpec = emitSpecifier(importerNewAbs, movesAbs.get(movedOld), spec.startsWith('@/'));
-      if (newSpec === spec) return whole;
-      changes.push(`${spec}  →  ${newSpec}`);
-      return `${lead}${q}${newSpec}${q}`;
-    });
-    if (changes.length) { edits.set(fileAbs, next); changeLog.push([fileAbs, changes]); }
+  if (status.trim() && !force) {
+    console.error('✖ git 工作区不干净。请先 commit / stash,确保本次重构可整体回滚。');
+    console.error('  (确实要在脏树上跑可加 --force,自负风险)');
+    console.error('—— 未提交改动 ——');
+    console.error(status);
+    process.exit(2);
   }
 }
 
-// 打印计划
-console.log(`\n[migrate-tauri-services] mode=${APPLY ? 'APPLY' : 'DRY-RUN'}`);
-console.log(`\n# 文件移动 (${Object.keys(MOVES).length})`);
-for (const [o, n] of Object.entries(MOVES)) console.log(`  ${existsSync(join(REPO_ROOT, o)) ? 'mv' : '·skip'}  ${o}  →  ${n}`);
-console.log(`\n# import 改写 (${changeLog.length} 个文件)`);
-for (const [abs, changes] of changeLog) { console.log(`  ${toPosix(relative(REPO_ROOT, abs))}`); for (const c of changes) console.log(`      ${c}`); }
-
-if (!APPLY) { console.log('\nDRY-RUN 完成。确认无误后加 --apply 执行。\n'); process.exit(0); }
-
-// 1) 物理移动(优先 git mv 保留历史)
-for (const [oldRel, newRel] of Object.entries(MOVES)) {
-  const oldAbs = join(REPO_ROOT, oldRel), newAbs = join(REPO_ROOT, newRel);
-  if (!existsSync(oldAbs)) continue;
-  mkdirSync(dirname(newAbs), { recursive: true });
-  try { execSync(`git mv -f "${oldRel}" "${newRel}"`, { cwd: REPO_ROOT, stdio: 'pipe' }); }
-  catch { renameSync(oldAbs, newAbs); }
+function countOccurrences(haystack, needle) {
+  let n = 0;
+  let i = haystack.indexOf(needle);
+  while (i !== -1) {
+    n++;
+    i = haystack.indexOf(needle, i + needle.length);
+  }
+  return n;
 }
-// 2) 写回改写后的内容(移动过的文件写到新位置)
-for (const [oldAbs, content] of edits) writeFileSync(movesAbs.get(oldAbs) ?? oldAbs, content);
-console.log('\nAPPLY 完成。请运行：git add -A && pnpm fix && pnpm guard\n');
+
+async function main() {
+  const args = process.argv.slice(2);
+  if (args.includes('-h') || args.includes('--help')) {
+    console.log('node acp-refactor.mjs [--write] [--force]\n默认 dry-run。git 干净才允许跑。锚点全命中才落盘。');
+    return;
+  }
+  const write = args.includes('--write');
+  const force = args.includes('--force');
+
+  assertGitClean(force);
+
+  // 按文件分组,每个文件只读一次。
+  const byFile = new Map();
+  for (const op of OPS) {
+    if (!byFile.has(op.file)) byFile.set(op.file, []);
+    byFile.get(op.file).push(op);
+  }
+
+  const planned = []; // { file, nextContent, hits }
+  const failures = [];
+
+  for (const [file, ops] of byFile) {
+    const abs = resolve(file);
+    let content;
+    try {
+      content = await readFile(abs, 'utf8');
+    } catch (err) {
+      failures.push(`${file}: 读取失败 — ${err.message}`);
+      continue;
+    }
+
+    let next = content;
+    let hits = 0;
+    for (const op of ops) {
+      const found = countOccurrences(next, op.find);
+      const expect = op.expect ?? 1;
+      if (found !== expect) {
+        const head = op.find.split('\n')[0];
+        failures.push(`${file}: 锚点命中 ${found} 次,期望 ${expect} 次 → 「${head}…」`);
+        continue;
+      }
+      next = next.split(op.find).join(op.replace);
+      hits += expect;
+    }
+    if (next !== content) planned.push({ file, nextContent: next, hits });
+  }
+
+  // fail-loud:任一锚点不符,整体中止,不写任何文件。
+  if (failures.length > 0) {
+    console.error('✖ 锚点校验失败,已中止(未写任何文件):');
+    for (const f of failures) console.error('  - ' + f);
+    console.error('\n原因通常是:你本地文件与基线不一致,或该域补丁已应用过。先 git diff 看清再说。');
+    process.exit(1);
+  }
+
+  if (planned.length === 0) {
+    console.log('没有可应用的改动(可能已全部应用,幂等通过)。');
+    return;
+  }
+
+  for (const p of planned) {
+    console.log(`${write ? '✔ 已改写' : '○ 待改写'} ${p.file}  (${p.hits} 处锚点)`);
+  }
+
+  if (write) {
+    for (const p of planned) await writeFile(resolve(p.file), p.nextContent, 'utf8');
+    console.log('—'.repeat(48));
+    console.log('已落盘。接着:pnpm biome check --write → 继续域②(Rust/specta)→ vue-tsc / cargo check。');
+  } else {
+    console.log('—'.repeat(48));
+    console.log('这是预览(dry-run)。确认无误后加 --write。');
+  }
+}
+
+main().catch((err) => {
+  console.error(err);
+  process.exit(1);
+});
