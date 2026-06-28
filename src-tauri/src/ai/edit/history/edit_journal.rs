@@ -1,12 +1,9 @@
 use crate::ai::edit::errors;
 use crate::ai::edit::history::pins::PinIndex;
-use crate::ai::edit::io::storage_lock;
 use crate::commands::contracts::AiEditOperationPayload;
-use fjall::{Database, Keyspace, KeyspaceCreateOptions, PersistMode};
+use fjall::{Database, KeyspaceCreateOptions, PersistMode};
 use std::collections::HashSet;
-use std::path::Path;
 
-const AED_DB_DIR: &str = "fjall";
 const OPERATIONS_KEYSPACE: &str = "operations";
 
 #[derive(Debug, Default)]
@@ -15,21 +12,11 @@ pub struct JournalPruneOutcome {
     pub reclaimed_bytes: u64,
 }
 
-pub fn append_operations(
-    storage_root: &Path,
-    operations: &[AiEditOperationPayload],
-) -> Result<(), String> {
-    storage_lock::with_storage_write_lock(storage_root, "追加 AED 操作日志", || {
-        append_operations_locked(storage_root, operations)
-    })
-}
-
-/// 复用调用方已打开的 fjall 句柄写入操作日志（lock-free 变体）。
+/// 写入操作日志（唯一句柄 API）。
 ///
-/// 不变量：调用方必须已持有 `journal.lock` 写锁，且 `db` 是同一存储目录上
-/// 唯一存活的句柄；本函数不再获取锁或重新打开 `Database`，以便与
-/// `file_transaction::commit` 共享单一句柄、消除一次提交内的重复开库。
-pub fn append_operations_with_db(
+/// 调用方须先通过 io::with_aed_database_write 持有 journal.lock 写锁并打开同一存储
+/// 目录上唯一的 Database；本函数只做 keyspace 级写入，不再自获取锁或重新开库。
+pub fn append_operations(
     db: &Database,
     operations: &[AiEditOperationPayload],
 ) -> Result<(), String> {
@@ -57,25 +44,11 @@ pub fn append_operations_with_db(
     persist(db)
 }
 
-fn append_operations_locked(
-    storage_root: &Path,
-    operations: &[AiEditOperationPayload],
-) -> Result<(), String> {
-    let store = open_store(storage_root)?;
-    append_operations_with_db(&store.db, operations)
-}
-
-pub fn list_operations(storage_root: &Path) -> Result<Vec<AiEditOperationPayload>, String> {
-    storage_lock::with_storage_read_lock(storage_root, "读取 AED 操作日志", || {
-        list_operations_locked(storage_root)
-    })
-}
-
 pub fn list_operations_with_pins(
-    storage_root: &Path,
+    db: &Database,
     pin_index: &PinIndex,
 ) -> Result<Vec<AiEditOperationPayload>, String> {
-    let mut operations = list_operations(storage_root)?;
+    let mut operations = list_operations(db)?;
     merge_operation_pins(&mut operations, pin_index);
     Ok(operations)
 }
@@ -87,16 +60,8 @@ pub fn merge_operation_pins(operations: &mut [AiEditOperationPayload], pin_index
     }
 }
 
-fn list_operations_locked(storage_root: &Path) -> Result<Vec<AiEditOperationPayload>, String> {
-    let store = open_store(storage_root)?;
-    list_operations_with_db(&store.db)
-}
-
-/// 复用调用方已打开的 fjall 句柄读取操作日志（lock-free 变体）。
-///
-/// 不变量：调用方须已持有 `journal.lock`（读或写锁），且 `db` 为同一存储目录上
-/// 唯一存活句柄；供 retention 在单锁单句柄内复用。
-pub fn list_operations_with_db(db: &Database) -> Result<Vec<AiEditOperationPayload>, String> {
+/// 读取操作日志（唯一句柄 API，约束同 append_operations，只读）。
+pub fn list_operations(db: &Database) -> Result<Vec<AiEditOperationPayload>, String> {
     let operations = db
         .keyspace(OPERATIONS_KEYSPACE, KeyspaceCreateOptions::default)
         .map_err(|error| {
@@ -124,27 +89,8 @@ pub fn list_operations_with_db(db: &Database) -> Result<Vec<AiEditOperationPaylo
     Ok(result)
 }
 
+/// 裁剪操作日志（唯一句柄 API，约束同 append_operations，写）。
 pub fn prune_operations(
-    storage_root: &Path,
-    retained_operation_ids: &HashSet<String>,
-) -> Result<JournalPruneOutcome, String> {
-    storage_lock::with_storage_write_lock(storage_root, "裁剪 AED 操作日志", || {
-        prune_operations_locked(storage_root, retained_operation_ids)
-    })
-}
-
-fn prune_operations_locked(
-    storage_root: &Path,
-    retained_operation_ids: &HashSet<String>,
-) -> Result<JournalPruneOutcome, String> {
-    let store = open_store(storage_root)?;
-    prune_operations_with_db(&store.db, retained_operation_ids)
-}
-
-/// 复用调用方已打开的 fjall 句柄裁剪操作日志（lock-free 变体）。
-///
-/// 不变量：调用方须已持有 `journal.lock` 写锁，且 `db` 为同一存储目录上唯一存活句柄。
-pub fn prune_operations_with_db(
     db: &Database,
     retained_operation_ids: &HashSet<String>,
 ) -> Result<JournalPruneOutcome, String> {
@@ -198,23 +144,6 @@ pub fn prune_operations_with_db(
     Ok(outcome)
 }
 
-struct JournalStore {
-    db: Database,
-    operations: Keyspace,
-}
-
-fn open_store(storage_root: &Path) -> Result<JournalStore, String> {
-    let db = Database::builder(storage_root.join(AED_DB_DIR))
-        .open()
-        .map_err(|error| errors::journal_failed(format!("打开 fjall AED 存储失败：{error}")))?;
-    let operations = db
-        .keyspace(OPERATIONS_KEYSPACE, KeyspaceCreateOptions::default)
-        .map_err(|error| {
-            errors::journal_failed(format!("打开 operations keyspace 失败：{error}"))
-        })?;
-    Ok(JournalStore { db, operations })
-}
-
 fn persist(db: &Database) -> Result<(), String> {
     db.persist(PersistMode::SyncAll)
         .map_err(|error| errors::journal_failed(format!("持久化 fjall 操作日志失败：{error}")))
@@ -227,6 +156,7 @@ fn operation_key(operation: &AiEditOperationPayload) -> String {
 #[cfg(test)]
 mod tests {
     use super::{append_operations, list_operations, prune_operations};
+    use crate::ai::edit::io;
     use crate::commands::contracts::AiEditOperationPayload;
     use std::collections::HashSet;
     use std::fs;
@@ -236,10 +166,13 @@ mod tests {
         let temp_dir = temp_dir("aed-edit-journal");
         fs::create_dir_all(&temp_dir).expect("temp directory should be created");
 
-        append_operations(&temp_dir, &[operation("operation-1", "task-1", "turn-1")])
-            .expect("operations should be appended");
+        io::with_aed_database_write(&temp_dir, "测试写入操作日志", |db| {
+            append_operations(db, &[operation("operation-1", "task-1", "turn-1")])
+        })
+        .expect("operations should be appended");
 
-        let operations = list_operations(&temp_dir).expect("operations should be listed");
+        let operations = io::with_aed_database_read(&temp_dir, "测试读取操作日志", list_operations)
+            .expect("operations should be listed");
 
         assert_eq!(operations.len(), 1);
         assert_eq!(operations[0].id, "operation-1");
@@ -256,22 +189,27 @@ mod tests {
         let temp_dir = temp_dir("aed-edit-journal-prune");
         fs::create_dir_all(&temp_dir).expect("temp directory should be created");
 
-        append_operations(
-            &temp_dir,
-            &[
-                operation("operation-1", "task-1", "turn-1"),
-                operation("operation-2", "task-1", "turn-2"),
-                operation("operation-3", "task-2", "turn-3"),
-            ],
-        )
+        io::with_aed_database_write(&temp_dir, "测试写入操作日志", |db| {
+            append_operations(
+                db,
+                &[
+                    operation("operation-1", "task-1", "turn-1"),
+                    operation("operation-2", "task-1", "turn-2"),
+                    operation("operation-3", "task-2", "turn-3"),
+                ],
+            )
+        })
         .expect("operations should be appended");
 
         let retained_operation_ids =
             HashSet::from(["operation-2".to_string(), "operation-3".to_string()]);
-        let outcome =
-            prune_operations(&temp_dir, &retained_operation_ids).expect("journal should be pruned");
+        let outcome = io::with_aed_database_write(&temp_dir, "测试裁剪操作日志", |db| {
+            prune_operations(db, &retained_operation_ids)
+        })
+        .expect("journal should be pruned");
 
-        let operations = list_operations(&temp_dir).expect("operations should be listed");
+        let operations = io::with_aed_database_read(&temp_dir, "测试读取操作日志", list_operations)
+            .expect("operations should be listed");
         assert_eq!(operations.len(), 2);
         assert_eq!(operations[0].id, "operation-2");
         assert_eq!(operations[1].id, "operation-3");

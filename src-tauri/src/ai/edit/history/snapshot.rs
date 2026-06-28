@@ -367,30 +367,11 @@ fn list_stored_snapshots_locked(storage_root: &Path) -> Result<Vec<AiSnapshotPay
     Ok(snapshots)
 }
 
-pub fn apply_snapshot_retention(
-    storage_root: &Path,
-    pin_index: &PinIndex,
-    policy: SnapshotRetentionPolicy,
-) -> Result<SnapshotPruneOutcome, String> {
-    storage_lock::with_storage_write_lock(storage_root, "执行 AED 快照 GC", || {
-        apply_snapshot_retention_locked(storage_root, pin_index, policy)
-    })
-}
-
-fn apply_snapshot_retention_locked(
-    storage_root: &Path,
-    pin_index: &PinIndex,
-    policy: SnapshotRetentionPolicy,
-) -> Result<SnapshotPruneOutcome, String> {
-    let store = open_store(storage_root)?;
-    apply_snapshot_retention_with_db(&store.db, storage_root, pin_index, policy)
-}
-
-/// 复用调用方已打开的 fjall 句柄执行快照 GC（lock-free 变体）。
+/// 执行快照 GC（唯一句柄 API）。
 ///
-/// 不变量：调用方须已持有 `journal.lock` 写锁，且 `db` 为同一存储目录上唯一存活句柄；
-/// 供 retention 在单锁单句柄内复用，避免单次 GC 重复开库。
-pub fn apply_snapshot_retention_with_db(
+/// 调用方须先通过 io::with_aed_database_write 持有 journal.lock 写锁并打开同一存储
+/// 目录上唯一的 Database；本函数只做 keyspace / CAS 级裁剪，不再自获取锁或重新开库。
+pub fn apply_snapshot_retention(
     db: &Database,
     storage_root: &Path,
     pin_index: &PinIndex,
@@ -972,6 +953,7 @@ mod tests {
         store_pre_tool_snapshot,
     };
     use crate::ai::edit::history::pins::PinIndex;
+    use crate::ai::edit::io;
     use crate::commands::contracts::AiApplyPatchMetadataRequest;
     use std::fs;
 
@@ -1114,16 +1096,19 @@ mod tests {
         )
         .expect("second snapshot should be written");
 
-        let outcome = apply_snapshot_retention(
-            &temp_dir,
-            &PinIndex::default(),
-            SnapshotRetentionPolicy {
-                now: jiff::Timestamp::now()
-                    + jiff::SignedDuration::from_secs((super::FULL_BLOB_TTL_DAYS + 1) * 86400),
-                total_blob_quota_bytes: 0,
-                ..SnapshotRetentionPolicy::default()
-            },
-        )
+        let outcome = io::with_aed_database_write(&temp_dir, "测试快照 GC", |db| {
+            apply_snapshot_retention(
+                db,
+                &temp_dir,
+                &PinIndex::default(),
+                SnapshotRetentionPolicy {
+                    now: jiff::Timestamp::now()
+                        + jiff::SignedDuration::from_secs((super::FULL_BLOB_TTL_DAYS + 1) * 86400),
+                    total_blob_quota_bytes: 0,
+                    ..SnapshotRetentionPolicy::default()
+                },
+            )
+        })
         .expect("snapshots should be downgraded");
 
         let snapshots = list_stored_snapshots(&temp_dir).expect("snapshots should be listed");

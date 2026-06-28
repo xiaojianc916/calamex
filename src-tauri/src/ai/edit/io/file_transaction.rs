@@ -49,7 +49,7 @@ pub fn commit(storage_root: &Path, plan: FileTransactionPlan) -> Result<(), Stri
             TransactionStatus::Committed,
         )?;
         apply_manifest(storage_root, &transaction.manifest)?;
-        edit_journal::append_operations_with_db(&store.db, &transaction.manifest.operations)?;
+        edit_journal::append_operations(&store.db, &transaction.manifest.operations)?;
         update_status_with_store(&store, &transaction.manifest.id, TransactionStatus::Done)?;
         remove_staging_dir(storage_root, &transaction.manifest.id)?;
 
@@ -81,7 +81,7 @@ fn recover_pending_with_store(
             }
             TransactionStatus::Committed => {
                 apply_manifest(storage_root, &manifest)?;
-                edit_journal::append_operations_with_db(&store.db, &manifest.operations)?;
+                edit_journal::append_operations(&store.db, &manifest.operations)?;
                 update_status_with_store(store, &manifest.id, TransactionStatus::Done)?;
                 remove_staging_dir(storage_root, &manifest.id)?;
             }
@@ -428,7 +428,9 @@ mod tests {
             fs::read_to_string(&modify_path).expect("modify target should exist"),
             "new"
         );
-        let operations = edit_journal::list_operations(&temp_dir).expect("operations should list");
+        let operations =
+            crate::ai::edit::io::with_aed_database_read(&temp_dir, "测试读取操作日志", edit_journal::list_operations)
+                .expect("operations should list");
         assert_eq!(operations.len(), 1);
         assert_eq!(operations[0].id, "operation-1");
 
@@ -468,7 +470,9 @@ mod tests {
             fs::read_to_string(&target_path).expect("target should exist"),
             "recovered"
         );
-        let operations = edit_journal::list_operations(&temp_dir).expect("operations should list");
+        let operations =
+            crate::ai::edit::io::with_aed_database_read(&temp_dir, "测试读取操作日志", edit_journal::list_operations)
+                .expect("operations should list");
         assert_eq!(operations.len(), 1);
         assert_eq!(operations[0].id, "operation-2");
 

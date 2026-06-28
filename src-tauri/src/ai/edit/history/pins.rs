@@ -40,12 +40,6 @@ pub fn set_pin(
     })
 }
 
-pub fn list_pin_records(storage_root: &Path) -> Result<Vec<PinRecord>, String> {
-    storage_lock::with_storage_read_lock(storage_root, "读取 AED Pin 状态", || {
-        list_pin_records_locked(storage_root)
-    })
-}
-
 pub fn build_pin_index(records: &[PinRecord]) -> PinIndex {
     let mut index = PinIndex::default();
 
@@ -108,15 +102,11 @@ fn set_pin_locked(
     Ok(record)
 }
 
-fn list_pin_records_locked(storage_root: &Path) -> Result<Vec<PinRecord>, String> {
-    let store = open_store(storage_root)?;
-    list_pin_records_with_db(&store.db)
-}
-
-/// 复用调用方已打开的 fjall 句柄读取 Pin 记录（lock-free 变体）。
+/// 读取 Pin 记录（唯一句柄 API）。
 ///
-/// 不变量：调用方须已持有 `journal.lock`，且 `db` 为同一存储目录上唯一存活句柄。
-pub fn list_pin_records_with_db(db: &Database) -> Result<Vec<PinRecord>, String> {
+/// 调用方须先通过 io::with_aed_database_read（或 write）持有 journal.lock 并打开同一
+/// 存储目录上唯一的 Database；本函数只做 keyspace 级读取。
+pub fn list_pin_records(db: &Database) -> Result<Vec<PinRecord>, String> {
     let pins = db
         .keyspace(PINS_KEYSPACE, KeyspaceCreateOptions::default)
         .map_err(|error| errors::journal_failed(format!("打开 pins keyspace 失败：{error}")))?;
@@ -168,6 +158,7 @@ fn pin_key(target_type: &str, target_id: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::{build_pin_index, list_pin_records, set_pin};
+    use crate::ai::edit::io;
     use std::fs;
 
     #[test]
@@ -176,7 +167,8 @@ mod tests {
         fs::create_dir_all(&temp_dir).expect("temp directory should be created");
 
         set_pin(&temp_dir, "task", "task-1", true).expect("pin should be written");
-        let records = list_pin_records(&temp_dir).expect("pins should be listed");
+        let records = io::with_aed_database_read(&temp_dir, "测试读取 Pin", list_pin_records)
+            .expect("pins should be listed");
         let index = build_pin_index(&records);
 
         assert_eq!(records.len(), 1);

@@ -463,10 +463,14 @@ fn resolve_operation(
             return Ok(operation);
         }
     }
-    edit_journal::list_operations(storage_root)?
-        .into_iter()
-        .find(|operation| operation.id == operation_id)
-        .ok_or_else(|| errors::operation_not_found(operation_id))
+    crate::ai::edit::io::with_aed_database_read(
+        storage_root,
+        "读取 AED 操作日志",
+        edit_journal::list_operations,
+    )?
+    .into_iter()
+    .find(|operation| operation.id == operation_id)
+    .ok_or_else(|| errors::operation_not_found(operation_id))
 }
 
 /// 列出指定 task 的全部 operation（**newest-first**，详见模块顶部不变量）。
@@ -482,7 +486,11 @@ fn list_task_operations(
         },
         state,
         Vec::new(),
-        edit_journal::list_operations(storage_root)?,
+        crate::ai::edit::io::with_aed_database_read(
+            storage_root,
+            "读取 AED 操作日志",
+            edit_journal::list_operations,
+        )?,
     )?;
     let operations = timeline
         .entries
@@ -1043,7 +1051,12 @@ mod tests {
             },
             &state,
             snapshot::list_stored_snapshots(&snapshot_root).expect("snapshots should be listed"),
-            edit_journal::list_operations(&snapshot_root).expect("operations should be listed"),
+            crate::ai::edit::io::with_aed_database_read(
+                &snapshot_root,
+                "测试读取操作日志",
+                edit_journal::list_operations,
+            )
+            .expect("operations should be listed"),
         )
         .expect("timeline should be listed");
 
@@ -1099,7 +1112,12 @@ mod tests {
             },
             &state,
             Vec::new(),
-            edit_journal::list_operations(&snapshot_root).expect("operations should be listed"),
+            crate::ai::edit::io::with_aed_database_read(
+                &snapshot_root,
+                "测试读取操作日志",
+                edit_journal::list_operations,
+            )
+            .expect("operations should be listed"),
         )
         .expect("timeline should be listed")
         .entries
@@ -1456,9 +1474,13 @@ mod tests {
         )
         .expect("patch should apply");
 
-        let operation_id = edit_journal::list_operations(&snapshot_root)
-            .expect("operations should be listed")
-            .into_iter()
+        let operation_id = crate::ai::edit::io::with_aed_database_read(
+            &snapshot_root,
+            "测试读取操作日志",
+            edit_journal::list_operations,
+        )
+        .expect("operations should be listed")
+        .into_iter()
             .find(|operation| operation.kind == "modify")
             .expect("modify operation should exist")
             .id;
