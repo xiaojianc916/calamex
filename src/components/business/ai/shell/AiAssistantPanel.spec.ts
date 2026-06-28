@@ -25,19 +25,13 @@ import type {
 } from '@/types/editor';
 import type { IGitRepositoryStatusPayload } from '@/types/git';
 
-const useFrontendToolMock = vi.hoisted(() => vi.fn());
 const useAiAssistantMock = vi.hoisted(() => vi.fn());
 const useAiAgentRunMock = vi.hoisted(() => vi.fn());
 const useAiAgentNetworkMock = vi.hoisted(() => vi.fn());
 const useAiWebSourcesMock = vi.hoisted(() => vi.fn());
 const useAiTokenContextMock = vi.hoisted(() => vi.fn());
 const useCopilotSuggestionsMock = vi.hoisted(() => vi.fn());
-const useCopilotContextMock = vi.hoisted(() => vi.fn());
 const useAcpApprovalMock = vi.hoisted(() => vi.fn());
-
-vi.mock('@copilotkit/vue', () => ({
-  useFrontendTool: useFrontendToolMock,
-}));
 
 vi.mock('@/composables/ai/useAiAssistant', () => ({
   useAiAssistant: useAiAssistantMock,
@@ -61,10 +55,6 @@ vi.mock('@/composables/ai/useAiTokenContext', () => ({
 
 vi.mock('@/composables/ai/useCopilotSuggestions', () => ({
   useCopilotSuggestions: useCopilotSuggestionsMock,
-}));
-
-vi.mock('@/composables/ai/useCopilotContext', () => ({
-  useCopilotContext: useCopilotContextMock,
 }));
 
 vi.mock('@/composables/ai/useAcpApproval', () => ({
@@ -516,8 +506,6 @@ describe('AiAssistantPanel', () => {
   beforeEach(() => {
     setActivePinia(createPinia());
     latestTokenContextArgs = null;
-    useFrontendToolMock.mockReturnValue(undefined);
-    useCopilotContextMock.mockReturnValue(undefined);
     useCopilotSuggestionsMock.mockReturnValue({
       suggestions: ref([{ title: '讲一个科学小知识', message: '讲一个科学小知识' }]),
       rotateBatch: vi.fn(),
