@@ -10,7 +10,7 @@
 - Remote file/folder context menu
 - Upload/download transfer list
 - Remote path create/rename/delete workflows
-- Remote file preview dialog orchestration
+- Remote file preview dialog coordination
 - Best-effort terminal SSH bridge
 
 ## Depends on

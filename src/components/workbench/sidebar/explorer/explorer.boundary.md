@@ -7,7 +7,7 @@
 - Workspace root loading and refresh
 - Directory expansion/collapse state
 - Inline create and inline rename UI state
-- File/folder mutation orchestration
+- File/folder mutation coordination
 - Workspace file watcher subscription
 - Explorer context menu state
 

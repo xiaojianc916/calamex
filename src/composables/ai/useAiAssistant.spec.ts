@@ -28,8 +28,6 @@ import type {
   IAgentExternalChatResultPayload,
   IAgentSidecarChatRequest,
   IAgentSidecarCheckpointRestoreRequest,
-  IAgentSidecarOrchestrateRequest,
-  IAgentSidecarOrchestrateResumeRequest,
   IAgentSidecarResponsePayload,
   IAgentSidecarStreamEventPayload,
   TJsonValue,
@@ -247,63 +245,6 @@ const aiServiceMock = vi.hoisted(() => {
     ],
     result: '已恢复到指定检查点。',
   }));
-  const sidecarOrchestrate = vi.fn(async (request: IAgentSidecarOrchestrateRequest) => {
-    const sessionId = request.sessionId ?? 'sidecar-orchestrate-session-1';
-    sidecarStreamHandler?.({
-      sessionId,
-      seq: 0,
-      event: {
-        type: 'plan_ready',
-        planId: 'orchestrate-plan-1',
-        threadId: 'orchestrate-thread-1',
-        version: 1,
-        status: 'pending_approval',
-        createdAt: '2026-04-29T10:00:00.000Z',
-        updatedAt: '2026-04-29T10:00:00.000Z',
-        approvedAt: null,
-        executedAt: null,
-        rejectionReason: null,
-        errorMessage: null,
-        plan: {
-          goal: request.goal,
-          summary: 'orchestrate plan summary',
-          requiresApproval: true,
-          steps: [
-            {
-              id: 'orchestrate-step-1',
-              title: '收集上下文',
-              goal: '收集上下文',
-              status: 'pending',
-              tools: ['search_project_files'],
-              riskLevel: 'low',
-              requiresApproval: false,
-              expectedOutput: '上下文摘要',
-            },
-            {
-              id: 'orchestrate-step-2',
-              title: '输出实施计划',
-              goal: '输出实施计划',
-              status: 'pending',
-              tools: ['edit_file'],
-              riskLevel: 'medium',
-              requiresApproval: true,
-              expectedOutput: '可执行计划',
-            },
-          ],
-        },
-      },
-    });
-
-    return { runId: 'orchestrate-run-1', result: null };
-  });
-
-  const sidecarOrchestrateResume = vi.fn(
-    async (request: IAgentSidecarOrchestrateResumeRequest) => ({
-      runId: request.runId,
-      result: null,
-    }),
-  );
-
   const onSidecarStream = vi.fn(async (handler: SidecarStreamHandler) => {
     sidecarStreamHandler = handler;
     return vi.fn(() => {
@@ -324,8 +265,6 @@ const aiServiceMock = vi.hoisted(() => {
     sidecarExternalChat,
     sidecarResolveApproval,
     sidecarRestoreCheckpoint,
-    sidecarOrchestrate,
-    sidecarOrchestrateResume,
     onSidecarStream,
     queueStreamResponse(
       content: string,
@@ -371,8 +310,6 @@ const aiServiceMock = vi.hoisted(() => {
       sidecarExternalChat.mockClear();
       sidecarResolveApproval.mockClear();
       sidecarRestoreCheckpoint.mockClear();
-      sidecarOrchestrate.mockClear();
-      sidecarOrchestrateResume.mockClear();
       onSidecarStream.mockClear();
     },
   };
@@ -392,8 +329,6 @@ vi.mock('@/services/ipc/ai.service', () => ({
     sidecarExternalChat: aiServiceMock.sidecarExternalChat,
     sidecarResolveApproval: aiServiceMock.sidecarResolveApproval,
     sidecarRestoreCheckpoint: aiServiceMock.sidecarRestoreCheckpoint,
-    sidecarOrchestrate: aiServiceMock.sidecarOrchestrate,
-    sidecarOrchestrateResume: aiServiceMock.sidecarOrchestrateResume,
     onSidecarStream: aiServiceMock.onSidecarStream,
   },
 }));
@@ -1267,148 +1202,6 @@ describe('useAiAssistant streaming integration', () => {
 
     expect(assistant.messages.value).toHaveLength(1);
     expect(assistant.messages.value[0]?.id).toBe('persisted-message');
-  });
-
-  it('runs a complex sidecar Plan flow via orchestration', async () => {
-    const { assistant } = createAssistantHarnessContext();
-    const store = assistant.agentPlan.store;
-    const userQuestion = '帮我完成一个复杂的多步骤任务';
-
-    aiServiceMock.sidecarOrchestrate.mockImplementationOnce(async (request) => {
-      const sessionId = request.sessionId ?? 'complex-session-1';
-      const events: IAgentSidecarStreamEventPayload['event'][] = [
-        { type: 'tool_start', toolName: 'list_project_files', input: {} },
-        { type: 'tool_result', toolName: 'list_project_files', output: {} },
-        {
-          type: 'plan_ready',
-          planId: 'complex-plan-1',
-          threadId: 'thread-1',
-          version: 1,
-          status: 'pending_approval',
-          createdAt: new Date().toISOString(),
-          updatedAt: new Date().toISOString(),
-          approvedAt: null,
-          executedAt: null,
-          rejectionReason: null,
-          errorMessage: null,
-          plan: {
-            goal: 'complex-goal',
-            requiresApproval: true,
-            steps: [
-              {
-                id: 'complex-step-1',
-                title: 'complex-step-1',
-                goal: 'complex-step-1',
-                status: 'pending',
-                tools: [],
-                riskLevel: 'low',
-                requiresApproval: false,
-                expectedOutput: '',
-              },
-              {
-                id: 'complex-step-2',
-                title: 'complex-step-2',
-                goal: 'complex-step-2',
-                status: 'pending',
-                tools: [],
-                riskLevel: 'medium',
-                requiresApproval: true,
-                expectedOutput: '',
-              },
-              {
-                id: 'complex-step-3',
-                title: 'complex-step-3',
-                goal: 'complex-step-3',
-                status: 'pending',
-                tools: [],
-                riskLevel: 'low',
-                requiresApproval: false,
-                expectedOutput: '',
-              },
-            ],
-          },
-        },
-      ];
-      events.forEach((event, index) => {
-        aiServiceMock.emitSidecar({ sessionId, seq: index, event });
-      });
-      return { runId: 'complex-orchestrate-run-1', result: null };
-    });
-
-    assistant.activeMode.value = 'plan';
-    assistant.draft.value = userQuestion;
-
-    await assistant.sendMessage();
-    await flushMicrotasks();
-
-    expect(assistant.messages.value).toHaveLength(1);
-    expect(assistant.messages.value[0]?.role).toBe('user');
-    expect(assistant.messages.value[0]?.content).toBe(userQuestion);
-
-    expect(aiServiceMock.classifyTask).toHaveBeenCalledTimes(0);
-    expect(aiServiceMock.chatStream).toHaveBeenCalledTimes(0);
-
-    expect(aiServiceMock.sidecarOrchestrate).toHaveBeenCalledWith(
-      expect.objectContaining({ goal: userQuestion }),
-    );
-
-    expect(assistant.agentSteps.value).toHaveLength(3);
-    expect(readReactiveValue(store.steps)).toHaveLength(3);
-    expect(readReactiveValue(store.steps)[1]?.requiresUserApproval).toBe(true);
-  });
-
-  it('plan 请求只把目标交给 sidecar 编排，不再转发消息和文件上下文', async () => {
-    const { assistant } = createAssistantHarnessContext();
-
-    assistant.activeMode.value = 'plan';
-    assistant.draft.value = '@current-file 修改完善这个文件';
-
-    await assistant.sendMessage();
-
-    const request = aiServiceMock.sidecarOrchestrate.mock.calls[0]?.[0];
-
-    expect(request?.goal).toBe('@current-file 修改完善这个文件');
-    expect(request).not.toHaveProperty('messages');
-    expect(request).not.toHaveProperty('context');
-  });
-
-  it('璁″垝鐢熸垚澶辫触鏃舵竻鎺夋棫姝ラ鍜屾棫 run锛岄伩鍏嶅崱鍦ㄦ墽琛屼腑', async () => {
-    const { assistant } = createAssistantHarnessContext();
-    const staleSteps = [
-      createPlanStep('plan-step-1', '旧计划第一步', 'running'),
-      createPlanStep('plan-step-2', '旧计划第二步'),
-    ];
-    const planStore = assistant.agentPlan.store;
-    const userQuestion = '@current-file 修改完善这个文件';
-
-    planStore.setPlan('旧计划', staleSteps);
-    Reflect.set(planStore, 'approvedAt', '2026-04-29T00:00:00.000Z');
-    planStore.upsertRun(createAgentRun(staleSteps));
-    assistant.agentSteps.value = staleSteps.map((step) => ({
-      id: step.id,
-      title: step.title,
-      status: step.status,
-    }));
-    aiServiceMock.classifyTask.mockResolvedValueOnce({
-      classification: 'complex',
-      shouldEnterPlanMode: true,
-      reason: '当前请求需要多步计划。',
-    });
-    aiServiceMock.sidecarOrchestrate.mockRejectedValueOnce(
-      new Error('IPC 请求参数无效，已记录 traceId=b45c10a5-d0d1-487d-bd。'),
-    );
-
-    assistant.activeMode.value = 'plan';
-    assistant.draft.value = userQuestion;
-
-    await assistant.sendMessage();
-
-    expect(readReactiveValue(planStore.steps)).toHaveLength(0);
-    expect(readReactiveValue(planStore.activeRunId)).toBeNull();
-    expect(readReactiveValue(planStore.approvedAt)).toBeNull();
-    expect(readReactiveValue(planStore.errorMessage)).toContain('IPC 请求参数无效');
-    expect(assistant.agentSteps.value).toHaveLength(0);
-    expect(assistant.draft.value).toBe('');
   });
 
   it('uses Mastra sidecar execute directly in agent mode without generating a plan', async () => {
