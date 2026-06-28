@@ -1,5 +1,8 @@
 import { ref } from 'vue';
-import { resumeOrchestration, startOrchestration } from '@/composables/ai/sidecar-orchestrate';
+import {
+  projectSidecarPlanResponse,
+  resolveSidecarOfficialUsage,
+} from '@/composables/ai/sidecar-events';
 import { aiService } from '@/services/ipc/ai.service';
 import { useAiAgentStore } from '@/store/aiAgent';
 import type {
@@ -77,37 +80,41 @@ export const useAiAgentPlan = () => {
       assertValidGoal(goal, '任务目标不能为空。');
       const contextSnapshot = cloneContext(context);
 
-      // 原生编排:启动单条 workflow run,跑到计划审批门挂起(plan_ready + suspend)。
-      // executionMode 作为 per-run 偏好随 goal/threadId 一同透传(默认 interactive),
-      // 由 sidecar 决定是否启用「校验 -> 重规划」自治闭环。
-      const { payload, projection } = await startOrchestration({
+      // 唯一标准管线:计划生成 = 一次 plan 模式的原生回合(sidecarChat mode='plan'),
+      // 后端跑 plan workflow 并以 plan_ready 事件带回结构化计划。无服务端挂起 run、无分步
+      // resume 闸门——批准/拒绝是纯本地状态切换,实际执行由 agent 回合(useAiAgentRun)承载。
+      const response = await aiService.sidecarChat({
+        mode: 'plan',
         goal,
-        executionMode: store.executionMode,
+        messages: [],
+        context: contextSnapshot,
+        workspaceRootPath,
         ...(options.threadId ? { threadId: options.threadId } : {}),
+        ...(options.planId ? { planId: options.planId } : {}),
       });
 
-      if (projection.usage) {
-        store.setLatestOfficialUsage(projection.usage);
+      const projection = projectSidecarPlanResponse(response, goal);
+      const officialUsage = resolveSidecarOfficialUsage(response);
+      if (officialUsage.usage) {
+        store.setLatestOfficialUsage(officialUsage.usage);
       }
       if (projection.errorMessage) {
         throw new Error(projection.errorMessage);
       }
       if (!projection.planMetadata) {
-        throw new Error('编排未返回计划元数据，无法进入审批流程。');
+        throw new Error('Plan 模式未返回计划元数据，无法进入审批流程。');
       }
       const planMetadata = projection.planMetadata;
 
       latestContext.value = contextSnapshot;
       latestWorkspaceRootPath.value = workspaceRootPath;
-      // 把计划阶段的 runId 一直带到执行阶段(approve / resume 复用)。
-      store.setOrchestrationRunId(payload.runId);
       store.setMode('plan');
       store.setPlan(goal, projection.steps, planMetadata);
 
       return {
         steps: projection.steps,
         planMetadata,
-        summary: planMetadata.summary ?? projection.plan?.summary ?? null,
+        summary: planMetadata.summary ?? projection.summary ?? null,
         toolCalls: projection.toolCalls,
         assistantContent: projection.assistantContent,
       };
@@ -136,8 +143,7 @@ export const useAiAgentPlan = () => {
     ).steps;
   };
 
-  // 原 plan_query 服务端对账已下线;计划状态完全以本地持久化快照为准。
-  // 暂停中的执行 run 是步骤的权威来源,优先对齐到它。
+  // 计划状态完全以本地持久化快照为准。暂停中的执行 run 是步骤的权威来源,优先对齐到它。
   const refreshPlanRecord = async (
     planId = store.planId,
     _version = store.planVersion ?? undefined,
@@ -187,17 +193,13 @@ export const useAiAgentPlan = () => {
     store.removeStep(stepId);
   };
 
-  // 原生编排:批准是本地状态切换;实际放行由执行阶段 resume('approve') 完成
-  // (host 在 approvePlan() 之后会调用 runPlanToCompletion,在那里 resume)。
+  // 批准 = 本地状态切换(approved + agent 模式);实际放行由执行阶段的 agent 回合完成。
   const approvePlan = async (): Promise<void> => {
     assertValidGoal(store.activeGoal, '任务目标不能为空。');
     assertValidPlanSteps(store.steps);
     store.isApproving = true;
     store.errorMessage = '';
     try {
-      if (!store.orchestrationRunId) {
-        throw new Error('当前没有可执行的编排 run，无法批准。');
-      }
       store.setPlanStatus('approved', store.approvedAt ?? new Date().toISOString());
       store.setMode('agent');
     } catch (error) {
@@ -208,29 +210,10 @@ export const useAiAgentPlan = () => {
     }
   };
 
-  // 原生编排:拒绝 = resume('reject') 拆掉挂起的 workflow,然后清空本地编排 run。
-  const rejectPlan = async (reason?: string): Promise<void> => {
-    const orchestrationRunId = store.orchestrationRunId;
-    if (!orchestrationRunId) {
-      resetPlan();
-      return;
-    }
-    store.isApproving = true;
-    store.errorMessage = '';
-    try {
-      await resumeOrchestration({
-        runId: orchestrationRunId,
-        decision: 'reject',
-        ...(reason ? { reason } : {}),
-      });
-      store.setOrchestrationRunId(null);
-      store.setMode('plan');
-    } catch (error) {
-      store.errorMessage = toErrorMessage(error, '拒绝计划失败。');
-      throw error;
-    } finally {
-      store.isApproving = false;
-    }
+  // 拒绝 = 直接丢弃本地计划草稿(无服务端挂起 run 需拆除)。
+  const rejectPlan = async (_reason?: string): Promise<void> => {
+    void _reason;
+    resetPlan();
   };
 
   const resetPlan = (): void => {
