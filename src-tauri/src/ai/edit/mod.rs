@@ -218,12 +218,23 @@ pub fn append_snapshot(
     storage_root: &Path,
     snapshot: AiSnapshotPayload,
 ) -> Result<(), String> {
-    {
-        let mut guard = state.timeline.lock();
-        guard.push(AiEditTimelineEntryPayload::Snapshot(snapshot));
-    }
+    append_snapshot_without_retention(state, snapshot);
     run_retention_policy_best_effort(state, storage_root);
     Ok(())
+}
+
+/// 仅把快照登记进内存时间线，不触发本地历史保留（retention）裁剪。
+///
+/// 用于一次应用内连续登记多张检查点快照（task-start / turn-start / source）的场景：
+/// 这些 append 紧挨着发生，期间逐个跑 retention 纯属重复——`apply_operation_plans`
+/// 会在提交后统一调用一次 `run_retention_policy_best_effort` 收口。把「登记」与
+/// 「裁剪」解耦后，一次 apply 的 retention 次数从最多 4 次降到 1 次。
+pub(crate) fn append_snapshot_without_retention(
+    state: &AiEditState,
+    snapshot: AiSnapshotPayload,
+) {
+    let mut guard = state.timeline.lock();
+    guard.push(AiEditTimelineEntryPayload::Snapshot(snapshot));
 }
 
 pub(crate) fn run_retention_policy_best_effort(state: &AiEditState, storage_root: &Path) {

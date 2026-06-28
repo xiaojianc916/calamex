@@ -242,15 +242,17 @@ fn capture_checkpoint_snapshots(
             confirmed_by_user,
         )?;
 
+    // 登记到内存时间线但不在此触发 retention：本次 apply 末尾的
+    // run_retention_policy_best_effort 会统一收口，避免一次应用跑 4 遍 retention。
     if let Some(snapshot) = task_start_snapshot {
-        ai_edit::append_snapshot(state, storage_root, snapshot)?;
+        ai_edit::append_snapshot_without_retention(state, snapshot);
     }
     if let Some(snapshot) = turn_start_snapshot {
-        ai_edit::append_snapshot(state, storage_root, snapshot)?;
+        ai_edit::append_snapshot_without_retention(state, snapshot);
     }
 
     let source_snapshot_id = source_snapshot.id.clone();
-    ai_edit::append_snapshot(state, storage_root, source_snapshot)?;
+    ai_edit::append_snapshot_without_retention(state, source_snapshot);
 
     Ok(Some(source_snapshot_id))
 }
