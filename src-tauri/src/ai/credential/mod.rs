@@ -13,6 +13,13 @@ const SUPPORTED_PROVIDER_IDS: &[&str] = &[
     "ollama",
 ];
 
+/// Tavily（信息源）凭证的独立 keyring 账户标识（account 名）。
+///
+/// 不进 `SUPPORTED_PROVIDER_IDS`，也没有 `default_provider_base_url` 条目：Tavily 是 web 检索
+/// 信息源，不是 LLM 端点，没有「厂商 base_url」概念。其读写走下方独立的 `get_tavily` /
+/// `set_tavily`，直连 keyring、不经 `provider_account`，避免污染 LLM 厂商凭证表。
+const TAVILY_ACCOUNT: &str = "tavily";
+
 pub struct CredentialStore;
 
 impl CredentialStore {
@@ -66,7 +73,42 @@ impl CredentialStore {
             let _ = entry.delete_credential();
         }
 
+        // 一并清除独立的 Tavily 信息源凭证：与「清除全部 AI 凭证」语义一致。
+        Self::clear_tavily();
+
         Ok(())
+    }
+
+    /// 读取 Tavily（信息源）API Key：直连独立的 keyring 账户。
+    ///
+    /// 与 LLM 厂商凭证不同，Tavily 未配置是常规可选态（web 工具未启用即跳过），故缺失 /
+    /// 空白一律返回 `None` 而非结构化错误，由调用方按「无 Key 即不注入」处理。
+    pub fn get_tavily() -> Option<String> {
+        let entry = keyring::Entry::new(SERVICE_NAME, TAVILY_ACCOUNT).ok()?;
+        let password = entry.get_password().ok()?;
+        let trimmed = password.trim();
+        (!trimmed.is_empty()).then(|| trimmed.to_string())
+    }
+
+    /// 写入 Tavily API Key 到独立 keyring 账户：`trim` 后非空则写入；为空即视为「清除」。
+    pub fn set_tavily(api_key: &str) -> Result<(), String> {
+        let trimmed = api_key.trim();
+        if trimmed.is_empty() {
+            Self::clear_tavily();
+            return Ok(());
+        }
+
+        keyring::Entry::new(SERVICE_NAME, TAVILY_ACCOUNT)
+            .map_err(|error| errors::error("AI_PROVIDER_UNAVAILABLE", error.to_string()))?
+            .set_password(trimmed)
+            .map_err(|error| errors::error("AI_PROVIDER_UNAVAILABLE", error.to_string()))
+    }
+
+    /// 清除 Tavily API Key（账户不存在时为安全空操作）。
+    pub fn clear_tavily() {
+        if let Ok(entry) = keyring::Entry::new(SERVICE_NAME, TAVILY_ACCOUNT) {
+            let _ = entry.delete_credential();
+        }
     }
 }
 

@@ -28,7 +28,6 @@
 
 #![allow(dead_code)]
 
-use fs_err as fs;
 use std::env;
 use std::path::{Path, PathBuf};
 
@@ -65,7 +64,7 @@ fn build_builtin_client_config() -> Result<AcpClientConfig, String> {
     let sidecar_root = resolve_builtin_agent_root()?;
     let node = resolve_node_executable()?;
     let args = resolve_entry_args(&sidecar_root)?;
-    let env = build_builtin_agent_env(&sidecar_root);
+    let env = build_builtin_agent_env();
 
     Ok(AcpClientConfig {
         program: path_to_string(&node),
@@ -109,9 +108,9 @@ fn resolve_entry_args(sidecar_root: &Path) -> Result<Vec<String>, String> {
 
 /// 构造子进程环境变量。仅含 stdio 入口真正需要的项：
 ///   * `NODE_COMPILE_CACHE`：复用编译缓存，缩短冷启动（与旧路径一致）；
-///   * `TAVILY_API_KEY`：web 工具所需，优先进程/用户环境，缺失时回退 sidecar `.env`；
+///   * `TAVILY_API_KEY`：web 工具所需，统一从 OS keyring 读取（与其它 AI 凭证同源）；
 ///   * `AGENT_MCP_UVX_PATH`：MCP 工具拉起 uvx 所需（Windows 解析）。
-fn build_builtin_agent_env(sidecar_root: &Path) -> Vec<(String, String)> {
+fn build_builtin_agent_env() -> Vec<(String, String)> {
     let mut env: Vec<(String, String)> = Vec::new();
 
     env.push((
@@ -119,10 +118,9 @@ fn build_builtin_agent_env(sidecar_root: &Path) -> Vec<(String, String)> {
         path_to_string(&builtin_agent_runtime_dir().join("node-compile-cache")),
     ));
 
-    // 优先用进程/用户环境的 TAVILY_API_KEY；缺失时才回退 sidecar `.env`（与旧路径优先级一致）。
-    if let Some(value) = env_or_user_env(TAVILY_API_KEY_ENV)
-        .or_else(|| read_dotenv_key(sidecar_root, TAVILY_API_KEY_ENV))
-    {
+    // Tavily（web 工具）Key 由 Rust 宿主从 OS keyring 读出后注入子进程环境，子进程据此读
+    // process.env。keyring 为唯一来源：不再读 .env，也不回退进程/用户环境，杜绝新旧杂糅。
+    if let Some(value) = crate::ai::credential::CredentialStore::get_tavily() {
         env.push((TAVILY_API_KEY_ENV.to_string(), value));
     }
 
@@ -258,39 +256,6 @@ fn windows_uvx_candidates() -> Vec<PathBuf> {
     candidates
 }
 
-/// 从 sidecar `.env` 读取指定键（仅在进程/用户环境缺失时作为回退）。
-fn read_dotenv_key(sidecar_root: &Path, key: &str) -> Option<String> {
-    let content = fs::read_to_string(sidecar_root.join(".env")).ok()?;
-    find_dotenv_value(&content, key)
-}
-
-/// 纯函数：从 dotenv 文本中提取 `key` 的值（跳过空行/注释，去首尾引号，空值视为无）。
-fn find_dotenv_value(content: &str, key: &str) -> Option<String> {
-    for line in content.lines() {
-        let trimmed = line.trim();
-        if trimmed.is_empty() || trimmed.starts_with('#') {
-            continue;
-        }
-
-        let Some((name, raw_value)) = trimmed.split_once('=') else {
-            continue;
-        };
-
-        // Strip "export " prefix for Unix shell convention: export KEY=value
-        let name = name.trim();
-        let name = name.strip_prefix("export ").unwrap_or(name).trim();
-
-        if name != key {
-            continue;
-        }
-
-        let value = raw_value.trim().trim_matches(['"', '\'']);
-        return (!value.is_empty()).then(|| value.to_string());
-    }
-
-    None
-}
-
 /// 进程环境优先，其次 Windows 用户环境（HKCU\\Environment）；均去首尾空白且空值视为无。
 pub(super) fn env_or_user_env(key: &str) -> Option<String> {
     let process_value = env::var(key).ok().and_then(non_empty_string);
@@ -355,45 +320,6 @@ pub(super) fn path_to_string(path: &Path) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn find_dotenv_value_extracts_key_skipping_comments_and_blanks() {
-        let content = "# comment\n\nTAVILY_API_KEY=tvly-from-dotenv\nOTHER=ignored\n";
-        assert_eq!(
-            find_dotenv_value(content, "TAVILY_API_KEY").as_deref(),
-            Some("tvly-from-dotenv")
-        );
-    }
-
-    #[test]
-    fn find_dotenv_value_trims_surrounding_quotes() {
-        assert_eq!(
-            find_dotenv_value("TAVILY_API_KEY=\"quoted-value\"", "TAVILY_API_KEY").as_deref(),
-            Some("quoted-value")
-        );
-        assert_eq!(
-            find_dotenv_value("TAVILY_API_KEY='single'", "TAVILY_API_KEY").as_deref(),
-            Some("single")
-        );
-    }
-
-    #[test]
-    fn find_dotenv_value_strips_export_prefix() {
-        assert_eq!(
-            find_dotenv_value("export TAVILY_API_KEY=tvly-exported", "TAVILY_API_KEY").as_deref(),
-            Some("tvly-exported")
-        );
-    }
-
-    #[test]
-    fn find_dotenv_value_returns_none_for_missing_or_empty() {
-        assert_eq!(find_dotenv_value("OTHER=x", "TAVILY_API_KEY"), None);
-        assert_eq!(find_dotenv_value("TAVILY_API_KEY=", "TAVILY_API_KEY"), None);
-        assert_eq!(
-            find_dotenv_value("TAVILY_API_KEY=   ", "TAVILY_API_KEY"),
-            None
-        );
-    }
 
     #[test]
     fn non_empty_string_trims_and_rejects_blank() {

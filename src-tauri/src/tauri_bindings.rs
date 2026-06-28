@@ -105,6 +105,8 @@ pub fn builder() -> Builder<tauri::Wry> {
             builtin_agent::builtin_agent_restore_checkpoint,
             builtin_agent::builtin_agent_orchestrate,
             builtin_agent::builtin_agent_orchestrate_resume,
+            builtin_agent::get_tavily_api_key,
+            builtin_agent::set_tavily_api_key,
             agent_webview::agent_webview_create,
             agent_webview::agent_webview_set_bounds,
             agent_webview::agent_webview_set_visible,
