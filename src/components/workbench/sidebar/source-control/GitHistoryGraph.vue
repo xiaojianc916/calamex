@@ -75,7 +75,10 @@ const {
   clearHoverTimers,
 } = useGitHistoryHoverCard({
   gitStore,
-  getCardEl: () => hoverCardComp.value?.getRootEl() ?? null,
+  getCardEl: () => {
+    const card = hoverCardComp.value;
+    return typeof card?.getRootEl === 'function' ? card.getRootEl() : null;
+  },
   getRootEl: () => rootRef.value,
   isMenuOpen: () => menu.open,
 });
