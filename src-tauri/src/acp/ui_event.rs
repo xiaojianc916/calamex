@@ -59,8 +59,8 @@ fn message_delta(text: String, phase: &str) -> Value {
 /// 不解读其结构、不压平为文本、不伪造 Mastra 遥测 base 字段（runId/agentId/timestamp/seq…）。
 /// `update` 自带 `sessionUpdate`（== `kind`）与 `toolCallId`，满足前端 wire schema 的浅校验；
 /// 前端 ACL 据 `toolCallId` 归一到 thread 协议 VM（见 src/types/ai/sidecar.ts）。
-fn tool_call_ui_event(kind: &str, update: &Value) -> Value {
-    json!({ "type": kind, "acpUpdate": update.clone() })
+fn tool_call_ui_event(kind: &str, update: Value) -> Value {
+    json!({ "type": kind, "acpUpdate": update })
 }
 
 /// 构造可用斜杠命令更新 `TAgentUiEvent`（`type` 为 `available_commands_update`）。
@@ -107,10 +107,10 @@ fn config_option_update_ui_event(config_options: &Value) -> Value {
 /// 入参为 client 层 `AcpStreamFrame.event`（官方 `SessionNotification` 的 camelCase JSON：
 /// `{ sessionId, update: { sessionUpdate, ... } }`）。返回 None 表示该通知在主聊天流中无
 /// 对应 UI 事件（链路外 / 未接入变体），调用方据此跳过、不向 webview 下发。
-pub fn session_notification_to_ui_event(notification: &Value) -> Option<Value> {
-    let update = notification.get("update")?;
-    let kind = update.get("sessionUpdate").and_then(Value::as_str)?;
-    match kind {
+pub fn session_notification_to_ui_event(mut notification: Value) -> Option<Value> {
+    let update = notification.get_mut("update")?;
+    let kind = update.get("sessionUpdate").and_then(Value::as_str)?.to_owned();
+    match kind.as_str() {
         "agent_message_chunk" => {
             let text = text_from_content_block(update.get("content")?)?;
             Some(message_delta(text, PHASE_FINAL))
@@ -122,7 +122,10 @@ pub fn session_notification_to_ui_event(notification: &Value) -> Option<Value> {
         // ACP 原生工具调用（ADR-20260617 · D1/D2）：最小透传，不解读/不压平。
         // 整个 ACP `update`（toolCallId/title/kind/status/content[]/locations/rawInput/
         // rawOutput 等）原样作为 `acpUpdate`，交前端 ACL 按 toolCallId 归一到 thread 协议 VM。
-        "tool_call" | "tool_call_update" => Some(tool_call_ui_event(kind, update)),
+        "tool_call" | "tool_call_update" => {
+            let owned_update = std::mem::take(update);
+            Some(tool_call_ui_event(&kind, owned_update))
+        }
         // 外部 agent 声明本会话可用的斜杠命令（标准 available_commands_update）：整份透传
         // availableCommands 原始数组，交前端 ACL 归一到命令面板 VM（D7-④）。
         "available_commands_update" => {
@@ -188,7 +191,7 @@ mod tests {
             "sessionUpdate": "agent_message_chunk",
             "content": { "type": "text", "text": "你好" }
         }));
-        let ui = session_notification_to_ui_event(&n).unwrap();
+        let ui = session_notification_to_ui_event(n).unwrap();
         assert_eq!(ui["type"], "message_delta");
         assert_eq!(ui["text"], "你好");
         assert_eq!(ui["phase"], "final");
@@ -200,7 +203,7 @@ mod tests {
             "sessionUpdate": "agent_thought_chunk",
             "content": { "type": "text", "text": "让我想想" }
         }));
-        let ui = session_notification_to_ui_event(&n).unwrap();
+        let ui = session_notification_to_ui_event(n).unwrap();
         assert_eq!(ui["type"], "message_delta");
         assert_eq!(ui["text"], "让我想想");
         assert_eq!(ui["phase"], "stage");
@@ -212,7 +215,7 @@ mod tests {
             "sessionUpdate": "agent_message_chunk",
             "content": { "type": "image", "data": "...", "mimeType": "image/png" }
         }));
-        assert!(session_notification_to_ui_event(&n).is_none());
+        assert!(session_notification_to_ui_event(n).is_none());
     }
 
     #[test]
@@ -228,7 +231,7 @@ mod tests {
             "locations": [{ "path": "/a/b.rs" }],
             "rawInput": { "path": "/a/b.rs" }
         });
-        let ui = session_notification_to_ui_event(&notif(update.clone())).unwrap();
+        let ui = session_notification_to_ui_event(notif(update.clone())).unwrap();
         assert_eq!(ui["type"], "tool_call");
         assert_eq!(ui["acpUpdate"], update);
     }
@@ -241,7 +244,7 @@ mod tests {
             "status": "completed",
             "rawOutput": { "ok": true }
         });
-        let ui = session_notification_to_ui_event(&notif(update.clone())).unwrap();
+        let ui = session_notification_to_ui_event(notif(update.clone())).unwrap();
         assert_eq!(ui["type"], "tool_call_update");
         assert_eq!(ui["acpUpdate"], update);
     }
@@ -256,7 +259,7 @@ mod tests {
             "sessionUpdate": "available_commands_update",
             "availableCommands": commands.clone()
         }));
-        let ui = session_notification_to_ui_event(&n).unwrap();
+        let ui = session_notification_to_ui_event(n).unwrap();
         assert_eq!(ui["type"], "available_commands_update");
         assert_eq!(ui["availableCommands"], commands);
     }
@@ -264,7 +267,7 @@ mod tests {
     #[test]
     fn available_commands_update_without_field_yields_none() {
         let n = notif(json!({ "sessionUpdate": "available_commands_update" }));
-        assert!(session_notification_to_ui_event(&n).is_none());
+        assert!(session_notification_to_ui_event(n).is_none());
     }
 
     #[test]
@@ -274,7 +277,7 @@ mod tests {
             "sessionUpdate": "usage_update",
             "usage": usage.clone()
         }));
-        let ui = session_notification_to_ui_event(&n).unwrap();
+        let ui = session_notification_to_ui_event(n).unwrap();
         assert_eq!(ui["type"], "usage_update");
         assert_eq!(ui["usage"], usage);
     }
@@ -282,7 +285,7 @@ mod tests {
     #[test]
     fn usage_update_without_field_yields_none() {
         let n = notif(json!({ "sessionUpdate": "usage_update" }));
-        assert!(session_notification_to_ui_event(&n).is_none());
+        assert!(session_notification_to_ui_event(n).is_none());
     }
 
     #[test]
@@ -291,7 +294,7 @@ mod tests {
             "sessionUpdate": "current_mode_update",
             "currentModeId": "agent"
         }));
-        let ui = session_notification_to_ui_event(&n).unwrap();
+        let ui = session_notification_to_ui_event(n).unwrap();
         assert_eq!(ui["type"], "current_mode_update");
         assert_eq!(ui["currentModeId"], "agent");
     }
@@ -299,7 +302,7 @@ mod tests {
     #[test]
     fn current_mode_update_without_field_yields_none() {
         let n = notif(json!({ "sessionUpdate": "current_mode_update" }));
-        assert!(session_notification_to_ui_event(&n).is_none());
+        assert!(session_notification_to_ui_event(n).is_none());
     }
 
     #[test]
@@ -320,7 +323,7 @@ mod tests {
             "sessionUpdate": "config_option_update",
             "configOptions": config_options.clone()
         }));
-        let ui = session_notification_to_ui_event(&n).unwrap();
+        let ui = session_notification_to_ui_event(n).unwrap();
         assert_eq!(ui["type"], "config_option_update");
         assert_eq!(ui["configOptions"], config_options);
     }
@@ -328,7 +331,7 @@ mod tests {
     #[test]
     fn config_option_update_without_field_yields_none() {
         let n = notif(json!({ "sessionUpdate": "config_option_update" }));
-        assert!(session_notification_to_ui_event(&n).is_none());
+        assert!(session_notification_to_ui_event(n).is_none());
     }
 
     #[test]
@@ -337,12 +340,12 @@ mod tests {
             "sessionUpdate": "plan",
             "entries": []
         }));
-        assert!(session_notification_to_ui_event(&n).is_none());
+        assert!(session_notification_to_ui_event(n).is_none());
     }
 
     #[test]
     fn missing_update_yields_none() {
-        assert!(session_notification_to_ui_event(&json!({ "sessionId": "s" })).is_none());
+        assert!(session_notification_to_ui_event(json!({ "sessionId": "s" })).is_none());
     }
 
     #[test]

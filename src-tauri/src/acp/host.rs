@@ -167,23 +167,20 @@ impl AcpHost {
         // （runtime::stream_emitter）统一负责，本层不得再投影；终态 done/error 不走 session/update，
         // 由 chat_stream 经 app.emit 直接合成补发。
         let sink: EventSink = Arc::new(move |mut frame: AcpStreamFrame| {
-            // 先按「原始 ACP 会话 id」捕获 available_commands_update 的 availableCommands 原始数组，
+            // 先按「原始 ACP 会话 id」捕获一次性下发的 available_commands_update / config_option_update，
             // 缓存供回合发起时以前端键重放（取键须在重写 session_id 之前，键须为 ACP 会话 UUID）。
-            if let Some(acp_session_id) = frame.session_id.clone() {
+            // 以 as_deref 借用避免每帧（含纯文本增量帧）对 session_id 的两次冗余 String 克隆——
+            // 仅在确有一次性命令/配置帧命中、需要落缓存时才 to_string。
+            if let Some(acp_session_id) = frame.session_id.as_deref() {
                 if let Some(commands) = extract_available_commands_update(&frame.event) {
                     commands_cache_for_sink
                         .lock()
-                        .insert(acp_session_id, commands);
+                        .insert(acp_session_id.to_string(), commands);
                 }
-            }
-
-            // 与可用命令同构：按原始 ACP 会话 id 捕获 config_option_update 的 configOptions 原始数组，
-            // 缓存供回合发起时以前端键重放（取键须在重写 session_id 之前）。
-            if let Some(acp_session_id) = frame.session_id.clone() {
                 if let Some(config_options) = extract_config_option_update(&frame.event) {
                     config_options_cache_for_sink
                         .lock()
-                        .insert(acp_session_id, config_options);
+                        .insert(acp_session_id.to_string(), config_options);
                 }
             }
 
