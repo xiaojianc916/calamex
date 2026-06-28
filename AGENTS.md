@@ -21,6 +21,7 @@
 - `src/bindings`、`src/generated`、`tauri.contracts.ts` 由 tauri-specta 生成，**不准手改**；要改契约去改 Rust 命令再生成。
 - 文件/进程/网络等系统能力必经 Rust 命令；密钥走 keyring，禁入 `localStorage`；`capabilities/` 按域最小授权，CSP 不开 `unsafe-*`。
 - 不改对外 IPC 契约、状态机/协议语义；所有“开”都要有对应的“关/退出”清理路径。
+- 重构后的代码不要新旧杂糅，不要兼容层
 
 ## 三、代码标准
 - **简洁优先**：只实现需求内功能，不预设扩展/配置点，不为不可能的分支写防御代码。
