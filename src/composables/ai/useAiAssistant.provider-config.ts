@@ -18,16 +18,13 @@ export interface IUseAiProviderConfigDeps {
  * 「全量可切换模型清单」本会话是否已下发过的幂等守卫（模块级，跨实例共享）。
  *
  * 清单（MASTRA_PROVIDER_PRESET.models）是静态常量，整个运行期只需下发一次。由于后端
- * set_seeded_models 会重启「正在运行的」Kimi 以刷新候选池，lo adConfig 可能被多次调用，
+ * set_seeded_models 会重启「正在运行的」Kimi 以刷新候选池，loadConfig 可能被多次调用，
  * 若每次都下发会平白触发重启。故用此守卫保证每会话仅下发一次（启动时 Kimi 通常尚未
  * 拉起，重启为空操作）。下发失败会重置为 false 以便下次重试。
  */
 let hasSeededSwitchableModelsThisSession = false;
 
-export const useAiProviderConfig = ({
-  workspaceRootPath,
-  errorMessage,
-}: IUseAiProviderConfigDeps) => {
+export const useAiProviderConfig = ({ errorMessage }: IUseAiProviderConfigDeps) => {
   const config = ref<IAiConfigPayload>(createDefaultAiConfigPayload());
 
   const providerLabel = computed(() =>
@@ -165,21 +162,10 @@ export const useAiProviderConfig = ({
     return result.test.message;
   };
 
-  const resolveWorkspaceRootPath = (): string => {
-    const workspaceRootPathValue = workspaceRootPath.value?.trim();
-
-    if (!workspaceRootPathValue) {
-      throw new Error('当前工作区路径不可用。');
-    }
-
-    return workspaceRootPathValue;
-  };
-
-  const loadTavilyApiKey = async (): Promise<string> =>
-    aiService.loadTavilyApiKey(resolveWorkspaceRootPath());
+  const loadTavilyApiKey = async (): Promise<string> => aiService.loadTavilyApiKey();
 
   const saveTavilyApiKey = async (apiKey: string): Promise<string> => {
-    await aiService.saveTavilyApiKey(resolveWorkspaceRootPath(), apiKey);
+    await aiService.saveTavilyApiKey(apiKey);
     const health = await aiService.sidecarRestart();
 
     return apiKey.trim()
