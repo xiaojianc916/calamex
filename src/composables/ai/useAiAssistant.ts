@@ -214,9 +214,9 @@ const MSG_CALL_FAILED = 'AI 调用失败';
 export const useAiAssistant = (options: IUseAiAssistantOptions) => {
   const agentStore = useAiAgentStore();
   const aiThreadStore = useAiThreadStore();
-  // ④.1 §D：编排器消息读写真源收敛到 aiThread 权威 entries（drop-in）。conversationStore
-  // 别名保留以最小化触点；活动/历史线程改读 legacy 形状 getter（activeConversationThread /
-  // conversationHistoryThreads），其余面（activeMessages / activeThreadId / replace* / 生命周期）1:1 同名。
+  // ④.1 §D：编排器消息读写真源收敛到 aiThread 权威 entries。conversationStore 别名保留以
+  // 最小化触点；活动滚动状态改读权威 authoritativeActiveThread，其余面（activeMessages /
+  // activeThreadId / 生命周期）1:1 同名。
   const conversationStore = aiThreadStore;
 
   const draft = ref('');
@@ -484,7 +484,7 @@ export const useAiAssistant = (options: IUseAiAssistantOptions) => {
   const historyThreads = computed(() => aiThreadStore.authoritativeHistoryThreads);
   const activeConversationId = computed(() => unref(conversationStore.activeThreadId));
   const activeConversationScrollState = computed<IAiConversationScrollState | null>(
-    () => conversationStore.activeConversationThread?.scrollState ?? null,
+    () => aiThreadStore.authoritativeActiveThread?.scrollState ?? null,
   );
   const conversationCheckpoints = computed<IAiConversationCheckpoint[]>(() =>
     buildConversationCheckpointsFromEntries(aiThreadStore.authoritativeActiveEntries),

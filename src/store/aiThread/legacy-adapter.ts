@@ -355,16 +355,3 @@ export function threadEntriesToMessages(entries: readonly IAiThreadEntry[]): IAi
   flushPendingToolCalls();
   return messages;
 }
-
-/** 把 IAiThread（entries）折叠回 legacy 会话线程（legacyThreadToThread 的逆，沿用元信息）。 */
-export function threadToLegacyThread(thread: IAiThread): IAiConversationThread {
-  return {
-    id: thread.id,
-    title: thread.title,
-    titleStatus: thread.titleStatus,
-    createdAt: thread.createdAt,
-    updatedAt: thread.updatedAt,
-    messages: threadEntriesToMessages(thread.entries),
-    ...(thread.scrollState ? { scrollState: thread.scrollState } : {}),
-  };
-}

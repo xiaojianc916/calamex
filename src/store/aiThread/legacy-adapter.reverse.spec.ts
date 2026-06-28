@@ -1,13 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import type { IAiChatMessage } from '@/types/ai';
-import type { IAiConversationThread } from '@/types/ai/conversation.schema';
 
-import {
-  legacyMessageToEntries,
-  legacyThreadToThread,
-  threadEntriesToMessages,
-  threadToLegacyThread,
-} from './legacy-adapter';
+import { legacyMessageToEntries, threadEntriesToMessages } from './legacy-adapter';
 
 const userMessage: IAiChatMessage = {
   role: 'user',
@@ -85,23 +79,5 @@ describe('threadEntriesToMessages', () => {
   it('skips non-message entries without throwing', () => {
     const entries = legacyMessageToEntries(userMessage);
     expect(threadEntriesToMessages(entries)).toHaveLength(1);
-  });
-});
-
-describe('threadToLegacyThread', () => {
-  it('inverts legacyThreadToThread meta + content', () => {
-    const thread: IAiConversationThread = {
-      id: 'th1',
-      title: 'T',
-      titleStatus: 'temporary',
-      createdAt: '2026-01-01T00:00:00.000Z',
-      updatedAt: '2026-01-01T00:00:02.000Z',
-      messages: [userMessage, assistantMessage],
-    };
-    const back = threadToLegacyThread(legacyThreadToThread(thread));
-    expect(back.id).toBe('th1');
-    expect(back.title).toBe('T');
-    expect(back.messages.map((m) => m.role)).toEqual(['user', 'assistant']);
-    expect(back.messages[1]!.content).toBe('world');
   });
 });

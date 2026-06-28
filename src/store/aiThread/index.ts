@@ -10,11 +10,7 @@ import { defineStore } from 'pinia';
 import { computed, ref, watch } from 'vue';
 
 import type { TAiThreadReduceEvent } from '@/store/aiThread/events';
-import {
-  legacyMessageToEntries,
-  threadEntriesToMessages,
-  threadToLegacyThread,
-} from '@/store/aiThread/legacy-adapter';
+import { threadEntriesToMessages } from '@/store/aiThread/legacy-adapter';
 import { selectRenderThread } from '@/store/aiThread/render-authority';
 import * as threadMutations from '@/store/aiThread/thread-mutations';
 import { restoreAttachmentPreviewPointers } from '@/store/plugins/attachmentPreviewStorage';
@@ -348,11 +344,12 @@ export const useAiThreadStore = defineStore('ai-thread', () => {
   }
 
   /* ==================================================================
-   * Step 8 ④.2-B：message 形状桥接（useAiConversationStore 编排面的 drop-in）
-   * 在 entries 权威之上提供同名 message 形状读写面，供编排器/标题/历史组合式逐一
-   * 改指本 store。读经 threadEntriesToMessages / threadToLegacyThread 还原（有损
-   * 边界见 legacy-adapter 文件头）；写经 legacyMessageToEntries 折叠为 entries 提交
-   * 到权威线程（单写者）。本步纯新增、无上层调用 → 零行为变化。
+   * Step 8 ④.2-B → ④.3：entries 写真源面（编排器已接管）
+   * 在 entries 权威之上提供 activeThreadId / activeMessages 只读投影与
+   * patchActiveThreadEntries 写真源。activeMessages 经 threadEntriesToMessages
+   * 还原，仅供续聊上下文与 token 估算（有损边界见 legacy-adapter 文件头）。
+   * 编排器写路径已全部走 patchActiveThreadEntries；legacy message 形状 setter 与
+   * thread 形状 getter 已退役。
    * ================================================================ */
   const activeThreadId = computed(() => authoritativeActiveThreadId.value);
 
@@ -360,17 +357,9 @@ export const useAiThreadStore = defineStore('ai-thread', () => {
     threadEntriesToMessages(authoritativeActiveThread.value?.entries ?? []),
   );
 
-  const activeConversationThread = computed(() =>
-    authoritativeActiveThread.value ? threadToLegacyThread(authoritativeActiveThread.value) : null,
-  );
-
-  const conversationHistoryThreads = computed(() =>
-    authoritativeHistoryThreads.value.map(threadToLegacyThread),
-  );
-
   /**
    * Entries-native 写真源：以 updater 直接变换活动线程 entries 并提交（经 patchActiveThread 归一）。
-   * 供编排器各写点取代 legacy message setter（replaceMessages / replaceThreadMessages）逐一改指。
+   * 编排器所有写点统一经此提交（已取代退役的 legacy message setter）。
    */
   function patchActiveThreadEntries(
     updater: (entries: readonly IAiThreadEntry[]) => IAiThreadEntry[],
@@ -379,24 +368,6 @@ export const useAiThreadStore = defineStore('ai-thread', () => {
       threadMutations.patchActiveThread(readAuthoritativeState(), (thread) => ({
         ...thread,
         entries: updater(thread.entries),
-      })),
-    );
-  }
-
-  function replaceMessages(messages: IAiChatMessage[]): void {
-    commitAuthoritativeState(
-      threadMutations.patchActiveThread(readAuthoritativeState(), (thread) => ({
-        ...thread,
-        entries: messages.flatMap(legacyMessageToEntries),
-      })),
-    );
-  }
-
-  function replaceThreadMessages(threadId: string, messages: IAiChatMessage[]): void {
-    commitAuthoritativeState(
-      threadMutations.patchThread(readAuthoritativeState(), threadId, (thread) => ({
-        ...thread,
-        entries: messages.flatMap(legacyMessageToEntries),
       })),
     );
   }
@@ -443,14 +414,10 @@ export const useAiThreadStore = defineStore('ai-thread', () => {
     failThreadTitleGeneration,
     setAuthoritativeThreads,
     flushPendingScrollStateUpdates,
-    // Step 8 ④.2-B：message 形状桥接（drop-in for useAiConversationStore，未接线）
+    // Step 8 ④.3：entries 写真源面（activeMessages 为续聊/token 只读投影）
     activeThreadId,
     activeMessages,
-    activeConversationThread,
-    conversationHistoryThreads,
     patchActiveThreadEntries,
-    replaceMessages,
-    replaceThreadMessages,
   };
 });
 
