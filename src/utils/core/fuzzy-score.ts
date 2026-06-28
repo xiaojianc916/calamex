@@ -96,6 +96,13 @@ export const computeFuzzyScore = (text: string, query: string): number | null =>
   const n = text.length;
   const m = query.length;
 
+  // 边界奖励仅取决于 text 与位置，与查询进度 j 无关：循环前一次性预算 O(n)，
+  // 避免在 O(n*m) 内层循环里对同一位置反复 classifyChar（行为不变）。
+  const boundaryBonus = new Float64Array(n);
+  for (let i = 0; i < n; i += 1) {
+    boundaryBonus[i] = boundaryBonusAt(text, i);
+  }
+
   const width = m + 1;
   const NEG_INF = Number.NEGATIVE_INFINITY;
   // scoreMatrix[i*width + j]：用 text[0..i) 匹配 query[0..j) 的最优分。
@@ -125,9 +132,9 @@ export const computeFuzzyScore = (text: string, query: string): number | null =>
           let bonus: number;
           if (runLength > 0) {
             // 连续命中：取「连续奖励」与「当前字符边界奖励」的较大者。
-            bonus = Math.max(BONUS_CONSECUTIVE, boundaryBonusAt(text, i - 1));
+            bonus = Math.max(BONUS_CONSECUTIVE, boundaryBonus[i - 1]);
           } else {
-            bonus = boundaryBonusAt(text, i - 1);
+            bonus = boundaryBonus[i - 1];
             if (j === 1) {
               bonus *= BONUS_FIRST_CHAR_MULTIPLIER;
             }
