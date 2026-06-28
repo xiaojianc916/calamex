@@ -3,10 +3,10 @@
   "entry": [
     "src/router/**/*.ts",
     "scripts/**/*.{ts,mjs,js}",
-    "agent-sidecar/src/server.ts",
-    "agent-sidecar/build.mjs"
+    "builtin-agent/src/server.ts",
+    "builtin-agent/build.mjs"
   ],
-  "project": ["src/**/*.{ts,tsx,vue}", "agent-sidecar/src/**/*.{ts,tsx}"],
+  "project": ["src/**/*.{ts,tsx,vue}", "builtin-agent/src/**/*.{ts,tsx}"],
   "ignore": [
     "src/env.d.ts",
     "src/shims-icons.d.ts",

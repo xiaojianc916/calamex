@@ -85,7 +85,7 @@ const nullishOptional = <T extends z.ZodType>(schema: T) =>
 const nullableOptionalTextSchema = nullishOptional(z.string().trim().min(1));
 
 /* ============================================================================
- * Unified diff hunk line schema (与 ai.schema / agent-sidecar.schema 共享约束)
+ * Unified diff hunk line schema (与 ai.schema / builtin-agent.schema 共享约束)
  *
  * 三个 schema 文件里同样的 unified-diff line 校验逻辑,通过 ai.schema 共享的
  * 常量(`UNIFIED_DIFF_HUNK_LINE_PREFIXES` / `UNIFIED_DIFF_NO_NEWLINE_MARKER`)

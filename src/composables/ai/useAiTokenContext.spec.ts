@@ -1,8 +1,7 @@
-import type { LanguageModelUsage } from 'ai';
 import { describe, expect, it } from 'vitest';
 import { computed, ref } from 'vue';
 import { useAiTokenContext } from '@/composables/ai/useAiTokenContext';
-import type { IAiChatMessage } from '@/types/ai';
+import type { IAiChatMessage, IAiLanguageModelUsage } from '@/types/ai';
 import type { IAiContextReference } from '@/types/ai/context';
 import type { TAgentRuntimeEvent } from '@/types/ai/sidecar';
 
@@ -38,7 +37,7 @@ const createContext = (options?: {
   contextReferences?: ReturnType<typeof ref<IAiContextReference[]>>;
   hasPendingRequest?: ReturnType<typeof ref<boolean>>;
   draft?: ReturnType<typeof ref<string>>;
-  officialUsage?: ReturnType<typeof ref<LanguageModelUsage | null | undefined>>;
+  officialUsage?: ReturnType<typeof ref<IAiLanguageModelUsage | null | undefined>>;
 }) => {
   const runtimeEvents = options?.runtimeEvents ?? ref<readonly TAgentRuntimeEvent[]>([]);
   const messages = options?.messages ?? ref<IAiChatMessage[]>([]);
@@ -46,7 +45,7 @@ const createContext = (options?: {
   const contextReferences = options?.contextReferences ?? ref<IAiContextReference[]>([]);
   const hasPendingRequest = options?.hasPendingRequest ?? ref(false);
   const draft = options?.draft ?? ref('');
-  const officialUsage = options?.officialUsage ?? ref<LanguageModelUsage | null>(null);
+  const officialUsage = options?.officialUsage ?? ref<IAiLanguageModelUsage | null>(null);
 
   return useAiTokenContext({
     mode: computed(() => options?.mode ?? 'chat'),
@@ -244,7 +243,7 @@ describe('useAiTokenContext', () => {
       },
     ]);
     const runtimeEvents = ref<readonly TAgentRuntimeEvent[]>([createModelStartedEvent(999)]);
-    const officialUsage = ref<LanguageModelUsage>({
+    const officialUsage = ref<IAiLanguageModelUsage>({
       inputTokens: 41,
       inputTokenDetails: {
         noCacheTokens: 37,

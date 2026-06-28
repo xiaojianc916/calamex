@@ -17,7 +17,7 @@ fn resolve_node_executable() -> Result<PathBuf, String> {
         }
     }
 
-    // 打包优先：安装包内自带的 Node（随包自发现，与 agent_sidecar 解析策略一致，
+    // 打包优先：安装包内自带的 Node（随包自发现，与 builtin_agent 解析策略一致，
     // 不再依赖启动期向进程环境注入 XIAOJIANC_NODE_EXE）。
     for root in crate::commands::shell_tools::bundled_resource_roots() {
         let node_dir = root.join("node");

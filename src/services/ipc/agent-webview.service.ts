@@ -14,7 +14,7 @@ import { type ICommandMeta, runCommand } from '@/services/tauri/core/ipc-define'
 /**
  * agent 内置浏览器的 CDP 远程调试端口(默认绑 127.0.0.1)。
  *
- * 单一事实来源:前端创建 webview 与 agent-sidecar `connectOverCDP` 必须用同一个端口。
+ * 单一事实来源:前端创建 webview 与 builtin-agent `connectOverCDP` 必须用同一个端口。
  */
 export const AGENT_WEBVIEW_CDP_PORT = 9333;
 

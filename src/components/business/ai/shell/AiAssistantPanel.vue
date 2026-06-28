@@ -123,7 +123,7 @@ const isAgentRunActionPending = ref(false);
 const isPromptModelSaving = ref(false);
 
 // 当前会话使用的 Agent 后端（自研 / Kimi）。会话级单选，一个会话只用一种 Agent。
-// Kimi 等外部 Agent 经 agent_sidecar_external_chat（标准 session/prompt）发送，由\n// useAiAssistant.sendMessage 据此 backend 分流到外部 ACP 发送链路。
+// Kimi 等外部 Agent 经 builtin_agent_external_chat（标准 session/prompt）发送，由\n// useAiAssistant.sendMessage 据此 backend 分流到外部 ACP 发送链路。
 type TSessionAgentBackend = 'builtin' | 'kimi';
 
 interface ISessionAgentOption {
@@ -865,7 +865,7 @@ const handlePromptPrewarm = (): void => {
       JSON.stringify({
         level: 'info',
         scope: 'ai',
-        event: 'agent_sidecar_warmup.skipped',
+        event: 'builtin_agent_warmup.skipped',
         reason: toErrorMessage(error, '预热连接失败'),
       }),
     );

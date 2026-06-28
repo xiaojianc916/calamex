@@ -9,7 +9,7 @@ import type {
 /* ============================================================================
  * 前端 ask_user 反向提问桥接（Human-in-the-Loop）。
  *
- * 职责对齐后端 `agent-sidecar/src/acp/approval-bridge.ts`：把「响应信封里的挂起
+ * 职责对齐后端 `builtin-agent/src/acp/approval-bridge.ts`：把「响应信封里的挂起
  * 事件」与「续跑回灌请求」之间的双向投影收拢到一个纯函数模块，与驱动循环
  * （useAiAssistant 的 run-to-gate 段）解耦，便于单测。
  *

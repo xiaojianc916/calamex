@@ -26,7 +26,7 @@
   // 故意收窄范围：src/ 大量 import .vue，tsgo 暂时解析不了会刷噪音，因此不纳入
   "include": [
     "scripts/**/*.ts"
-    // agent-sidecar 是纯 TS，确认无 .vue 依赖后解开下一行可扩大覆盖：
-    // ,"agent-sidecar/src/**/*.ts"
+    // builtin-agent 是纯 TS，确认无 .vue 依赖后解开下一行可扩大覆盖：
+    // ,"builtin-agent/src/**/*.ts"
   ]
 }

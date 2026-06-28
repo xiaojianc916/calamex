@@ -1,7 +1,7 @@
 use crate::commands::lsp::commands as lsp_commands;
 use crate::commands::terminal::commands as terminal_commands;
 use crate::commands::{
-    agent_sidecar, agent_webview, ai, format, git, script_run, search, shell_tools, skills, ssh,
+    builtin_agent, agent_webview, ai, format, git, script_run, search, shell_tools, skills, ssh,
     window, window_stage, workspace_fs, workspace_watcher,
 };
 use specta_typescript::Typescript;
@@ -95,16 +95,16 @@ pub fn builder() -> Builder<tauri::Wry> {
             ssh::transfer::delete_ssh_path,
             ssh::transfer::rename_ssh_path,
             ssh::transfer::create_ssh_directory,
-            agent_sidecar::agent_sidecar_health,
-            agent_sidecar::agent_sidecar_restart,
-            agent_sidecar::agent_sidecar_warmup,
-            agent_sidecar::agent_sidecar_chat,
-            agent_sidecar::agent_sidecar_external_chat,
-            agent_sidecar::agent_sidecar_resolve_approval,
-            agent_sidecar::agent_sidecar_resolve_ask_user,
-            agent_sidecar::agent_sidecar_restore_checkpoint,
-            agent_sidecar::agent_sidecar_orchestrate,
-            agent_sidecar::agent_sidecar_orchestrate_resume,
+            builtin_agent::builtin_agent_health,
+            builtin_agent::builtin_agent_restart,
+            builtin_agent::builtin_agent_warmup,
+            builtin_agent::builtin_agent_chat,
+            builtin_agent::builtin_agent_external_chat,
+            builtin_agent::builtin_agent_resolve_approval,
+            builtin_agent::builtin_agent_resolve_ask_user,
+            builtin_agent::builtin_agent_restore_checkpoint,
+            builtin_agent::builtin_agent_orchestrate,
+            builtin_agent::builtin_agent_orchestrate_resume,
             agent_webview::agent_webview_create,
             agent_webview::agent_webview_set_bounds,
             agent_webview::agent_webview_set_visible,

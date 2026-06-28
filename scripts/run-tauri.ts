@@ -547,13 +547,13 @@ const buildWindowsToolchainEnv = (): ToolchainResult => {
     };
 };
 
-const sidecarDir = path.join(rootDir, 'agent-sidecar');
+const sidecarDir = path.join(rootDir, 'builtin-agent');
 const bundledNodeExeName = process.platform === 'win32' ? 'node.exe' : 'node';
 const bundledNodePath = path.join(rootDir, 'src-tauri', 'resources-bundle', 'node', bundledNodeExeName);
 
 const sidecarBuildScript = path.join(sidecarDir, 'build.mjs');
 
-// dev 下预编译 agent-sidecar -> dist/server.js，运行时直接 node dist/server.js，
+// dev 下预编译 builtin-agent -> dist/server.js，运行时直接 node dist/server.js，
 // 不再依赖 tsx（tsx 在 Node 26 下解析入口会塌成盘符 D: 而崩溃）。
 const ensureSidecarBuilt = (): void => {
     if (mode !== 'dev' || !existsSync(sidecarDir)) {
@@ -561,11 +561,11 @@ const ensureSidecarBuilt = (): void => {
     }
 
     if (!existsSync(sidecarBuildScript)) {
-        console.warn('[run-tauri] 未找到 agent-sidecar/build.mjs，跳过 sidecar 预编译；请先执行 pnpm install。');
+        console.warn('[run-tauri] 未找到 builtin-agent/build.mjs，跳过 sidecar 预编译；请先执行 pnpm install。');
         return;
     }
 
-    console.log('[run-tauri] 预编译 agent-sidecar -> dist/server.js ...');
+    console.log('[run-tauri] 预编译 builtin-agent -> dist/server.js ...');
     const result = spawnSync(process.execPath, [sidecarBuildScript], {
         cwd: sidecarDir,
         stdio: 'inherit',
@@ -599,15 +599,15 @@ const ensureBundledNode = (): string | null => {
     }
 };
 
-// 通过环境变量强制 app 用内置 Node + 仓库内 agent-sidecar，不覆盖用户已设变量。
+// 通过环境变量强制 app 用内置 Node + 仓库内 builtin-agent，不覆盖用户已设变量。
 const withBundledSidecarRuntime = (baseEnv: NodeJS.ProcessEnv): NodeJS.ProcessEnv => {
     if (mode !== 'dev') {
         return baseEnv;
     }
 
     const env = { ...baseEnv };
-    if (!env.XIAOJIANC_AGENT_SIDECAR_ROOT && existsSync(sidecarDir)) {
-        env.XIAOJIANC_AGENT_SIDECAR_ROOT = sidecarDir;
+    if (!env.XIAOJIANC_BUILTIN_AGENT_ROOT && existsSync(sidecarDir)) {
+        env.XIAOJIANC_BUILTIN_AGENT_ROOT = sidecarDir;
     }
 
     if (!env.XIAOJIANC_NODE_EXE) {

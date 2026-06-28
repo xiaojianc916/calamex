@@ -9,7 +9,7 @@ import {
 } from '@/composables/ai/sidecar-events';
 import type { TAgentUiEvent } from '@/types/ai/sidecar';
 
-describe('agent-sidecar-events', () => {
+describe('builtin-agent-events', () => {
   it('等待 sidecar 审批时不把回答投影成已完成', () => {
     const projection = projectSidecarExecuteResponse({
       sessionId: 'sidecar-session-1',

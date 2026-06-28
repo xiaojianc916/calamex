@@ -4,7 +4,7 @@
 //! - `%APPDATA%\Calamex\ai-config.json`（AI 配置，最早期）
 //! - `%APPDATA%\com.xiaojianc.Calamex\.notion-ide-ai\edits`（AI 编辑历史）
 //! - `%APPDATA%\com.xiaojianc.Calamex\session.json`（会话快照）
-//! - `%LOCALAPPDATA%\com.xiaojianc.Calamex\agent-sidecar`（本地 AI 服务运行时）
+//! - `%LOCALAPPDATA%\com.xiaojianc.Calamex\builtin-agent`（本地 AI 服务运行时）
 //! - 上一版又把它们分到 `%APPDATA%\.calamex` 与 `%LOCALAPPDATA%\.calamex` 两处。
 //!
 //! 现统一归到用户主目录下的单一品牌根 `~/.calamex`（Windows 即
@@ -128,17 +128,17 @@ pub fn migrate_legacy_storage() {
         );
     }
 
-    // 本地 AI 服务运行时：%LOCALAPPDATA%\com.xiaojianc.Calamex\agent-sidecar -> ai-service
+    // 本地 AI 服务运行时：%LOCALAPPDATA%\com.xiaojianc.Calamex\builtin-agent -> ai-service
     if let Some(local_app_data) = std::env::var_os("LOCALAPPDATA").map(PathBuf::from) {
         let legacy_service = local_app_data
             .join("com.xiaojianc.Calamex")
-            .join("agent-sidecar");
+            .join("builtin-agent");
         let new_service = root.join("ai-service");
         // 整目录迁移后，再把目录内的旧文件名规整为按功能命名。
         migrate_path(&legacy_service, &new_service);
-        rename_within(&new_service, "agent-sidecar.token", "auth.token");
-        rename_within(&new_service, "agent-sidecar.log", "service.log");
-        rename_within(&new_service, "agent-sidecar.log.old", "service.log.old");
+        rename_within(&new_service, "builtin-agent.token", "auth.token");
+        rename_within(&new_service, "builtin-agent.log", "service.log");
+        rename_within(&new_service, "builtin-agent.log.old", "service.log.old");
         rename_within(&new_service, ".node-compile-cache", "node-compile-cache");
     }
 }
@@ -347,10 +347,10 @@ mod tests {
     #[test]
     fn rename_within_normalizes_file_name() {
         let dir = unique_temp_dir("rename");
-        fs::write(dir.join("agent-sidecar.token"), b"tok").unwrap();
-        rename_within(&dir, "agent-sidecar.token", "auth.token");
+        fs::write(dir.join("builtin-agent.token"), b"tok").unwrap();
+        rename_within(&dir, "builtin-agent.token", "auth.token");
         assert!(dir.join("auth.token").exists());
-        assert!(!dir.join("agent-sidecar.token").exists());
+        assert!(!dir.join("builtin-agent.token").exists());
         let _ = fs::remove_dir_all(&dir);
     }
 }

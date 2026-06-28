@@ -20,7 +20,7 @@
 //!      `host.ensure_session` 解析后以 session_id 传入。
 //!
 //! 上述投影（model/chat、agent/chat、agent/chat/resolve、agent/ask-user/resume）均已由网关 /
-//! 命令层 live 调用（见 `ai::gateway::conversation` 与 `commands::agent_sidecar`）。
+//! 命令层 live 调用（见 `ai::gateway::conversation` 与 `commands::builtin_agent`）。
 
 use crate::commands::contracts::{
     AgentSidecarApprovalResolveRequest, AgentSidecarAskUserAnswerPayload,

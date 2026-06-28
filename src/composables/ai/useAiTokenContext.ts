@@ -1,8 +1,7 @@
-import type { LanguageModelUsage } from 'ai';
 import type { ComputedRef } from 'vue';
 import { computed, onBeforeUnmount, ref, watch } from 'vue';
 import { findModelContextWindow } from '@/constants/ai/providers';
-import type { IAiChatMessage } from '@/types/ai';
+import type { IAiChatMessage, IAiLanguageModelUsage } from '@/types/ai';
 import type { TAiAssistantMode } from '@/types/ai/assistant-mode';
 import type { IAiContextReference } from '@/types/ai/context';
 import type { TAgentRuntimeEvent } from '@/types/ai/sidecar';
@@ -11,7 +10,7 @@ export interface IAiTokenContextProps {
   usedTokens: number;
   maxTokens: number;
   modelId?: string;
-  usage: LanguageModelUsage;
+  usage: IAiLanguageModelUsage;
   usageSource: TAiTokenUsageSource;
 }
 
@@ -27,7 +26,7 @@ interface IUseAiTokenContextOptions {
   contextReferences: ComputedRef<readonly IAiContextReference[]>;
   hasPendingRequest: ComputedRef<boolean>;
   draft: ComputedRef<string>;
-  officialUsage?: ComputedRef<LanguageModelUsage | null | undefined>;
+  officialUsage?: ComputedRef<IAiLanguageModelUsage | null | undefined>;
 }
 
 const isPositiveFiniteNumber = (value: number | undefined): value is number =>
@@ -36,7 +35,7 @@ const isPositiveFiniteNumber = (value: number | undefined): value is number =>
 const toNonNegativeFiniteNumber = (value: number | undefined): number | undefined =>
   typeof value === 'number' && Number.isFinite(value) && value >= 0 ? value : undefined;
 
-const resolveUsageInputTokens = (usage: LanguageModelUsage | undefined): number | undefined => {
+const resolveUsageInputTokens = (usage: IAiLanguageModelUsage | undefined): number | undefined => {
   const inputTokens = toNonNegativeFiniteNumber(usage?.inputTokens);
   if (inputTokens !== undefined) {
     return inputTokens;
@@ -52,8 +51,8 @@ const resolveUsageInputTokens = (usage: LanguageModelUsage | undefined): number 
 };
 
 const hasUsableUsage = (
-  usage: LanguageModelUsage | null | undefined,
-): usage is LanguageModelUsage =>
+  usage: IAiLanguageModelUsage | null | undefined,
+): usage is IAiLanguageModelUsage =>
   resolveUsageInputTokens(usage ?? undefined) !== undefined ||
   toNonNegativeFiniteNumber(usage?.outputTokens) !== undefined ||
   toNonNegativeFiniteNumber(usage?.totalTokens) !== undefined ||
@@ -67,7 +66,7 @@ const createUsage = (
     totalTokens?: number;
     reasoningTokens?: number;
   },
-): LanguageModelUsage => {
+): IAiLanguageModelUsage => {
   const outputTokens = toNonNegativeFiniteNumber(options?.outputTokens) ?? 0;
   const reasoningTokens = toNonNegativeFiniteNumber(options?.reasoningTokens) ?? 0;
   const totalTokens = toNonNegativeFiniteNumber(options?.totalTokens) ?? inputTokens + outputTokens;
@@ -92,7 +91,7 @@ const createUsage = (
 
 interface IResolvedTokenUsage {
   source: TAiTokenUsageSource;
-  usage: LanguageModelUsage;
+  usage: IAiLanguageModelUsage;
 }
 
 const sumTokenCounts = (
@@ -110,8 +109,8 @@ const sumRequiredTokenCounts = (left: number | undefined, right: number | undefi
   (left ?? 0) + (right ?? 0);
 
 const resolveAggregationInputTokenDetails = (
-  usage: LanguageModelUsage,
-): NonNullable<LanguageModelUsage['inputTokenDetails']> => {
+  usage: IAiLanguageModelUsage,
+): NonNullable<IAiLanguageModelUsage['inputTokenDetails']> => {
   const inputTokens = resolveUsageInputTokens(usage) ?? 0;
   const cacheReadTokens = toNonNegativeFiniteNumber(usage.inputTokenDetails?.cacheReadTokens) ?? 0;
 
@@ -125,8 +124,8 @@ const resolveAggregationInputTokenDetails = (
 };
 
 const resolveAggregationOutputTokenDetails = (
-  usage: LanguageModelUsage,
-): NonNullable<LanguageModelUsage['outputTokenDetails']> => {
+  usage: IAiLanguageModelUsage,
+): NonNullable<IAiLanguageModelUsage['outputTokenDetails']> => {
   const outputTokens = toNonNegativeFiniteNumber(usage.outputTokens) ?? 0;
   const reasoningTokens = toNonNegativeFiniteNumber(usage.outputTokenDetails?.reasoningTokens) ?? 0;
 
@@ -139,9 +138,9 @@ const resolveAggregationOutputTokenDetails = (
 };
 
 const aggregateUsage = (
-  current: LanguageModelUsage | undefined,
-  next: LanguageModelUsage,
-): LanguageModelUsage => {
+  current: IAiLanguageModelUsage | undefined,
+  next: IAiLanguageModelUsage,
+): IAiLanguageModelUsage => {
   const currentInputDetails = current ? resolveAggregationInputTokenDetails(current) : undefined;
   const nextInputDetails = resolveAggregationInputTokenDetails(next);
   const currentOutputDetails = current ? resolveAggregationOutputTokenDetails(current) : undefined;
@@ -190,7 +189,7 @@ const aggregateUsage = (
 
 const resolveStreamOfficialUsage = (
   stream: IAiChatMessage['stream'] | undefined,
-): LanguageModelUsage | undefined => {
+): IAiLanguageModelUsage | undefined => {
   if (!stream) {
     return undefined;
   }
@@ -220,7 +219,7 @@ const resolveStreamOfficialUsage = (
 const resolveAccumulatedStreamUsage = (
   messages: readonly IAiChatMessage[],
 ): IResolvedTokenUsage | undefined => {
-  const usage = messages.reduce<LanguageModelUsage | undefined>((current, message) => {
+  const usage = messages.reduce<IAiLanguageModelUsage | undefined>((current, message) => {
     const streamUsage = resolveStreamOfficialUsage(message.stream);
 
     if (!streamUsage) {
@@ -294,7 +293,7 @@ export const useAiTokenContext = (options: IUseAiTokenContextOptions) => {
   const usedTokens = computed(
     () => resolveUsageInputTokens(latestCompletedUsage.value?.usage) ?? 0,
   );
-  const usage = computed<LanguageModelUsage>(
+  const usage = computed<IAiLanguageModelUsage>(
     () => latestCompletedUsage.value?.usage ?? createUsage(0),
   );
   const usageSource = computed<TAiTokenUsageSource>(() => 'official');

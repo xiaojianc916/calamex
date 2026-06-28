@@ -62,15 +62,15 @@ import { normalizeFileSystemPath } from '@/utils/file/path';
  * Tavily（信息源）API Key 的落盘策略 —— 与API Key 不同的「受控例外」。
  *
  * API Key 走 `ai_save_credentials`/`ai_connect_provider` 存入操作系统 keyring，
- * store 与前端不持有明文。但 Tavily Key 由 agent-sidecar（独立子进程）在启动时从
+ * store 与前端不持有明文。但 Tavily Key 由 builtin-agent（独立子进程）在启动时从
  * **进程环境变量**读取，拿不到桌面端的 OS keyring，因此只能以明文写入 sidecar 的
- * `agent-sidecar/.env`（下方常量）。
+ * `builtin-agent/.env`（下方常量）。
  *
  * 安全前提：仓库根 `.gitignore` 已忽略 `.env` 与 `.env.*`，该明文 Key 不会被提交，
  * 只存在于用户本地工作区。改动此处时务必维持上述 gitignore 约束，不要把 Tavily Key
  * 写到任何会被纳入版本控制的路径。
  */
-const SIDECAR_DOTENV_RELATIVE_PATH = 'agent-sidecar/.env';
+const SIDECAR_DOTENV_RELATIVE_PATH = 'builtin-agent/.env';
 const TAVILY_API_KEY_ENV = 'TAVILY_API_KEY';
 const MISSING_FILE_ERROR_PATTERN = /不存在|找不到|not found|cannot find|no such file/iu;
 

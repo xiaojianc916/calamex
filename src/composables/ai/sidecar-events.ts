@@ -31,10 +31,10 @@ import { clipTextPreview } from '@/utils/file/text-preview';
  * needs_replan = 步骤之间冲突或依赖错位,需要重新生成计划
  * ========================================================================== */
 
-export const AGENT_SIDECAR_PLAN_VALIDATION_STATUSES = ['passed', 'failed', 'needs_replan'] as const;
+export const BUILTIN_AGENT_PLAN_VALIDATION_STATUSES = ['passed', 'failed', 'needs_replan'] as const;
 
 export type TAgentSidecarPlanValidationStatus =
-  (typeof AGENT_SIDECAR_PLAN_VALIDATION_STATUSES)[number];
+  (typeof BUILTIN_AGENT_PLAN_VALIDATION_STATUSES)[number];
 
 /* ============================================================================
  * Public projection types
@@ -552,7 +552,7 @@ const toValidationSeverity = (value: string | null): TAiAgentPlanRiskLevel =>
     : 'medium';
 
 const toValidationStatus = (value: string | null): TAgentSidecarPlanValidationStatus | null =>
-  AGENT_SIDECAR_PLAN_VALIDATION_STATUSES.includes(value as TAgentSidecarPlanValidationStatus)
+  BUILTIN_AGENT_PLAN_VALIDATION_STATUSES.includes(value as TAgentSidecarPlanValidationStatus)
     ? (value as TAgentSidecarPlanValidationStatus)
     : null;
 

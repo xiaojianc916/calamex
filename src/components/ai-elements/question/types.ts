@@ -2,7 +2,7 @@
  * AI 反向提问（ask_user / Human-in-the-Loop）组件层契约。
  *
  * 单一来源（single source of truth）位于 `@/types/ai/sidecar`，那里镜像
- * agent-sidecar `schemas/events.ts` 的 askUser* wire schema，与 `TAgentUiEvent`
+ * builtin-agent `schemas/events.ts` 的 askUser* wire schema，与 `TAgentUiEvent`
  * 的 `ask_user_required` 事件及恢复请求类型同居一处。
  *
  * 本文件仅作为组件层的 re-export barrel，让 QuestionPrompt.vue 与

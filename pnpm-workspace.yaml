@@ -1,6 +1,6 @@
 packages:
   - .
-  - agent-sidecar
+  - builtin-agent
 minimumReleaseAge: 0
 allowBuilds:
   agent-browser: true

@@ -1,7 +1,7 @@
 //! AI 网关侧的 sidecar 模型配置构造。
 //!
 //! `current_sidecar_model_config` / `narrator_sidecar_model_config` 历史上住在已下线的
-//! `crate::agent_sidecar`（旧 HTTP sidecar 模块）里，但它们与 HTTP 传输无关：只是把
+//! `crate::builtin_agent`（旧 HTTP sidecar 模块）里，但它们与 HTTP 传输无关：只是把
 //! 当前已保存的 AI 配置（主模型 / Narrator）组装成 `AgentSidecarModelConfigPayload`，
 //! 供 ACP 透传（model/chat）在 payload 未携带 model_config 时补齐。
 //!

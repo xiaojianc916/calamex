@@ -6,12 +6,12 @@
 // 一并打进安装包。由 build.beforeBundleCommand 调用（vite build 之后、
 // NSIS 打包之前）。
 //
-// 与 Rust 端 (agent_sidecar/mod.rs、commands/lsp.rs、commands/shell_tools.rs)
+// 与 Rust 端 (builtin_agent/mod.rs、commands/lsp.rs、commands/shell_tools.rs)
 // 的解析策略保持一致：随包优先 → 系统兑底。本脚本负责「随包」那一份。
 //
 // 产物布局（必须与 Rust 的 bundled_resource_roots() 拼接路径对齐）：
 //   resources-bundle/node/node.exe
-//   resources-bundle/agent-sidecar/{package.json,src,dist,node_modules}
+//   resources-bundle/builtin-agent/{package.json,src,dist,node_modules}
 //   resources-bundle/lsp/node_modules/bash-language-server/out/cli.js
 //   resources-bundle/shellcheck.exe
 //   resources-bundle/shfmt.exe  (可选，失败不阻断打包)
@@ -101,21 +101,21 @@ function stageNode(): void {
 }
 
 // 3) sidecar：复制 package.json + src，然后在 staging 目录内做一份自包含安装。
-//    tsx 在 agent-sidecar 中是 devDependency，但运行时需要它
+//    tsx 在 builtin-agent 中是 devDependency，但运行时需要它
 //    (node node_modules/tsx/dist/cli.mjs)，因此安装时不能 --omit=dev。
 //    另预编译出 dist/server.js，运行时优先 node dist/server.js（不依赖 tsx
 //    现场转译，规避 tsx 在 Node 26 下解析入口塌成盘符 D: 的崩溃）；src + tsx 仅作兜底。
 function stageSidecar(): void {
-	const srcDir = join(repoRoot, "agent-sidecar")
-	const destDir = join(stageRoot, "agent-sidecar")
+	const srcDir = join(repoRoot, "builtin-agent")
+	const destDir = join(stageRoot, "builtin-agent")
 	if (!existsSync(srcDir)) {
-		fail(`未找到 agent-sidecar 源目录：${srcDir}`)
+		fail(`未找到 builtin-agent 源目录：${srcDir}`)
 	}
 	mkdirSync(destDir, { recursive: true })
 	copyFileSync(join(srcDir, "package.json"), join(destDir, "package.json"))
 	const srcSrc = join(srcDir, "src")
 	if (!existsSync(srcSrc)) {
-		fail(`未找到 agent-sidecar/src：${srcSrc}`)
+		fail(`未找到 builtin-agent/src：${srcSrc}`)
 	}
 	cpSync(srcSrc, join(destDir, "src"), { recursive: true })
 	// 用 npm 在 staging 目录做自包含安装（含原生模块的正确平台版本）。
@@ -130,7 +130,7 @@ function stageSidecar(): void {
 	if (!existsSync(serverEntry)) {
 		fail(`sidecar 入口缺失：${serverEntry}`)
 	}
-	// 预编译生产入口 dist/server.js：在仓库内 agent-sidecar 用其完整
+	// 预编译生产入口 dist/server.js：在仓库内 builtin-agent 用其完整
 	// node_modules/tsconfig 构建，再把 dist 复制进随包目录。
 	run(npmBin(), ["run", "build"], { cwd: srcDir })
 	const compiledEntry = join(srcDir, "dist", "server.js")
@@ -138,8 +138,8 @@ function stageSidecar(): void {
 		fail(`sidecar 预编译后未找到入口：${compiledEntry}`)
 	}
 	cpSync(join(srcDir, "dist"), join(destDir, "dist"), { recursive: true })
-	log("已预编译并内置 agent-sidecar/dist（运行时使用 node dist/server.js）")
-	log("已内置 agent-sidecar（含生产依赖与 tsx）")
+	log("已预编译并内置 builtin-agent/dist（运行时使用 node dist/server.js）")
+	log("已内置 builtin-agent（含生产依赖与 tsx）")
 }
 
 // 4) bash-language-server：用 npm 在 lsp/ 下做自包含安装（解决 pnpm 提升导致的

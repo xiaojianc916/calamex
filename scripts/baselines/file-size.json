@@ -475,7 +475,7 @@
             "expiresAt": "2026-12-31"
         },
         {
-            "path": "src-tauri/src/agent_sidecar/mod.rs",
+            "path": "src-tauri/src/builtin_agent/mod.rs",
             "rule": "max-lines-800",
             "reason": "存量超限：登记时 1516 行 > 800，待按 R-20.x 拆分还债",
             "owner": "@xiaojianc",

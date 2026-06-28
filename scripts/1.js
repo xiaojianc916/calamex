@@ -1,7 +1,7 @@
 import { readFileSync, writeFileSync, existsSync } from 'node:fs';
 
 const REL = 'src/tools/mcp/client.spec.ts';
-const BASE = existsSync(REL) ? '' : (existsSync('agent-sidecar/' + REL) ? 'agent-sidecar/' : '');
+const BASE = existsSync(REL) ? '' : (existsSync('builtin-agent/' + REL) ? 'builtin-agent/' : '');
 
 function patch(rel, edits) {
   const path = BASE + rel;

@@ -7,8 +7,8 @@ import type { TAiExecutionMode } from '@/types/ai/execution-mode';
  * Mode / role / status enums
  * ========================================================================== */
 
-export const AGENT_SIDECAR_MODES = ['ask', 'plan', 'agent', 'patch', 'review'] as const;
-export type TAgentSidecarMode = (typeof AGENT_SIDECAR_MODES)[number];
+export const BUILTIN_AGENT_MODES = ['ask', 'plan', 'agent', 'patch', 'review'] as const;
+export type TAgentSidecarMode = (typeof BUILTIN_AGENT_MODES)[number];
 
 export type TAgentSidecarMessageRole = 'user' | 'assistant' | 'system' | 'tool';
 
@@ -144,7 +144,7 @@ export interface IDiffFile {
 /* ============================================================================
  * Ask-user (reverse questioning / Human-in-the-Loop)
  *
- * 前端镜像 agent-sidecar `schemas/events.ts` 的 askUser* wire schema,作为单一来源
+ * 前端镜像 builtin-agent `schemas/events.ts` 的 askUser* wire schema,作为单一来源
  * (single source of truth):ask_user 工具挂起时,后端把 askUserRequestSchema 负载随
  * `ask_user_required` UI 事件写进响应信封;前端据此渲染 QuestionPrompt,用户作答后经
  * 扩展方法 `calamex.dev/agent/ask-user/resume` 回灌 outcome + 结构化 answers,续跑同一回合。
@@ -935,7 +935,7 @@ export interface IAgentSidecarOrchestratePayload {
 /* ============================================================================
  * 外部 ACP 编码 agent（Kimi / Codex，ADR-0015）发送契约
  *
- * 镜像 Rust 契约 src-tauri/src/commands/contracts/agent_sidecar.rs 的
+ * 镜像 Rust 契约 src-tauri/src/commands/contracts/builtin_agent.rs 的
  * AgentBackendKind / AgentExternalChatRequest / AgentExternalChatResultPayload
  * （serde rename_all = "camelCase"）。外部 agent 只实现标准 session/prompt，不接收
  * 逐请求 model_config（凭据由其自身 CLI 自管）；过程增量经 session/update 帧走既有

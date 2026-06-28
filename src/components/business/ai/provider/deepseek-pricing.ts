@@ -1,4 +1,4 @@
-import type { LanguageModelUsage } from 'ai';
+import type { IAiLanguageModelUsage } from '@/types/ai';
 
 const TOKENS_PER_MILLION = 1_000_000;
 
@@ -93,7 +93,7 @@ const resolveDeepSeekPricingTier = (
   return undefined;
 };
 
-const getUsageBreakdown = (usage: LanguageModelUsage | undefined): IDeepSeekUsageBreakdown => {
+const getUsageBreakdown = (usage: IAiLanguageModelUsage | undefined): IDeepSeekUsageBreakdown => {
   const inputTokens = sanitizeTokenValue(usage?.inputTokens);
   const outputTokens = sanitizeTokenValue(usage?.outputTokens);
 
@@ -134,7 +134,7 @@ const getCostByTokens = (tokens: number, pricePerMillionCny: number): number =>
  */
 export const computeDeepSeekCostBreakdown = (
   modelId: string | undefined,
-  usage: LanguageModelUsage | undefined,
+  usage: IAiLanguageModelUsage | undefined,
 ): IDeepSeekCostBreakdown | undefined => {
   const tier = resolveDeepSeekPricingTier(modelId);
   if (!tier) {

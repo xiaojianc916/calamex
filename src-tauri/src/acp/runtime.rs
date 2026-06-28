@@ -146,7 +146,7 @@ impl AcpRuntime {
     }
 
     /// 强制重启指定后端：关停其现有宿主（若有）后立即用给定 `AppHandle` 重新派生、
-    /// 缓存一个新宿主。语义对齐旧 HTTP sidecar 的「重启」（`agent_sidecar::restart`）：
+    /// 缓存一个新宿主。语义对齐旧 HTTP sidecar 的「重启」（`builtin_agent::restart`）：
     /// 不论当前连接状态如何，丢弃并重建。
     ///
     /// 与 `get_or_spawn_backend` 一致由 `AppHandle` 装配真实 emit 闭包；`AcpHost::spawn` 同步

@@ -1,4 +1,4 @@
-pub(crate) mod agent_sidecar;
+pub(crate) mod builtin_agent;
 pub(crate) mod agent_webview;
 pub(crate) mod ai;
 pub(crate) mod contracts;

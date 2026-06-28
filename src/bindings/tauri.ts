@@ -130,25 +130,25 @@ export const commands = {
 	deleteSshPath: (payload: SshPathDeleteRequest) => __TAURI_INVOKE<SshPathDeletePayload>("delete_ssh_path", { payload }),
 	renameSshPath: (payload: SshPathRenameRequest) => __TAURI_INVOKE<SshPathRenamePayload>("rename_ssh_path", { payload }),
 	createSshDirectory: (payload: SshDirectoryCreateRequest) => __TAURI_INVOKE<SshDirectoryCreatePayload>("create_ssh_directory", { payload }),
-	agentSidecarHealth: () => __TAURI_INVOKE<AgentSidecarHealthPayload>("agent_sidecar_health"),
-	agentSidecarRestart: () => __TAURI_INVOKE<AgentSidecarHealthPayload>("agent_sidecar_restart"),
-	agentSidecarWarmup: () => __TAURI_INVOKE<AgentSidecarWarmupPayload>("agent_sidecar_warmup"),
-	agentSidecarChat: (payload: AgentSidecarChatRequest_Deserialize) => __TAURI_INVOKE<AgentSidecarResponsePayload_Serialize>("agent_sidecar_chat", { payload }),
+	builtinAgentHealth: () => __TAURI_INVOKE<AgentSidecarHealthPayload>("builtin_agent_health"),
+	builtinAgentRestart: () => __TAURI_INVOKE<AgentSidecarHealthPayload>("builtin_agent_restart"),
+	builtinAgentWarmup: () => __TAURI_INVOKE<AgentSidecarWarmupPayload>("builtin_agent_warmup"),
+	builtinAgentChat: (payload: AgentSidecarChatRequest_Deserialize) => __TAURI_INVOKE<AgentSidecarResponsePayload_Serialize>("builtin_agent_chat", { payload }),
 	/**
 	 *  外部 ACP 编码 agent（Kimi Code / Codex 等，ADR-0015）的标准回合命令（`session/prompt`）。
 	 * 
-	 *  与 `agent_sidecar_chat`（走自家边车的带外 `agent_chat` 扩展回合）不同：按后端类型经
+	 *  与 `builtin_agent_chat`（走自家边车的带外 `agent_chat` 扩展回合）不同：按后端类型经
 	 *  `get_or_spawn_backend` 解析/派生对应的独立常驻宿主，解析稳定会话后以纯文本内容块驱动
 	 *  一轮标准 prompt。**不补齐 model_config**——外部 agent 的凭据由其自身 CLI 自管（见
 	 *  acp/launch.rs；如 Kimi 凭据落 ~/.kimi，登录由其自身流程处理）。过程增量经 session/update 帧转发
 	 *  （投影见 acp/ui_event.rs），本命令仅返回终态：会话标识 + 回合终止原因。
 	 */
-	agentSidecarExternalChat: (payload: AgentExternalChatRequest_Deserialize) => __TAURI_INVOKE<AgentExternalChatResultPayload>("agent_sidecar_external_chat", { payload }),
-	agentSidecarResolveApproval: (payload: AgentSidecarApprovalResolveRequest_Deserialize) => __TAURI_INVOKE<AgentSidecarResponsePayload_Serialize>("agent_sidecar_resolve_approval", { payload }),
-	agentSidecarResolveAskUser: (payload: AgentSidecarAskUserResumeRequest_Deserialize) => __TAURI_INVOKE<AgentSidecarResponsePayload_Serialize>("agent_sidecar_resolve_ask_user", { payload }),
-	agentSidecarRestoreCheckpoint: (payload: AgentSidecarCheckpointRestoreRequest_Deserialize) => __TAURI_INVOKE<AgentSidecarResponsePayload_Serialize>("agent_sidecar_restore_checkpoint", { payload }),
-	agentSidecarOrchestrate: (payload: AgentSidecarOrchestrateRequest_Deserialize) => __TAURI_INVOKE<AgentSidecarOrchestratePayload>("agent_sidecar_orchestrate", { payload }),
-	agentSidecarOrchestrateResume: (payload: AgentSidecarOrchestrateResumeRequest_Deserialize) => __TAURI_INVOKE<AgentSidecarOrchestratePayload>("agent_sidecar_orchestrate_resume", { payload }),
+	builtinAgentExternalChat: (payload: AgentExternalChatRequest_Deserialize) => __TAURI_INVOKE<AgentExternalChatResultPayload>("builtin_agent_external_chat", { payload }),
+	builtinAgentResolveApproval: (payload: AgentSidecarApprovalResolveRequest_Deserialize) => __TAURI_INVOKE<AgentSidecarResponsePayload_Serialize>("builtin_agent_resolve_approval", { payload }),
+	builtinAgentResolveAskUser: (payload: AgentSidecarAskUserResumeRequest_Deserialize) => __TAURI_INVOKE<AgentSidecarResponsePayload_Serialize>("builtin_agent_resolve_ask_user", { payload }),
+	builtinAgentRestoreCheckpoint: (payload: AgentSidecarCheckpointRestoreRequest_Deserialize) => __TAURI_INVOKE<AgentSidecarResponsePayload_Serialize>("builtin_agent_restore_checkpoint", { payload }),
+	builtinAgentOrchestrate: (payload: AgentSidecarOrchestrateRequest_Deserialize) => __TAURI_INVOKE<AgentSidecarOrchestratePayload>("builtin_agent_orchestrate", { payload }),
+	builtinAgentOrchestrateResume: (payload: AgentSidecarOrchestrateResumeRequest_Deserialize) => __TAURI_INVOKE<AgentSidecarOrchestratePayload>("builtin_agent_orchestrate_resume", { payload }),
 	/**  Create (or reuse) the child webview and start the CDP control plane. Idempotent. */
 	agentWebviewCreate: (input: AgentWebviewCreateInput, traceId: string | null) => __TAURI_INVOKE<null>("agent_webview_create", { input, traceId }),
 	/**  Sync child webview bounds. */

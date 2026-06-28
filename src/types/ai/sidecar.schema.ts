@@ -9,7 +9,7 @@ import {
   AGENT_PLAN_STATUSES,
   AGENT_RUNTIME_EVENT_SCHEMA_VERSION,
   AGENT_RUNTIME_EVENT_TYPES,
-  AGENT_SIDECAR_MODES,
+  BUILTIN_AGENT_MODES,
   type TAgentRuntimeEvent,
   type TJsonValue,
 } from '@/types/ai/sidecar';
@@ -39,7 +39,7 @@ export const jsonValueSchema: z.ZodType<TJsonValue> = z.lazy(() =>
  * Enum schemas (re-exported as zod schemas of TS const arrays)
  * ========================================================================== */
 
-export const agentSidecarModeSchema = z.enum(AGENT_SIDECAR_MODES);
+export const agentSidecarModeSchema = z.enum(BUILTIN_AGENT_MODES);
 export const agentPlanStatusSchema = z.enum(AGENT_PLAN_STATUSES);
 
 /* ============================================================================
@@ -190,7 +190,7 @@ export const diffFileSchema = z.object({
  * Ask-user (reverse questioning / Human-in-the-Loop)
  *
  * 运行时校验 schema，镜像 sidecar.ts 的手写类型（handwritten types 为该域 SoT）。
- * 字段约束对齐 agent-sidecar/src/schemas/events.ts 的 askUser* wire schema：
+ * 字段约束对齐 builtin-agent/src/schemas/events.ts 的 askUser* wire schema：
  * header ≤8 中文/≤16 字符的 chip 短标签；questions 1-4 题（对齐 Gemini ask_user
  * 上限）；仅 choice 型携带 options。
  * ========================================================================== */
@@ -235,7 +235,7 @@ export const askUserResultSchema = z.object({
  * agentRuntimeEventSchema>` 会带 `[k: string]: unknown` 索引签名，**无法**直接
  * 当作 handwritten `TAgentRuntimeEvent` 联合用。
  *
- * 等 agent-sidecar.ts 切到 schema 派生时（类似 ai.ts 的重构），需要把这里展开
+ * 等 builtin-agent.ts 切到 schema 派生时（类似 ai.ts 的重构），需要把这里展开
  * 成 21 个变体的 `z.discriminatedUnion('type', [...])`，删掉 passthrough。
  * 这是较大工作量，暂列 TODO。
  *

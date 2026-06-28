@@ -1,7 +1,7 @@
 /**
  * UTF-16 代理对检测与跳过辅助。
  *
- * 多处代码（document-metrics.ts、agent-sidecar/text-metrics.ts、
+ * 多处代码（document-metrics.ts、builtin-agent/text-metrics.ts、
  * terminal-output-buffer.ts）各自手写了相同的 charCodeAt + surrogate range check。
  * 此处提供共享实现，消除重复。
  */

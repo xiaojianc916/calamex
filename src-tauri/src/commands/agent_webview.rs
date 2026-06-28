@@ -43,7 +43,7 @@ const WRY_DEFAULT_BROWSER_ARGS: &str =
 const RESULT_BINDING_NAME: &str = "__calamexPickerResult";
 
 /// CDP 连接最大重试次数。
-/// 40 次 × 250ms = 最长 10 秒等待 agent-sidecar WebView 的调试端口就绪。
+/// 40 次 × 250ms = 最长 10 秒等待 builtin-agent WebView 的调试端口就绪。
 #[cfg(feature = "native_webview")]
 const CDP_CONNECT_MAX_RETRIES: usize = 40;
 

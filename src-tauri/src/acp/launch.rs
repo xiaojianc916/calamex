@@ -3,12 +3,12 @@
 //! 职责：把「用哪个 node、跑哪个 ACP 入口、注入哪些子进程环境变量」解析成
 //! `client::AcpClientConfig { program, args, env }`，供 `spawn_acp_client` 派生 stdio 子进程。
 //!
-//! 本模块的进程/入口/env 解析逻辑总实自旧 `agent_sidecar/mod.rs`（原 HTTP 路径的
-//!     `resolve_sidecar_root` / `resolve_node_executable` / env 注入等），以便后续删除旧
+//! 本模块的进程/入口/env 解析逻辑总实自旧 `builtin_agent/mod.rs`（原 HTTP 路径的
+//!     `resolve_builtin_agent_root` / `resolve_node_executable` / env 注入等），以便后续删除旧
 //!     模块后本文件仍自包含。与旧 HTTP 路径的关键区别：
 //!   * 入口改为 ACP stdio 入口 `dist/acp/stdio-entry.js`（回退 `tsx + src/acp/stdio-entry.ts`），
 //!     而非旧 `dist/server.js`；
-//!   * stdio 无 HTTP 监听，故不注入 `AGENT_SIDECAR_PORT` / `AGENT_SIDECAR_TOKEN`
+//!   * stdio 无 HTTP 监听，故不注入 `BUILTIN_AGENT_PORT` / `BUILTIN_AGENT_TOKEN`
 //!     （二者仅用于旧 HTTP 服务的端口与 Bearer 鉴权）；
 //!   * 模型配置走逐请求通道（chat / restore 请求携带 `model_config`），而 stdio-entry 仅在
 //!     启动时用 env 做可选预热（`createMastraModelConfigFromEnv()`，缺失会优雅跳过），故
@@ -34,7 +34,7 @@ use std::path::{Path, PathBuf};
 
 use super::client::AcpClientConfig;
 
-const SIDECAR_ROOT_ENV: &str = "XIAOJIANC_AGENT_SIDECAR_ROOT";
+const BUILTIN_AGENT_ROOT_ENV: &str = "XIAOJIANC_BUILTIN_AGENT_ROOT";
 const NODE_EXE_ENV: &str = "XIAOJIANC_NODE_EXE";
 const MCP_UVX_PATH_ENV: &str = "AGENT_MCP_UVX_PATH";
 const TAVILY_API_KEY_ENV: &str = "TAVILY_API_KEY";
@@ -62,10 +62,10 @@ pub fn build_acp_client_config() -> Result<AcpClientConfig, String> {
 /// `program` = 解析出的 node 绝对路径；`args` = ACP 入口（优先预编译产物，否则 tsx + 源码）；
 /// `env` = 子进程环境变量（工具所需 + 编译缓存）。
 fn build_builtin_client_config() -> Result<AcpClientConfig, String> {
-    let sidecar_root = resolve_sidecar_root()?;
+    let sidecar_root = resolve_builtin_agent_root()?;
     let node = resolve_node_executable()?;
     let args = resolve_entry_args(&sidecar_root)?;
-    let env = build_sidecar_env(&sidecar_root);
+    let env = build_builtin_agent_env(&sidecar_root);
 
     Ok(AcpClientConfig {
         program: path_to_string(&node),
@@ -92,14 +92,14 @@ fn resolve_entry_args(sidecar_root: &Path) -> Result<Vec<String>, String> {
 
     if !tsx_cli.is_file() {
         return Err(format!(
-            "AGENT_SIDECAR_UNAVAILABLE: 未找到 sidecar TSX 启动器：{}",
+            "BUILTIN_AGENT_UNAVAILABLE: 未找到 sidecar TSX 启动器：{}",
             tsx_cli.display()
         ));
     }
 
     if !entry.is_file() {
         return Err(format!(
-            "AGENT_SIDECAR_UNAVAILABLE: 未找到 ACP stdio 入口：{}",
+            "BUILTIN_AGENT_UNAVAILABLE: 未找到 ACP stdio 入口：{}",
             entry.display()
         ));
     }
@@ -111,12 +111,12 @@ fn resolve_entry_args(sidecar_root: &Path) -> Result<Vec<String>, String> {
 ///   * `NODE_COMPILE_CACHE`：复用编译缓存，缩短冷启动（与旧路径一致）；
 ///   * `TAVILY_API_KEY`：web 工具所需，优先进程/用户环境，缺失时回退 sidecar `.env`；
 ///   * `AGENT_MCP_UVX_PATH`：MCP 工具拉起 uvx 所需（Windows 解析）。
-fn build_sidecar_env(sidecar_root: &Path) -> Vec<(String, String)> {
+fn build_builtin_agent_env(sidecar_root: &Path) -> Vec<(String, String)> {
     let mut env: Vec<(String, String)> = Vec::new();
 
     env.push((
         "NODE_COMPILE_CACHE".to_string(),
-        path_to_string(&sidecar_runtime_dir().join("node-compile-cache")),
+        path_to_string(&builtin_agent_runtime_dir().join("node-compile-cache")),
     ));
 
     // 优先用进程/用户环境的 TAVILY_API_KEY；缺失时才回退 sidecar `.env`（与旧路径优先级一致）。
@@ -134,21 +134,21 @@ fn build_sidecar_env(sidecar_root: &Path) -> Vec<(String, String)> {
 }
 
 /// 运行时可写目录：统一落到品牌根 `.calamex/ai-service`（与 `storage_paths` 一致）。
-fn sidecar_runtime_dir() -> PathBuf {
+fn builtin_agent_runtime_dir() -> PathBuf {
     crate::storage_paths::local_root().join("ai-service")
 }
 
-fn resolve_sidecar_root() -> Result<PathBuf, String> {
-    if let Some(path) = env_or_user_env(SIDECAR_ROOT_ENV).map(PathBuf::from)
+fn resolve_builtin_agent_root() -> Result<PathBuf, String> {
+    if let Some(path) = env_or_user_env(BUILTIN_AGENT_ROOT_ENV).map(PathBuf::from)
         && path.is_dir()
     {
         return Ok(path);
     }
 
-    // 随包优先：安装包内 resources-bundle/agent-sidecar（含 dist 与 node_modules）。
+    // 随包优先：安装包内 resources-bundle/builtin-agent（含 dist 与 node_modules）。
     // 与 shell_tools 的解析策略一致：随包优先 → 源码树兑底。
     for root in crate::commands::shell_tools::bundled_resource_roots() {
-        let bundled = root.join("agent-sidecar");
+        let bundled = root.join("builtin-agent");
         if bundled.join("package.json").is_file() {
             return Ok(bundled);
         }
@@ -156,16 +156,16 @@ fn resolve_sidecar_root() -> Result<PathBuf, String> {
 
     let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     let Some(workspace_root) = manifest_dir.parent() else {
-        return Err("AGENT_SIDECAR_UNAVAILABLE: 无法定位仓库根目录。".to_string());
+        return Err("BUILTIN_AGENT_UNAVAILABLE: 无法定位仓库根目录。".to_string());
     };
-    let sidecar_root = workspace_root.join("agent-sidecar");
+    let sidecar_root = workspace_root.join("builtin-agent");
 
     if sidecar_root.is_dir() {
         return Ok(sidecar_root);
     }
 
     Err(format!(
-        "AGENT_SIDECAR_UNAVAILABLE: 未找到 agent-sidecar 目录：{}",
+        "BUILTIN_AGENT_UNAVAILABLE: 未找到 builtin-agent 目录：{}",
         sidecar_root.display()
     ))
 }
@@ -197,7 +197,7 @@ pub(super) fn resolve_node_executable() -> Result<PathBuf, String> {
     find_executable_in_path("node.exe")
         .or_else(|| find_executable_in_path("node"))
         .ok_or_else(|| {
-            "AGENT_SIDECAR_UNAVAILABLE: 未找到 node.exe，请设置 XIAOJIANC_NODE_EXE。".to_string()
+            "BUILTIN_AGENT_UNAVAILABLE: 未找到 node.exe，请设置 XIAOJIANC_NODE_EXE。".to_string()
         })
 }
 

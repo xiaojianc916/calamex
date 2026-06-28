@@ -1,0 +1,589 @@
+import { ModelRouterEmbeddingModel, type MastraModelConfig } from '@mastra/core/llm';
+import { LibSQLStore, LibSQLVector } from '@mastra/libsql';
+import { Memory } from '@mastra/memory';
+import { randomUUID } from 'node:crypto';
+import {
+    existsSync,
+    mkdirSync,
+    readFileSync,
+    renameSync,
+    writeFileSync,
+} from 'node:fs';
+import { homedir } from 'node:os';
+import { join, resolve } from 'node:path';
+import { pathToFileURL } from 'node:url';
+import { z } from 'zod';
+
+import type { IAgentRuntimeInput } from '../contracts/runtime-input.js';
+import { toNonEmptyString } from '../shared/utils.js';
+import { isTruthyEnv, isFalsyEnv } from '../shared/env-utils.js';
+
+// -----------------------------------------------------------------------------
+// Constants
+// -----------------------------------------------------------------------------
+
+const DEFAULT_MEMORY_LAST_MESSAGES = 6;
+const MIN_MEMORY_LAST_MESSAGES = 2;
+const MAX_MEMORY_LAST_MESSAGES = 12;
+const DEFAULT_SEMANTIC_RECALL_TOP_K = 4;
+
+const DEFAULT_APP_IDENTIFIER = 'com.xiaojianc.Calamex';
+const DEFAULT_STORAGE_DIRECTORY = 'builtin-agent';
+const DEFAULT_STORAGE_FILENAME = 'mastra.db';
+
+const RESOURCE_SCOPE_WORKSPACE_PREFIX = 'workspace:';
+const RESOURCE_SCOPE_SESSION_PREFIX = 'builtin-agent:session:';
+
+const STORAGE_ID = 'builtin-agent-memory-storage';
+const VECTOR_ID = 'builtin-agent-memory-vector';
+
+const PROJECT_DIR_NAME = '.mastracode';
+const PROJECT_JSON_NAME = 'project.json';
+
+// RFC 4122 v1–v5 UUID, case-insensitive.
+const UUID_REGEX =
+    /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+
+// -----------------------------------------------------------------------------
+// Env var keys
+//
+// BUILTIN_AGENT_STORAGE_ROOT
+//   Absolute path; overrides the platform-specific storage directory.
+// BUILTIN_AGENT_LIBSQL_URL
+//   Full libsql:// or file:// URL. If set, bypasses directory resolution.
+// BUILTIN_AGENT_MEMORY_LAST_MESSAGES
+//   Integer in [2, 12]. Out-of-range or non-integer values are clamped/ignored
+//   with a console.warn.
+// BUILTIN_AGENT_MEMORY_EMBEDDER_MODEL
+//   Model identifier passed to ModelRouterEmbeddingModel. Required to enable
+//   semantic recall.
+// BUILTIN_AGENT_MEMORY_ENABLE_SEMANTIC_RECALL
+//   Falsy ("0"/"false"/"no"/"off") explicitly disables semantic recall.
+//   Otherwise semantic recall is enabled iff BUILTIN_AGENT_MEMORY_EMBEDDER_MODEL
+//   is set.
+// BUILTIN_AGENT_MEMORY_ENABLE_OBSERVATIONAL
+//   Falsy ("0"/"false"/"no"/"off") explicitly disables observational memory.
+//   Otherwise observational memory is enabled by default.
+// BUILTIN_AGENT_MEMORY_ENABLE_OBSERVATIONAL_BUFFERING
+//   Truthy to let Mastra buffer observation tokens. Defaults to false.
+// -----------------------------------------------------------------------------
+
+const STORAGE_ROOT_ENV = 'BUILTIN_AGENT_STORAGE_ROOT';
+const LIBSQL_URL_ENV = 'BUILTIN_AGENT_LIBSQL_URL';
+const MEMORY_LAST_MESSAGES_ENV = 'BUILTIN_AGENT_MEMORY_LAST_MESSAGES';
+const EMBEDDER_MODEL_ENV = 'BUILTIN_AGENT_MEMORY_EMBEDDER_MODEL';
+const ENABLE_SEMANTIC_RECALL_ENV = 'BUILTIN_AGENT_MEMORY_ENABLE_SEMANTIC_RECALL';
+const ENABLE_OBSERVATIONAL_MEMORY_ENV = 'BUILTIN_AGENT_MEMORY_ENABLE_OBSERVATIONAL';
+const ENABLE_OBSERVATIONAL_MEMORY_BUFFERING_ENV =
+    'BUILTIN_AGENT_MEMORY_ENABLE_OBSERVATIONAL_BUFFERING';
+
+// -----------------------------------------------------------------------------
+// Working memory schema
+//
+// Array caps below are intentional truncation limits passed to Mastra so the
+// LLM doesn't bloat working memory indefinitely. Tune cautiously: raising them
+// increases prompt size on every turn.
+// -----------------------------------------------------------------------------
+
+const trimmedNonEmptyStringSchema = z.string().trim().min(1);
+const optionalTrimmedStringSchema = trimmedNonEmptyStringSchema.optional();
+
+// 放宽 lastStopReason 规则：允许字段省略、传 null、传空字符串。当模型无停止原因时，
+// 无需强制填充内容，空值/省略/null 均为合法值，避免模型因校验规则被迫编造内容。
+const nullableOptionalTrimmedStringSchema = z.string().trim().nullable().optional();
+
+export const mastraWorkingMemorySchema = z.object({
+    currentTask: z
+        .object({
+            goal: optionalTrimmedStringSchema,
+            phase: z.enum(['responding', 'planning', 'executing', 'reviewing']).optional(),
+            status: z.enum(['active', 'blocked', 'completed']).optional(),
+            lastStopReason: nullableOptionalTrimmedStringSchema,
+        })
+        .optional(),
+    constraints: z.array(trimmedNonEmptyStringSchema).max(10).optional(),
+    importantFacts: z.array(trimmedNonEmptyStringSchema).max(20).optional(),
+    decisions: z.array(trimmedNonEmptyStringSchema).max(10).optional(),
+    openQuestions: z.array(trimmedNonEmptyStringSchema).max(10).optional(),
+});
+
+// -----------------------------------------------------------------------------
+// Public types
+// -----------------------------------------------------------------------------
+
+export interface IMastraMemoryScope {
+    thread: string;
+    resource: string;
+}
+
+export interface ICreateMastraMemoryScopeOptions {
+    /**
+     * Durable agent processors bind the workflow run to a session resource.
+     * Use this when the same run may suspend/resume or execute workspace tools.
+     */
+    resourceScope?: 'workspace' | 'session';
+}
+
+/**
+ * IMastraMemoryReference 与 IMastraMemoryScope 在 TS 结构等价下完全可互换。
+ *
+ * 此处用 type alias 而非 separate interface,**承认它们是同一物**;过去用
+ * 两个独立 interface 试图表达"传给 Mastra API 的 reference vs 会话 scope"
+ * 的语义差异,但 TS 不强制 nominal 区分 —— 编译器允许任意方向互传。
+ *
+ * 如果未来真的需要 nominal 隔离,改成 brand 模式:
+ *   export type IMastraMemoryReference = IMastraMemoryScope & {
+ *       readonly __mastraReferenceBrand: unique symbol;
+ *   };
+ * 届时所有调用点必须通过 createMastraMemoryReference 转换。
+ */
+export type IMastraMemoryReference = IMastraMemoryScope;
+
+// -----------------------------------------------------------------------------
+// Env helpers
+// -----------------------------------------------------------------------------
+
+
+
+
+
+
+
+// -----------------------------------------------------------------------------
+// Resolvers
+// -----------------------------------------------------------------------------
+
+export const resolveMemoryLastMessages = (
+    env: NodeJS.ProcessEnv = process.env,
+): number => {
+    const configured = toNonEmptyString(env[MEMORY_LAST_MESSAGES_ENV]);
+    if (!configured) return DEFAULT_MEMORY_LAST_MESSAGES;
+
+    const parsed = Number.parseFloat(configured);
+    if (!Number.isFinite(parsed) || !Number.isInteger(parsed)) {
+        console.warn(
+            `[builtin-agent] ${MEMORY_LAST_MESSAGES_ENV}="${configured}" is not a valid integer; falling back to ${DEFAULT_MEMORY_LAST_MESSAGES}.`,
+        );
+        return DEFAULT_MEMORY_LAST_MESSAGES;
+    }
+
+    const clamped = Math.min(
+        MAX_MEMORY_LAST_MESSAGES,
+        Math.max(MIN_MEMORY_LAST_MESSAGES, parsed),
+    );
+    if (clamped !== parsed) {
+        console.warn(
+            `[builtin-agent] ${MEMORY_LAST_MESSAGES_ENV}=${parsed} out of [${MIN_MEMORY_LAST_MESSAGES}, ${MAX_MEMORY_LAST_MESSAGES}]; clamped to ${clamped}.`,
+        );
+    }
+    return clamped;
+};
+
+const resolveSemanticRecallEmbedderModel = (
+    env: NodeJS.ProcessEnv = process.env,
+): string | null => toNonEmptyString(env[EMBEDDER_MODEL_ENV]);
+
+/**
+ * Semantic recall is enabled when an embedder model is configured, unless
+ * BUILTIN_AGENT_MEMORY_ENABLE_SEMANTIC_RECALL is explicitly falsy. Setting the
+ * env truthy without an embedder model is still treated as disabled — we can't
+ * recall without an embedder.
+ */
+export const resolveSemanticRecallEnabled = (
+    env: NodeJS.ProcessEnv = process.env,
+): boolean => {
+    if (resolveSemanticRecallEmbedderModel(env) === null) return false;
+    if (isFalsyEnv(env[ENABLE_SEMANTIC_RECALL_ENV])) return false;
+    return true;
+};
+
+export const resolveObservationalMemoryEnabled = (
+    env: NodeJS.ProcessEnv = process.env,
+): boolean => !isFalsyEnv(env[ENABLE_OBSERVATIONAL_MEMORY_ENV]);
+
+export const resolveObservationalMemoryBufferingEnabled = (
+    env: NodeJS.ProcessEnv = process.env,
+): boolean => isTruthyEnv(env[ENABLE_OBSERVATIONAL_MEMORY_BUFFERING_ENV]);
+
+export interface IMastraObservationalMemoryModels {
+    observer: MastraModelConfig;
+    reflector: MastraModelConfig;
+}
+
+/**
+ * Platform-aware default storage directory. Override with
+ * BUILTIN_AGENT_STORAGE_ROOT (absolute path).
+ *
+ * - win32:  %APPDATA%\\com.xiaojianc.Calamex\\builtin-agent
+ * - darwin: ~/Library/Application Support/com.xiaojianc.Calamex/builtin-agent
+ * - linux:  $XDG_DATA_HOME/com.xiaojianc.Calamex/builtin-agent
+ *           (fallback ~/.local/share/com.xiaojianc.Calamex/builtin-agent)
+ * - other:  <cwd>/.builtin-agent
+ */
+export const resolveMastraStorageDirectory = (
+    env: NodeJS.ProcessEnv = process.env,
+    cwd: string = process.cwd(),
+): string => {
+    const configuredRoot = toNonEmptyString(env[STORAGE_ROOT_ENV]);
+    if (configuredRoot) return resolve(configuredRoot);
+
+    switch (process.platform) {
+        case 'win32': {
+            const appDataRoot =
+                toNonEmptyString(env.APPDATA) ?? toNonEmptyString(env.LOCALAPPDATA);
+            if (appDataRoot) {
+                return resolve(appDataRoot, DEFAULT_APP_IDENTIFIER, DEFAULT_STORAGE_DIRECTORY);
+            }
+            break;
+        }
+        case 'darwin': {
+            const home = toNonEmptyString(env.HOME) ?? homedir();
+            if (home) {
+                return resolve(
+                    home,
+                    'Library',
+                    'Application Support',
+                    DEFAULT_APP_IDENTIFIER,
+                    DEFAULT_STORAGE_DIRECTORY,
+                );
+            }
+            break;
+        }
+        case 'linux': {
+            const xdg = toNonEmptyString(env.XDG_DATA_HOME);
+            if (xdg) {
+                return resolve(xdg, DEFAULT_APP_IDENTIFIER, DEFAULT_STORAGE_DIRECTORY);
+            }
+            const home = toNonEmptyString(env.HOME) ?? homedir();
+            if (home) {
+                return resolve(
+                    home,
+                    '.local',
+                    'share',
+                    DEFAULT_APP_IDENTIFIER,
+                    DEFAULT_STORAGE_DIRECTORY,
+                );
+            }
+            break;
+        }
+        default:
+            break;
+    }
+    return resolve(cwd, '.builtin-agent');
+};
+
+/**
+ * Resolve the libsql storage URL, ensuring the parent directory exists.
+ * Side effect: creates the storage directory via mkdirSync.
+ *
+ * BUILTIN_AGENT_LIBSQL_URL takes precedence over BUILTIN_AGENT_STORAGE_ROOT.
+ * If both are set, STORAGE_ROOT is ignored and we emit a console.warn so the
+ * silent override is observable.
+ */
+export const resolveMastraStorageUrl = (
+    env: NodeJS.ProcessEnv = process.env,
+    cwd: string = process.cwd(),
+): string => {
+    const configuredUrl = toNonEmptyString(env[LIBSQL_URL_ENV]);
+    if (configuredUrl) {
+        if (toNonEmptyString(env[STORAGE_ROOT_ENV])) {
+            console.warn(
+                `[builtin-agent] Both ${LIBSQL_URL_ENV} and ${STORAGE_ROOT_ENV} are set; ` +
+                `${LIBSQL_URL_ENV} takes precedence and ${STORAGE_ROOT_ENV} is ignored.`,
+            );
+        }
+        return configuredUrl;
+    }
+
+    const storageDirectory = resolveMastraStorageDirectory(env, cwd);
+    mkdirSync(storageDirectory, { recursive: true });
+    return pathToFileURL(join(storageDirectory, DEFAULT_STORAGE_FILENAME)).href;
+};
+
+// -----------------------------------------------------------------------------
+// Project UUID
+// -----------------------------------------------------------------------------
+
+const isValidUuid = (value: unknown): value is string =>
+    typeof value === 'string' && UUID_REGEX.test(value);
+
+/**
+ * Read or create a stable per-workspace UUID, stored at
+ * `<workspaceRootPath>/.mastracode/project.json`.
+ *
+ * Behavior:
+ * - If the file exists and contains a valid UUID, return it.
+ * - If the file exists but is unreadable / not JSON / missing a valid uuid,
+ *   throw — we do NOT silently overwrite, because that would orphan all prior
+ *   memory under the old UUID.
+ * - If the file does not exist, generate a new UUID and write atomically
+ *   (temp file + rename with `wx` flag). On rename collision, prefer the
+ *   value written by the racing process if it's valid.
+ * - If the atomic write fails entirely, warn and return the in-memory UUID;
+ *   memory will be per-session until the underlying issue is fixed.
+ *
+ * **Concurrency caveat**: POSIX `rename(2)` silently overwrites the destination,
+ * so two processes racing the "file does not exist → write" branch can each
+ * overwrite the other; the last writer wins. The rename-failure recovery branch
+ * only catches the Windows scenario where rename-over-existing-file fails with
+ * EPERM/EACCES. For desktop-sidecar use this is acceptable — the workspace is
+ * typically owned by a single Aster IDE process. If multi-process init becomes
+ * a real scenario, switch to an O_CREAT|O_EXCL lockfile pattern.
+ *
+ * NOTE: This is the uncached implementation. Callers should use
+ * `resolveProjectUuid`, which memoizes results per workspace path.
+ */
+const readOrCreateProjectUuid = (workspaceRootPath: string): string => {
+    const mastraCodeDir = join(workspaceRootPath, PROJECT_DIR_NAME);
+    const projectJsonPath = join(mastraCodeDir, PROJECT_JSON_NAME);
+
+    if (existsSync(projectJsonPath)) {
+        let content: string;
+        try {
+            content = readFileSync(projectJsonPath, 'utf8');
+        } catch (error) {
+            throw new Error(
+                `[builtin-agent] Failed to read ${projectJsonPath}: ${(error as Error).message}`,
+            );
+        }
+
+        let parsed: unknown;
+        try {
+            parsed = JSON.parse(content);
+        } catch (error) {
+            throw new Error(
+                `[builtin-agent] ${projectJsonPath} is not valid JSON (${(error as Error).message}). ` +
+                `Refusing to overwrite; please repair or delete the file manually.`,
+            );
+        }
+
+        const uuid = (parsed as { uuid?: unknown } | null)?.uuid;
+        if (!isValidUuid(uuid)) {
+            throw new Error(
+                `[builtin-agent] ${projectJsonPath} is missing a valid "uuid" field. ` +
+                `Refusing to overwrite; please repair or delete the file manually.`,
+            );
+        }
+        return uuid;
+    }
+
+    const newUuid = randomUUID();
+    try {
+        mkdirSync(mastraCodeDir, { recursive: true });
+        // Tempfile nonce: pid + ms + randomUUID() makes collision practically impossible
+        // even under same-millisecond same-pid retry.
+        const tempPath = `${projectJsonPath}.${process.pid}.${Date.now()}.${randomUUID()}.tmp`;
+        writeFileSync(
+            tempPath,
+            JSON.stringify({ uuid: newUuid, createdAt: new Date().toISOString() }, null, 2),
+            { encoding: 'utf8', flag: 'wx' },
+        );
+        try {
+            renameSync(tempPath, projectJsonPath);
+        } catch (renameError) {
+            // Windows: rename over existing file can fail with EPERM/EACCES.
+            // If another process raced us and produced a valid UUID, defer to it.
+            if (existsSync(projectJsonPath)) {
+                try {
+                    const raced = JSON.parse(readFileSync(projectJsonPath, 'utf8')) as {
+                        uuid?: unknown;
+                    };
+                    if (isValidUuid(raced?.uuid)) {
+                        return raced.uuid;
+                    }
+                } catch {
+                    // fall through to rethrow
+                }
+            }
+            throw renameError;
+        }
+    } catch (error) {
+        // Asymmetric with the read path above: read-failure throws (data corruption
+        // needs human attention), but write-failure degrades to per-session UUID
+        // (disk-full / EACCES is typically transient or environmental).
+        console.warn(
+            `[builtin-agent] Failed to persist project UUID at ${projectJsonPath}: ${(error as Error).message}. ` +
+            `Memory will be per-session until this is fixed.`,
+        );
+    }
+    return newUuid;
+};
+
+/**
+ * Process-lifetime cache of resolved project UUIDs, keyed by workspace path.
+ *
+ * `createMastraMemoryScope` runs on every request and would otherwise hit the
+ * filesystem (existsSync + readFileSync) each time. The project UUID is
+ * immutable once created, so memoizing for the process lifetime is safe. It
+ * also stabilizes the write-failure degraded path: instead of minting a fresh
+ * random UUID on every call (fragmenting memory), a single per-process UUID is
+ * reused until the process restarts.
+ */
+const projectUuidCache = new Map<string, string>();
+
+/**
+ * Cached accessor for the stable per-workspace UUID. See
+ * `readOrCreateProjectUuid` for the underlying read/create semantics.
+ */
+export const resolveProjectUuid = (workspaceRootPath: string): string => {
+    const cached = projectUuidCache.get(workspaceRootPath);
+    if (cached !== undefined) {
+        return cached;
+    }
+    const uuid = readOrCreateProjectUuid(workspaceRootPath);
+    projectUuidCache.set(workspaceRootPath, uuid);
+    return uuid;
+};
+
+// -----------------------------------------------------------------------------
+// Memory scope / reference
+// -----------------------------------------------------------------------------
+
+const resolveSemanticRecallEmbedder = (
+    env: NodeJS.ProcessEnv = process.env,
+): ModelRouterEmbeddingModel | null => {
+    if (!resolveSemanticRecallEnabled(env)) return null;
+    const model = resolveSemanticRecallEmbedderModel(env);
+    return model ? new ModelRouterEmbeddingModel(model) : null;
+};
+
+/**
+ * Compute the Mastra memory scope for a session.
+ *
+ * - `thread` defaults to `input.threadId`, falling back to `fallbackThreadId`.
+ * - `resource` is `workspace:<uuid>` when a workspace path is present.
+ * - Pass `{ resourceScope: 'session' }` for durable/suspendable runs, where
+ *   Mastra processors require every input message to stay on a stable resource.
+ *   Explicit UI threads use the thread id so later turns can replay history.
+ * - Otherwise it falls back to `builtin-agent:session:<threadId>`,
+ *   so unrelated no-workspace sessions don't share working memory.
+ */
+export const createMastraMemoryScope = (
+    input: Pick<IAgentRuntimeInput, 'workspaceRootPath' | 'threadId'>,
+    fallbackThreadId: string,
+    options: ICreateMastraMemoryScopeOptions = {},
+): IMastraMemoryScope => {
+    const workspaceRootPath = toNonEmptyString(input.workspaceRootPath ?? null);
+    const threadId = toNonEmptyString(input.threadId ?? null) ?? fallbackThreadId;
+
+    if (!workspaceRootPath || options.resourceScope === 'session') {
+        // Session-scoped resource: each thread gets its own resource id,
+        // preventing working-memory bleed across unrelated no-workspace runs.
+        return {
+            thread: threadId,
+            resource: `${RESOURCE_SCOPE_SESSION_PREFIX}${threadId}`,
+        };
+    }
+
+    const projectUuid = resolveProjectUuid(workspaceRootPath);
+    return {
+        thread: threadId,
+        resource: `${RESOURCE_SCOPE_WORKSPACE_PREFIX}${projectUuid}`,
+    };
+};
+
+/**
+ * Passthrough by design — see jsdoc on IMastraMemoryReference.
+ * Returns a shallow copy so callers can mutate one without affecting the other.
+ */
+export const createMastraMemoryReference = (
+    scope: IMastraMemoryScope,
+): IMastraMemoryReference => ({ ...scope });
+
+// -----------------------------------------------------------------------------
+// Memory factory
+// -----------------------------------------------------------------------------
+
+/**
+ * Build the Mastra `Memory` instance used by the agent sidecar.
+ * Configured via env vars — see the "Env var keys" block near the top of this
+ * file for the full list.
+ */
+export const createMastraAgentMemory = (
+    storageUrl: string,
+    observationalMemoryModels: IMastraObservationalMemoryModels,
+    env: NodeJS.ProcessEnv = process.env,
+): Memory => {
+    const embedder = resolveSemanticRecallEmbedder(env);
+    const semanticRecallEnabled = embedder !== null;
+    const observationalMemoryEnabled = resolveObservationalMemoryEnabled(env);
+    const observationalMemoryBufferingEnabled =
+        resolveObservationalMemoryBufferingEnabled(env);
+
+    // Reverse-inferred from `Memory` ctor because @mastra/memory doesn't export
+    // these option types publicly. Stable across patch releases; if a mastra
+    // major bump breaks it, fail loud here at the type level.
+    type MemoryCtorArgs = NonNullable<ConstructorParameters<typeof Memory>[0]>;
+    type MemoryOpts = NonNullable<MemoryCtorArgs['options']>;
+
+    const options: MemoryOpts = {
+        lastMessages: resolveMemoryLastMessages(env),
+        workingMemory: {
+            enabled: true,
+            scope: 'resource',
+            schema: mastraWorkingMemorySchema,
+        },
+    };
+
+    if (observationalMemoryEnabled) {
+        // Mastra default = buffering ON. We only set `observation.bufferTokens`
+        // when the user explicitly wants buffering OFF.
+        options.observationalMemory = observationalMemoryBufferingEnabled
+            ? {
+                scope: 'thread',
+                // `activateAfterIdle: 'auto'` lets Mastra pick a provider-aware
+                // prompt-cache TTL and force-activate buffered observations once a
+                // thread has been idle long enough that the prompt cache would
+                // expire — so the next uncached request sends compressed
+                // observations instead of a large raw message window. Top-level
+                // setting applies to observations. Only meaningful when async
+                // buffering is on (this branch).
+                activateAfterIdle: 'auto',
+                observation: {
+                    model: observationalMemoryModels.observer,
+                },
+                reflection: {
+                    model: observationalMemoryModels.reflector,
+                },
+            }
+            : {
+                scope: 'thread',
+                observation: {
+                    model: observationalMemoryModels.observer,
+                    bufferTokens: false,
+                },
+                reflection: {
+                    model: observationalMemoryModels.reflector,
+                },
+            };
+    }
+
+    if (semanticRecallEnabled) {
+        options.semanticRecall = {
+            topK: DEFAULT_SEMANTIC_RECALL_TOP_K,
+            messageRange: { before: 1, after: 1 },
+            scope: 'resource',
+        };
+    }
+
+    const ctorArgs: MemoryCtorArgs = {
+        storage: new LibSQLStore({
+            id: STORAGE_ID,
+            url: storageUrl,
+        }),
+        options,
+    };
+
+    if (semanticRecallEnabled && embedder) {
+        // LibSQLStore 与 LibSQLVector 共用同一个 sqlite 文件 —— 这是 mastra 推荐
+        // 模式(单 db 内分 schema),节省 file handle。如果将来需要把 vector 索引
+        // 隔离到独立文件,改这里。
+        ctorArgs.vector = new LibSQLVector({
+            id: VECTOR_ID,
+            url: storageUrl,
+        });
+        ctorArgs.embedder = embedder;
+    }
+
+    return new Memory(ctorArgs);
+};

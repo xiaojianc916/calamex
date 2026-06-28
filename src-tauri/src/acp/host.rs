@@ -4,7 +4,7 @@
 //! `acp_client` 门控的新增模块，落地阶段不影响现有 HTTP/NDJSON sidecar。
 //!
 //! 把同目录两层装配成单一编排面，对齐 sidecar 自身的 ACP Agent（见
-//! `agent-sidecar/src/acp/agent.ts`）与 Zed `agent_ui/acp_thread.rs` 的回合模型，
+//! `builtin-agent/src/acp/agent.ts`）与 Zed `agent_ui/acp_thread.rs` 的回合模型，
 //! 不自创协议语义：
 //!   * `client`   —— 常驻 stdio 连接 + 命令句柄（new_session / prompt /
 //!     set_session_mode / restore_checkpoint / model_chat / web_search / web_fetch /

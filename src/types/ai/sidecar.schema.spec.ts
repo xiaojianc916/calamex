@@ -64,7 +64,7 @@ describe('agent sidecar event contract', () => {
             id: 'approval-write-sidecar',
             toolName: 'write_file',
             question: '需要写入 sidecar IPC 合约和 Tauri 命令文件，是否允许本次修改？',
-            summary: '新增 agent_sidecar 命令、AgentUiEvent schema 和 service façade。',
+            summary: '新增 builtin_agent 命令、AgentUiEvent schema 和 service façade。',
             riskLevel: 'medium',
             reversible: true,
             createdAt: '2026-05-01T10:00:00.000Z',

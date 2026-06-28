@@ -15,14 +15,14 @@ describe('AiErrorNotice', () => {
 
   it('在两条分隔线中间渲染告警图标和报错文案', () => {
     const wrapper = mount(AiErrorNotice, {
-      props: { message: 'AGENT_SIDECAR_UNAVAILABLE: 节点未就绪' },
+      props: { message: 'BUILTIN_AGENT_UNAVAILABLE: 节点未就绪' },
     });
 
     expect(wrapper.find('.ai-error-notice').exists()).toBe(true);
     expect(wrapper.findAll('.ai-error-notice__line')).toHaveLength(2);
     expect(wrapper.find('.lucide-circle-alert').exists()).toBe(true);
     expect(wrapper.find('.ai-error-notice__text').text()).toBe(
-      'AGENT_SIDECAR_UNAVAILABLE: 节点未就绪',
+      'BUILTIN_AGENT_UNAVAILABLE: 节点未就绪',
     );
   });
 

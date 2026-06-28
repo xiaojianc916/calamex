@@ -164,5 +164,5 @@ const writeGenerated = (relativePath: string, content: string): void => {
 };
 
 writeGenerated('src/constants/ai/runtime-tools.generated.ts', frontendOutput);
-writeGenerated('agent-sidecar/src/tools/generated.ts', sidecarOutput);
+writeGenerated('builtin-agent/src/tools/generated.ts', sidecarOutput);
 writeGenerated('src-tauri/src/commands/ai/tools_generated.rs', rustOutput);

@@ -34,7 +34,7 @@ import type { IIpcCallOptions } from './core/ipc-types';
 
 /** 30min timeout: AI agent tasks may run long; this is an IPC safety net,
  * not a business timeout. Server has its own task timeout. */
-const AGENT_SIDECAR_TASK_TIMEOUT_MS = 30 * 60 * 1000;
+const BUILTIN_AGENT_TASK_TIMEOUT_MS = 30 * 60 * 1000;
 
 /**
  * Agent sidecar Tauri 命令的声明式包装元数据表。每条语义与原手写 callSpectaCommand
@@ -42,68 +42,68 @@ const AGENT_SIDECAR_TASK_TIMEOUT_MS = 30 * 60 * 1000;
  */
 const SIDECAR_COMMAND_META = {
   agentSidecarHealth: {
-    command: 'agent_sidecar_health',
+    command: 'builtin_agent_health',
     guardHint: '读取 Agent sidecar 健康状态',
     idempotent: true,
     audit: 'sensitive',
     timeoutMs: 10_000,
   },
   agentSidecarRestart: {
-    command: 'agent_sidecar_restart',
+    command: 'builtin_agent_restart',
     guardHint: '重启 Agent sidecar 进程',
     audit: 'sensitive',
     timeoutMs: 30_000,
   },
   agentSidecarWarmup: {
-    command: 'agent_sidecar_warmup',
+    command: 'builtin_agent_warmup',
     guardHint: '预热 Agent sidecar 模型连接',
     audit: 'sensitive',
     timeoutMs: 8_000,
   },
   agentSidecarChat: {
-    command: 'agent_sidecar_chat',
+    command: 'builtin_agent_chat',
     guardHint: '通过 Node sidecar 执行 Agent Ask',
     audit: 'sensitive',
-    timeoutMs: AGENT_SIDECAR_TASK_TIMEOUT_MS,
+    timeoutMs: BUILTIN_AGENT_TASK_TIMEOUT_MS,
     measureInput: measureAiChatInput,
   },
   agentSidecarExternalChat: {
-    command: 'agent_sidecar_external_chat',
+    command: 'builtin_agent_external_chat',
     guardHint: '通过外部 ACP agent 执行标准回合',
     audit: 'sensitive',
-    timeoutMs: AGENT_SIDECAR_TASK_TIMEOUT_MS,
+    timeoutMs: BUILTIN_AGENT_TASK_TIMEOUT_MS,
     measureInput: measureAiChatInput,
   },
   agentSidecarResolveApproval: {
-    command: 'agent_sidecar_resolve_approval',
+    command: 'builtin_agent_resolve_approval',
     guardHint: '处理 Agent sidecar 工具审批',
     audit: 'sensitive',
-    timeoutMs: AGENT_SIDECAR_TASK_TIMEOUT_MS,
+    timeoutMs: BUILTIN_AGENT_TASK_TIMEOUT_MS,
   },
   agentSidecarResolveAskUser: {
-    command: 'agent_sidecar_resolve_ask_user',
+    command: 'builtin_agent_resolve_ask_user',
     guardHint: '处理 Agent sidecar 询问用户回合恢复',
     audit: 'sensitive',
-    timeoutMs: AGENT_SIDECAR_TASK_TIMEOUT_MS,
+    timeoutMs: BUILTIN_AGENT_TASK_TIMEOUT_MS,
   },
   agentSidecarRestoreCheckpoint: {
-    command: 'agent_sidecar_restore_checkpoint',
+    command: 'builtin_agent_restore_checkpoint',
     guardHint: '通过 Node sidecar 恢复 Agent 回滚检查点',
     audit: 'sensitive',
-    timeoutMs: AGENT_SIDECAR_TASK_TIMEOUT_MS,
+    timeoutMs: BUILTIN_AGENT_TASK_TIMEOUT_MS,
   },
   agentSidecarOrchestrate: {
-    command: 'agent_sidecar_orchestrate',
+    command: 'builtin_agent_orchestrate',
     guardHint: 'Start native orchestration workflow via Node sidecar',
     audit: 'sensitive',
-    timeoutMs: AGENT_SIDECAR_TASK_TIMEOUT_MS,
+    timeoutMs: BUILTIN_AGENT_TASK_TIMEOUT_MS,
     measureInput: measureAiChatInput,
   },
   agentSidecarOrchestrateResume: {
-    command: 'agent_sidecar_orchestrate_resume',
+    command: 'builtin_agent_orchestrate_resume',
     guardHint: 'Resume Agent sidecar orchestration workflow (approval gate)',
     audit: 'sensitive',
-    timeoutMs: AGENT_SIDECAR_TASK_TIMEOUT_MS,
+    timeoutMs: BUILTIN_AGENT_TASK_TIMEOUT_MS,
   },
 } satisfies Record<string, ICommandMeta>;
 

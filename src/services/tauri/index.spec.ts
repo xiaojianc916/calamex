@@ -273,7 +273,7 @@ describe('tauriService', () => {
         code: 'ipc.timeout',
         scope: 'ipc',
       });
-      expect(invokeMock).toHaveBeenCalledWith('agent_sidecar_restore_checkpoint', {
+      expect(invokeMock).toHaveBeenCalledWith('builtin_agent_restore_checkpoint', {
         payload: {
           runId: 'run-1',
           snapshotId: 'snapshot-1',
@@ -306,6 +306,6 @@ describe('tauriService', () => {
       status: 'ready',
       engine: 'mastra',
     });
-    expect(invokeMock).toHaveBeenCalledWith('agent_sidecar_restart');
+    expect(invokeMock).toHaveBeenCalledWith('builtin_agent_restart');
   });
 });

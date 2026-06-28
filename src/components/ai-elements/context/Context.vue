@@ -1,8 +1,8 @@
 <script setup lang="ts">
-import type { LanguageModelUsage } from 'ai';
 import { computed, provide } from 'vue';
 import { HoverCard } from '@/components/ui/hover-card';
 import type { TAiTokenUsageSource } from '@/composables/ai/useAiTokenContext';
+import type { IAiLanguageModelUsage } from '@/types/ai';
 import { ContextKey, type IContextUsageCost, type TContextModelId } from './context';
 
 defineOptions({
@@ -12,7 +12,7 @@ defineOptions({
 const props = defineProps<{
   usedTokens: number;
   maxTokens: number;
-  usage?: LanguageModelUsage;
+  usage?: IAiLanguageModelUsage;
   usageSource?: TAiTokenUsageSource;
   modelId?: TContextModelId;
   cost?: IContextUsageCost;

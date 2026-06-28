@@ -13,7 +13,7 @@
  *
  * 注：本文件为纯新增类型出口，先不接入主 barrel / 契约 union（接线在后续
  * 迁移步骤完成），以保证该步零运行时风险。类型名与 sidecar 侧
- * `agent-sidecar/src/acp/from-runtime-event.ts` 的 SDK 导入保持同源。
+ * `builtin-agent/src/acp/from-runtime-event.ts` 的 SDK 导入保持同源。
  * ========================================================================== */
 import type { SessionUpdate, ToolCallContent, ToolKind } from '@agentclientprotocol/sdk';
 

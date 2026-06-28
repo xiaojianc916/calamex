@@ -147,7 +147,7 @@ fn detect_shellcheck_dialect(
 /// 解析策略统一为「随包优先 → 系统兜底」。开发模式 (`tauri dev`) 下这些目录
 /// 通常不存在，候选会被 is_file() 过滤掉，因此对开发流程无副作用。
 ///
-/// 同时供 agent_sidecar 复用以定位随包的 agent-sidecar 与 Node 运行时，
+/// 同时供 builtin_agent 复用以定位随包的 builtin-agent 与 Node 运行时，
 /// 确保打包侧 (prepare-bundle-resources.ts) 与运行时侧的产物布局契约一致。
 pub(crate) fn bundled_resource_roots() -> Vec<PathBuf> {
     let mut roots = Vec::new();

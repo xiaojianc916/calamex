@@ -26,7 +26,7 @@
 相比「把 HITL 工作流再包进工具」，工具级挂起更直接，并规避 #11015
 （嵌套 suspend 工作流的 Studio 体验问题）。
 
-注册位置：`agent-sidecar/src/engines/tools/tools.ts` 的 `rawTools`
+注册位置：`builtin-agent/src/engines/tools/tools.ts` 的 `rawTools`
 （经 `createToolErrorCircuitBreaker` 包装），与 `read_current_file` 等同级。
 
 ### 传输：另起 `agent/ask-user` + `/resume`

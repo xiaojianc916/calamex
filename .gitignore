@@ -11,8 +11,8 @@ target
 *.log
 *.bak
 .strands-sessions
-agent-sidecar/.strands-sessions
-agent-sidecar/.agent-sidecar/
+builtin-agent/.strands-sessions
+builtin-agent/.builtin-agent/
 
 # 构建产物 / 缓存
 *.pdb
@@ -35,4 +35,4 @@ src-tauri/resources-bundle/
 src-tauri/gen/schemas/
 
 # Compiled JS artifacts that shadow .ts sources (never used at runtime)
-agent-sidecar/src/**/*.js
+builtin-agent/src/**/*.js

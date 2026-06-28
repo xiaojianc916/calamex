@@ -40,7 +40,7 @@
 | 🌿 **Git 集成** | 基于 `gix`（gitoxide）实现状态、差异、版本信息等仓库操作。 |
 | 🔐 **SSH / SFTP** | 基于 `russh` / `russh-sftp` 的远程连接与文件传输，连接池化管理。 |
 | 🤖 **AI 辅助** | 前端集成 CopilotKit、AG-UI 协议与 `ai` SDK，支持脚本理解、补全与对话式辅助；模型调用统一收敛到 Node 边车（OpenAI 兼容接口），Rust 侧仅作为凭证 / 策略 / 审计网关并桥接边车，不直连模型。 |
-| 🧩 **AI Agent 边车** | 独立的 Node 边车 `agent-sidecar/`，基于 **Mastra** 编排智能体与工具（顺序思考、Context7、Tavily 网络搜索、TypeScript 语言服务、浏览器自动化等），经 MCP 接入，并通过 Agent Client Protocol（ACP）与宿主通信。状态推进中，详见 `agent-sidecar/MATURITY.md`。 |
+| 🧩 **AI Agent 边车** | 独立的 Node 边车 `builtin-agent/`，基于 **Mastra** 编排智能体与工具（顺序思考、Context7、Tavily 网络搜索、TypeScript 语言服务、浏览器自动化等），经 MCP 接入，并通过 Agent Client Protocol（ACP）与宿主通信。状态推进中，详见 `builtin-agent/MATURITY.md`。 |
 | 📁 **工作区** | 安全的文件系统命令与实时文件监听（`notify`），所有 I/O 经 Rust 命令出口。 |
 
 ## 技术栈
@@ -54,14 +54,14 @@
 
 **桌面 / 后端**
 - Tauri 2.x（`tray-icon`、dialog、store 插件）
-- Rust（edition 2021），按域拆分的命令模块（terminal / lsp / git / ssh / search / workspace / ai / shell_tools / script_run / format / skills / agent_sidecar / agent_webview / window / contracts 等）
+- Rust（edition 2021），按域拆分的命令模块（terminal / lsp / git / ssh / search / workspace / ai / shell_tools / script_run / format / skills / builtin_agent / agent_webview / window / contracts 等）
 - IPC 类型由 `tauri-specta` 自动生成，前后端契约强类型对齐
 - 异步运行时 Tokio
 
-**AI 边车（`agent-sidecar/`，Node）**
+**AI 边车（`builtin-agent/`，Node）**
 - 基于 Mastra 的智能体运行时，经 MCP 集成顺序思考、Context7、Tavily、TypeScript 语言服务、浏览器自动化等工具
 - 模型走 OpenAI 兼容接口（`@ai-sdk/openai-compatible`）；通过 Agent Client Protocol（ACP，`@agentclientprotocol/sdk`）经 stdio 与宿主通信，支持流式响应
-- 会话与记忆基于 libSQL；当前为推进中状态（见 `agent-sidecar/MATURITY.md`）
+- 会话与记忆基于 libSQL；当前为推进中状态（见 `builtin-agent/MATURITY.md`）
 
 **工程化**
 - 包管理：pnpm（workspace）
@@ -89,7 +89,7 @@
 │  commands: terminal · lsp · git · ssh(+pool) ·  │
 │  search · workspace_fs · workspace_watcher ·    │
 │  ai · shell_tools · script_run · format ·       │
-│  skills · agent_sidecar · agent_webview ·       │
+│  skills · builtin_agent · agent_webview ·       │
 │  window(+stage) · contracts                     │
 └───────────────┬───────────────────────────────┘
                 │  PTY / WSL 调用
@@ -99,7 +99,7 @@
 └─────────────────────────────────────────────────┘
 ```
 
-> AI Agent 能力由独立的 Node 边车 `agent-sidecar/` 承载，Rust 侧经 `commands/agent_sidecar` 与 `commands/agent_webview` 桥接其生命周期，并通过 Agent Client Protocol（ACP）与之通信。
+> AI Agent 能力由独立的 Node 边车 `builtin-agent/` 承载，Rust 侧经 `commands/builtin_agent` 与 `commands/agent_webview` 桥接其生命周期，并通过 Agent Client Protocol（ACP）与之通信。
 
 **约束要点**
 - 组件 **不** 直接 `fetch` / `invoke` / 读写存储；I/O 唯一出口为 `services/`。
@@ -133,7 +133,7 @@
 │   └── __tests__/            # 前端单元测试
 ├── src-tauri/                # 桌面 / Rust 后端
 │   ├── src/
-│   │   ├── commands/         # 按域拆分的 Tauri 命令（含 agent_sidecar / agent_webview / skills / format 等）
+│   │   ├── commands/         # 按域拆分的 Tauri 命令（含 builtin_agent / agent_webview / skills / format 等）
 │   │   ├── terminal/         # PTY / 终端后端
 │   │   ├── ai/               # AI 网关（凭证 / 策略 / 审计 + 边车桥接，不直连模型）
 │   │   ├── acp/              # Agent Client Protocol 宿主侧实现
@@ -147,7 +147,7 @@
 │   ├── resources-bundle/     # 打包随附资源
 │   ├── build.rs              # 构建脚本
 │   └── tauri.conf.json       # Tauri 配置
-├── agent-sidecar/            # 基于 Mastra 的 AI Agent 边车（Node）
+├── builtin-agent/            # 基于 Mastra 的 AI Agent 边车（Node）
 │   ├── src/
 │   │   ├── acp/              # Agent Client Protocol 服务（入口 stdio-entry.ts）
 │   │   ├── engines/          # 智能体 / 编排引擎

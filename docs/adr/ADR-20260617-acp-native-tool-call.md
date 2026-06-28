@@ -74,7 +74,7 @@ ACP 的 `session/update` 会推送 `tool_call` / `tool_call_update`，自带：
 下游（store / 组件）**只认协议 VM**，不再感知事件来源。归约以 **ACP `toolCallId` 为合并键**
 （不是 `toolName`），把 started → update(N) → completed 收敛为同一条 `ThreadEntry`
 （`projection/reconcile-thread-entries.ts` 已有骨架，按此键改写）。
-> 依据：sidecar 出站投影 `agent-sidecar/src/acp/from-runtime-event.ts` 已用 `toolUseId` 充当
+> 依据：sidecar 出站投影 `builtin-agent/src/acp/from-runtime-event.ts` 已用 `toolUseId` 充当
 > `toolCallId`，故「按 toolCallId 合并」在 egress 侧已成立；Kimi（原生 ACP）与 Mastra（经此投影）
 > 可走同一归一路径。
 

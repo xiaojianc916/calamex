@@ -1759,7 +1759,7 @@ export const useAiAssistant = (options: IUseAiAssistantOptions) => {
   // Streaming pipeline
   // -----------------------------------------------------------------------
 
-  // 外部 ACP 编码 agent（Kimi / Codex，ADR-0015）发送链路：经 agent_sidecar_external_chat
+  // 外部 ACP 编码 agent（Kimi / Codex，ADR-0015）发送链路：经 builtin_agent_external_chat
   // 驱动一轮标准 session/prompt。外部 agent 无富信封，过程增量经 session/update 帧走既有
   // sidecar 流（subscribeSidecarSessionStream + applySidecarLiveEventsToAgentMessage）。
   // 流式关键：用前端预生成的 sidecarSessionId 在发起回合「之前」订阅，后端据此把外部帧的

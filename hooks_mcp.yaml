@@ -28,11 +28,11 @@ actions:
     timeout: 900
 
   - name: 'typecheck_sidecar'
-    description: '运行 agent-sidecar 类型检查'
-    command: 'pnpm --dir agent-sidecar typecheck'
+    description: '运行 builtin-agent 类型检查'
+    command: 'pnpm --dir builtin-agent typecheck'
     timeout: 900
 
   - name: 'test_sidecar'
-    description: '运行 agent-sidecar 单测'
-    command: 'pnpm --dir agent-sidecar test'
+    description: '运行 builtin-agent 单测'
+    command: 'pnpm --dir builtin-agent test'
     timeout: 1800

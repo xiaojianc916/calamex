@@ -235,7 +235,7 @@ export const useCopilotSuggestions = (): IUseCopilotSuggestionsResult => {
 
   // 后台补偿：仅用于把动态词池写入缓存以温暖“下次启动”，
   // 绝不回灌当前已提交的展示集合（否则又会触发二次刷新）。
-  // narrator 依赖 agent-sidecar 子进程，冷启动 / 瞬时抖动会让首次生成失败，
+  // narrator 依赖 builtin-agent 子进程，冷启动 / 瞬时抖动会让首次生成失败，
   // 这里按指数退避做若干次有界重试。
   const warmPoolCache = async (attempt = 0): Promise<void> => {
     if (disposed) {
