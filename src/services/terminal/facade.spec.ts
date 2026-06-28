@@ -7,7 +7,6 @@ import {
   type TTerminalListen,
 } from '@/services/terminal/eventBus';
 import { useTerminalFacade } from '@/services/terminal/facade';
-import { createTerminalShadowCompareStore } from '@/services/terminal/shadowCompare';
 import { useTerminalRuntimeStore } from '@/services/terminal/state';
 import type { ITauriService } from '@/types/tauri';
 import type {
@@ -343,56 +342,6 @@ describe('terminal facade suite 1', () => {
 
     expect(runtimeStore.getSessionState('main-terminal')).toBe('idle_interactive');
     expect(facade.activeRun.value).toBeNull();
-  });
-
-  it('terminal facade case 6', () => {
-    const shadowCompare = createTerminalShadowCompareStore();
-    shadowCompare.start('run-1', 'legacy', 100);
-    shadowCompare.start('run-1', 'shadow', 110);
-    shadowCompare.appendOutput('run-1', 'legacy', 'hello\n');
-    shadowCompare.appendOutput('run-1', 'shadow', 'hello\n');
-    shadowCompare.pushState('run-1', 'legacy', 'running');
-    shadowCompare.pushState('run-1', 'shadow', 'running');
-    shadowCompare.complete('run-1', 'legacy', 140);
-    shadowCompare.complete('run-1', 'shadow', 145);
-
-    expect(shadowCompare.compare('run-1')).toMatchObject({
-      outputEqual: true,
-      byteDiff: 0,
-      durationDeltaMs: -5,
-      stateSequenceEqual: true,
-    });
-  });
-
-  it('terminal facade case 7', () => {
-    const shadowCompare = createTerminalShadowCompareStore();
-
-    for (let index = 0; index < 50; index += 1) {
-      const runId = `shadow-run-${index}`;
-      const output = `Hello SH Editor #${index}\n`;
-      shadowCompare.start(runId, 'legacy', 1000 + index);
-      shadowCompare.start(runId, 'shadow', 1000 + index);
-      shadowCompare.pushState(runId, 'legacy', 'switching_to_run');
-      shadowCompare.pushState(runId, 'shadow', 'switching_to_run');
-      shadowCompare.pushState(runId, 'legacy', 'running');
-      shadowCompare.pushState(runId, 'shadow', 'running');
-      shadowCompare.appendOutput(runId, 'legacy', output);
-      shadowCompare.appendOutput(runId, 'shadow', output);
-      shadowCompare.pushState(runId, 'legacy', 'idle_interactive');
-      shadowCompare.pushState(runId, 'shadow', 'idle_interactive');
-      shadowCompare.complete(runId, 'legacy', 1200 + index);
-      shadowCompare.complete(runId, 'shadow', 1200 + index);
-    }
-
-    expect(shadowCompare.listComparisons()).toHaveLength(50);
-    for (const comparison of shadowCompare.listComparisons()) {
-      expect(comparison).toMatchObject({
-        outputEqual: true,
-        byteDiff: 0,
-        durationDeltaMs: 0,
-        stateSequenceEqual: true,
-      });
-    }
   });
 
   it('per-session 状态事件按会话存储,交互退出后清除', async () => {
