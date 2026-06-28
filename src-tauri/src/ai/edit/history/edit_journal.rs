@@ -24,28 +24,45 @@ pub fn append_operations(
     })
 }
 
-fn append_operations_locked(
-    storage_root: &Path,
+/// 复用调用方已打开的 fjall 句柄写入操作日志（lock-free 变体）。
+///
+/// 不变量：调用方必须已持有 `journal.lock` 写锁，且 `db` 是同一存储目录上
+/// 唯一存活的句柄；本函数不再获取锁或重新打开 `Database`，以便与
+/// `file_transaction::commit` 共享单一句柄、消除一次提交内的重复开库。
+pub fn append_operations_with_db(
+    db: &Database,
     operations: &[AiEditOperationPayload],
 ) -> Result<(), String> {
     if operations.is_empty() {
         return Ok(());
     }
 
-    let store = open_store(storage_root)?;
-    let mut batch = store.db.batch();
+    let operations_keyspace = db
+        .keyspace(OPERATIONS_KEYSPACE, KeyspaceCreateOptions::default)
+        .map_err(|error| {
+            errors::journal_failed(format!("打开 operations keyspace 失败：{error}"))
+        })?;
+    let mut batch = db.batch();
 
     for operation in operations {
         let key = operation_key(operation);
         let value = serde_json::to_vec(operation)
             .map_err(|error| errors::journal_failed(format!("序列化操作日志失败：{error}")))?;
-        batch.insert(&store.operations, key, value);
+        batch.insert(&operations_keyspace, key, value);
     }
 
     batch
         .commit()
         .map_err(|error| errors::journal_failed(format!("写入 fjall 操作日志失败：{error}")))?;
-    persist(&store.db)
+    persist(db)
+}
+
+fn append_operations_locked(
+    storage_root: &Path,
+    operations: &[AiEditOperationPayload],
+) -> Result<(), String> {
+    let store = open_store(storage_root)?;
+    append_operations_with_db(&store.db, operations)
 }
 
 pub fn list_operations(storage_root: &Path) -> Result<Vec<AiEditOperationPayload>, String> {

@@ -31,40 +31,58 @@ pub fn commit(storage_root: &Path, plan: FileTransactionPlan) -> Result<(), Stri
         return Ok(());
     }
 
-    recover_pending(storage_root)?;
+    // 单一临界区 + 单一 fjall 句柄：整段提交（恢复未决事务、写 manifest、追加
+    // 操作日志、状态流转）共享同一把 journal.lock 写锁与同一个 Database 句柄，
+    // 把原先一次提交内 ~5 次「开库 + 加锁」收敛为 1 次。
+    //
+    // 不变量保持：句柄生命周期严格 ⊆ 写锁临界区，提交结束即释放；同项目多实例
+    // （依赖 try_lock 失败回退）行为不受影响。
+    storage_lock::with_storage_write_lock(storage_root, "提交 AED 文件事务", || {
+        let store = open_store(storage_root)?;
+        recover_pending_with_store(&store, storage_root)?;
 
-    let transaction = PreparedFileTransaction::new(storage_root, plan)?;
-    transaction.write_staging_files()?;
-    update_status(
-        storage_root,
-        &transaction.manifest.id,
-        TransactionStatus::Committed,
-    )?;
-    apply_manifest(storage_root, &transaction.manifest)?;
-    edit_journal::append_operations(storage_root, &transaction.manifest.operations)?;
-    update_status(
-        storage_root,
-        &transaction.manifest.id,
-        TransactionStatus::Done,
-    )?;
-    remove_staging_dir(storage_root, &transaction.manifest.id)?;
+        let transaction = PreparedFileTransaction::prepare(&store, storage_root, plan)?;
+        transaction.write_staging_files()?;
+        update_status_with_store(
+            &store,
+            &transaction.manifest.id,
+            TransactionStatus::Committed,
+        )?;
+        apply_manifest(storage_root, &transaction.manifest)?;
+        edit_journal::append_operations_with_db(&store.db, &transaction.manifest.operations)?;
+        update_status_with_store(&store, &transaction.manifest.id, TransactionStatus::Done)?;
+        remove_staging_dir(storage_root, &transaction.manifest.id)?;
 
-    Ok(())
+        Ok(())
+    })
 }
 
 pub fn recover_pending(storage_root: &Path) -> Result<(), String> {
-    let manifests = list_manifests(storage_root)?;
+    storage_lock::with_storage_write_lock(storage_root, "恢复 AED 文件事务", || {
+        let store = open_store(storage_root)?;
+        recover_pending_with_store(&store, storage_root)
+    })
+}
+
+/// 复用调用方已打开的句柄恢复未决事务（lock-free 变体）。
+///
+/// 不变量：调用方必须已持有 `journal.lock` 写锁；本函数不再加锁或重新开库。
+fn recover_pending_with_store(
+    store: &TransactionStore,
+    storage_root: &Path,
+) -> Result<(), String> {
+    let manifests = list_manifests_with_store(store)?;
 
     for manifest in manifests {
         match manifest.status {
             TransactionStatus::Prepared => {
                 remove_staging_dir(storage_root, &manifest.id)?;
-                update_status(storage_root, &manifest.id, TransactionStatus::Done)?;
+                update_status_with_store(store, &manifest.id, TransactionStatus::Done)?;
             }
             TransactionStatus::Committed => {
                 apply_manifest(storage_root, &manifest)?;
-                edit_journal::append_operations(storage_root, &manifest.operations)?;
-                update_status(storage_root, &manifest.id, TransactionStatus::Done)?;
+                edit_journal::append_operations_with_db(&store.db, &manifest.operations)?;
+                update_status_with_store(store, &manifest.id, TransactionStatus::Done)?;
                 remove_staging_dir(storage_root, &manifest.id)?;
             }
             TransactionStatus::Done => {}
@@ -80,7 +98,12 @@ struct PreparedFileTransaction {
 }
 
 impl PreparedFileTransaction {
-    fn new(storage_root: &Path, plan: FileTransactionPlan) -> Result<Self, String> {
+    /// 在调用方已持有写锁 + 已打开句柄的前提下准备事务（lock-free）。
+    fn prepare(
+        store: &TransactionStore,
+        storage_root: &Path,
+        plan: FileTransactionPlan,
+    ) -> Result<Self, String> {
         let now = Timestamp::now();
         let id = format!("ai-edit-tx-{}", now.as_nanosecond());
         let entries = plan
@@ -98,10 +121,19 @@ impl PreparedFileTransaction {
             operations: plan.operations,
         };
 
-        upsert_manifest(storage_root, &manifest)?;
+        upsert_manifest_with_store(store, &manifest)?;
         Ok(Self {
             storage_root: storage_root.to_path_buf(),
             manifest,
+        })
+    }
+
+    /// 测试辅助：自获取写锁并打开句柄后委托给 [`PreparedFileTransaction::prepare`]。
+    #[cfg(test)]
+    fn new(storage_root: &Path, plan: FileTransactionPlan) -> Result<Self, String> {
+        storage_lock::with_storage_write_lock(storage_root, "写入 AED 文件事务", || {
+            let store = open_store(storage_root)?;
+            Self::prepare(&store, storage_root, plan)
         })
     }
 
@@ -211,19 +243,38 @@ fn apply_manifest(storage_root: &Path, manifest: &FileTransactionManifest) -> Re
     Ok(())
 }
 
-fn upsert_manifest(storage_root: &Path, manifest: &FileTransactionManifest) -> Result<(), String> {
-    storage_lock::with_storage_write_lock(storage_root, "写入 AED 文件事务", || {
-        let store = open_store(storage_root)?;
-        let value = serde_json::to_vec(manifest)
-            .map_err(|error| errors::transaction_failed(format!("序列化文件事务失败：{error}")))?;
-        store
-            .transactions
-            .insert(manifest.id.as_bytes(), value)
-            .map_err(|error| errors::transaction_failed(format!("写入文件事务失败：{error}")))?;
-        persist(&store.db)
-    })
+fn upsert_manifest_with_store(
+    store: &TransactionStore,
+    manifest: &FileTransactionManifest,
+) -> Result<(), String> {
+    let value = serde_json::to_vec(manifest)
+        .map_err(|error| errors::transaction_failed(format!("序列化文件事务失败：{error}")))?;
+    store
+        .transactions
+        .insert(manifest.id.as_bytes(), value)
+        .map_err(|error| errors::transaction_failed(format!("写入文件事务失败：{error}")))?;
+    persist(&store.db)
 }
 
+fn update_status_with_store(
+    store: &TransactionStore,
+    transaction_id: &str,
+    status: TransactionStatus,
+) -> Result<(), String> {
+    let mut manifest = load_manifest(&store.transactions, transaction_id)?
+        .ok_or_else(|| errors::transaction_failed("文件事务不存在。"))?;
+    manifest.status = status;
+    let value = serde_json::to_vec(&manifest)
+        .map_err(|error| errors::transaction_failed(format!("序列化文件事务失败：{error}")))?;
+    store
+        .transactions
+        .insert(transaction_id.as_bytes(), value)
+        .map_err(|error| errors::transaction_failed(format!("写入文件事务失败：{error}")))?;
+    persist(&store.db)
+}
+
+/// 测试辅助：自获取写锁并打开句柄后更新事务状态。
+#[cfg(test)]
 fn update_status(
     storage_root: &Path,
     transaction_id: &str,
@@ -231,42 +282,32 @@ fn update_status(
 ) -> Result<(), String> {
     storage_lock::with_storage_write_lock(storage_root, "更新 AED 文件事务状态", || {
         let store = open_store(storage_root)?;
-        let mut manifest = load_manifest(&store.transactions, transaction_id)?
-            .ok_or_else(|| errors::transaction_failed("文件事务不存在。"))?;
-        manifest.status = status;
-        let value = serde_json::to_vec(&manifest)
-            .map_err(|error| errors::transaction_failed(format!("序列化文件事务失败：{error}")))?;
-        store
-            .transactions
-            .insert(transaction_id.as_bytes(), value)
-            .map_err(|error| errors::transaction_failed(format!("写入文件事务失败：{error}")))?;
-        persist(&store.db)
+        update_status_with_store(&store, transaction_id, status)
     })
 }
 
-fn list_manifests(storage_root: &Path) -> Result<Vec<FileTransactionManifest>, String> {
-    storage_lock::with_storage_read_lock(storage_root, "读取 AED 文件事务", || {
-        let store = open_store(storage_root)?;
-        let mut manifests = Vec::new();
+fn list_manifests_with_store(
+    store: &TransactionStore,
+) -> Result<Vec<FileTransactionManifest>, String> {
+    let mut manifests = Vec::new();
 
-        for item in store.transactions.iter() {
-            let (_key, value) = item.into_inner().map_err(|error| {
-                errors::transaction_failed(format!("读取文件事务失败：{error}"))
-            })?;
-            match serde_json::from_slice::<FileTransactionManifest>(&value) {
-                Ok(manifest) => manifests.push(manifest),
-                Err(error) => {
-                    tracing::warn!(
-                        target: "ai.edit",
-                        error = %error,
-                        "skip invalid AED file transaction manifest"
-                    );
-                }
+    for item in store.transactions.iter() {
+        let (_key, value) = item
+            .into_inner()
+            .map_err(|error| errors::transaction_failed(format!("读取文件事务失败：{error}")))?;
+        match serde_json::from_slice::<FileTransactionManifest>(&value) {
+            Ok(manifest) => manifests.push(manifest),
+            Err(error) => {
+                tracing::warn!(
+                    target: "ai.edit",
+                    error = %error,
+                    "skip invalid AED file transaction manifest"
+                );
             }
         }
+    }
 
-        Ok(manifests)
-    })
+    Ok(manifests)
 }
 
 fn load_manifest(

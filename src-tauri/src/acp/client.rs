@@ -747,14 +747,6 @@ pub fn spawn_acp_client(
                             let res = cx.send_request(request).block_task().await;
                             let _ = reply.send(res.map_err(|e| e.to_string()));
                         }
-                        Command::Orchestrate { request, reply } => {
-                            let res = cx.send_request(request).block_task().await;
-                            let _ = reply.send(res.map_err(|e| e.to_string()));
-                        }
-                        Command::OrchestrateResume { request, reply } => {
-                            let res = cx.send_request(request).block_task().await;
-                            let _ = reply.send(res.map_err(|e| e.to_string()));
-                        }
                         Command::AgentChat { request, reply } => {
                             let res = cx.send_request(request).block_task().await;
                             let _ = reply.send(res.map_err(|e| e.to_string()));
@@ -845,22 +837,6 @@ mod tests {
         assert_eq!(value["intent"], "research");
         assert_eq!(value["maxResults"], 5);
         assert!(value.get("recency").is_none());
-    }
-
-    #[test]
-    fn orchestrate_ext_request_serializes_to_camel_case_params() {
-        let request = OrchestrateExtRequest {
-            goal: "build feature".to_string(),
-            thread_id: Some("t1".to_string()),
-            execution_mode: None,
-            session_id: Some("s1".to_string()),
-            model_config: None,
-        };
-        let value = serde_json::to_value(&request).unwrap();
-        assert_eq!(value["goal"], "build feature");
-        assert_eq!(value["threadId"], "t1");
-        assert_eq!(value["sessionId"], "s1");
-        assert!(value.get("executionMode").is_none());
     }
 
     // ---- AgentChat 新增测试 ----
