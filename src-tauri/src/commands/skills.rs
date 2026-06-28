@@ -63,7 +63,7 @@ pub fn list_skills() -> Result<SkillListPayload, String> {
         });
     }
 
-    skills.sort_by_key(|left| left.name.to_lowercase());
+    skills.sort_by_cached_key(|left| left.name.to_lowercase());
 
     Ok(SkillListPayload {
         root_path: root.to_string_lossy().to_string(),

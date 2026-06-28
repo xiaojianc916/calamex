@@ -261,14 +261,12 @@ export const useEditorStore = defineStore(
       const activeId = activeDocumentId.value;
       const candidates = documents.value
         .filter((item) => isUnloadableCleanTextDocument(item, activeId))
-        .sort((left, right) => {
-          const leftTime = Date.parse(left.lastAccessedAt ?? '');
-          const rightTime = Date.parse(right.lastAccessedAt ?? '');
-          return (
-            (Number.isFinite(leftTime) ? leftTime : 0) -
-            (Number.isFinite(rightTime) ? rightTime : 0)
-          );
-        });
+        .map((item) => {
+          const parsed = Date.parse(item.lastAccessedAt ?? '');
+          return { item, time: Number.isFinite(parsed) ? parsed : 0 };
+        })
+        .sort((left, right) => left.time - right.time)
+        .map((entry) => entry.item);
 
       const overflow = candidates.length - MAX_LOADED_CLEAN_TEXT_BUFFERS;
       if (overflow <= 0) {

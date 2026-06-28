@@ -98,7 +98,6 @@
     "pinia-plugin-persistedstate": "^4.7.1",
     "read-excel-file": "^9.1.1",
     "reka-ui": "^2.10.1",
-    "rxjs": "catalog:",
     "shiki": "^4.3.0",
     "tailwind-merge": "^3.6.0",
     "tailwind-variants": "^3.2.2",

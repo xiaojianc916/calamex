@@ -13,7 +13,3 @@ allowBuilds:
   '@moonshot-ai/kimi-code': true
   koffi: true
   node-pty: true
-overrides:
-  rxjs: "catalog:"
-catalog:
-  rxjs: ^7.8.2

@@ -1,71 +1,58 @@
 #!/usr/bin/env node
-// fix-workspace-sort.mjs —— 性能修复：目录排序 sort_by → sort_by_cached_key
-// 把每次比较都重算的 name.to_lowercase() 降为每条目仅算一次。
-// 非破坏：锚点不匹配/自检不过则不写入并退出 1。
-import { readFile, writeFile } from 'node:fs/promises';
-import path from 'node:path';
+// 2.mjs —— 放仓库根、在仓库根运行：node 2.mjs
+// 删除已死的直接 rxjs 依赖及其 workspace 锁定。
+// rxjs 仍会经 posthog-node ← @mastra/core 传递安装，这里只删“我们自己”的声明。
+import { readFile, writeFile, access } from "node:fs/promises";
+import { resolve } from "node:path";
 
-const FILE = path.join(process.cwd(), 'src-tauri', 'src', 'commands', 'workspace_fs.rs');
+const root = process.cwd();
 
-const main = async () => {
-  console.log('== calamex 性能修复：workspace 目录排序 ==');
+// 防呆：确认是在仓库根跑的
+try {
+  await access(resolve(root, "pnpm-workspace.yaml"));
+} catch {
+  console.error(`✗ 当前目录不是仓库根（找不到 pnpm-workspace.yaml）：${root}\n  请 cd 到 my_desktop_app 根目录后再运行 node 2.mjs`);
+  process.exit(1);
+}
 
-  let src;
-  try {
-    src = await readFile(FILE, 'utf8');
-  } catch (e) {
-    console.error(`✗ 读不到文件：${FILE}`);
-    console.error('  请在仓库根目录(含 src-tauri/)运行。', e.message);
-    process.exit(1);
-  }
-
-  if (src.includes('sort_by_cached_key')) {
-    console.log('• 已是最新：已使用 sort_by_cached_key，无需修改。');
+async function edit(rel, transform) {
+  const path = resolve(root, rel);
+  const original = await readFile(path, "utf8");
+  const next = transform(original);
+  if (next === null) {
+    console.log(`• ${rel}: 已是干净状态，跳过`);
     return;
   }
+  await writeFile(path, next, "utf8");
+  console.log(`✓ ${rel}: 已更新`);
+}
 
-  const anchor = 'entries.sort_by(';
-  const startIdx = src.indexOf(anchor);
-  if (startIdx === -1) {
-    console.error('✗ 锚点未匹配：未找到 entries.sort_by( 。');
-    console.error('  本地排序段可能已改动，请粘贴 read_workspace_entries 的排序部分以便适配。');
-    process.exit(1);
+// 1) package.json —— 删掉 dependencies 里的直接依赖行
+await edit("package.json", (src) => {
+  const re = /\r?\n[ \t]*"rxjs":[ \t]*"catalog:",/;
+  if (!re.test(src)) return null;
+  const out = src.replace(re, "");
+  if (/"rxjs"[ \t]*:[ \t]*"catalog:"/.test(out)) {
+    throw new Error("package.json: rxjs 删除后仍存在，已中止");
   }
-  // sort_by(...) 调用以唯一的 "});" 结束（闭包体内不含该三字符序列）。
-  const endRel = src.indexOf('});', startIdx);
-  if (endRel === -1) {
-    console.error('✗ 锚点未匹配：未找到 sort_by 调用结束的 "});"。');
-    process.exit(1);
+  return out;
+});
+
+// 2) pnpm-workspace.yaml —— 整段删除 overrides 与 catalog（两者各自只有 rxjs 一个键）
+await edit("pnpm-workspace.yaml", (src) => {
+  const re =
+    /\r?\noverrides:\r?\n[ \t]*rxjs:[ \t]*"catalog:"\r?\ncatalog:\r?\n[ \t]*rxjs:[ \t]*\^7\.8\.2/;
+  if (!re.test(src)) return null;
+  const out = src.replace(re, "");
+  if (/\brxjs\b/.test(out)) {
+    throw new Error("pnpm-workspace.yaml: rxjs 删除后仍存在，已中止");
   }
-  const endIdx = endRel + 3;
+  return out;
+});
 
-  const lineStart = src.lastIndexOf('\n', startIdx) + 1;
-  const indent = (src.slice(lineStart, startIdx).match(/^[ \t]*/) ?? [''])[0];
-  const eol = src.includes('\r\n') ? '\r\n' : '\n';
-
-  const block = [
-    `${indent}entries.sort_by_cached_key(|entry| {`,
-    `${indent}    // 目录在前：!is_dir(false) 排在文件(true)之前。`,
-    `${indent}    // 同类：先按 lowercase，再按原始 name 兜底（区分仅大小写不同的名字）。`,
-    `${indent}    // sort_by_cached_key：每条目仅算一次 lowercase，避免比较器里 O(n log n) 次重复分配。`,
-    `${indent}    let is_dir = entry.kind.as_str() == "directory";`,
-    `${indent}    (!is_dir, entry.name.to_lowercase(), entry.name.clone())`,
-    `${indent}});`,
-  ].join(eol);
-
-  const next = src.slice(0, lineStart) + block + src.slice(endIdx);
-
-  if (next.includes('entries.sort_by(') || !next.includes('sort_by_cached_key')) {
-    console.error('✗ 替换后自检失败，未写入（文件保持原样）。');
-    process.exit(1);
-  }
-
-  await writeFile(FILE, next, 'utf8');
-  console.log('✓ 已应用：sort_by → sort_by_cached_key。');
-  console.log('  验证：');
-  console.log('    cargo build  -p calamex --quiet');
-  console.log('    cargo test   -p calamex read_workspace_entries --quiet');
-  console.log('    cargo clippy -p calamex -- -D warnings');
-};
-
-main().catch((e) => { console.error('✗ 异常：', e); process.exit(1); });
+console.log(
+  "\n完成。接下来：\n" +
+    "  pnpm install      # 重写 pnpm-lock.yaml\n" +
+    "  pnpm why rxjs     # 应只剩 posthog-node ← @mastra 这一支\n" +
+    "  pnpm typecheck && pnpm test\n",
+);
