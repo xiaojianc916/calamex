@@ -88,7 +88,7 @@ const DeferredAiWebSourcesPanel = defineAsyncComponent({
   suspensible: false,
 });
 
-// \u542f\u52a8\u6253\u70b9\uff08\u9636\u6bb50\u00b7\u91cf\u5316\uff09\uff1aAI \u9762\u677f\u771f\u8eab setup \u8d77\u70b9\uff0c\u7528\u4e8e\u5b9a\u4f4d\u9996\u5c4f\u8017\u65f6\u5206\u5e03\u3002
+// 启动打点（阶段0·量化）：AI 面板真身 setup 起点，用于定位首屏耗时分布。
 markStartup('ai-assistant-panel-setup-start');
 const documentRef = computed(() => props.document);
 const activeRunRef = computed(() => props.activeRun);
@@ -107,10 +107,10 @@ const assistant = useAiAssistant({
 const agentRun = useAiAgentRun();
 const agentNetwork = useAiAgentNetwork();
 const webSources = useAiWebSources();
-// ACP \u5de5\u5177\u8c03\u7528\u5ba1\u6279\u95ed\u73af\uff08ADR-20260617 D6\uff09\uff1a\u8ba2\u9605\u5bbf\u4e3b\u7ecf ai:sidecar-approval \u62b9\u6765\u7684\u53cd\u5411\n// session/request_permission\uff0c\u5728\u9762\u677f\u5185\u6e32\u67d3\u5ba1\u6279\u6d6e\u5c42\u5e76\u628a\u7528\u6237\u51b3\u7b56\u539f\u6587\u56de\u6295\u3002\u6b64\u524d\u8be5\u95ed\u73af\u7ec4\u5408\u5f0f\n// \u4ece\u672a\u5728\u4efb\u610f\u5df2\u6302\u8f7d\u7ec4\u4ef6\u4e2d\u5b9e\u4f8b\u5316\uff0c\u5bfc\u81f4 Kimi \u7b49\u5916\u90e8 Agent \u7533\u8bf7\u5de5\u5177\u6743\u9650\u65f6\u65e0 UI \u5448\u73b0\uff0c\n// \u7533\u8bf7\u88ab\u6c38\u4e45\u6302\u8d77\u3001\u56de\u5408\u5361\u5728\u201c\u601d\u8003\u4e2d\u201d\u2014\u2014\u6b63\u662f\u6587\u4ef6\u4fee\u6539\u4e00\u76f4\u5361\u4f4f\u7684\u6839\u56e0\u4e4b\u4e8c\u3002
+// ACP 工具调用审批闭环（ADR-20260617 D6）：订阅宿主经 ai:sidecar-approval 抹来的反向\n// session/request_permission，在面板内渲染审批浮层并把用户决策原文回投。此前该闭环组合式\n// 从未在任意已挂载组件中实例化，导致 Kimi 等外部 Agent 申请工具权限时无 UI 呈现，\n// 申请被永久挂起、回合卡在“思考中”——正是文件修改一直卡住的根因之二。
 const acpApproval = useAcpApproval();
 const acpApprovalCurrent = computed(() => acpApproval.current.value);
-// Kimi \u7b49\u5916\u90e8 ACP Agent \u7684 AskUserQuestion \u540c\u6837\u7ecf\u53cd\u5411 request_permission \u62b5\u8fbe\uff1b\u82e5\u8bc6\u522b\u4e3a\u63d0\u95ee\uff0c\n// \u6539\u7528\u9879\u76ee\u65e2\u6709\u7684 QuestionPrompt \u53cd\u5411\u63d0\u95ee UI \u5448\u73b0\uff0c\u800c\u975e\u901a\u7528\u5de5\u5177\u5ba1\u6279\u5361\u7247\u3002
+// Kimi 等外部 ACP Agent 的 AskUserQuestion 同样经反向 request_permission 抵达；若识别为提问，\n// 改用项目既有的 QuestionPrompt 反向提问 UI 呈现，而非通用工具审批卡片。
 const acpApprovalQuestions = computed(() => acpApprovalCurrent.value?.askUserQuestions ?? null);
 const aiThreadStore = useAiThreadStore();
 const renderThreadEntries = computed(() => aiThreadStore.renderActiveEntries);
@@ -140,8 +140,8 @@ const settingsTavilyApiKey = ref('');
 const isAgentRunActionPending = ref(false);
 const isPromptModelSaving = ref(false);
 
-// \u5f53\u524d\u4f1a\u8bdd\u4f7f\u7528\u7684 Agent \u540e\u7aef\uff08\u81ea\u7814 / Kimi\uff09\u3002\u4f1a\u8bdd\u7ea7\u5355\u9009\uff0c\u4e00\u4e2a\u4f1a\u8bdd\u53ea\u7528\u4e00\u79cd Agent\u3002
-// Kimi \u7b49\u5916\u90e8 Agent \u7ecf agent_sidecar_external_chat\uff08\u6807\u51c6 session/prompt\uff09\u53d1\u9001\uff0c\u7531\n// useAiAssistant.sendMessage \u636e\u6b64 backend \u5206\u6d41\u5230\u5916\u90e8 ACP \u53d1\u9001\u94fe\u8def\u3002
+// 当前会话使用的 Agent 后端（自研 / Kimi）。会话级单选，一个会话只用一种 Agent。
+// Kimi 等外部 Agent 经 agent_sidecar_external_chat（标准 session/prompt）发送，由\n// useAiAssistant.sendMessage 据此 backend 分流到外部 ACP 发送链路。
 type TSessionAgentBackend = 'builtin' | 'kimi';
 
 interface ISessionAgentOption {
@@ -156,7 +156,7 @@ const agentOptions: ISessionAgentOption[] = [
 
 const sessionAgentBackend = ref<TSessionAgentBackend>('kimi');
 
-// kimi \u4f1a\u8bdd\u5411\u8f93\u5165\u6846\u900f\u4f20 ACP \u516c\u793a\u547d\u4ee4\uff0c\u4f9b\u659c\u6760\u83dc\u5355\u4f5c\u4e3a\u5185\u7f6e\u547d\u4ee4\u5217\u8868\uff1b\u5176\u5b83 Agent \u4e0d\u900f\u4f20\uff08\u7528\u81ea\u7814\u6280\u80fd\uff09\u3002
+// kimi 会话向输入框透传 ACP 公示命令，供斜杠菜单作为内置命令列表；其它 Agent 不透传（用自研技能）。
 const kimiSlashCommands = computed(() =>
   sessionAgentBackend.value === 'kimi' ? assistant.acpAvailableCommands.commands.value : undefined,
 );
@@ -196,7 +196,7 @@ const {
   handleRestoreConversationCheckpoint,
 } = useAiConversationCheckpoints(assistant);
 
-// \u542f\u52a8\u6253\u70b9\uff08\u9636\u6bb50\u00b7\u91cf\u5316\uff09\uff1a\u6838\u5fc3 composable \u521d\u59cb\u5316\u5b8c\u6210\u3002
+// 启动打点（阶段0·量化）：核心 composable 初始化完成。
 markStartup('ai-assistant-panel-composables-ready');
 
 const currentServicePlatform = computed(() =>
@@ -254,7 +254,7 @@ const visibleUserQuestion = computed(() => {
   return question;
 });
 const isResolvingUserQuestion = ref(false);
-// \u7ec4\u5408\u5668\u5185\u8054\u63d0\u95ee\uff1aAiPromptInput \u5185\u5d4c\u63d0\u95ee\u6846\u7684\u7b54\u6848 / \u53d6\u6d88\uff0c\u8def\u7531\u5230\u65e2\u6709 ACP / plan \u63d0\u95ee\u5904\u7406\u5668\u3002
+// 组合器内联提问：AiPromptInput 内嵌提问框的答案 / 取消，路由到既有 ACP / plan 提问处理器。
 const handleComposerQuestionSubmit = (answers: NonNullable<IAskUserResult['answers']>): void => {
   const result: IAskUserResult = { outcome: 'selected', answers };
   if (acpApprovalQuestions.value) {
@@ -311,10 +311,10 @@ const planConfirmationVisible = computed(() => {
     isPlanConfirmationStatus.value
   );
 });
-// Plan \u5ba1\u6279\u4f5c\u4e3a\u5e73\u94fa\u65f6\u95f4\u7ebf\u91cc\u7684\u4e00\u6761 plan-control \u6761\u76ee\uff1a\u7b49\u5f85\u6279\u51c6\u65f6\u5408\u6210\u4e00\u6761\u6570\u636e\u6a21\u578b
-// plan_control entry\uff0c\u8ffd\u52a0\u8fdb\u5582\u7ed9 AiChatThread \u7684 thread-entries\uff0c\u7531 threadEntriesToTimeline
-// \u6295\u5f71\u4e3a plan-control \u6e32\u67d3\u6761\u76ee\u3002\u5ba1\u6279\u6001\u662f planStore \u6d3e\u751f\u7684\u4e34\u65f6\u6001\uff0c\u6545\u53ea\u5728\u6e32\u67d3\u671f overlay\uff0c
-// \u4e0d\u843d reduce \u6301\u4e45\u5316\uff1a\u6279\u51c6/\u62d2\u7edd\u540e\u5b83\u968f planConfirmationVisible \u81ea\u7136\u6d88\u5931\uff0c\u4e0d\u6b8b\u7559\u5e7d\u7075\u5361\u3002
+// Plan 审批作为平铺时间线里的一条 plan-control 条目：等待批准时合成一条数据模型
+// plan_control entry，追加进喂给 AiChatThread 的 thread-entries，由 threadEntriesToTimeline
+// 投影为 plan-control 渲染条目。审批态是 planStore 派生的临时态，故只在渲染期 overlay，
+// 不落 reduce 持久化：批准/拒绝后它随 planConfirmationVisible 自然消失，不残留幽灵卡。
 const planControlEntry = computed<IAiThreadEntry | null>(() => {
   if (!planConfirmationVisible.value) {
     return null;
@@ -347,8 +347,8 @@ const threadPlanDetails = computed(() =>
     hasActiveRun: Boolean(planActiveRun.value),
   }),
 );
-// \u8fd0\u884c\u8fdb\u5ea6/\u5de5\u5177\u786e\u8ba4\u6536\u655b\u5230\u8f93\u5165\u6846\u4e0a\u65b9\u7684 Codex \u98ce\u683c\u7ec6\u6761\uff1b\u53ea\u5728\u8ba1\u5212\u771f\u6b63\u6267\u884c\uff08\u6709 run\uff09\u6216
-// \u51fa\u73b0\u5de5\u5177\u786e\u8ba4\u65f6\u663e\u793a\uff0c\u7528\u4e8e\u6291\u5236 Web \u6765\u6e90\u9762\u677f\u91cc\u91cd\u590d\u7684\u6d3b\u52a8\u6307\u793a\u3002
+// 运行进度/工具确认收敛到输入框上方的 Codex 风格细条；只在计划真正执行（有 run）或
+// 出现工具确认时显示，用于抑制 Web 来源面板里重复的活动指示。
 const planProgressVisible = computed(() => {
   if (assistant.activeMode.value !== 'plan') {
     return false;
@@ -418,10 +418,10 @@ const isLiveToolActivity = (activity: IAiToolActivityInline): boolean =>
 
 const normalizeToolActivitySummary = (activity: IAiToolActivityInline): string => {
   const source = activity.targetPreview?.trim() || activity.label.trim();
-  const withoutEllipsis = source.replace(/\u2026+$/u, '').trim();
+  const withoutEllipsis = source.replace(/…+$/u, '').trim();
   const withoutPrefix = withoutEllipsis
-    .replace(/^\u6b63\u5728(?:\u8bfb\u53d6|\u641c\u7d22|\u52a0\u8f7d|\u4f7f\u7528|\u5e94\u7528|\u751f\u6210|\u9a8c\u8bc1|\u6267\u884c)\s*[\uff1a:\uff1a]?\s*/u, '')
-    .replace(/^\u5df2(?:\u8bfb\u53d6|\u641c\u7d22|\u52a0\u8f7d|\u4f7f\u7528|\u5e94\u7528|\u751f\u6210|\u9a8c\u8bc1|\u6267\u884c)\s*[\uff1a:\uff1a]?\s*/u, '')
+    .replace(/^正在(?:读取|搜索|加载|使用|应用|生成|验证|执行)\s*[：:：]?\s*/u, '')
+    .replace(/^已(?:读取|搜索|加载|使用|应用|生成|验证|执行)\s*[：:：]?\s*/u, '')
     .trim();
 
   return withoutPrefix || withoutEllipsis || activity.toolName;
@@ -451,11 +451,11 @@ const buildPlanRunFinalAnswer = (
   stepFinalAnswers: IAiAgentStepFinalAnswer[],
 ): string => {
   if (run.status === 'failed') {
-    return `\u8ba1\u5212\u6267\u884c\u5931\u8d25\uff1a${run.errorMessage ?? '\u6267\u884c\u8fc7\u7a0b\u4e2d\u51fa\u73b0\u9519\u8bef\u3002'}`;
+    return `计划执行失败：${run.errorMessage ?? '执行过程中出现错误。'}`;
   }
 
   if (run.status === 'cancelled') {
-    return '\u8ba1\u5212\u6267\u884c\u5df2\u53d6\u6d88\u3002';
+    return '计划执行已取消。';
   }
 
   const answerByStepId = new Map(
@@ -465,12 +465,12 @@ const buildPlanRunFinalAnswer = (
     .filter((step) => step.status === 'done')
     .map((step) => {
       const answer = answerByStepId.get(step.id);
-      return answer ? `- ${step.title}\uff1a${answer}` : `- ${step.title}\uff1a\u5df2\u5b8c\u6210\u3002`;
+      return answer ? `- ${step.title}：${answer}` : `- ${step.title}：已完成。`;
     });
 
   return [
-    '\u5df2\u5b8c\u6210\u8fd9\u8f6e\u8ba1\u5212\u6267\u884c\u3002',
-    ...(resultLines.length ? ['', '\u6267\u884c\u7ed3\u679c\uff1a', ...resultLines] : []),
+    '已完成这轮计划执行。',
+    ...(resultLines.length ? ['', '执行结果：', ...resultLines] : []),
   ].join('\n');
 };
 
@@ -500,17 +500,17 @@ const buildPlanTokenEstimationMessages = (
   step: IAiTaskPlanStep,
   createdAt: string,
 ): IAiChatMessage[] => {
-  const toolList = step.tools.length ? step.tools.join(', ') : '\u672a\u9650\u5b9a\uff0c\u6309\u4efb\u52a1\u9700\u8981\u9009\u62e9\u53ef\u7528\u5de5\u5177';
+  const toolList = step.tools.length ? step.tools.join(', ') : '未限定，按任务需要选择可用工具';
 
   return [
     {
       id: `plan-token-system:${step.id}`,
       role: 'system',
       content: [
-        '\u4f60\u6b63\u5728\u6267\u884c IDE Agent Plan \u7684\u5355\u4e2a\u6b65\u9aa4\u3002',
-        '\u5fc5\u987b\u56f4\u7ed5\u5f53\u524d\u6b65\u9aa4\u76ee\u6807\u8c03\u7528\u53ef\u7528\u5de5\u5177\uff1b\u4e0d\u8981\u6267\u884c\u4e0e\u5f53\u524d\u6b65\u9aa4\u65e0\u5173\u7684\u64cd\u4f5c\u3002',
-        '\u5982\u679c\u9700\u8981\u9ad8\u98ce\u9669\u5de5\u5177\uff0c\u8bf7\u901a\u8fc7 sidecar approval \u4e8b\u4ef6\u7b49\u5f85\u7528\u6237\u786e\u8ba4\u3002',
-        '\u5199\u76d8\u3001\u5220\u9664\u3001\u547d\u4ee4\u3001\u5b89\u88c5\u4f9d\u8d56\u548c Git \u64cd\u4f5c\u90fd\u5fc5\u987b\u4fdd\u7559\u53ef\u56de\u6eda\u8bed\u4e49\u3002',
+        '你正在执行 IDE Agent Plan 的单个步骤。',
+        '必须围绕当前步骤目标调用可用工具；不要执行与当前步骤无关的操作。',
+        '如果需要高风险工具，请通过 sidecar approval 事件等待用户确认。',
+        '写盘、删除、命令、安装依赖和 Git 操作都必须保留可回滚语义。',
       ].join('\n'),
       createdAt,
       references: [],
@@ -519,12 +519,12 @@ const buildPlanTokenEstimationMessages = (
       id: `plan-token-user:${step.id}`,
       role: 'user',
       content: [
-        `\u4efb\u52a1\u76ee\u6807\uff1a${goal}`,
-        `\u5f53\u524d\u6b65\u9aa4\uff1a${step.title}`,
-        `\u6b65\u9aa4\u76ee\u6807\uff1a${step.goal}`,
-        `\u9884\u671f\u4ea7\u7269\uff1a${step.expectedOutput}`,
-        `\u5efa\u8bae\u5de5\u5177\uff1a${toolList}`,
-        '\u8bf7\u6267\u884c\u8fd9\u4e2a\u6b65\u9aa4\uff0c\u5e76\u5728\u5b8c\u6210\u540e\u7ed9\u51fa\u7b80\u77ed\u7ed3\u8bba\u3002',
+        `任务目标：${goal}`,
+        `当前步骤：${step.title}`,
+        `步骤目标：${step.goal}`,
+        `预期产物：${step.expectedOutput}`,
+        `建议工具：${toolList}`,
+        '请执行这个步骤，并在完成后给出简短结论。',
       ].join('\n'),
       createdAt,
       references: [],
@@ -551,14 +551,14 @@ const activeAgentFlowMessage = computed<IAiChatMessage | null>(() => {
   const isTerminalRun = run
     ? run.status === 'completed' || run.status === 'failed' || run.status === 'cancelled'
     : false;
-  let content = 'Agent \u6b63\u5728\u6267\u884c\u8ba1\u5212\u3002';
+  let content = 'Agent 正在执行计划。';
 
   if (run?.status === 'paused') {
-    content = '\u8ba1\u5212\u5df2\u6682\u505c\uff0c\u70b9\u51fb\u7ee7\u7eed\u540e\u4f1a\u4ece\u672a\u5b8c\u6210\u6b65\u9aa4\u6062\u590d\u6267\u884c\u3002';
+    content = '计划已暂停，点击继续后会从未完成步骤恢复执行。';
   } else if (run && isTerminalRun) {
     content = buildPlanRunFinalAnswer(run, stepFinalAnswers);
   } else if (latestToolCall) {
-    content = `AI \u6b63\u5728\u81ea\u52a8\u4f7f\u7528\u5de5\u5177\uff1a${latestToolCall.summary}`;
+    content = `AI 正在自动使用工具：${latestToolCall.summary}`;
   }
 
   return {
@@ -571,8 +571,8 @@ const activeAgentFlowMessage = computed<IAiChatMessage | null>(() => {
   };
 });
 
-// \u65e7\u7684 agent-flow synthetic message \u4ec5\u7528\u4e8e token usage \u4f30\u7b97\uff0c\u4e0d\u518d\u8fdb\u5165\u53ef\u89c1\u65f6\u95f4\u7ebf\uff1b
-// AiChatThread \u4f1a\u6309 `agent-flow:` \u524d\u7f00\u5c06\u5176\u8fc7\u6ee4\u6389\u3002
+// 旧的 agent-flow synthetic message 仅用于 token usage 估算，不再进入可见时间线；
+// AiChatThread 会按 `agent-flow:` 前缀将其过滤掉。
 const threadMessages = computed<IAiChatMessage[]>(() => {
   const flowMessage = activeAgentFlowMessage.value;
 
@@ -585,7 +585,7 @@ const threadMessages = computed<IAiChatMessage[]>(() => {
     flowMessage,
   ];
 });
-// \u771f\u6b63\u5582\u7ed9\u5e73\u94fa\u65f6\u95f4\u7ebf\u7684 entries\uff1areduce \u771f\u6e90 entries + \u53ef\u9009\u7684 plan-control \u5ba1\u6279\u6761\u76ee\uff08\u6e32\u67d3\u671f overlay\uff09\u3002
+// 真正喂给平铺时间线的 entries：reduce 真源 entries + 可选的 plan-control 审批条目（渲染期 overlay）。
 const visibleThreadEntries = computed<readonly IAiThreadEntry[]>(() => {
   const controlEntry = planControlEntry.value;
 
@@ -658,9 +658,9 @@ const hasPendingTokenRequest = computed(
     (assistant.activeMode.value === 'plan' && tokenEstimationMessages.value.length > 0),
 );
 const tokenOfficialUsage = computed(() => {
-  // \u63a5\u6536\u4fa7 ACP usage_update \u95ed\u73af\uff08ADR-20260617 \u00b7 D7-\u2466\uff09\uff1a\u5bbf\u4e3b\u5df2\u628a usage_update \u6295\u5f71\u4e3a
-  // \u5171\u4eab IAiLanguageModelUsage VM\u3002\u4efb\u4e00\u6a21\u5f0f\u53ea\u8981\u672c\u56de\u5408\u6709 ACP \u7528\u91cf\u5c31\u4f18\u5148\u91c7\u7528\uff08chat / agent
-  // \u7ecf ACP host \u4e0a\u62a5\uff09\uff1b\u5176\u5f62\u72b6\u4e0e\u5916\u90e8 LanguageModelUsage \u8d4b\u503c\u517c\u5bb9\uff0c\u53ef\u76f4\u63a5\u4f5c\u4e3a\u5b98\u65b9\u7528\u91cf\u6765\u6e90\u3002
+  // 接收侧 ACP usage_update 闭环（ADR-20260617 · D7-⑦）：宿主已把 usage_update 投影为
+  // 共享 IAiLanguageModelUsage VM。任一模式只要本回合有 ACP 用量就优先采用（chat / agent
+  // 经 ACP host 上报）；其形状与外部 LanguageModelUsage 赋值兼容，可直接作为官方用量来源。
   const acpTurnUsage = assistant.acpUsage.usage.value;
   if (acpTurnUsage) {
     return acpTurnUsage;
@@ -685,21 +685,21 @@ const { contextProps: tokenContextProps } = useAiTokenContext({
 });
 const submitLabel = computed(() => {
   if (assistant.activeMode.value === 'plan') {
-    return '\u751f\u6210\u8ba1\u5212';
+    return '生成计划';
   }
 
   if (assistant.activeMode.value === 'agent') {
-    return '\u5f00\u59cb\u6267\u884c';
+    return '开始执行';
   }
 
   return assistant.sendButtonLabel.value;
 });
 const assistantTypingLabel = computed(() => {
   if (assistant.activeMode.value === 'plan' && (planIsPlanning.value || planIsClassifying.value)) {
-    return '\u6b63\u5728\u751f\u6210\u8ba1\u5212';
+    return '正在生成计划';
   }
 
-  return '\u6b63\u5728\u51c6\u5907\u56de\u590d';
+  return '正在准备回复';
 });
 
 if (planStore.value.mode === 'plan' || planId.value || planActiveRun.value) {
@@ -715,14 +715,14 @@ const fileRollbackLabel = computed(() => {
   }
 
   if (prompt.status === 'reverting') {
-    return '\u6b63\u5728\u56de\u6eda AI \u6587\u4ef6\u4fee\u6539';
+    return '正在回滚 AI 文件修改';
   }
 
   if (prompt.status === 'reverted') {
-    return '\u5df2\u56de\u6eda AI \u6700\u8fd1\u4e00\u6b21\u6587\u4ef6\u4fee\u6539';
+    return '已回滚 AI 最近一次文件修改';
   }
 
-  return 'AI \u5df2\u4fee\u6539\u6587\u4ef6\uff0c\u53ef\u56de\u6eda\u6700\u8fd1\u4e00\u6b21';
+  return 'AI 已修改文件，可回滚最近一次';
 });
 const isFileRollbackDisabled = computed(() => fileRollbackPrompt.value?.status !== 'ready');
 
@@ -751,7 +751,7 @@ const handleSuggestionSelect = async (suggestion: string): Promise<void> => {
   await assistant.sendMessage({ agentBackend: sessionAgentBackend.value });
 };
 
-// \u5207\u6362\u4f1a\u8bdd Agent \u540e\u7aef\u540e\uff0c\u6e05\u6389\u4e0a\u4e00\u6761\uff08\u53ef\u80fd\u662f Kimi \u672a\u63a5\u5165\uff09\u7684\u9519\u8bef\u63d0\u793a\u3002
+// 切换会话 Agent 后端后，清掉上一条（可能是 Kimi 未接入）的错误提示。
 const handleAgentBackendChange = (agent: unknown): void => {
   if (!isSessionAgentBackend(agent)) {
     return;
@@ -799,19 +799,19 @@ const handleSearchWebSources = async (query: string): Promise<void> => {
       step ? { stepId: step.id, stepTitle: step.title } : {},
     );
   } catch (error) {
-    setPlanError(error, '\u7f51\u7edc\u641c\u7d22\u5931\u8d25\u3002');
+    setPlanError(error, '网络搜索失败。');
   }
 };
 const handleFetchWebSource = async (sourceId: string): Promise<void> => {
   try {
     await webSources.fetchSource(sourceId);
   } catch (error) {
-    setPlanError(error, '\u7f51\u9875\u8bfb\u53d6\u5931\u8d25\u3002');
+    setPlanError(error, '网页读取失败。');
   }
 };
 
-// \u4e3b\u6a21\u578b\u9009\u62e9\u5668\u53d8\u66f4\uff1a\u53ea\u5bf9 builtin\uff08mastra \u5168\u5c40\u6a21\u578b\uff09\u751f\u6548\uff0c\u628a selectedModel \u6301\u4e45\u5316\u5230 ai.json\u3002
-// kimi \u7b49\u5916\u90e8 Agent \u7684\u6a21\u578b\u5207\u6362\u8d70 ACP config_options\uff08handleSessionConfigOptionChange\uff09\uff0c\u4e0d\u7ecf\u6b64\u8def\u5f84\u3002
+// 主模型选择器变更：只对 builtin（mastra 全局模型）生效，把 selectedModel 持久化到 ai.json。
+// kimi 等外部 Agent 的模型切换走 ACP config_options（handleSessionConfigOptionChange），不经此路径。
 const handlePromptModelChange = async (modelId: string): Promise<void> => {
   if (sessionAgentBackend.value !== 'builtin') {
     return;
@@ -833,7 +833,7 @@ const handlePromptModelChange = async (modelId: string): Promise<void> => {
     });
     settingsDraft.value = cloneAiConfigPayload(assistant.config.value);
   } catch (error) {
-    assistant.error.value = toErrorMessage(error, '\u6a21\u578b\u5207\u6362\u5931\u8d25');
+    assistant.error.value = toErrorMessage(error, '模型切换失败');
   } finally {
     isPromptModelSaving.value = false;
   }
@@ -845,7 +845,7 @@ const handlePromptNetworkPermissionChange = async (
   try {
     await agentNetwork.setNetworkPermission(permission);
   } catch (error) {
-    setPlanError(error, '\u8bbe\u7f6e\u7f51\u7edc\u8bbf\u95ee\u6743\u9650\u5931\u8d25\u3002');
+    setPlanError(error, '设置网络访问权限失败。');
   }
 };
 
@@ -861,7 +861,7 @@ const handlePromptExecutionModeChange = (mode: TAiExecutionMode): void => {
   planStore.value.setExecutionMode(mode);
 };
 
-// kimi(ACP) \u4f1a\u8bdd\u914d\u7f6e\u9879\u53d8\u66f4\uff1a\u628a\u8f93\u5165\u6846\u9009\u62e9\u7684 optionId/value \u8def\u7531\u5230\u5f53\u524d\u4f1a\u8bdd\u7684 ACP \u914d\u7f6e\u9879\u5207\u6362\u3002
+// kimi(ACP) 会话配置项变更：把输入框选择的 optionId/value 路由到当前会话的 ACP 配置项切换。
 const handleSessionConfigOptionChange = (optionId: string, value: string): void => {
   void assistant.acpSessionConfigOptions.selectConfigOption(
     assistant.activeConversationId.value,
@@ -884,7 +884,7 @@ const handlePromptPrewarm = (): void => {
         level: 'info',
         scope: 'ai',
         event: 'agent_sidecar_warmup.skipped',
-        reason: toErrorMessage(error, '\u9884\u70ed\u8fde\u63a5\u5931\u8d25'),
+        reason: toErrorMessage(error, '预热连接失败'),
       }),
     );
   });
@@ -900,7 +900,7 @@ const withAgentRunAction = async <T>(
   const runId = getActiveAgentRunId();
 
   if (!runId) {
-    setPlanErrorMessage('\u5f53\u524d\u6ca1\u6709\u53ef\u6267\u884c\u7684 Agent run\u3002');
+    setPlanErrorMessage('当前没有可执行的 Agent run。');
     return null;
   }
 
@@ -924,7 +924,7 @@ const handleRemovePlanStep = (stepId: string): void => {
   try {
     assistant.agentPlan.removeStep(stepId);
   } catch (error) {
-    setPlanError(error, '\u5220\u9664\u8ba1\u5212\u6b65\u9aa4\u5931\u8d25\u3002');
+    setPlanError(error, '删除计划步骤失败。');
   }
 };
 
@@ -932,7 +932,7 @@ const handleRegeneratePlan = async (): Promise<void> => {
   try {
     await assistant.agentPlan.regeneratePlan();
   } catch (error) {
-    setPlanError(error, '\u91cd\u751f\u6210\u8ba1\u5212\u5931\u8d25\u3002');
+    setPlanError(error, '重生成计划失败。');
   }
 };
 
@@ -944,26 +944,26 @@ const handleApprovePlan = async (): Promise<void> => {
       workspaceRootPath: props.workspaceRootPath,
     });
   } catch (error) {
-    setPlanError(error, '\u6279\u51c6\u6216\u542f\u52a8\u8ba1\u5212\u5931\u8d25\u3002');
+    setPlanError(error, '批准或启动计划失败。');
   }
 };
 
 const handleRejectPlan = async (): Promise<void> => {
   try {
-    await assistant.agentPlan.rejectPlan('\u7528\u6237\u62d2\u7edd\u5f53\u524d\u8ba1\u5212\u3002');
+    await assistant.agentPlan.rejectPlan('用户拒绝当前计划。');
   } catch (error) {
-    setPlanError(error, '\u62d2\u7edd\u8ba1\u5212\u5931\u8d25\u3002');
+    setPlanError(error, '拒绝计划失败。');
   }
 };
 
 const handlePauseRun = async (): Promise<void> => {
-  await withAgentRunAction((runId) => agentRun.pauseRun(runId), '\u6682\u505c Agent run \u5931\u8d25\u3002');
+  await withAgentRunAction((runId) => agentRun.pauseRun(runId), '暂停 Agent run 失败。');
 };
 
 const handleResumeRun = async (): Promise<void> => {
   const resumedRun = await withAgentRunAction(
     (runId) => agentRun.resumeRun(runId),
-    '\u7ee7\u7eed Agent run \u5931\u8d25\u3002',
+    '继续 Agent run 失败。',
   );
 
   if (!resumedRun) {
@@ -977,12 +977,12 @@ const handleResumeRun = async (): Promise<void> => {
       workspaceRootPath: props.workspaceRootPath,
     });
   } catch (error) {
-    setPlanError(error, '\u7ee7\u7eed\u6267\u884c\u8ba1\u5212\u5931\u8d25\u3002');
+    setPlanError(error, '继续执行计划失败。');
   }
 };
 
 const handleCancelRun = async (): Promise<void> => {
-  await withAgentRunAction((runId) => agentRun.cancelRun(runId), '\u53d6\u6d88 Agent run \u5931\u8d25\u3002');
+  await withAgentRunAction((runId) => agentRun.cancelRun(runId), '取消 Agent run 失败。');
 };
 
 const handleResolveToolConfirmation = async (
@@ -991,7 +991,7 @@ const handleResolveToolConfirmation = async (
   const confirmation = planPendingToolConfirmation.value;
 
   if (!confirmation) {
-    setPlanErrorMessage('\u5f53\u524d\u6ca1\u6709\u5f85\u5904\u7406\u7684\u5de5\u5177\u786e\u8ba4\u3002');
+    setPlanErrorMessage('当前没有待处理的工具确认。');
     return;
   }
 
@@ -1002,7 +1002,7 @@ const handleResolveToolConfirmation = async (
     try {
       await assistant.resolveSidecarToolConfirmation(decision);
     } catch (error) {
-      setPlanError(error, '\u5904\u7406 Provider \u5de5\u5177\u786e\u8ba4\u5931\u8d25\u3002');
+      setPlanError(error, '处理 Provider 工具确认失败。');
     } finally {
       isAgentRunActionPending.value = false;
     }
@@ -1018,7 +1018,7 @@ const handleResolveToolConfirmation = async (
     try {
       resolvedRun = await agentRun.resolveSidecarStepToolConfirmation(confirmation.id, decision);
     } catch (error) {
-      setPlanError(error, '\u5904\u7406 Sidecar step \u5de5\u5177\u786e\u8ba4\u5931\u8d25\u3002');
+      setPlanError(error, '处理 Sidecar step 工具确认失败。');
     } finally {
       isAgentRunActionPending.value = false;
     }
@@ -1031,14 +1031,14 @@ const handleResolveToolConfirmation = async (
           workspaceRootPath: props.workspaceRootPath,
         });
       } catch (error) {
-        setPlanError(error, '\u7ee7\u7eed\u6267\u884c\u8ba1\u5212\u5931\u8d25\u3002');
+        setPlanError(error, '继续执行计划失败。');
       }
     }
 
     return;
   }
 
-  setPlanErrorMessage('Legacy Agent \u5de5\u5177\u786e\u8ba4\u94fe\u5df2\u79fb\u9664\uff0c\u8bf7\u4f7f\u7528\u5b98\u65b9 sidecar \u5ba1\u6279\u94fe\u3002');
+  setPlanErrorMessage('Legacy Agent 工具确认链已移除，请使用官方 sidecar 审批链。');
 };
 
 const handleResolveUserQuestion = async (result: IAskUserResult): Promise<void> => {
@@ -1052,7 +1052,7 @@ const handleResolveUserQuestion = async (result: IAskUserResult): Promise<void> 
   try {
     await assistant.resolveSidecarUserQuestion(result);
   } catch (error) {
-    setPlanError(error, '\u5904\u7406\u53cd\u5411\u63d0\u95ee\u5931\u8d25\u3002');
+    setPlanError(error, '处理反向提问失败。');
   } finally {
     isResolvingUserQuestion.value = false;
   }
@@ -1072,7 +1072,7 @@ const handleResolveAcpApproval = async (optionId: string): Promise<void> => {
   try {
     await acpApproval.resolve(current.toolCallId, optionId);
   } catch (error) {
-    assistant.error.value = toErrorMessage(error, '\u63d0\u4ea4\u5de5\u5177\u8c03\u7528\u5ba1\u6279\u5931\u8d25\u3002');
+    assistant.error.value = toErrorMessage(error, '提交工具调用审批失败。');
   }
 };
 
@@ -1083,8 +1083,8 @@ const handleCancelAcpApproval = (): void => {
     return;
   }
 
-  // \u53d6\u6d88\u5ba1\u6279 = \u53d6\u6d88\u5f53\u524d\u56de\u5408\uff1a\u5148\u672c\u5730\u51fa\u961f\u907f\u514d\u91cd\u590d\u5448\u73b0\uff0c\u518d\u89e6\u53d1\u5e26\u5916 ai_cancel\uff1b
-  // \u5bbf\u4e3b ApprovalRegistry::cancel_session \u4e22\u5f03 sender \u2192 Cancelled\uff0c\u7ecf\u5e26\u5916 responder \u56de\u6295\u3002
+  // 取消审批 = 取消当前回合：先本地出队避免重复呈现，再触发带外 ai_cancel；
+  // 宿主 ApprovalRegistry::cancel_session 丢弃 sender → Cancelled，经带外 responder 回投。
   acpApproval.dismiss(current.toolCallId);
   void assistant.stopCurrentRequest();
 };
@@ -1096,19 +1096,19 @@ const handleResolveAcpUserQuestion = async (result: IAskUserResult): Promise<voi
     return;
   }
 
-  // \u9009\u4e2d\u5019\u9009\u9879 / \u547d\u4e2d Skip(reject) \u2192 \u56de\u6295\u8be5 optionId \u539f\u503c\uff08\u5bf9\u9f50 approval.rs \u9010\u5b57\u5339\u914d\uff09\u3002
+  // 选中候选项 / 命中 Skip(reject) → 回投该 optionId 原值（对齐 approval.rs 逐字匹配）。
   const decision = resolveAcpDecisionFromAskUserResult(current.request, result);
 
   if (decision) {
     try {
       await acpApproval.resolve(current.toolCallId, decision);
     } catch (error) {
-      assistant.error.value = toErrorMessage(error, '\u63d0\u4ea4\u5de5\u5177\u8c03\u7528\u5ba1\u6279\u5931\u8d25\u3002');
+      assistant.error.value = toErrorMessage(error, '提交工具调用审批失败。');
     }
     return;
   }
 
-  // \u65e2\u672a\u9009\u9879\u4e5f\u65e0 reject \u53ef\u56de\u6295 \u2192 \u53d6\u6d88\u5f53\u524d\u56de\u5408\uff08\u5e26\u5916 ai_cancel\uff09\u3002
+  // 既未选项也无 reject 可回投 → 取消当前回合（带外 ai_cancel）。
   acpApproval.dismiss(current.toolCallId);
   void assistant.stopCurrentRequest();
 };
@@ -1129,7 +1129,7 @@ const saveSettings = async (
     settingsDraft.value = cloneAiConfigPayload(assistant.config.value);
     feedback.onSuccess(message);
   } catch (error) {
-    feedback.onError(toErrorMessage(error, 'AI \u8fde\u63a5\u5931\u8d25'));
+    feedback.onError(toErrorMessage(error, 'AI 连接失败'));
   }
 };
 
@@ -1142,7 +1142,7 @@ const testProvider = async (
   try {
     feedback.onSuccess(await assistant.testProviderConfig(config, apiKey, role));
   } catch (error) {
-    feedback.onError(toErrorMessage(error, '\u8fde\u63a5\u6d4b\u8bd5\u5931\u8d25'));
+    feedback.onError(toErrorMessage(error, '连接测试失败'));
   }
 };
 
@@ -1155,7 +1155,7 @@ const saveTavilyKey = async (
     settingsTavilyApiKey.value = apiKey.trim();
     feedback.onSuccess(message);
   } catch (error) {
-    feedback.onError(toErrorMessage(error, 'Tavily API Key \u4fdd\u5b58\u5931\u8d25'));
+    feedback.onError(toErrorMessage(error, 'Tavily API Key 保存失败'));
   }
 };
 
@@ -1168,14 +1168,14 @@ const restorePersistedPlanUiState = async (): Promise<void> => {
   await assistant.agentPlan.restorePersistedPlanState();
 };
 
-// \u542f\u52a8\u6253\u70b9\uff08\u9636\u6bb50\u00b7\u91cf\u5316\uff09\uff1a\u540c\u6b65 setup\uff08\u542b\u6d3e\u751f\u8ba1\u7b97\uff09\u5168\u90e8\u5b8c\u6210\u3002
+// 启动打点（阶段0·量化）：同步 setup（含派生计算）全部完成。
 markStartup('ai-assistant-panel-setup-done');
 
 onMounted(() => {
-  // \u542f\u52a8\u6253\u70b9\uff08\u9636\u6bb50\u00b7\u91cf\u5316\uff09\uff1a\u5b50\u7ec4\u4ef6\u6e32\u67d3\u6302\u8f7d\u5b8c\u6210\uff08\u9996\u5e27\uff09\u3002
+  // 启动打点（阶段0·量化）：子组件渲染挂载完成（首帧）。
   markStartup('ai-assistant-panel-mounted');
   restorePersistedPlanUiState().catch((error) => {
-    setPlanError(error, '\u6062\u590d\u8ba1\u5212\u72b6\u6001\u5931\u8d25\u3002');
+    setPlanError(error, '恢复计划状态失败。');
   });
   assistant
     .loadConfig()
@@ -1187,10 +1187,10 @@ onMounted(() => {
 </script>
 
 <template>
-  <AiPanelFrame class="ai-assistant-panel" aria-label="AI \u52a9\u624b\u9762\u677f">
+  <AiPanelFrame class="ai-assistant-panel" aria-label="AI 助手面板">
     <template #mark>
       <Select :model-value="sessionAgentBackend" @update:model-value="handleAgentBackendChange">
-        <SelectTrigger aria-label="\u9009\u62e9 Agent" class="ai-agent-mark">
+        <SelectTrigger aria-label="选择 Agent" class="ai-agent-mark">
           <AiProviderIcon
             v-if="sessionAgentBackend === 'kimi'"
             class="ai-agent-mark__icon"
@@ -1225,10 +1225,10 @@ onMounted(() => {
     </template>
 
     <template #actions>
-      <button type="button" class="ai-icon-button" aria-label="\u65b0\u5efa\u5bf9\u8bdd" @click="startNewConversation">
+      <button type="button" class="ai-icon-button" aria-label="新建对话" @click="startNewConversation">
         <SquarePen aria-hidden="true" />
       </button>
-      <button type="button" class="ai-icon-button" aria-label="AI \u8bbe\u7f6e" @click="openSettings">
+      <button type="button" class="ai-icon-button" aria-label="AI 设置" @click="openSettings">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" aria-hidden="true">
           <path d="M20 7h-7" />
           <path d="M14 17H4" />
@@ -1237,7 +1237,7 @@ onMounted(() => {
         </svg>
       </button>
       <div ref="historyAnchorRef" class="ai-history-anchor">
-        <button type="button" class="ai-icon-button" aria-label="\u5bf9\u8bdd\u8bb0\u5f55" aria-haspopup="dialog"
+        <button type="button" class="ai-icon-button" aria-label="对话记录" aria-haspopup="dialog"
           :aria-expanded="isHistoryOpen" @click="toggleHistoryPopover">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" aria-hidden="true">
             <path d="M3 3v5h5" />
@@ -1250,12 +1250,12 @@ onMounted(() => {
             :animate="{ opacity: 1, scale: 1, y: 0 }" :exit="{ opacity: 0, scale: 0.96, y: -6 }"
             :transition="{ duration: 0.18, ease: [0.23, 1, 0.32, 1] }">
             <section ref="historyPopoverRef" class="ai-history-popover" role="dialog"
-              aria-label="\u5bf9\u8bdd\u8bb0\u5f55">
+              aria-label="对话记录">
               <header class="ai-history-header">
                 <div class="ai-history-title-group">
-                  <strong>\u5bf9\u8bdd\u8bb0\u5f55</strong>
+                  <strong>对话记录</strong>
                 </div>
-                <button v-if="activeHistoryThread" type="button" class="ai-history-clear-icon" aria-label="\u5220\u9664\u5f53\u524d\u5bf9\u8bdd\u8bb0\u5f55"
+                <button v-if="activeHistoryThread" type="button" class="ai-history-clear-icon" aria-label="删除当前对话记录"
                   @click="openDeleteConversationDialog(activeHistoryThread.id)">
                   <Trash2 aria-hidden="true" />
                 </button>
@@ -1271,7 +1271,7 @@ onMounted(() => {
                       </div>
                       <div class="ai-history-subtitle" v-text="getHistoryMessageCountLabel(thread.messages)"></div>
                     </button>
-                    <button type="button" class="ai-history-delete-button" aria-label="\u5220\u9664\u8fd9\u6761\u5bf9\u8bdd\u8bb0\u5f55"
+                    <button type="button" class="ai-history-delete-button" aria-label="删除这条对话记录"
                       @click.stop="openDeleteConversationDialog(thread.id)">
                       <Trash2 aria-hidden="true" />
                     </button>
@@ -1279,7 +1279,7 @@ onMounted(() => {
                 </div>
                 <div v-if="hasMoreHistoryThreads" class="ai-history-load-sentinel" aria-hidden="true"></div>
               </div>
-              <div v-else class="ai-history-empty">\u6682\u65e0\u5bf9\u8bdd\u8bb0\u5f55</div>
+              <div v-else class="ai-history-empty">暂无对话记录</div>
             </section>
           </Motion>
         </AnimatePresence>
@@ -1385,8 +1385,8 @@ onMounted(() => {
               <p v-text="deleteDialogDescription"></p>
             </div>
             <div class="ai-dialog-actions">
-              <button type="button" class="ai-button is-ghost" @click="cancelClearConversation">\u53d6\u6d88</button>
-              <button type="button" class="ai-button is-danger" @click="confirmClearConversation">\u5220\u9664</button>
+              <button type="button" class="ai-button is-ghost" @click="cancelClearConversation">取消</button>
+              <button type="button" class="ai-button is-danger" @click="confirmClearConversation">删除</button>
             </div>
           </section>
         </div>
@@ -1853,7 +1853,7 @@ onMounted(() => {
 </style>
 
 <style id="ai-agent-mark-global-overrides">
-/* \u5de6\u4e0a\u89d2 Agent \u4e0b\u62c9\uff1aSelectContent \u4f1a teleport \u5230 body\uff0c\u5fc5\u987b\u7528\u5168\u5c40\u6837\u5f0f\u8986\u76d6 */
+/* 左上角 Agent 下拉：SelectContent 会 teleport 到 body，必须用全局样式覆盖 */
 .ai-agent-mark-content {
   border: 1px solid #f0f0f2 !important;
   background: #ffffff !important;
@@ -1864,14 +1864,14 @@ onMounted(() => {
   padding: 8px !important;
 }
 
-/* \u8986\u76d6\u5185\u90e8\u53ef\u80fd\u7ee7\u627f\u7684\u5f39\u7a97/\u83dc\u5355\u80cc\u666f */
+/* 覆盖内部可能继承的弹窗/菜单背景 */
 .ai-agent-mark-content *,
 .ai-agent-mark-content [data-radix-select-viewport],
 .ai-agent-mark-content [role='listbox'] {
   background-color: transparent;
 }
 
-/* \u5220\u9664/\u9690\u85cf\u201c\u9009\u62e9 Agent\u201d\u6807\u9898\uff0c\u53cc\u4fdd\u9669 */
+/* 删除/隐藏“选择 Agent”标题，双保险 */
 .ai-agent-mark-content .ai-agent-mark-section-label,
 .ai-agent-mark-content [data-slot='select-label'] {
   display: none !important;

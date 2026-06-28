@@ -419,7 +419,7 @@ const sessionConfigOptionList = computed<readonly IAcpSessionConfigOption[]>(
 );
 
 // 识别「模型」配置项：Kimi 经 ACP config_options 公示的可切换模型项（id/name 含 model/模型）。
-const MODEL_CONFIG_OPTION_PATTERN = /model|\u6a21\u578b/i;
+const MODEL_CONFIG_OPTION_PATTERN = /model|模型/i;
 const isModelConfigOption = (option: IAcpSessionConfigOption): boolean =>
   MODEL_CONFIG_OPTION_PATTERN.test(option.id) || MODEL_CONFIG_OPTION_PATTERN.test(option.name);
 
@@ -536,11 +536,11 @@ const selectedModelLabel = computed(() => {
     return resolveSessionConfigOptionLabel(modelOption);
   }
   if (isKimiModelLocked.value) {
-    return 'Kimi \u672a\u516c\u793a\u53ef\u5207\u6362\u6a21\u578b';
+    return 'Kimi 未公示可切换模型';
   }
   const modelId = selectedModel.value;
   if (!modelId) {
-    return '\u672a\u9009\u62e9\u6a21\u578b';
+    return '未选择模型';
   }
   const matched = selectedPlatform.value.models.find((model) => model.id === modelId);
   if (matched) {
@@ -562,7 +562,7 @@ const modelSections = computed<IAiPromptModelSection[]>(() =>
   AI_SERVICE_PLATFORM_PRESETS.map((platform) => ({
     key: platform.id,
     label: platform.label,
-    badge: connectedPlatformIds.value.has(platform.id) ? '\u5df2\u63a5\u5165' : null,
+    badge: connectedPlatformIds.value.has(platform.id) ? '已接入' : null,
     models: platform.models.map((model) => ({
       id: model.id,
       label: formatModelLabel(model.label),
@@ -615,9 +615,9 @@ const modeSelectValueLabel = computed(() => {
   return current?.label ?? '';
 });
 
-const networkPermissionLabel = computed(() => (networkPermissionEnabled.value ? '\u5df2\u5141\u8bb8' : '\u8be2\u95ee'));
+const networkPermissionLabel = computed(() => (networkPermissionEnabled.value ? '已允许' : '询问'));
 
-const executionModeLabel = computed(() => (executionAutonomous.value ? '\u5df2\u5f00\u542f' : '\u5df2\u5173\u95ed'));
+const executionModeLabel = computed(() => (executionAutonomous.value ? '已开启' : '已关闭'));
 
 const normalizePendingAttachmentName = (file: File): string => {
   const normalizedName = file.name.trim();
@@ -637,14 +637,14 @@ const createPendingAttachment = (file: File): IAiAttachedFile => {
     sizeLabel: '',
     kind,
     status: 'processing',
-    detailLabel: '\u5904\u7406\u4e2d\u2026',
+    detailLabel: '处理中…',
     reference: {
       id,
       kind: kind === 'image' ? 'image-attachment' : 'search-result',
-      label: `${kind === 'image' ? '\u56fe\u7247\u9644\u4ef6' : '\u9644\u4ef6'} \u00b7 ${name}`,
+      label: `${kind === 'image' ? '图片附件' : '附件'} · ${name}`,
       path: name,
       range: null,
-      contentPreview: '\u9644\u4ef6\u6b63\u5728\u5904\u7406\u4e2d\uff0c\u5b8c\u6210\u540e\u4f1a\u4f5c\u4e3a AI \u4e0a\u4e0b\u6587\u53d1\u9001\u3002',
+      contentPreview: '附件正在处理中，完成后会作为 AI 上下文发送。',
       redacted: false,
     },
   };
@@ -667,7 +667,7 @@ const queueAttachmentFile = async (file: File): Promise<void> => {
   }
   pendingAttachmentDrafts.value = pendingAttachmentDrafts.value.map((attachment) =>
     attachment.id === draft.id
-      ? { ...attachment, status: 'failed', detailLabel: '\u5904\u7406\u5931\u8d25' }
+      ? { ...attachment, status: 'failed', detailLabel: '处理失败' }
       : attachment,
   );
 };
@@ -1041,7 +1041,7 @@ const toggleNetworkPermission = (): void => {
   emit('networkPermissionChange', networkPermissionEnabled.value ? 'ask' : 'allowed-this-run');
 };
 
-// 切换自主 plan 模式:interactive(逐步门控) \u21c4 autonomous(无人值守闭环)。
+// 切换自主 plan 模式:interactive(逐步门控) ⇄ autonomous(无人值守闭环)。
 // executionMode 是本地同步状态,无需 saving 态。
 const toggleExecutionMode = (): void => {
   if (props.disabled) {
@@ -1072,7 +1072,7 @@ const handleRemoveAttachment = (id: string): void => {
   emit('removeFile', id);
 };
 
-// \ud83d\udcce 附件选择：调用系统原生文件对话框（记忆上次目录、首次回退工作区根 / home）。
+// 📎 附件选择：调用系统原生文件对话框（记忆上次目录、首次回退工作区根 / home）。
 // 仅桌面运行时可用；已移除向隐藏 <input type=file> 的降级。
 const handleOpenFileDialog = async (): Promise<void> => {
   if (props.disabled) {
@@ -1201,7 +1201,7 @@ onMounted(() => {
                     type="button"
                     class="ai-question-pager-btn"
                     :disabled="questionIndex === 0"
-                    aria-label="\u4e0a\u4e00\u4e2a\u95ee\u9898"
+                    aria-label="上一个问题"
                     @click="goToPrevQuestion"
                   >
                     <ChevronLeft class="size-4" />
@@ -1211,7 +1211,7 @@ onMounted(() => {
                     type="button"
                     class="ai-question-pager-btn"
                     :disabled="questionIndex === questionTotal - 1"
-                    aria-label="\u4e0b\u4e00\u4e2a\u95ee\u9898"
+                    aria-label="下一个问题"
                     @click="goToNextQuestion"
                   >
                     <ChevronRight class="size-4" />
@@ -1220,7 +1220,7 @@ onMounted(() => {
                 <button
                   type="button"
                   class="ai-question-close"
-                  aria-label="\u53d6\u6d88\u63d0\u95ee"
+                  aria-label="取消提问"
                   @click="handleQuestionCancel"
                 >
                   <X class="size-4" />
@@ -1260,7 +1260,7 @@ onMounted(() => {
                 <button
                   type="button"
                   class="ai-question-free-check"
-                  aria-label="\u9009\u62e9\u81ea\u5b9a\u4e49\u56de\u7b54"
+                  aria-label="选择自定义回答"
                   @click="toggleFreeOption"
                 >
                   <span class="ai-question-checkbox" aria-hidden="true">
@@ -1270,7 +1270,7 @@ onMounted(() => {
                 <textarea
                   class="ai-question-free"
                   rows="1"
-                  :placeholder="currentQuestion?.placeholder || '\u6216\u8005\uff0c\u8bf7\u63cf\u8ff0\u4f60\u7684\u8981\u6c42\u2026\u2026'"
+                  :placeholder="currentQuestion?.placeholder || '或者，请描述你的要求……'"
                   :value="currentDraft.text"
                   @input="onQuestionTextInput"
                   @focus="focusFreeOption"
@@ -1286,7 +1286,7 @@ onMounted(() => {
             data-slot="ai-prompt-editor"
             role="textbox"
             aria-multiline="true"
-            aria-label="\u8f93\u5165\u6d88\u606f"
+            aria-label="输入消息"
             :contenteditable="disabled ? 'false' : 'true'"
             @input="onEditorInput"
             @keydown="handleKeyDown"
@@ -1301,7 +1301,7 @@ onMounted(() => {
             v-if="isEditorEmpty"
             class="ai-prompt-placeholder"
             aria-hidden="true"
-            >\u4f7f\u7528 AI \u5904\u7406\u5404\u79cd\u4efb\u52a1...</span
+            >使用 AI 处理各种任务...</span
           >
         </div>
         <InputGroupAddon align="block-end" class="ai-toolbar-row">
@@ -1312,7 +1312,7 @@ onMounted(() => {
               class="ai-icon-action ai-attachment-button"
               size="icon-xs"
               :disabled="disabled"
-              aria-label="\u63d0\u4f9b\u80cc\u666f\u4fe1\u606f"
+              aria-label="提供背景信息"
               @click="handleOpenFileDialog"
             >
               <Paperclip class="size-4" :stroke-width="1.5" />
@@ -1325,7 +1325,7 @@ onMounted(() => {
                   class="ai-icon-action ai-mode-trigger"
                   size="icon-xs"
                   :disabled="disabled"
-                  aria-label="\u6253\u5f00 AI \u6a21\u5f0f\u8bbe\u7f6e"
+                  aria-label="打开 AI 模式设置"
                 >
                   <Settings2 class="size-4" :stroke-width="1.5" />
                 </InputGroupButton>
@@ -1367,7 +1367,7 @@ onMounted(() => {
                   @select.prevent="toggleNetworkPermission"
                 >
                   <Globe class="ai-settings-menu-icon" />
-                  <span class="ai-settings-menu-label">\u7f51\u7edc\u8bbf\u95ee\u6743\u9650</span>
+                  <span class="ai-settings-menu-label">网络访问权限</span>
                   <button
                     type="button"
                     class="ai-network-switch"
@@ -1385,7 +1385,7 @@ onMounted(() => {
                   @select="handleOpenInformationSources"
                 >
                   <Network class="ai-settings-menu-icon" />
-                  <span class="ai-settings-menu-label">\u6211\u7684\u4fe1\u606f\u6e90</span>
+                  <span class="ai-settings-menu-label">我的信息源</span>
                   <ChevronRight class="ai-settings-menu-chevron" />
                 </DropdownMenuItem>
                 <DropdownMenuItem
@@ -1393,7 +1393,7 @@ onMounted(() => {
                   @select="openSkillsManager"
                 >
                   <Plus class="ai-settings-menu-icon" />
-                  <span class="ai-settings-menu-label">\u6dfb\u52a0skill</span>
+                  <span class="ai-settings-menu-label">添加skill</span>
                 </DropdownMenuItem>
 
                 <DropdownMenuItem
@@ -1403,7 +1403,7 @@ onMounted(() => {
                   @select.prevent="toggleExecutionMode"
                 >
                   <Bot class="ai-settings-menu-icon" />
-                  <span class="ai-settings-menu-label">\u81ea\u4e3bplan\u6a21\u5f0f</span>
+                  <span class="ai-settings-menu-label">自主plan模式</span>
                   <button
                     type="button"
                     class="ai-network-switch"
@@ -1421,7 +1421,7 @@ onMounted(() => {
                   @select="handleOpenPersonalization"
                 >
                   <Paintbrush class="ai-settings-menu-icon" />
-                  <span class="ai-settings-menu-label">\u4e2a\u6027\u5316</span>
+                  <span class="ai-settings-menu-label">个性化</span>
                 </DropdownMenuItem>
               </DropdownMenuContent>
             </DropdownMenu>
@@ -1432,7 +1432,7 @@ onMounted(() => {
             :disabled="modelSelectDisabled || isKimiModelLocked"
             @update:model-value="handleModelSelectorChange"
           >
-            <SelectTrigger aria-label="\u9009\u62e9\u6a21\u578b" class="ai-model-trigger">
+            <SelectTrigger aria-label="选择模型" class="ai-model-trigger">
               <AiProviderIcon
                 class="ai-model-trigger__icon"
                 :platform-id="modelTriggerPlatformId"
@@ -1533,7 +1533,7 @@ onMounted(() => {
             </Select>
           </template>
           <Context v-bind="resolvedTokenContext" :cost="tokenUsageCost">
-            <ContextTrigger class="ai-token-trigger" aria-label="Token \u6d88\u8017" />
+            <ContextTrigger class="ai-token-trigger" aria-label="Token 消耗" />
             <ContextContent
               side="top"
               align="end"
@@ -1554,7 +1554,7 @@ onMounted(() => {
             variant="outline"
             class="ai-send-button"
             size="icon-xs"
-            aria-label="\u505c\u6b62"
+            aria-label="停止"
             @click="handleStop"
           >
             <Square class="size-4" />
