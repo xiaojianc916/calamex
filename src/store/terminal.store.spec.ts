@@ -48,9 +48,16 @@ describe('useTerminalRuntimeStore', () => {
 
   it('markRunStarted 同 runId 再次到达时合并句柄，不新增镜像', () => {
     const store = useTerminalRuntimeStore();
-    store.markRunStarted(createHandle({ runId: 'run-1', sessionId: 'session-A', cwd: '', commandLine: '' }));
     store.markRunStarted(
-      createHandle({ runId: 'run-1', sessionId: 'session-A', cwd: '/repo', commandLine: 'bash x.sh' }),
+      createHandle({ runId: 'run-1', sessionId: 'session-A', cwd: '', commandLine: '' }),
+    );
+    store.markRunStarted(
+      createHandle({
+        runId: 'run-1',
+        sessionId: 'session-A',
+        cwd: '/repo',
+        commandLine: 'bash x.sh',
+      }),
     );
     expect(store.sessionActiveRuns.size).toBe(1);
     expect(store.activeRun?.cwd).toBe('/repo');

@@ -18,6 +18,7 @@ import type {
 } from '@/types/git';
 import { areFileSystemPathsEqual, normalizeFileSystemPath } from '@/utils/file/path';
 import { logger } from '@/utils/platform/logger';
+import { useBackgroundQueue } from './git/use-background-queue';
 import {
   createEmptyPullRequestSupport,
   createPullRequestRepositoryScope,
@@ -35,7 +36,6 @@ import {
   type TPullRequestState,
   updatePullRequestListForState,
 } from './git-pull-request-helpers';
-import { useBackgroundQueue } from './git/use-background-queue';
 
 /** Git store 后台任务（commit 统计 / PR 预载）失败时的统一日志通道。 */
 const gitLogger = logger.child({ module: 'git' });
@@ -269,8 +269,7 @@ export const useGitStore = defineStore('git', () => {
   // process / shouldSkip 在运行时才调用，故可在此提前引用后续定义的 getCommitStats / loadCommitStatsOnly。
   const commitStatsQueue = useBackgroundQueue({
     process: (commitId) => loadCommitStatsOnly(commitId),
-    shouldSkip: (commitId) =>
-      !status.value.repositoryRootPath || Boolean(getCommitStats(commitId)),
+    shouldSkip: (commitId) => !status.value.repositoryRootPath || Boolean(getCommitStats(commitId)),
     delayMs: GIT_COMMIT_STATS_BACKGROUND_DELAY_MS,
     failureLogEvent: 'git.commit_stats.background_load_failed',
     logger: gitLogger,
