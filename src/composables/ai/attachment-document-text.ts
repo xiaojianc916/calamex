@@ -1,16 +1,17 @@
-// 文档附件正文提取：把 .docx / .pdf / .xlsx / .xls 解析成纯文本，
+// 文档附件正文提取：把 .docx / .pdf / .xlsx 解析成纯文本，
 // 再走既有「文本附件」上下文链路。所有解析库均动态 import，不进主包。
 //
 // - .docx：mammoth(extractRawText)
 // - .pdf：pdfjs-dist（逐页 getTextContent 拼接；扫描件无文本层 → 返回空串）
-// - .xlsx/.xls：xlsx(SheetJS)，每个 sheet 转 CSV 后拼接
+// - .xlsx：read-excel-file（逐 sheet 读出行，再转 CSV 拼接）
 //
-// 注意：旧版二进制 .doc 不在此列（无可靠浏览器端解析），仍按原文本逻辑处理。
+// 注意：read-excel-file 仅支持 OOXML 的 .xlsx；旧版二进制 .xls / .doc 不在此列
+//（无可靠浏览器端解析），仍按原文本逻辑处理。
 
-const DOCUMENT_ATTACHMENT_EXTENSION_PATTERN = /\.(docx|pdf|xlsx|xls)$/i;
+const DOCUMENT_ATTACHMENT_EXTENSION_PATTERN = /\.(docx|pdf|xlsx)$/i;
 
 const DOCUMENT_ATTACHMENT_MIME_PATTERN =
-  /^(application\/pdf|application\/vnd\.openxmlformats-officedocument\.(wordprocessingml\.document|spreadsheetml\.sheet)|application\/vnd\.ms-excel)$/i;
+  /^(application\/pdf|application\/vnd\.openxmlformats-officedocument\.(wordprocessingml\.document|spreadsheetml\.sheet))$/i;
 
 export const isDocumentAttachment = (file: File): boolean =>
   DOCUMENT_ATTACHMENT_MIME_PATTERN.test(file.type) ||
@@ -43,15 +44,29 @@ const extractPdfText = async (buffer: ArrayBuffer): Promise<string> => {
   return pages.join('\n\n');
 };
 
-const extractSpreadsheetText = async (buffer: ArrayBuffer): Promise<string> => {
-  const XLSX = await import('xlsx');
-  const workbook = XLSX.read(buffer, { type: 'array' });
+const toCsvCell = (cell: unknown): string => {
+  if (cell === null || cell === undefined) {
+    return '';
+  }
 
-  return workbook.SheetNames.map((sheetName) => {
-    const sheet = workbook.Sheets[sheetName];
-    const csv = sheet ? XLSX.utils.sheet_to_csv(sheet) : '';
-    return `# ${sheetName}\n${csv}`;
-  }).join('\n\n');
+  const text = cell instanceof Date ? cell.toISOString() : String(cell);
+  return /[",\n]/.test(text) ? `"${text.replace(/"/g, '""')}"` : text;
+};
+
+const extractSpreadsheetText = async (buffer: ArrayBuffer): Promise<string> => {
+  const { default: readXlsxFile } = await import('read-excel-file');
+  const blob = new Blob([buffer]);
+  const sheets = await readXlsxFile(blob, { getSheets: true });
+
+  const sections = await Promise.all(
+    sheets.map(async ({ name }): Promise<string> => {
+      const rows = await readXlsxFile(blob, { sheet: name });
+      const csv = rows.map((row) => row.map(toCsvCell).join(',')).join('\n');
+      return `# ${name}\n${csv}`;
+    }),
+  );
+
+  return sections.join('\n\n');
 };
 
 export const extractDocumentText = async (file: File): Promise<string | null> => {
@@ -71,12 +86,7 @@ export const extractDocumentText = async (file: File): Promise<string | null> =>
     return extractPdfText(buffer);
   }
 
-  if (
-    ext === 'xlsx' ||
-    ext === 'xls' ||
-    file.type.includes('spreadsheetml') ||
-    file.type === 'application/vnd.ms-excel'
-  ) {
+  if (ext === 'xlsx' || file.type.includes('spreadsheetml')) {
     return extractSpreadsheetText(buffer);
   }
 
