@@ -49,7 +49,7 @@ use agent_client_protocol::schema::{
 };
 
 use crate::commands::contracts::{
-    AgentSidecarHealthPayload, AgentSidecarOrchestratePayload, AgentSidecarResponsePayload,
+    AgentSidecarHealthPayload, AgentSidecarResponsePayload,
     AgentSidecarWarmupPayload, AiWebFetchPayload, AiWebSearchPayload,
 };
 
@@ -57,7 +57,7 @@ use super::approval::{ApprovalError, ApprovalRegistry, ApprovalRequestInfo};
 use super::client::{
     AcpClientConfig, AcpClientError, AcpClientHandle, AcpStreamFrame, AgentAskUserResumeExtRequest,
     AgentChatExtRequest, AgentChatResolveExtRequest, CheckpointRestoreRequest, EventSink,
-    HealthExtRequest, ModelChatExtRequest, OrchestrateExtRequest, OrchestrateResumeExtRequest,
+    HealthExtRequest, ModelChatExtRequest,
     WarmupExtRequest, WebFetchExtRequest, WebSearchExtRequest, spawn_acp_client,
 };
 
@@ -68,32 +68,6 @@ pub type StreamEmitter = Arc<dyn Fn(AcpStreamFrame) + Send + Sync>;
 /// 待决审批下沉口：把回合内挂起的权限请求详情推给 webview 渲染审批 UI。
 /// 由宿主接线层提供 emit 闭包；其回传决策经 `resolve_approval` 唤醒回合。
 pub type ApprovalEmitter = Arc<dyn Fn(ApprovalRequestInfo) + Send + Sync>;
-
-/// 一次 `orchestrate` 编排启动的宿主侧入参。
-#[derive(Debug, Clone, Default)]
-pub struct AcpOrchestrateStart {
-    /// 编排目标（自然语言），原样透传给 sidecar。
-    pub goal: String,
-    /// 稳定线程标识：用于 `ensure_session` 复用/新建会话。
-    pub thread_id: Option<String>,
-    /// 每次运行的执行偏好（interactive/autonomous）；取值由 sidecar zod 校验。
-    pub execution_mode: Option<String>,
-    /// 新建会话时作为 cwd（→ sidecar workspaceRootPath）；复用会话时忽略。
-    pub workspace_root_path: Option<String>,
-}
-
-/// 一次 `orchestrate_resume` 编排续跑的宿主侧入参。
-#[derive(Debug, Clone, Default)]
-pub struct AcpOrchestrateResume {
-    /// 被挂起编排运行的标识，原样透传给 sidecar 以定位续跑目标。
-    pub run_id: String,
-    /// 审批决策（approve/reject/continue/cancel）；取值由 sidecar zod 校验，原样透传。
-    pub decision: String,
-    /// 可选的决策理由；为空白时整字段省略。
-    pub reason: Option<String>,
-    /// 稳定线程标识：用于 `ensure_session` 复用同一会话并随请求透传。
-    pub thread_id: Option<String>,
-}
 
 /// 宿主侧 ACP 编排句柄。可作为 Tauri 托管状态长驻：内部协作件均为
 /// 可克隆/共享句柄，整体 `Send + Sync`。
@@ -536,53 +510,6 @@ impl AcpHost {
         let value = self.handle.health(HealthExtRequest {}).await?;
         serde_json::from_value(value).map_err(|error| {
             AcpClientError::Protocol(format!("invalid health response payload: {error}"))
-        })
-    }
-
-    /// 启动一次原生计划编排（扩展方法 `calamex.dev/plan/orchestrate`）。
-    pub async fn orchestrate(
-        &self,
-        start: AcpOrchestrateStart,
-    ) -> Result<AgentSidecarOrchestratePayload, AcpClientError> {
-        let session_id = self
-            .ensure_session(
-                start.thread_id.as_deref().unwrap_or_default(),
-                start.workspace_root_path.as_deref(),
-            )
-            .await?;
-        let request = OrchestrateExtRequest {
-            goal: start.goal,
-            thread_id: non_empty(start.thread_id.as_deref()).map(str::to_string),
-            execution_mode: non_empty(start.execution_mode.as_deref()).map(str::to_string),
-            session_id: Some(session_id.to_string()),
-            model_config: None,
-        };
-        let value = self.handle.orchestrate(request).await?;
-        serde_json::from_value(value).map_err(|error| {
-            AcpClientError::Protocol(format!("invalid orchestrate response payload: {error}"))
-        })
-    }
-
-    /// 恢复一个被审批门挂起的编排运行（扩展方法 `calamex.dev/plan/orchestrate/resume`）。
-    pub async fn orchestrate_resume(
-        &self,
-        resume: AcpOrchestrateResume,
-    ) -> Result<AgentSidecarOrchestratePayload, AcpClientError> {
-        let session_id = self
-            .ensure_session(resume.thread_id.as_deref().unwrap_or_default(), None)
-            .await?;
-        let request = OrchestrateResumeExtRequest {
-            run_id: resume.run_id,
-            decision: resume.decision,
-            reason: non_empty(resume.reason.as_deref()).map(str::to_string),
-            session_id: Some(session_id.to_string()),
-            model_config: None,
-        };
-        let value = self.handle.orchestrate_resume(request).await?;
-        serde_json::from_value(value).map_err(|error| {
-            AcpClientError::Protocol(format!(
-                "invalid orchestrate resume response payload: {error}"
-            ))
         })
     }
 

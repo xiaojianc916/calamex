@@ -129,35 +129,6 @@ pub struct WarmupExtRequest {
 #[request(method = "calamex.dev/health", response = Value)]
 pub struct HealthExtRequest {}
 
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, JsonRpcRequest)]
-#[serde(rename_all = "camelCase")]
-#[request(method = "calamex.dev/plan/orchestrate", response = Value)]
-pub struct OrchestrateExtRequest {
-    pub goal: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub thread_id: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub execution_mode: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub session_id: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub model_config: Option<ExtModelConfig>,
-}
-
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, JsonRpcRequest)]
-#[serde(rename_all = "camelCase")]
-#[request(method = "calamex.dev/plan/orchestrate/resume", response = Value)]
-pub struct OrchestrateResumeExtRequest {
-    pub run_id: String,
-    pub decision: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub reason: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub session_id: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub model_config: Option<ExtModelConfig>,
-}
-
 /// `calamex.dev/agent/chat` 扩展方法的单条消息。
 /// 字段镜像 sidecar `agentChatMessageSchema`：role覆盖四类,content 纯文本。
 /// role 取值由 sidecar zod 统一校验,宿主侧以字符串原样透传。
@@ -387,14 +358,6 @@ enum Command {
         request: HealthExtRequest,
         reply: oneshot::Sender<Result<Value, String>>,
     },
-    Orchestrate {
-        request: OrchestrateExtRequest,
-        reply: oneshot::Sender<Result<Value, String>>,
-    },
-    OrchestrateResume {
-        request: OrchestrateResumeExtRequest,
-        reply: oneshot::Sender<Result<Value, String>>,
-    },
     AgentChat {
         request: AgentChatExtRequest,
         reply: oneshot::Sender<Result<Value, String>>,
@@ -545,32 +508,6 @@ impl AcpClientHandle {
         let (reply, rx) = oneshot::channel();
         self.cmd_tx
             .send(Command::Health { request, reply })
-            .map_err(|_| AcpClientError::NotRunning)?;
-        rx.await
-            .map_err(|_| AcpClientError::NotRunning)?
-            .map_err(AcpClientError::Protocol)
-    }
-
-    pub async fn orchestrate(
-        &self,
-        request: OrchestrateExtRequest,
-    ) -> Result<Value, AcpClientError> {
-        let (reply, rx) = oneshot::channel();
-        self.cmd_tx
-            .send(Command::Orchestrate { request, reply })
-            .map_err(|_| AcpClientError::NotRunning)?;
-        rx.await
-            .map_err(|_| AcpClientError::NotRunning)?
-            .map_err(AcpClientError::Protocol)
-    }
-
-    pub async fn orchestrate_resume(
-        &self,
-        request: OrchestrateResumeExtRequest,
-    ) -> Result<Value, AcpClientError> {
-        let (reply, rx) = oneshot::channel();
-        self.cmd_tx
-            .send(Command::OrchestrateResume { request, reply })
             .map_err(|_| AcpClientError::NotRunning)?;
         rx.await
             .map_err(|_| AcpClientError::NotRunning)?

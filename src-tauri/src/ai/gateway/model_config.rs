@@ -43,7 +43,7 @@ fn sidecar_model_config_from(
 
 /// 主模型（顶层 selected_model / base_url）的 sidecar 模型配置。
 pub(crate) fn current_sidecar_model_config() -> Result<AgentSidecarModelConfigPayload, String> {
-    let config = crate::ai::gateway::get_config();
+    let config = crate::ai::gateway::current_config()?;
     sidecar_model_config_from(
         config.selected_model.as_deref(),
         config.base_url.as_deref(),
@@ -53,7 +53,7 @@ pub(crate) fn current_sidecar_model_config() -> Result<AgentSidecarModelConfigPa
 
 /// Narrator 模型（config.narrator.selected_model / base_url）的 sidecar 模型配置。
 pub(crate) fn narrator_sidecar_model_config() -> Result<AgentSidecarModelConfigPayload, String> {
-    let config = crate::ai::gateway::get_config();
+    let config = crate::ai::gateway::current_config()?;
     sidecar_model_config_from(
         config.narrator.selected_model.as_deref(),
         config.narrator.base_url.as_deref(),

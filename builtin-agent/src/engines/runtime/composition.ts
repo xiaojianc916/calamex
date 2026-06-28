@@ -3,8 +3,6 @@ import { createMastraModelConfig, resolveMastraModelConfig } from '../agent/fact
 import { extractRestoreResultText, resolveSystemPromptFromSnapshot, resolveWorkspaceRootPathFromSnapshot } from '../context/context.js';
 import { normalizeMastraError, classifyProviderErrorCode } from '../shared/errors.js';
 import { createErrorResponse } from '../responses/responses.js';
-import { createMastraPlanOrchestrationDeps } from '../plan/orchestration-deps.js';
-import { PLAN_ORCHESTRATION_WORKFLOW_ID, createPlanOrchestrationWorkflow, type TPlanOrchestrationWorkflow } from '../plan/orchestration-workflow.js';
 import { getSessionMessageText } from '../session/session-messages.js';
 import { loadMastraMcpTools } from '../../tools/index.js';
 import { DEFAULT_EXECUTION_AGENT_ID, DEFAULT_EXECUTION_AGENT_NAME, DEFAULT_ROLLBACK_STEP, type TMastraChatMessage } from '../shared/types.js';
@@ -13,56 +11,9 @@ import { createMastraAgentInputProcessors, createMastraAgentOutputProcessors, de
 import type { IAgentRuntimeResponse, IAgentRuntimeRunOptions, TAgentRuntimeOutputEvent } from '../contracts/runtime-contracts.js';
 import type { IAgentRuntimeInput, IAgentRuntimeModelConfigInput, ICheckpointRestoreInput } from '../contracts/runtime-input.js';
 import { DurableStepIds } from '@mastra/core/agent/durable';
-import { Mastra } from '@mastra/core/mastra';
 
 
 export class MastraRuntime extends MastraRuntimeApproval {
-    /**
-     * Phase 2：构建原生 Mastra 计划编排 workflow（默认关，由 server.ts 的
-     * `/agent/plan/orchestrate` 在 `AGENT_ORCHESTRATION_WORKFLOW=1` 时调用）。
-     *
-     * deps 复用现有 store（结构化真值）与现有 phase 方法（跑 agent），
-     * 不改动任何既有运行路径，可随时 git revert。
-     *
-     * Phase 2c-2：额外注入 resolveApproval，让 deps.resolveToolApproval 能以审批决定
-     * 续跑被工具审批挂起的内层 agent run（统一 resume 通道·方案A）。
-     *
-     * Phase 3a：把 workflow 注册到带 libsql storage 的 Mastra 实例上，让 run
-     * 快照落到持久化存储（storage 域 'workflows'，官方用于 suspend/resume），
-     * 为跨进程 / TTL 回收后恢复打基础。复用 factory.ts 中 agent 执行 workflow
-     * 已验证的持久化范式。仍默认关，不影响任何既有路径，可随时 git revert。
-     */
-    buildPlanOrchestrationWorkflow(
-        modelConfig?: IAgentRuntimeModelConfigInput,
-    ): TPlanOrchestrationWorkflow {
-        const workflow = createPlanOrchestrationWorkflow(
-            createMastraPlanOrchestrationDeps({
-                planStore: this.planStore,
-                planWorkflowStore: this.planWorkflowStore,
-                plan: (input, options) => this.plan(input, options),
-                execute: (input, options) => this.execute(input, options),
-                validatePlan: (input, options) => this.validatePlan(input, options),
-                replanPlan: (input, options) => this.replanPlan(input, options),
-                resolveApproval: (input, options) => this.resolveApproval(input, options),
-                ...(modelConfig ? { modelConfig } : {}),
-            }),
-        );
-
-        // 实例级 storage 会流向注册在其上的 workflow，使 createRun().start() 的
-        // run 快照写入 libsql。必须返回「经实例取回」的句柄（绑定了 storage），
-        // 而非裸 workflow——与 factory.ts 中 getAgentById/getWorkflow 一致。
-        const mastra = new Mastra({
-            workflows: { [PLAN_ORCHESTRATION_WORKFLOW_ID]: workflow as never },
-            storage: this.storage as never,
-        });
-
-        // workflow 值 as never 会使 getWorkflowById 的参数联合塌缩为 never，
-        // 给实参加 as never（纯编译期，运行时传真实 id）解除。
-        return mastra.getWorkflowById(
-            PLAN_ORCHESTRATION_WORKFLOW_ID as never,
-        ) as unknown as TPlanOrchestrationWorkflow;
-    }
-
     /**
      * 原始模型透传（仿 Zed 独立模型请求的 utility 用法：标题生成 / 行内补全 / 连接测试）。
      *

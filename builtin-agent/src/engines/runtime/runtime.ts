@@ -6,7 +6,6 @@ import type {
 } from '../contracts/runtime-contracts.js';
 import type {
     IAgentRuntimeInput,
-    IAgentRuntimeModelConfigInput,
     IApprovalResolutionInput,
     IAskUserResolutionInput,
     ICheckpointRestoreInput,
@@ -15,7 +14,6 @@ import type {
     IPlanQueryInput,
     IPlanRejectInput,
 } from '../contracts/runtime-input.js';
-import type { TPlanOrchestrationWorkflow } from '../plan/orchestration-workflow.js';
 
 export type {
     IAgentRuntimeContext,
@@ -111,15 +109,6 @@ export interface IAgentSidecarRuntime {
      * agent 会话主流程不受影响。
      */
     modelChat?: TRuntimeMethod<IAgentRuntimeInput>;
-
-    /**
-     * 可选：构建原生 Mastra 计划编排 workflow（Phase 2，默认关）。
-     * 仅 server.ts 的 `/agent/plan/orchestrate` 在 `AGENT_ORCHESTRATION_WORKFLOW=1`
-     * 时使用；不实现时该路由返回 404，旧路径不受影响。
-     */
-    buildPlanOrchestrationWorkflow?: (
-        modelConfig?: IAgentRuntimeModelConfigInput,
-    ) => TPlanOrchestrationWorkflow;
 
     /**
      * 可选的优雅关闭钩子：释放运行时持有的长生命周期资源（如 MCP 子进程）。

@@ -82,7 +82,7 @@ pub fn apply_operation_plans(
         build_file_transaction_plan(plans, operation_payloads.clone(), workspace_root)?;
     validate_operation_conflicts(plans, workspace_root)?;
     file_transaction::commit(storage_root, transaction_plan)?;
-    record_committed_operations(state, &operation_payloads)?;
+    record_committed_operations(state, operation_payloads)?;
     ai_edit::run_retention_policy_best_effort(state, storage_root);
 
     Ok(results)
@@ -312,13 +312,12 @@ fn build_file_result(plan: &AiAutoApplyOperationPlan) -> Result<AiAutoApplyFileR
 
 fn record_committed_operations(
     state: &AiEditState,
-    operations: &[AiEditOperationPayload],
+    operations: Vec<AiEditOperationPayload>,
 ) -> Result<(), String> {
     let mut guard = state.timeline.lock();
     guard.extend(
         operations
-            .iter()
-            .cloned()
+            .into_iter()
             .map(AiEditTimelineEntryPayload::Operation),
     );
     Ok(())

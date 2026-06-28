@@ -1,7 +1,6 @@
 import type { IAiLanguageModelUsage } from '@/types/ai';
 import type { TAcpToolCall, TAcpToolCallUpdate } from '@/types/ai/acp-tool-call';
 import type { IAiContextReference } from '@/types/ai/context';
-import type { TAiExecutionMode } from '@/types/ai/execution-mode';
 
 /* ============================================================================
  * Mode / role / status enums
@@ -889,47 +888,6 @@ export interface IAgentSidecarStreamEventPayload {
   sessionId: string;
   seq: number;
   event: TAgentUiEvent;
-}
-
-/* ============================================================================
- * Native orchestration (orchestration workflow) request / response
- *
- * Single-channel orchestration: start streams events (reusing TAgentUiEvent
- * via the existing ai:sidecar-stream window event); resume is a plain JSON
- * call. Shapes mirror Rust AgentSidecarOrchestrateRequest /
- * AgentSidecarOrchestrateResumeRequest / AgentSidecarOrchestratePayload.
- * ========================================================================== */
-
-export interface IAgentSidecarOrchestrateRequest {
-  sessionId?: string;
-  goal: string;
-  threadId?: string;
-  /**
-   * Per-run execution preference. Threaded through verbatim like `threadId`
-   * (the sidecar validates it and defaults to `interactive`). Omitted from the
-   * request body when undefined so the sidecar applies its own default.
-   */
-  executionMode?: TAiExecutionMode;
-  modelConfig?: IAgentSidecarModelConfig;
-}
-
-/**
- * 统一的恢复决策。三类挂起点共用同一入口,由 step 内部根据 suspendData.reason 解释:
- * - 计划审批门 / 工具审批:`approve` | `reject`
- * - 逐步闸门(step gate):`continue`(跑下一步) | `cancel`(中止)
- */
-export type TAgentSidecarOrchestrateDecision = 'approve' | 'reject' | 'continue' | 'cancel';
-
-export interface IAgentSidecarOrchestrateResumeRequest {
-  runId: string;
-  decision: TAgentSidecarOrchestrateDecision;
-  reason?: string;
-  modelConfig?: IAgentSidecarModelConfig;
-}
-
-export interface IAgentSidecarOrchestratePayload {
-  runId: string;
-  result: TJsonValue | null;
 }
 
 /* ============================================================================

@@ -138,8 +138,7 @@ async fn chat_stream_via_acp(
         .or_else(|| default_model(&config.provider_type))
         .unwrap_or_else(|| DEFAULT_MASTRA_MODEL.to_string());
 
-    let input_references = payload.references.clone();
-    let messages = collect_messages(payload.messages, input_references.clone())?;
+    let messages = collect_messages(payload.messages, payload.references)?;
 
     // 保留旧路径的「至少一条 user 消息」前置校验：collect_messages 仅保证结果非空且
     // 角色合法，不保证存在 user 消息；缺失时与旧路径一致地拒绝。

@@ -68,9 +68,6 @@ import type {
   IAgentSidecarChatRequest,
   IAgentSidecarCheckpointRestoreRequest,
   IAgentSidecarHealthPayload,
-  IAgentSidecarOrchestratePayload,
-  IAgentSidecarOrchestrateRequest,
-  IAgentSidecarOrchestrateResumeRequest,
   IAgentSidecarResponsePayload,
   IAgentSidecarStreamEventPayload,
   IAgentSidecarWarmupPayload,
@@ -306,12 +303,6 @@ export interface ITauriService {
   agentSidecarRestoreCheckpoint(
     payload: IAgentSidecarCheckpointRestoreRequest,
   ): Promise<IAgentSidecarResponsePayload>;
-  agentSidecarOrchestrate(
-    payload: IAgentSidecarOrchestrateRequest,
-  ): Promise<IAgentSidecarOrchestratePayload>;
-  agentSidecarOrchestrateResume(
-    payload: IAgentSidecarOrchestrateResumeRequest,
-  ): Promise<IAgentSidecarOrchestratePayload>;
   onAgentSidecarStream(
     handler: (payload: IAgentSidecarStreamEventPayload) => void,
   ): Promise<() => void>;

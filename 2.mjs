@@ -1,93 +1,79 @@
 #!/usr/bin/env node
-// fix-host-sink-clone.mjs
-// perf(acp): borrow session_id in EventSink instead of cloning twice per frame
-// sink 是每条 session/update 帧的下沉口（每个 token 增量都过），原代码无条件 clone 两次
-// Option<String> 仅为 peek；改为 as_deref 借用，只在确有一次性命令/配置帧落缓存时才 to_string。
+// fix-autoapply-operation-clone.mjs
+// perf(aed): move operation payloads into the timeline instead of cloning them again.
 import { readFile, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 
-const FILE = path.join(process.cwd(), 'src-tauri', 'src', 'acp', 'host.rs');
+const FILE = path.join(process.cwd(), 'src-tauri', 'src', 'ai', 'edit', 'apply', 'auto_apply.rs');
 
-const OLD = `            // 先按「原始 ACP 会话 id」捕获 available_commands_update 的 availableCommands 原始数组，
-            // 缓存供回合发起时以前端键重放（取键须在重写 session_id 之前，键须为 ACP 会话 UUID）。
-            if let Some(acp_session_id) = frame.session_id.clone() {
-                if let Some(commands) = extract_available_commands_update(&frame.event) {
-                    commands_cache_for_sink
-                        .lock()
-                        .insert(acp_session_id, commands);
-                }
-            }
+const EDITS = [
+  { // 1) 调用点：按值传入（move）
+    old: 'record_committed_operations(state, &operation_payloads)?;',
+    neu: 'record_committed_operations(state, operation_payloads)?;',
+  },
+  { // 2) 函数签名：&[..] → Vec<..>
+    old: `fn record_committed_operations(
+    state: &AiEditState,
+    operations: &[AiEditOperationPayload],
+) -> Result<(), String> {`,
+    neu: `fn record_committed_operations(
+    state: &AiEditState,
+    operations: Vec<AiEditOperationPayload>,
+) -> Result<(), String> {`,
+  },
+  { // 3) 函数体：iter().cloned() → into_iter()
+    old: `    guard.extend(
+        operations
+            .iter()
+            .cloned()
+            .map(AiEditTimelineEntryPayload::Operation),
+    );`,
+    neu: `    guard.extend(
+        operations
+            .into_iter()
+            .map(AiEditTimelineEntryPayload::Operation),
+    );`,
+  },
+];
 
-            // 与可用命令同构：按原始 ACP 会话 id 捕获 config_option_update 的 configOptions 原始数组，
-            // 缓存供回合发起时以前端键重放（取键须在重写 session_id 之前）。
-            if let Some(acp_session_id) = frame.session_id.clone() {
-                if let Some(config_options) = extract_config_option_update(&frame.event) {
-                    config_options_cache_for_sink
-                        .lock()
-                        .insert(acp_session_id, config_options);
-                }
-            }`;
-
-const NEU = `            // 先按「原始 ACP 会话 id」捕获一次性下发的 available_commands_update / config_option_update，
-            // 缓存供回合发起时以前端键重放（取键须在重写 session_id 之前，键须为 ACP 会话 UUID）。
-            // 以 as_deref 借用避免每帧（含纯文本增量帧）对 session_id 的两次冗余 String 克隆——
-            // 仅在确有一次性命令/配置帧命中、需要落缓存时才 to_string。
-            if let Some(acp_session_id) = frame.session_id.as_deref() {
-                if let Some(commands) = extract_available_commands_update(&frame.event) {
-                    commands_cache_for_sink
-                        .lock()
-                        .insert(acp_session_id.to_string(), commands);
-                }
-                if let Some(config_options) = extract_config_option_update(&frame.event) {
-                    config_options_cache_for_sink
-                        .lock()
-                        .insert(acp_session_id.to_string(), config_options);
-                }
-            }`;
+function applyExact(text, old, neu, label) {
+  const first = text.indexOf(old);
+  if (first === -1) return { text, status: 'missing' };
+  if (text.indexOf(old, first + old.length) !== -1) return { text, status: 'ambiguous' };
+  return { text: text.replace(old, neu), status: 'ok' };
+}
 
 async function main() {
   let raw;
-  try {
-    raw = await readFile(FILE, 'utf8');
-  } catch (err) {
-    console.error(`✗ 读取失败：${err.message}`);
-    process.exit(1);
-  }
+  try { raw = await readFile(FILE, 'utf8'); }
+  catch (err) { console.error(`✗ 读取失败：${err.message}`); process.exit(1); }
   const crlf = raw.includes('\r\n');
   let lf = raw.replaceAll('\r\n', '\n');
 
-  if (lf.includes('= frame.session_id.as_deref() {')) {
-    console.log('• 已是最新：host.rs sink 已采用借用语义，无需修改');
-    return;
+  if (lf.includes('operations: Vec<AiEditOperationPayload>,') &&
+      lf.includes('record_committed_operations(state, operation_payloads)?;')) {
+    console.log('• 已是最新：operation 列表已 move 进时间线'); return;
   }
 
-  const first = lf.indexOf(OLD);
-  if (first === -1) {
-    console.error('✗ 锚点未匹配，跳过（未写入）：host.rs sink 双 clone 块');
-    process.exit(1);
+  for (let i = 0; i < EDITS.length; i++) {
+    const { old, neu } = EDITS[i];
+    const r = applyExact(lf, old, neu);
+    if (r.status !== 'ok') {
+      console.error(`✗ 第 ${i + 1} 处锚点${r.status === 'missing' ? '未匹配' : '不唯一'}，放弃写入（未改动任何文件）`);
+      process.exit(1);
+    }
+    lf = r.text;
   }
-  if (lf.indexOf(OLD, first + OLD.length) !== -1) {
-    console.error('✗ 锚点出现多次，保守中止（未写入）');
-    process.exit(1);
-  }
-  lf = lf.replace(OLD, NEU);
 
-  // 自检：旧的每帧 clone 必须消失；新借用 + 落缓存 to_string 必须出现。
-  if (
-    lf.includes('frame.session_id.clone()') ||
-    !lf.includes('= frame.session_id.as_deref() {') ||
-    !lf.includes('.insert(acp_session_id.to_string(), commands)') ||
-    !lf.includes('.insert(acp_session_id.to_string(), config_options)')
-  ) {
-    console.error('✗ 自检失败，放弃写入（未改动任何文件）');
-    process.exit(1);
+  // 自检
+  if (lf.includes('record_committed_operations(state, &operation_payloads)') ||
+      lf.includes('operations: &[AiEditOperationPayload],') ||
+      lf.includes('.iter()\n            .cloned()\n            .map(AiEditTimelineEntryPayload::Operation)') ||
+      !lf.includes('operations\n            .into_iter()\n            .map(AiEditTimelineEntryPayload::Operation)')) {
+    console.error('✗ 自检失败，放弃写入（未改动任何文件）'); process.exit(1);
   }
 
   await writeFile(FILE, crlf ? lf.replaceAll('\n', '\r\n') : lf, 'utf8');
-  console.log('✓ 已修复：host.rs sink 改为 as_deref 借用，消除每帧两次冗余 session_id 克隆');
+  console.log('✓ 已修复：record_committed_operations 接管所有权，省掉每次写盘的整表 operation 克隆');
 }
-
-main().catch((err) => {
-  console.error(`✗ 执行失败：${err.message}`);
-  process.exit(1);
-});
+main().catch((err) => { console.error(`✗ 执行失败：${err.message}`); process.exit(1); });

@@ -4,14 +4,11 @@ import {
   type AgentSidecarAskUserResumeRequest_Deserialize,
   type AgentSidecarChatRequest_Deserialize,
   type AgentSidecarCheckpointRestoreRequest_Deserialize,
-  type AgentSidecarOrchestrateRequest_Deserialize,
-  type AgentSidecarOrchestrateResumeRequest_Deserialize,
   commands,
 } from '@/bindings/tauri';
 import { acpPermissionRequestPayloadSchema } from '@/types/ai/acp-permission.schema';
 import type {
   IAgentExternalChatResultPayload,
-  IAgentSidecarOrchestratePayload,
   IAgentSidecarResponsePayload,
   IAgentSidecarStreamEventPayload,
 } from '@/types/ai/sidecar';
@@ -92,19 +89,6 @@ const SIDECAR_COMMAND_META = {
     audit: 'sensitive',
     timeoutMs: BUILTIN_AGENT_TASK_TIMEOUT_MS,
   },
-  agentSidecarOrchestrate: {
-    command: 'builtin_agent_orchestrate',
-    guardHint: 'Start native orchestration workflow via Node sidecar',
-    audit: 'sensitive',
-    timeoutMs: BUILTIN_AGENT_TASK_TIMEOUT_MS,
-    measureInput: measureAiChatInput,
-  },
-  agentSidecarOrchestrateResume: {
-    command: 'builtin_agent_orchestrate_resume',
-    guardHint: 'Resume Agent sidecar orchestration workflow (approval gate)',
-    audit: 'sensitive',
-    timeoutMs: BUILTIN_AGENT_TASK_TIMEOUT_MS,
-  },
 } satisfies Record<string, ICommandMeta>;
 
 type TSidecarTauriService = Pick<
@@ -117,8 +101,6 @@ type TSidecarTauriService = Pick<
   | 'agentSidecarResolveApproval'
   | 'agentSidecarResolveAskUser'
   | 'agentSidecarRestoreCheckpoint'
-  | 'agentSidecarOrchestrate'
-  | 'agentSidecarOrchestrateResume'
   | 'onAgentSidecarStream'
   | 'onAcpApproval'
 >;
@@ -185,22 +167,6 @@ export const sidecarTauriService: TSidecarTauriService = {
         payload as unknown as AgentSidecarCheckpointRestoreRequest_Deserialize,
       ),
     ) as Promise<IAgentSidecarResponsePayload>;
-  },
-
-  agentSidecarOrchestrate(payload, options?: IIpcCallOptions) {
-    return runCommand(SIDECAR_COMMAND_META.agentSidecarOrchestrate, payload, options, () =>
-      commands.agentSidecarOrchestrate(
-        payload as unknown as AgentSidecarOrchestrateRequest_Deserialize,
-      ),
-    ) as Promise<IAgentSidecarOrchestratePayload>;
-  },
-
-  agentSidecarOrchestrateResume(payload, options?: IIpcCallOptions) {
-    return runCommand(SIDECAR_COMMAND_META.agentSidecarOrchestrateResume, payload, options, () =>
-      commands.agentSidecarOrchestrateResume(
-        payload as unknown as AgentSidecarOrchestrateResumeRequest_Deserialize,
-      ),
-    ) as Promise<IAgentSidecarOrchestratePayload>;
   },
 
   async onAgentSidecarStream(handler) {

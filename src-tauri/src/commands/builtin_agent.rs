@@ -2,8 +2,7 @@ use crate::commands::contracts::{
     AgentBackendKind, AgentExternalChatRequest, AgentExternalChatResultPayload,
     AgentSidecarApprovalResolveRequest, AgentSidecarAskUserResumeRequest, AgentSidecarChatRequest,
     AgentSidecarCheckpointRestoreRequest, AgentSidecarHealthPayload,
-    AgentSidecarModelConfigPayload, AgentSidecarOrchestratePayload, AgentSidecarOrchestrateRequest,
-    AgentSidecarOrchestrateResumeRequest, AgentSidecarResponsePayload,
+    AgentSidecarModelConfigPayload, AgentSidecarResponsePayload,
     AgentSidecarRollbackStepPath, AgentSidecarWarmupPayload,
 };
 use agent_client_protocol::schema::{ContentBlock, TextContent};
@@ -327,66 +326,6 @@ pub async fn builtin_agent_restore_checkpoint(
         })
         .await
         .map_err(|error| error.to_string())
-}
-
-#[tauri::command]
-#[specta::specta]
-pub async fn builtin_agent_orchestrate(
-    app: AppHandle,
-    payload: AgentSidecarOrchestrateRequest,
-) -> Result<AgentSidecarOrchestratePayload, String> {
-    // session_id 不注入：host 以 thread_id 解析/建立会话。
-    // 注意：编排路径目前未逐请求补齐 model_config（AcpOrchestrateStart 无该字段），
-    // sidecar 端会退回启动期环境解析，而 launch 层当前不注入模型 env；编排在
-    // feature flag 后面、主聊天不走此路。若后续启用编排，需比照 chat 补齐
-    // model_config（需扩展 AcpOrchestrateStart，独立改动）。
-    acp_host(&app)?
-        .orchestrate(crate::acp::AcpOrchestrateStart {
-            goal: payload.goal,
-            thread_id: payload.thread_id,
-            execution_mode: payload.execution_mode,
-            workspace_root_path: None,
-        })
-        .await
-        .map_err(|error| error.to_string())
-}
-
-#[tauri::command]
-#[specta::specta]
-pub async fn builtin_agent_orchestrate_resume(
-    app: AppHandle,
-    payload: AgentSidecarOrchestrateResumeRequest,
-) -> Result<AgentSidecarOrchestratePayload, String> {
-    // 续跑以 run_id 定位挂起运行；thread_id 不在续跑契约内，置 None（host 自行处理会话）。
-    acp_host(&app)?
-        .orchestrate_resume(crate::acp::AcpOrchestrateResume {
-            run_id: payload.run_id,
-            decision: payload.decision,
-            reason: payload.reason,
-            thread_id: None,
-        })
-        .await
-        .map_err(|error| error.to_string())
-}
-
-/// 读取 Tavily（信息源）API Key：直连 OS keyring 的独立 Tavily 账户（见 ai::credential）。
-///
-/// 与各 LLM 厂商凭证同源落 keyring，前端 / store 不持有明文。未配置 / 为空时回传空串
-/// （web 工具未启用即视为无 Key），由前端按空值处理。
-#[tauri::command]
-#[specta::specta]
-pub async fn get_tavily_api_key() -> Result<String, String> {
-    Ok(crate::ai::credential::CredentialStore::get_tavily().unwrap_or_default())
-}
-
-/// 写入 Tavily API Key 到 OS keyring（trim 后为空即清除）。
-///
-/// 写入后不自动重启 ACP 子进程：由前端在保存后显式调用 builtin_agent_restart，使其在下次
-/// 启动时从 keyring 读出并注入子进程环境（见 acp::launch::build_builtin_agent_env）。
-#[tauri::command]
-#[specta::specta]
-pub async fn set_tavily_api_key(api_key: String) -> Result<(), String> {
-    crate::ai::credential::CredentialStore::set_tavily(&api_key)
 }
 
 #[cfg(test)]

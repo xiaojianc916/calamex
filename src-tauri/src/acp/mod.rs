@@ -48,7 +48,7 @@ pub use bridge::{
 
 #[allow(unused_imports)]
 pub use host::{
-    AcpHost, AcpOrchestrateResume, AcpOrchestrateStart, ApprovalEmitter, StreamEmitter,
+    AcpHost, ApprovalEmitter, StreamEmitter,
 };
 
 // 进程级生命周期：把单一 AcpHost 作为 Tauri 托管状态持有（对齐 Zed 连接持有模型）。

@@ -301,7 +301,7 @@ fn apply_snapshot_retention_locked(
                 continue;
             }
 
-            let before_total = active_blob_bytes.values().copied().sum::<u64>();
+            let before_total = current_total;
             strip_manifest_blobs(
                 storage_root,
                 &store,
