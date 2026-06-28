@@ -10,7 +10,6 @@ import { createDefaultAiConfigPayload } from '@/services/ipc/ai-config.service';
 import type { IAiConfigPayload, IAiProviderConnectionRequest, TAiModelRole } from '@/types/ai';
 
 export interface IUseAiProviderConfigDeps {
-  workspaceRootPath: Ref<string | null>;
   errorMessage: Ref<string>;
 }
 

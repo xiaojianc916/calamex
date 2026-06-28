@@ -235,7 +235,6 @@ export const useAiAssistant = (options: IUseAiAssistantOptions) => {
     connectProvider,
     testProvider,
   } = useAiProviderConfig({
-    workspaceRootPath: options.workspaceRootPath,
     errorMessage,
   });
   const isSettingsOpen = ref(false);
