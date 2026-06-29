@@ -143,13 +143,16 @@ describe('shell-completion provider', () => {
     expect(previousTreeArgument).toBe(mocks.parserParse.mock.results[0].value);
   });
 
-  it('模糊匹配可命中非前缀候选（如 "gt" → "git"）', async () => {
+  it('补全统一交给 CodeMirror 过滤：provider 返回完整候选且不设 filter:false', async () => {
     mocks.parserInit.mockResolvedValue(undefined);
     const runCompletion = createSource();
 
     const result = await runCompletion('gt', 2);
 
+    // 不再手写过滤：'git' 作为候选交给 CodeMirror，由其内建模糊匹配命中 gt→git
     expect(result?.options.some((entry) => entry.label === 'git')).toBe(true);
+    // 未设 filter:false，表示匹配/打分/排序/高亮统一由 @codemirror/autocomplete 负责
+    expect(result?.filter).not.toBe(false);
   });
 });
 

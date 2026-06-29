@@ -12,8 +12,6 @@ import type {
   IShellCompletionEntry,
 } from '@/types/shell-completion';
 
-const MAX_SUGGESTIONS = 80;
-
 const VARIABLE_BRACE_PATTERN = /\$\{([A-Za-z_][A-Za-z0-9_]*)?$/;
 const VARIABLE_DIRECT_PATTERN = /\$([A-Za-z_][A-Za-z0-9_]*)?$/;
 const OPTION_PATTERN = /--?[A-Za-z0-9-]*$/;
@@ -621,38 +619,6 @@ const resolveCompletionContext = (
   };
 };
 
-// 子序列门控：仅决定「哪些候选进入 MAX_SUGGESTIONS 截断」。真正的模糊打分、排序与高亮
-// 交给 CodeMirror autocomplete（CompletionResult.filter 默认开启）。'gt' 仍能命中 'git'。
-const isSubsequenceMatch = (text: string, query: string): boolean => {
-  if (!query) {
-    return true;
-  }
-  const haystack = text.toLowerCase();
-  const needle = query.toLowerCase();
-  let cursor = 0;
-  for (let index = 0; index < haystack.length && cursor < needle.length; index += 1) {
-    if (haystack[index] === needle[cursor]) {
-      cursor += 1;
-    }
-  }
-  return cursor === needle.length;
-};
-
-const entryMatchesQuery = (entry: IShellCompletionEntry, partial: string): boolean => {
-  if (!partial) {
-    return true;
-  }
-  if (isSubsequenceMatch(entry.label, partial)) {
-    return true;
-  }
-  return entry.detail.toLowerCase().includes(partial.toLowerCase());
-};
-
-const filterEntries = (
-  entries: IShellCompletionEntry[],
-  partial: string,
-): IShellCompletionEntry[] => entries.filter((entry) => entryMatchesQuery(entry, partial));
-
 const createCommandEntries = (labels: string[], priority: number): IShellCompletionEntry[] =>
   labels.map((label) => ({
     label,
@@ -771,35 +737,28 @@ const getArgumentSpecAtIndex = (
 
 const buildArgumentValueEntries = (
   argumentSpec: IShellCommandArgumentSpec | null,
-  partial: string,
 ): IShellCompletionEntry[] => {
   if (!argumentSpec?.suggestions?.length) {
     return [];
   }
-  return filterEntries(
-    argumentSpec.suggestions.flatMap((entry) =>
-      createValueEntryFromSuggestionSpec(entry, argumentSpec),
-    ),
-    partial,
+  return argumentSpec.suggestions.flatMap((entry) =>
+    createValueEntryFromSuggestionSpec(entry, argumentSpec),
   );
 };
 
 const buildOptionValueEntries = (
   flagSpec: IShellCommandOptionSpec,
   argumentIndex: number,
-  partial: string,
 ): IShellCompletionEntry[] =>
   buildArgumentValueEntries(
     getArgumentSpecAtIndex(getOptionArgumentSpecs(flagSpec), argumentIndex),
-    partial,
   );
 
 const buildPositionalArgumentValueEntries = (
   commandNode: IShellCommandNodeSpec,
   argumentIndex: number,
-  partial: string,
 ): IShellCompletionEntry[] =>
-  buildArgumentValueEntries(getArgumentSpecAtIndex(commandNode.args ?? [], argumentIndex), partial);
+  buildArgumentValueEntries(getArgumentSpecAtIndex(commandNode.args ?? [], argumentIndex));
 
 const getCurrentTokenPrefix = (context: ICompletionContext): string =>
   context.optionPrefix || context.wordPrefix;
@@ -980,7 +939,7 @@ const resolveCommandCatalogContext = async (
 const resolveInlineFlagValueContext = (
   catalogContext: ICommandCatalogContext,
   currentToken: string,
-): (IFlagValueContext & { partial: string }) | null => {
+): IFlagValueContext | null => {
   if (!currentToken.startsWith('-')) {
     return null;
   }
@@ -996,7 +955,6 @@ const resolveInlineFlagValueContext = (
   return {
     flag: matchedFlag,
     argumentIndex: 0,
-    partial: currentToken.slice(separatorIndex + 1),
   };
 };
 
@@ -1056,35 +1014,27 @@ const collectLookaheadEntries = (
 const isTestCommand = (commandName: string | null): boolean =>
   commandName === 'test' || commandName === '[' || commandName === '[[';
 
-const buildVariableEntries = (
-  context: ICompletionContext,
-  symbols: ISymbolSnapshot,
-): IShellCompletionEntry[] => {
-  const partial = context.variableContext?.partial ?? context.wordPrefix;
-  const entries = [...createVariableEntries(symbols.variableNames, 2), ...COMMON_VARIABLE_ENTRIES];
-  return filterEntries(entries, partial);
-};
+const buildVariableEntries = (symbols: ISymbolSnapshot): IShellCompletionEntry[] => [
+  ...createVariableEntries(symbols.variableNames, 2),
+  ...COMMON_VARIABLE_ENTRIES,
+];
 
-const buildCommandEntries = async (
-  context: ICompletionContext,
-  symbols: ISymbolSnapshot,
-): Promise<IShellCompletionEntry[]> => {
+const buildCommandEntries = async (symbols: ISymbolSnapshot): Promise<IShellCompletionEntry[]> => {
   const localCommandEntries = createCommandEntries(symbols.functionNames, 1);
   const recentCommandEntries = createCommandEntries(symbols.recentCommandNames, 8);
   const commandCatalogRootEntries = await loadCommandCatalogRootEntries();
-  return filterEntries(
-    [
-      ...localCommandEntries,
-      ...recentCommandEntries,
-      ...commandCatalogRootEntries,
-      ...SHELL_COMMAND_ENTRIES,
-    ],
-    context.wordPrefix,
-  );
+  return [
+    ...localCommandEntries,
+    ...recentCommandEntries,
+    ...commandCatalogRootEntries,
+    ...SHELL_COMMAND_ENTRIES,
+  ];
 };
 
-const buildKeywordEntries = (context: ICompletionContext): IShellCompletionEntry[] =>
-  filterEntries([...SHELL_KEYWORD_ENTRIES, ...SHELL_SNIPPET_ENTRIES], context.wordPrefix);
+const buildKeywordEntries = (): IShellCompletionEntry[] => [
+  ...SHELL_KEYWORD_ENTRIES,
+  ...SHELL_SNIPPET_ENTRIES,
+];
 
 const buildArgumentEntries = async (
   context: ICompletionContext,
@@ -1095,7 +1045,7 @@ const buildArgumentEntries = async (
   const normalizedCommandName = context.activeCommandName.toLowerCase();
   const partial = getCurrentTokenPrefix(context);
   if (isTestCommand(normalizedCommandName)) {
-    return filterEntries(TEST_OPERATOR_ENTRIES, partial);
+    return TEST_OPERATOR_ENTRIES;
   }
   const commandTokens = collectCommandTokensBeforeCursor(
     context.activeCommandNode,
@@ -1105,12 +1055,12 @@ const buildArgumentEntries = async (
   const catalogContext = await resolveCommandCatalogContext(commandTokens, partial);
   if (!catalogContext) {
     if (wrapperCommandSet.has(normalizedCommandName)) {
-      return filterEntries(await loadCommandCatalogRootEntries(), partial);
+      return loadCommandCatalogRootEntries();
     }
     return [];
   }
   if (catalogContext.wrapperAwaitingCommand) {
-    return filterEntries(await loadCommandCatalogRootEntries(), partial);
+    return loadCommandCatalogRootEntries();
   }
   const inlineFlagValueContext = resolveInlineFlagValueContext(
     catalogContext,
@@ -1120,14 +1070,12 @@ const buildArgumentEntries = async (
     return buildOptionValueEntries(
       inlineFlagValueContext.flag,
       inlineFlagValueContext.argumentIndex,
-      inlineFlagValueContext.partial,
     );
   }
   if (catalogContext.awaitingFlagValue) {
     return buildOptionValueEntries(
       catalogContext.awaitingFlagValue.flag,
       catalogContext.awaitingFlagValue.argumentIndex,
-      partial,
     );
   }
   if (!catalogContext.activeNode) {
@@ -1138,7 +1086,6 @@ const buildArgumentEntries = async (
     : buildPositionalArgumentValueEntries(
         catalogContext.activeNode,
         catalogContext.positionalArgumentIndex,
-        partial,
       );
   const flagEntries = collectAvailableFlags(catalogContext.visitedNodes).flatMap(
     createFlagEntryFromSpec,
@@ -1149,7 +1096,7 @@ const buildArgumentEntries = async (
   const candidates = partial.startsWith('-')
     ? flagEntries
     : [...positionalArgumentEntries, ...subcommandEntries, ...flagEntries];
-  return filterEntries(candidates, partial);
+  return candidates;
 };
 
 const dedupeEntries = (entries: IShellCompletionEntry[]): IShellCompletionEntry[] => {
@@ -1170,6 +1117,9 @@ const dedupeEntries = (entries: IShellCompletionEntry[]): IShellCompletionEntry[
   });
 };
 
+// 匹配 / 打分 / 排序 / 高亮 / 限量统一交给 @codemirror/autocomplete：此处只负责
+// 「按光标上下文产出候选集合」与去重，不做任何查询过滤，也不按 priority 截断
+//（截断会在 CM 匹配之前丢弃可命中的低优先级候选）。priority 通过 boost 传达给 CM。
 const buildCompletionEntries = async (
   language: Language,
   context: ICompletionContext,
@@ -1180,25 +1130,22 @@ const buildCompletionEntries = async (
   }
   const lookaheadEntries = collectLookaheadEntries(language, context, symbols);
   if (context.variableContext || context.isDeclarationContext) {
-    return dedupeEntries([...lookaheadEntries, ...buildVariableEntries(context, symbols)]).slice(
-      0,
-      MAX_SUGGESTIONS,
-    );
+    return dedupeEntries([...lookaheadEntries, ...buildVariableEntries(symbols)]);
   }
   const entries: IShellCompletionEntry[] = [...lookaheadEntries];
   if (context.isCommandNameContext) {
-    entries.push(...(await buildCommandEntries(context, symbols)));
-    entries.push(...buildKeywordEntries(context));
+    entries.push(...(await buildCommandEntries(symbols)));
+    entries.push(...buildKeywordEntries());
   } else {
     entries.push(...(await buildArgumentEntries(context)));
     if (context.isInString) {
-      entries.push(...buildVariableEntries(context, symbols));
+      entries.push(...buildVariableEntries(symbols));
     }
   }
   if (entries.length === 0 || context.wordPrefix.length > 0) {
-    entries.push(...buildKeywordEntries(context));
+    entries.push(...buildKeywordEntries());
   }
-  return dedupeEntries(entries).slice(0, MAX_SUGGESTIONS);
+  return dedupeEntries(entries);
 };
 
 const resolveInsertText = (entry: IShellCompletionEntry, context: ICompletionContext): string => {
