@@ -153,6 +153,50 @@ describe('shell-completion provider', () => {
   });
 });
 
+describe('appendAliasEntries', () => {
+  it('将别名展开为独立候选，且别名不继承插入文本、优先级排在规范名之后', async () => {
+    const { appendAliasEntries } = await import('./shell-completion');
+
+    const primaryEntry = {
+      label: 'install',
+      kind: 'command' as const,
+      detail: '安装依赖 · 别名: i, add',
+      insertText: 'install',
+      insertAsSnippet: true,
+      priority: 6,
+    };
+    const entries = appendAliasEntries(primaryEntry, '安装依赖', ['i', 'add']);
+
+    expect(entries).toHaveLength(3);
+    expect(entries[0]).toBe(primaryEntry);
+
+    const aliasLabels = entries.slice(1).map((entry) => entry.label);
+    expect(aliasLabels).toEqual(['i', 'add']);
+
+    for (const aliasEntry of entries.slice(1)) {
+      expect(aliasEntry.kind).toBe('command');
+      expect(aliasEntry.priority).toBe(6.5);
+      expect(aliasEntry.insertText).toBeUndefined();
+      expect(aliasEntry.insertAsSnippet).toBeUndefined();
+      expect(aliasEntry.detail).toContain('install 的别名');
+    }
+  });
+
+  it('无别名时原样返回规范名候选', async () => {
+    const { appendAliasEntries } = await import('./shell-completion');
+
+    const primaryEntry = {
+      label: 'status',
+      kind: 'command' as const,
+      detail: '查看状态',
+      priority: 6,
+    };
+    const entries = appendAliasEntries(primaryEntry, '查看状态', []);
+
+    expect(entries).toEqual([primaryEntry]);
+  });
+});
+
 describe('getUtf8ByteLength', () => {
   it('与 TextEncoder 的字节长度保持一致', async () => {
     const { getUtf8ByteLength } = await import('./shell-completion');
