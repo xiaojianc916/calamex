@@ -11,7 +11,6 @@ import type {
   IShellCommandValueSuggestionSpec,
   IShellCompletionEntry,
 } from '@/types/shell-completion';
-import { computeFuzzyScore } from '@/utils/core/fuzzy-score';
 
 const MAX_SUGGESTIONS = 80;
 
@@ -622,17 +621,31 @@ const resolveCompletionContext = (
   };
 };
 
-// 模糊匹配门控：当「label / 别名为查询子序列」时命中（fzf 式评分见 utils/core/fuzzy-score），
-// 同时保留对 detail 描述的子串搜索。相比此前的 startsWith，'gt' 也能命中 'git'，
-// 让更优的对齐候选进入排序。
+// 子序列门控：仅决定「哪些候选进入 MAX_SUGGESTIONS 截断」。真正的模糊打分、排序与高亮
+// 交给 CodeMirror autocomplete（CompletionResult.filter 默认开启）。'gt' 仍能命中 'git'。
+const isSubsequenceMatch = (text: string, query: string): boolean => {
+  if (!query) {
+    return true;
+  }
+  const haystack = text.toLowerCase();
+  const needle = query.toLowerCase();
+  let cursor = 0;
+  for (let index = 0; index < haystack.length && cursor < needle.length; index += 1) {
+    if (haystack[index] === needle[cursor]) {
+      cursor += 1;
+    }
+  }
+  return cursor === needle.length;
+};
+
 const entryMatchesQuery = (entry: IShellCompletionEntry, partial: string): boolean => {
   if (!partial) {
     return true;
   }
-  if (computeFuzzyScore(entry.label, partial) !== null) {
+  if (isSubsequenceMatch(entry.label, partial)) {
     return true;
   }
-  if (entry.aliases?.some((alias) => computeFuzzyScore(alias, partial) !== null)) {
+  if (entry.aliases?.some((alias) => isSubsequenceMatch(alias, partial))) {
     return true;
   }
   return entry.detail.toLowerCase().includes(partial.toLowerCase());
@@ -1183,22 +1196,6 @@ const resolveCodeMirrorCompletionType = (
   }
 };
 
-// 当前补全上下文的「有效查询串」：与下方计算 from 偏移所用的前缀保持一致。
-const resolveActiveQuery = (context: ICompletionContext): string =>
-  context.variableContext
-    ? context.variableContext.partial
-    : context.optionPrefix || context.wordPrefix;
-
-// 把模糊匹配得分折成 (-1, 1) 的微调量：仅在「同 priority 档位内」按匹配质量打破并列，
-// 不跨档（priority 差 ≥ 1，而微调量绝对值 < 1），因此不会扰动既有的优先级排序。
-const resolveScoreBoost = (entry: IShellCompletionEntry, query: string): number => {
-  if (!query) {
-    return 0;
-  }
-  const score = computeFuzzyScore(entry.label, query);
-  return score === null ? 0 : Math.tanh(score / 64);
-};
-
 const toCodeMirrorCompletion = (
   entry: IShellCompletionEntry,
   context: ICompletionContext,
@@ -1209,7 +1206,7 @@ const toCodeMirrorCompletion = (
     detail: entry.detail,
     info: entry.documentation,
     type: resolveCodeMirrorCompletionType(entry.kind),
-    boost: -1 * (entry.priority ?? 99) + resolveScoreBoost(entry, resolveActiveQuery(context)),
+    boost: -1 * (entry.priority ?? 99),
   };
 
   if (entry.insertAsSnippet) {
