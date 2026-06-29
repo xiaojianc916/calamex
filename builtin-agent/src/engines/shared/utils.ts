@@ -118,12 +118,18 @@ export const createRuntimePreview = (
         return '';
     }
 
-    const characters = Array.from(normalized);
-    const clipped = characters.length <= limit
-        ? normalized
-        : `${characters.slice(0, limit).join('')}...`;
+    // 只扫描到第 limit 个码位即可判定是否需要截断，避免对超长 tool 预览整段物化成码位数组。
+    const prefix: string[] = [];
+    let truncated = false;
+    for (const char of normalized) {
+        if (prefix.length >= limit) {
+            truncated = true;
+            break;
+        }
+        prefix.push(char);
+    }
 
-    return clipped;
+    return truncated ? `${prefix.join('')}...` : normalized;
 };
 
 export const createCommandRuntimeInputPreview = (value: unknown): string => {

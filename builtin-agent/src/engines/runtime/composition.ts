@@ -24,9 +24,6 @@ export class MastraRuntime extends MastraRuntimeApproval {
      * 指令 / 工具策略污染（见 prompts/system-prompt.ts 的 buildSystemPrompt）。
      *
      * 非流式：utility 调用要的是完整结果，故用 agent.generate 而非 stream。
-     * DeepSeek reasoning 透传 shim 仅在回放「带 tool_calls 的 assistant 消息」时生效，
-     * 本路径无工具调用，故无需 runWithDeepSeekReasoningContext 包裹
-     * （见 models/providers/deepseek-reasoning-fetch.ts）。
      */
     async modelChat(
         input: IAgentRuntimeInput,
@@ -115,6 +112,24 @@ export class MastraRuntime extends MastraRuntimeApproval {
             agentId: DEFAULT_EXECUTION_AGENT_ID,
             ...(this.now ? { now: this.now } : {}),
         });
+
+        const failRestore = (errorMessage: string): IAgentRuntimeResponse => {
+            pushUiEvent(events, createRuntimeEvent({
+                type: 'rollback.restore.failed',
+                visibility: 'user',
+                level: 'error',
+                snapshotId,
+                errorMessage,
+            }), options);
+
+            return createErrorResponse(
+                sessionId,
+                `Mastra 回滚恢复失败：${errorMessage}`,
+                events,
+                options,
+            );
+        };
+
         const modelConfig = resolveMastraModelConfig(
             this.readModelConfig,
             'modelConfig' in input ? (input as ICheckpointRestoreInput & {
@@ -135,56 +150,17 @@ export class MastraRuntime extends MastraRuntimeApproval {
             const snapshot = await this.loadExecutionSnapshot(DurableStepIds.AGENTIC_LOOP, input.runId);
 
             if (!snapshot) {
-                pushUiEvent(events, createRuntimeEvent({
-                    type: 'rollback.restore.failed',
-                    visibility: 'user',
-                    level: 'error',
-                    snapshotId,
-                    errorMessage: '未找到可恢复的 checkpoint。',
-                }), options);
-
-                return createErrorResponse(
-                    sessionId,
-                    'Mastra 回滚恢复失败：未找到可恢复的 checkpoint。',
-                    events,
-                    options,
-                );
+                return failRestore('未找到可恢复的 checkpoint。');
             }
 
             if (snapshot.status === 'running') {
-                pushUiEvent(events, createRuntimeEvent({
-                    type: 'rollback.restore.failed',
-                    visibility: 'user',
-                    level: 'error',
-                    snapshotId,
-                    errorMessage: '当前 run 仍在执行，暂时不能回滚。',
-                }), options);
-
-                return createErrorResponse(
-                    sessionId,
-                    'Mastra 回滚恢复失败：当前 run 仍在执行，暂时不能回滚。',
-                    events,
-                    options,
-                );
+                return failRestore('当前 run 仍在执行，暂时不能回滚。');
             }
 
             const systemPrompt = resolveSystemPromptFromSnapshot(snapshot);
 
             if (!systemPrompt) {
-                pushUiEvent(events, createRuntimeEvent({
-                    type: 'rollback.restore.failed',
-                    visibility: 'user',
-                    level: 'error',
-                    snapshotId,
-                    errorMessage: 'checkpoint 缺少可恢复的系统提示词。',
-                }), options);
-
-                return createErrorResponse(
-                    sessionId,
-                    'Mastra 回滚恢复失败：checkpoint 缺少可恢复的系统提示词。',
-                    events,
-                    options,
-                );
+                return failRestore('checkpoint 缺少可恢复的系统提示词。');
             }
 
             const workspaceRootPath = resolveWorkspaceRootPathFromSnapshot(snapshot);
@@ -254,40 +230,14 @@ export class MastraRuntime extends MastraRuntimeApproval {
                     result: restoreMessage,
                 };
             } catch (error) {
-                pushUiEvent(events, createRuntimeEvent({
-                    type: 'rollback.restore.failed',
-                    visibility: 'user',
-                    level: 'error',
-                    snapshotId,
-                    errorMessage: normalizeMastraError(error),
-                }), options);
-
-                return createErrorResponse(
-                    sessionId,
-                    `Mastra 回滚恢复失败：${normalizeMastraError(error)}`,
-                    events,
-                    options,
-                );
+                return failRestore(normalizeMastraError(error));
             } finally {
                 await mcpBundle.disconnectAll();
                 await destroyMastraWorkspace(workspace);
                 await destroyMastraBrowser(browser);
             }
         } catch (error) {
-            pushUiEvent(events, createRuntimeEvent({
-                type: 'rollback.restore.failed',
-                visibility: 'user',
-                level: 'error',
-                snapshotId,
-                errorMessage: normalizeMastraError(error),
-            }), options);
-
-            return createErrorResponse(
-                sessionId,
-                `Mastra 回滚恢复失败：${normalizeMastraError(error)}`,
-                events,
-                options,
-            );
+            return failRestore(normalizeMastraError(error));
         }
     }
 }
