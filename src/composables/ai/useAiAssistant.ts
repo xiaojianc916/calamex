@@ -8,60 +8,36 @@ import {
   unref,
   watch,
 } from 'vue';
-import {
-  buildAiAgentPatchSummaryFromAedDiffs,
-  buildAiAgentPatchSummaryFromApplyResult,
-  buildAiPatchSetFromAedDiff,
-  mergeAiAgentPatchSummaries,
-  parseAiAedPatchRef,
-} from '@/components/business/ai/edit/patch-summary';
-import {
-  buildAskUserResumeRequest,
-  extractPendingAskUser,
-  type IAgentSidecarPendingAskUser,
-} from '@/composables/ai/sidecar-ask-user';
+import { parseAiAedPatchRef } from '@/components/business/ai/edit/patch-summary';
 import {
   extractVisibleAgentRuntimeEvents,
   projectSidecarEventsToToolState,
-  projectSidecarExecuteResponse,
 } from '@/composables/ai/sidecar-events';
 import { subscribeSidecarSessionStream } from '@/composables/ai/sidecar-stream-listener';
 import { useAcpAvailableCommands } from '@/composables/ai/useAcpAvailableCommands';
 import { useAcpPlan } from '@/composables/ai/useAcpPlan';
 import { useAcpSessionConfigOptions } from '@/composables/ai/useAcpSessionConfigOptions';
 import { useAcpUsage } from '@/composables/ai/useAcpUsage';
-import { useAiAgentPlan } from '@/composables/ai/useAiAgentPlan';
 import {
   type IAiWebSelectionContext,
   useAiWebSelectionInbox,
 } from '@/composables/ai/useAiWebSelectionInbox';
 import { useSidecarChangedDocumentRefresh } from '@/composables/useSidecarChangedDocumentRefresh';
 import { aiService } from '@/services/ipc/ai.service';
-import { buildCurrentFileReference } from '@/services/ipc/ai-context.service';
 import { aiEditService } from '@/services/ipc/ai-edit.service';
 import { type IAiPersistedSidecarAgentSession, useAiAgentStore } from '@/store/aiAgent';
 import { legacyMessageToEntries, useAiThreadStore } from '@/store/aiThread';
 import type {
   IAiAgentPatchSummary,
-  IAiApplyPatchMetadata,
   IAiAttachedFile,
   IAiChatMessage,
   IAiContextReference,
   IAiImageAttachmentPreview,
   IAiPatchSet,
-  IAiToolConfirmationRequest,
-  TAiToolConfirmationDecision,
 } from '@/types/ai';
 import type { TAiAssistantMode } from '@/types/ai/assistant-mode';
 import type { IAiConversationScrollState } from '@/types/ai/conversation.schema';
-import type { IAiEditGetDiffPayload, IAiEditOperation } from '@/types/ai/edit';
-import type {
-  IAgentSidecarMessage,
-  IAskUserResult,
-  TAgentBackendKind,
-  TAgentRuntimeEvent,
-  TAgentUiEvent,
-} from '@/types/ai/sidecar';
+import type { TAgentBackendKind, TAgentRuntimeEvent, TAgentUiEvent } from '@/types/ai/sidecar';
 import type { IAiThread, IAiThreadAssistantMessageEntry, IAiThreadEntry } from '@/types/ai/thread';
 import type {
   IActiveRunSummary,
@@ -72,7 +48,6 @@ import type {
 import type { IGitRepositoryStatusPayload } from '@/types/git';
 
 import { toErrorMessage } from '@/utils/error/error';
-import { areFileSystemPathsEqual, normalizeFileSystemPath } from '@/utils/file/path';
 import { logger } from '@/utils/platform/logger';
 
 // ---------------------------------------------------------------------------
@@ -113,25 +88,16 @@ import {
   type IAiConversationCheckpoint,
   mergeRuntimeEvents,
 } from './useAiAssistant.runtime-events';
-import { runShellCheckForAppliedPatch } from './useAiAssistant.shellcheck';
 import {
   createSidecarLiveEventBuffer,
   getLatestSidecarLiveEvents,
-  getOperationAppliedTime,
   hasMeaningfulAssistantText,
-  type ISidecarAnswerStreamMetadata,
-  isAiEditOperationEntry,
-  mapToolConfirmationDecisionToSidecarDecision,
   resolveSidecarDoneStreamTokenSnapshot,
-  resolveSidecarToolProjectionStatus,
-  resolveSidecarWaitingStreamStatus,
 } from './useAiAssistant.stream';
 
 type TAiQuickActionId = 'explain' | 'fix' | 'review';
 
 type TAiFileRollbackStatus = 'ready' | 'reverting' | 'reverted';
-
-const SIDECAR_EXPLICIT_CONTEXT_MESSAGE_LIMIT = 12;
 
 // builtin 是标准 ACP 后端：前端三模式（chat/agent/plan）→ Agent 公示的 ACP 会话模式 id
 // （ask/plan/agent，见 builtin-agent AGENT_MODES / RUNTIME_METHOD_BY_MODE）。经官方
@@ -157,26 +123,9 @@ interface IAgentExecutionStep {
   status: TAgentExecutionStepStatus;
 }
 
-interface IActiveAgentPatchTarget {
-  runId: string;
-  stepId: string;
-}
-
-interface ISidecarPatchApplyResult {
-  appliedPaths: string[];
-  runtimeEvents: TAgentRuntimeEvent[];
-  patches: IAiPatchSet[];
-  summaries: IAiAgentPatchSummary[];
-}
-
 interface IAgentExecutionMessagePatchState {
   patches?: readonly IAiPatchSet[];
   changedFilesSummary?: IAiAgentPatchSummary | null;
-}
-
-interface IAedDiffPatchState {
-  patches: IAiPatchSet[];
-  changedFilesSummary: IAiAgentPatchSummary | null;
 }
 
 export type { IAiAttachedFile, IAiImageAttachmentPreview } from '@/types/ai';
@@ -211,7 +160,6 @@ const MAX_CONTEXT_CHARS = 12_000;
 const MAX_TEXT_ATTACHMENT_BYTES = 128 * 1024;
 const MAX_DOCUMENT_ATTACHMENT_BYTES = 20 * 1024 * 1024;
 const MAX_IMAGE_ATTACHMENT_BYTES = 5 * 1024 * 1024;
-const AI_EDIT_ROLLBACK_TIMELINE_LIMIT = 24;
 const MSG_CALL_FAILED = 'AI 调用失败';
 
 // ---------------------------------------------------------------------------
@@ -322,14 +270,6 @@ export const useAiAssistant = (options: IUseAiAssistantOptions) => {
     }
   };
 
-  const persistSidecarToolConfirmation = (
-    confirmation: IAiToolConfirmationRequest,
-    session: IAiPersistedSidecarAgentSession,
-  ): void => {
-    agentStore.setPendingToolConfirmation(confirmation);
-    agentStore.setPendingSidecarAgentSession(session);
-  };
-
   const clearSidecarToolConfirmation = (confirmationId?: string): void => {
     agentStore.clearPendingToolConfirmation(confirmationId);
 
@@ -345,14 +285,6 @@ export const useAiAssistant = (options: IUseAiAssistantOptions) => {
     }
 
     clearSidecarToolConfirmation();
-  };
-
-  const persistSidecarUserQuestion = (
-    question: IAgentSidecarPendingAskUser,
-    session: IAiPersistedSidecarAgentSession,
-  ): void => {
-    agentStore.setPendingUserQuestion(question);
-    agentStore.setPendingSidecarAgentSession(session);
   };
 
   const clearSidecarUserQuestion = (requestId?: string): void => {
@@ -500,54 +432,11 @@ export const useAiAssistant = (options: IUseAiAssistantOptions) => {
     buildConversationCheckpointsFromEntries(aiThreadStore.authoritativeActiveEntries),
   );
 
-  const agentPlan = useAiAgentPlan();
   const acpAvailableCommands = useAcpAvailableCommands();
   const acpPlan = useAcpPlan();
   const acpUsage = useAcpUsage();
   const acpSessionConfigOptions = useAcpSessionConfigOptions();
   const { refreshSidecarChangedDocuments } = useSidecarChangedDocumentRefresh();
-
-  const resolveActiveAgentPatchTarget = (): IActiveAgentPatchTarget | null => {
-    const activeRun = unref(agentPlan.store.activeRun);
-
-    if (!activeRun) {
-      return null;
-    }
-
-    if (activeRun.currentStepId) {
-      return {
-        runId: activeRun.id,
-        stepId: activeRun.currentStepId,
-      };
-    }
-
-    const activeStep = activeRun.steps.find((step) => step.status === 'running' || step.isActive);
-
-    if (!activeStep) {
-      return null;
-    }
-
-    return {
-      runId: activeRun.id,
-      stepId: activeStep.id,
-    };
-  };
-
-  const buildActiveAgentPatchMetadata = (): Pick<
-    IAiApplyPatchMetadata,
-    'agentRunId' | 'agentStepId'
-  > | null => {
-    const target = resolveActiveAgentPatchTarget();
-
-    if (!target) {
-      return null;
-    }
-
-    return {
-      agentRunId: target.runId,
-      agentStepId: target.stepId,
-    };
-  };
 
   const getAssistantEntry = (messageId: string): IAiThreadAssistantMessageEntry | null => {
     for (const entry of aiThreadStore.authoritativeActiveEntries) {
@@ -642,163 +531,6 @@ export const useAiAssistant = (options: IUseAiAssistantOptions) => {
     if (refreshResult.failedNames.length > 0) {
       errorMessage.value = `Agent 已修改文件，但刷新 ${refreshResult.failedNames.join('、')} 失败，请手动重新打开。`;
     }
-  };
-
-  const operationTouchesChangedPath = (
-    operation: IAiEditOperation,
-    changedFilePaths: readonly string[],
-  ): boolean => {
-    if (changedFilePaths.length === 0) {
-      return false;
-    }
-
-    const operationPaths = [operation.path, operation.newPath].filter((path): path is string =>
-      Boolean(path?.trim()),
-    );
-
-    return operationPaths.some((operationPath) =>
-      changedFilePaths.some((changedPath) => areFileSystemPathsEqual(operationPath, changedPath)),
-    );
-  };
-
-  const findLatestRollbackableOperation = async (
-    changedFilePaths: readonly string[],
-  ): Promise<IAiEditOperation | null> => {
-    if (changedFilePaths.length === 0) {
-      return null;
-    }
-
-    const timeline = await aiEditService.listTimeline({
-      taskId: activeConversationId.value ?? null,
-      limit: AI_EDIT_ROLLBACK_TIMELINE_LIMIT,
-    });
-    const operations = timeline.entries
-      .filter(isAiEditOperationEntry)
-      .map((entry) => entry.data)
-      .filter((operation) => operationTouchesChangedPath(operation, changedFilePaths))
-      .sort((left, right) => getOperationAppliedTime(right) - getOperationAppliedTime(left));
-
-    return operations[0] ?? null;
-  };
-
-  const updateFileRollbackPrompt = async (
-    changedFilePaths: readonly string[],
-    hasFileMutations: boolean,
-  ): Promise<void> => {
-    if (!hasFileMutations || changedFilePaths.length === 0) {
-      return;
-    }
-
-    try {
-      const operation = await findLatestRollbackableOperation(changedFilePaths);
-
-      if (!operation) {
-        return;
-      }
-
-      fileRollbackPrompt.value = {
-        operationId: operation.id,
-        fileCount: changedFilePaths.length,
-        status: 'ready',
-        updatedAt: new Date().toISOString(),
-      };
-    } catch (error) {
-      logger.warn({
-        event: 'ai.file_rollback_prompt.failed',
-        err: error,
-      });
-    }
-  };
-
-  const collectUniqueAedDiffPaths = (
-    changedFilePaths: readonly string[],
-    excludedPaths: readonly string[],
-  ): string[] => {
-    const paths: string[] = [];
-    const seen = new Set<string>();
-
-    for (const path of changedFilePaths) {
-      const trimmedPath = path.trim();
-
-      if (!trimmedPath) {
-        continue;
-      }
-
-      if (
-        excludedPaths.some((excludedPath) => areFileSystemPathsEqual(excludedPath, trimmedPath))
-      ) {
-        continue;
-      }
-
-      const normalized = normalizeFileSystemPath(trimmedPath, {
-        collapseDuplicateSeparators: true,
-        trimTrailingSeparator: true,
-      });
-
-      if (!normalized || seen.has(normalized)) {
-        continue;
-      }
-
-      seen.add(normalized);
-      paths.push(trimmedPath);
-    }
-
-    return paths;
-  };
-
-  const loadAedDiffPatchStateForChangedFiles = async (input: {
-    changedFilePaths: readonly string[];
-    excludedPaths: readonly string[];
-    fallbackTaskId: string;
-    runId: string;
-    stepId: string;
-  }): Promise<IAedDiffPatchState | null> => {
-    const taskId = activeConversationId.value ?? input.fallbackTaskId;
-    const paths = collectUniqueAedDiffPaths(input.changedFilePaths, input.excludedPaths);
-
-    if (!taskId.trim() || paths.length === 0) {
-      return null;
-    }
-
-    const diffs: IAiEditGetDiffPayload[] = [];
-
-    for (const path of paths) {
-      try {
-        const diff = await aiEditService.getDiff({ taskId, path });
-
-        if (diff.hunks.length > 0) {
-          diffs.push(diff);
-        }
-      } catch (error) {
-        logger.warn({
-          event: 'ai.aed_diff_preview.load_failed',
-          path,
-          err: error,
-        });
-      }
-    }
-
-    if (diffs.length === 0) {
-      return null;
-    }
-
-    const patches = diffs
-      .map(buildAiPatchSetFromAedDiff)
-      .filter((patch): patch is IAiPatchSet => patch !== null);
-    const changedFilesSummary = buildAiAgentPatchSummaryFromAedDiffs({
-      diffs,
-      taskId,
-      runId: input.runId,
-      stepId: input.stepId,
-      appliedAt: new Date().toISOString(),
-    });
-
-    return patches.length > 0 || changedFilesSummary
-      ? {
-          patches,
-          changedFilesSummary,
-        }
-      : null;
   };
 
   const mapSidecarToolCallStatusToStepStatus = (
@@ -903,117 +635,6 @@ export const useAiAssistant = (options: IUseAiAssistantOptions) => {
     runtimeTimelineEvents.value = mergeRuntimeEvents(runtimeTimelineEvents.value, events) ?? [];
   };
 
-  const appendRuntimeTimelineEvents = (events: readonly TAgentUiEvent[]): void => {
-    appendVisibleRuntimeTimelineEvents(extractVisibleAgentRuntimeEvents(events));
-  };
-
-  // 上下文真源 = 权威 entries（对标 Zed AcpThread::to_markdown 由 entries 派生上下文）：
-  // user_message → 文本块以空行衔接；assistant_message → message chunk 文本顺序拼接；
-  // 仅取 user/assistant 文本、去空、保序、截最近 N 条。与旧 messages 投影按构造等价。
-  const toSidecarMessages = (entries: readonly IAiThreadEntry[]): IAgentSidecarMessage[] => {
-    const sidecarMessages: IAgentSidecarMessage[] = [];
-    for (const entry of entries) {
-      if (entry.type === 'user_message') {
-        const content = entry.content
-          .flatMap((block) => (block.type === 'text' ? [block.text] : []))
-          .join('\n\n')
-          .trim();
-        if (content.length > 0) {
-          sidecarMessages.push({ role: 'user', content });
-        }
-        continue;
-      }
-      if (entry.type === 'assistant_message') {
-        const content = entry.chunks
-          .flatMap((chunk) =>
-            chunk.type === 'message' && chunk.block.type === 'text' ? [chunk.block.text] : [],
-          )
-          .join('')
-          .trim();
-        if (content.length > 0) {
-          sidecarMessages.push({ role: 'assistant', content });
-        }
-      }
-    }
-    return sidecarMessages.slice(-SIDECAR_EXPLICIT_CONTEXT_MESSAGE_LIMIT);
-  };
-
-  const applySidecarPatchSets = async (
-    patchEntries: readonly ISidecarPatchEntry[],
-    turnId: string,
-    sessionId: string,
-  ): Promise<ISidecarPatchApplyResult> => {
-    const appliedPaths: string[] = [];
-    const runtimeEvents: TAgentRuntimeEvent[] = [];
-    const appliedPatches: IAiPatchSet[] = [];
-    const summaries: IAiAgentPatchSummary[] = [];
-
-    for (const patchEntry of patchEntries) {
-      const patch = patchEntry.patch;
-      const patchMetadata = buildActiveAgentPatchMetadata();
-      const result = patchEntry.alreadyApplied
-        ? {
-            appliedFiles: patch.files.map((file) => ({
-              path: file.path,
-              byteSize: 0,
-            })),
-          }
-        : await aiService.applyPatch({
-            patch,
-            metadata: {
-              taskId: activeConversationId.value,
-              turnId,
-              reason: patch.summary,
-              toolCallId: 'apply_file_edits',
-              confirmedByUser: true,
-              workspaceRootPath: options.workspaceRootPath.value,
-              agentRunId: patchMetadata?.agentRunId ?? null,
-              agentStepId: patchMetadata?.agentStepId ?? null,
-            },
-          });
-      const currentAppliedPaths = result.appliedFiles.map((file) => file.path);
-
-      syncPatchedDocument(options.document.value, patch, currentAppliedPaths);
-      appliedPaths.push(...currentAppliedPaths);
-      if (currentAppliedPaths.length > 0) {
-        appliedPatches.push(patch);
-      }
-      runtimeEvents.push(
-        ...(await runShellCheckForAppliedPatch({
-          patch,
-          appliedPaths: currentAppliedPaths,
-          runId: patchMetadata?.agentRunId ?? `sidecar:${turnId}`,
-          sessionId,
-          seqStart: runtimeEvents.length + 1,
-        })),
-      );
-
-      const taskId = activeConversationId.value ?? turnId;
-      const summary = buildAiAgentPatchSummaryFromApplyResult({
-        patch,
-        applyResult: result,
-        taskId,
-        runId: patchMetadata?.agentRunId ?? `sidecar:${turnId}`,
-        stepId: patchMetadata?.agentStepId ?? 'agent',
-        appliedAt: new Date().toISOString(),
-      });
-
-      if (summary) {
-        summaries.push(summary);
-        if (patchMetadata?.agentRunId && patchMetadata.agentStepId) {
-          agentPlan.store.appendPatchSummary(summary);
-        }
-      }
-    }
-
-    return {
-      appliedPaths,
-      runtimeEvents,
-      patches: appliedPatches,
-      summaries,
-    };
-  };
-
   const buildLiveAppliedPatchState = (
     patchEntries: readonly ISidecarPatchEntry[],
   ): IAgentExecutionMessagePatchState | undefined => {
@@ -1038,154 +659,6 @@ export const useAiAssistant = (options: IUseAiAssistantOptions) => {
       : undefined;
   };
 
-  interface IFinalizeSidecarTurnContext {
-    assistantMessageId: string;
-    threadId: string | null;
-    fallbackActivityText: string;
-    patchTaskId: string;
-    patchSessionId: string;
-    updateSteps: boolean;
-    onPendingConfirmation: (pendingConfirmation: IAiToolConfirmationRequest) => void;
-    onPendingUserQuestion: (pendingUserQuestion: IAgentSidecarPendingAskUser) => void;
-  }
-
-  const finalizeSidecarTurn = async (
-    payload: Awaited<ReturnType<typeof aiService.sidecarChat>>,
-    ctx: IFinalizeSidecarTurnContext,
-  ): Promise<void> => {
-    appendRuntimeTimelineEvents(payload.events);
-    const projection = projectSidecarExecuteResponse(payload);
-    const toolProjection = projectSidecarEventsToToolState({
-      events: payload.events,
-      fallbackActivityText: ctx.fallbackActivityText,
-      streamStatus: resolveSidecarToolProjectionStatus(projection),
-    });
-    const sidecarStreamStatus = resolveSidecarWaitingStreamStatus(projection);
-    const streamMetadata: ISidecarAnswerStreamMetadata = {
-      messageId: ctx.assistantMessageId,
-      threadId: ctx.threadId,
-      toolCalls: toolProjection.toolCalls,
-      streamStatus: sidecarStreamStatus,
-      activityText: toolProjection.activityText,
-      // payload.events 可能漏掉「仅经实时流到达」的 runtime agent 事件，收尾合并本回合累计的可见
-      // runtime 时间线（已含实时 + payload 事件，按 id 去重）。
-      runtimeEvents: compactRuntimeEvents(
-        mergeRuntimeEvents(
-          runtimeTimelineEvents.value,
-          extractVisibleAgentRuntimeEvents(payload.events),
-        ) ?? [],
-      ),
-      streamTokenSnapshot: resolveSidecarDoneStreamTokenSnapshot(
-        getLatestSidecarLiveEvents(payload.events).doneEvent,
-      ),
-    };
-
-    const sidecarPatchEntries = projection.errorMessage
-      ? []
-      : extractSidecarPatchEntries(payload.events);
-    const sidecarPatchResult =
-      sidecarPatchEntries.length > 0
-        ? await applySidecarPatchSets(sidecarPatchEntries, ctx.patchTaskId, ctx.patchSessionId)
-        : { appliedPaths: [], runtimeEvents: [], patches: [], summaries: [] };
-    const sidecarAppliedPaths = sidecarPatchResult.appliedPaths;
-    const aedDiffPatchState = projection.errorMessage
-      ? null
-      : await loadAedDiffPatchStateForChangedFiles({
-          changedFilePaths: projection.changedFilePaths,
-          excludedPaths: sidecarAppliedPaths,
-          fallbackTaskId: ctx.patchTaskId,
-          runId: `sidecar:${ctx.patchTaskId}`,
-          stepId: 'agent',
-        });
-    const patchSummaries = [
-      ...sidecarPatchResult.summaries,
-      ...(aedDiffPatchState?.changedFilesSummary ? [aedDiffPatchState.changedFilesSummary] : []),
-    ];
-    const displayedPatches = [...sidecarPatchResult.patches, ...(aedDiffPatchState?.patches ?? [])];
-    const changedFilesSummary = mergeAiAgentPatchSummaries(patchSummaries);
-    const patchState =
-      displayedPatches.length > 0 || changedFilesSummary
-        ? { patches: displayedPatches, changedFilesSummary }
-        : undefined;
-
-    if (sidecarPatchResult.runtimeEvents.length > 0) {
-      streamMetadata.runtimeEvents = compactRuntimeEvents([
-        ...(streamMetadata.runtimeEvents ?? []),
-        ...sidecarPatchResult.runtimeEvents,
-      ]);
-      appendVisibleRuntimeTimelineEvents(sidecarPatchResult.runtimeEvents);
-    }
-
-    if (ctx.updateSteps) {
-      for (const toolCall of toolProjection.toolCalls) {
-        updateAgentStep(
-          toolCall.id,
-          toolCall.summary,
-          mapSidecarToolCallStatusToStepStatus(toolCall.status),
-        );
-      }
-    }
-
-    // 收尾：把本回合最终 reduce 态 + patches 写入 authoritative（mirror $subscribe 负责持久化）。
-    const finalStream: NonNullable<IAiChatMessage['stream']> = {
-      status: projection.errorMessage ? 'completed' : streamMetadata.streamStatus,
-      ...(streamMetadata.activityText !== undefined
-        ? { activityText: streamMetadata.activityText }
-        : {}),
-      ...(streamMetadata.runtimeEvents?.length
-        ? { runtimeEvents: streamMetadata.runtimeEvents }
-        : {}),
-      // token 用量：除 usage VM 外，同时补齐顶层扁平字段，供消费侧两种读法都命中。
-      ...(streamMetadata.streamTokenSnapshot
-        ? {
-            usage: streamMetadata.streamTokenSnapshot,
-            inputTokens: streamMetadata.streamTokenSnapshot.inputTokens,
-            outputTokens: streamMetadata.streamTokenSnapshot.outputTokens,
-            totalTokens: streamMetadata.streamTokenSnapshot.totalTokens,
-          }
-        : {}),
-    };
-    updateLiveThreadFromSidecarEvents(ctx.assistantMessageId, ctx.threadId, payload.events, {
-      stream: finalStream,
-      patches: patchState?.patches,
-      // 最终回答正文经收尾注入落进权威 entries（唯一真源）。
-      finalContent: projection.assistantContent,
-      changedFilesSummary: patchState?.changedFilesSummary ?? undefined,
-    });
-
-    await refreshChangedDocumentsAfterSidecarRun(
-      [...projection.changedFilePaths, ...sidecarAppliedPaths],
-      projection.hasFileMutations || sidecarAppliedPaths.length > 0,
-    );
-    await updateFileRollbackPrompt(
-      [...projection.changedFilePaths, ...sidecarAppliedPaths],
-      projection.hasFileMutations || sidecarAppliedPaths.length > 0,
-    );
-
-    if (projection.pendingConfirmation) {
-      ctx.onPendingConfirmation(projection.pendingConfirmation);
-      return;
-    }
-
-    const pendingUserQuestion = extractPendingAskUser(payload);
-
-    if (pendingUserQuestion) {
-      ctx.onPendingUserQuestion(pendingUserQuestion);
-      return;
-    }
-
-    clearSidecarToolConfirmation();
-    clearSidecarUserQuestion();
-
-    if (!projection.errorMessage) {
-      clearAttachedFiles({ revokePreviews: false });
-    }
-
-    if (projection.errorMessage) {
-      errorMessage.value = projection.errorMessage;
-    }
-  };
-
   const failSidecarAgentMessage = (messageId: string, message: string): void => {
     patchAssistantEntry(messageId, (entry) => ({
       ...entry,
@@ -1195,294 +668,6 @@ export const useAiAssistant = (options: IUseAiAssistantOptions) => {
     errorMessage.value = message;
   };
 
-  const executeSidecarAgentRequest = async (
-    messageContent: string,
-    references: IAiContextReference[],
-    turnId: string,
-    threadId: string | null,
-  ): Promise<void> => {
-    errorMessage.value = '';
-    isSending.value = true;
-    agentSteps.value = [];
-    runtimeTimelineEvents.value = [];
-    clearSidecarToolConfirmation();
-    clearSidecarUserQuestion();
-
-    const assistantMessageId = createMessageId('assistant');
-    const targetThreadId = threadId;
-    activeBufferedThreadId.value = targetThreadId;
-    // 回合基线 = 「发起回合前」的权威 entries 快照（此刻活动线程已含本回合 user_message、
-    // 尚无 assistant 占位）。同时用于本回合 sidecar 上下文与（审批/反向提问）resume 基线。
-    const turnBaseEntries = [...aiThreadStore.authoritativeActiveEntries];
-    const initialActivityText = buildInitialAgentActivityText();
-    const placeholderMessage: IAiChatMessage = {
-      id: assistantMessageId,
-      role: 'assistant',
-      content: '',
-      createdAt: new Date().toISOString(),
-      references: [],
-      toolCalls: [],
-      stream: {
-        status: 'streaming',
-        activityText: initialActivityText,
-        runtimeEvents: [],
-      },
-    };
-
-    aiThreadStore.patchActiveThreadEntries((entries) => [
-      ...entries,
-      ...legacyMessageToEntries(placeholderMessage),
-    ]);
-    activeAgentMessageId.value = assistantMessageId;
-    activeAbortController.value = new AbortController();
-    const sidecarSessionId = `sidecar:${assistantMessageId}`;
-    const sidecarContextReferences = buildSidecarContextReferences(references);
-    const liveEventBuffer = createSidecarLiveEventBuffer((events, freshEvents) => {
-      appendVisibleRuntimeTimelineEvents(extractVisibleAgentRuntimeEvents(freshEvents));
-      const liveRenderState = applySidecarLiveEventsToAgentMessage(
-        assistantMessageId,
-        targetThreadId,
-        '',
-        events,
-      );
-      updateLiveThreadFromSidecarEvents(
-        assistantMessageId,
-        targetThreadId,
-        events,
-        liveRenderState,
-      );
-    });
-    let unlistenSidecarStream: (() => void) | null = null;
-
-    try {
-      unlistenSidecarStream = await subscribeSidecarSessionStream(sidecarSessionId, (event) => {
-        liveEventBuffer.push(event);
-      });
-      const payload = await aiService.sidecarChat({
-        sessionId: sidecarSessionId,
-        mode: 'agent',
-        goal: messageContent,
-        messages: toSidecarMessages(turnBaseEntries),
-        workspaceRootPath: options.workspaceRootPath.value,
-        context: sidecarContextReferences,
-        ...(targetThreadId ? { threadId: targetThreadId } : {}),
-      });
-      liveEventBuffer.flush();
-      unlistenSidecarStream?.();
-      unlistenSidecarStream = null;
-      await finalizeSidecarTurn(payload, {
-        assistantMessageId,
-        threadId: targetThreadId,
-        fallbackActivityText: initialActivityText,
-        patchTaskId: turnId,
-        patchSessionId: sidecarSessionId,
-        updateSteps: true,
-        onPendingConfirmation: (pendingConfirmation) => {
-          persistSidecarToolConfirmation(pendingConfirmation, {
-            sessionId: payload.sessionId,
-            assistantMessageId,
-            threadId: targetThreadId,
-            turnId,
-            baseEntries: turnBaseEntries,
-            messageContent,
-            references: sidecarContextReferences,
-          });
-        },
-        onPendingUserQuestion: (pendingUserQuestion) => {
-          persistSidecarUserQuestion(pendingUserQuestion, {
-            sessionId: payload.sessionId,
-            assistantMessageId,
-            threadId: targetThreadId,
-            turnId,
-            baseEntries: turnBaseEntries,
-            messageContent,
-            references: sidecarContextReferences,
-          });
-        },
-      });
-    } catch (error) {
-      if (!activeAbortController.value?.signal.aborted) {
-        failSidecarAgentMessage(assistantMessageId, toErrorMessage(error, MSG_CALL_FAILED));
-      }
-    } finally {
-      liveEventBuffer.dispose();
-      unlistenSidecarStream?.();
-      activeAbortController.value = null;
-      activeAgentMessageId.value = null;
-      clearActiveBufferedThread(targetThreadId);
-      isSending.value = false;
-    }
-  };
-
-  const resolveSidecarToolConfirmation = async (
-    decision: TAiToolConfirmationDecision,
-  ): Promise<void> => {
-    const session = agentStore.pendingSidecarAgentSession;
-    const confirmation = unref(agentPlan.store.pendingToolConfirmation);
-
-    if (!session || !confirmation) {
-      errorMessage.value = '当前没有可继续的 Agent 工具确认。';
-      return;
-    }
-
-    isSending.value = true;
-    activeSidecarAgentSession.value = session;
-    activeAgentMessageId.value = session.assistantMessageId;
-    activeBufferedThreadId.value = session.threadId;
-    const liveEventBuffer = createSidecarLiveEventBuffer((events, freshEvents) => {
-      appendVisibleRuntimeTimelineEvents(extractVisibleAgentRuntimeEvents(freshEvents));
-      const liveRenderState = applySidecarLiveEventsToAgentMessage(
-        session.assistantMessageId,
-        session.threadId,
-        '',
-        events,
-      );
-      updateLiveThreadFromSidecarEvents(
-        session.assistantMessageId,
-        session.threadId,
-        events,
-        liveRenderState,
-      );
-    });
-    let unlistenSidecarStream: (() => void) | null = null;
-
-    try {
-      unlistenSidecarStream = await subscribeSidecarSessionStream(session.sessionId, (event) => {
-        liveEventBuffer.push(event);
-      });
-      const payload = await aiService.sidecarResolveApproval({
-        sessionId: session.sessionId,
-        requestId: confirmation.id,
-        decision: mapToolConfirmationDecisionToSidecarDecision(decision),
-        goal: session.messageContent,
-        messages: toSidecarMessages(session.baseEntries),
-        workspaceRootPath: options.workspaceRootPath.value,
-        context: session.references,
-        ...(session.threadId ? { threadId: session.threadId } : {}),
-      });
-      liveEventBuffer.flush();
-      unlistenSidecarStream?.();
-      unlistenSidecarStream = null;
-      clearSidecarToolConfirmation(confirmation.id);
-      await finalizeSidecarTurn(payload, {
-        assistantMessageId: session.assistantMessageId,
-        threadId: session.threadId,
-        fallbackActivityText: session.messageContent,
-        patchTaskId: session.turnId ?? session.assistantMessageId,
-        patchSessionId: payload.sessionId,
-        updateSteps: false,
-        onPendingConfirmation: (pendingConfirmation) => {
-          persistSidecarToolConfirmation(pendingConfirmation, {
-            ...session,
-            sessionId: payload.sessionId,
-          });
-        },
-        onPendingUserQuestion: (pendingUserQuestion) => {
-          persistSidecarUserQuestion(pendingUserQuestion, {
-            ...session,
-            sessionId: payload.sessionId,
-          });
-        },
-      });
-    } catch (error) {
-      failSidecarAgentMessage(
-        session.assistantMessageId,
-        toErrorMessage(error, '处理 Agent 工具确认失败。'),
-      );
-    } finally {
-      liveEventBuffer.dispose();
-      unlistenSidecarStream?.();
-      activeAgentMessageId.value = null;
-      activeSidecarAgentSession.value = null;
-      clearActiveBufferedThread(session.threadId);
-      isSending.value = false;
-    }
-  };
-
-  const resolveSidecarUserQuestion = async (result: IAskUserResult): Promise<void> => {
-    const session = agentStore.pendingSidecarAgentSession;
-    const question = agentStore.pendingUserQuestion;
-
-    if (!session || !question) {
-      errorMessage.value = '当前没有可继续的反向提问。';
-      return;
-    }
-
-    isSending.value = true;
-    activeSidecarAgentSession.value = session;
-    activeAgentMessageId.value = session.assistantMessageId;
-    activeBufferedThreadId.value = session.threadId;
-    const liveEventBuffer = createSidecarLiveEventBuffer((events, freshEvents) => {
-      appendVisibleRuntimeTimelineEvents(extractVisibleAgentRuntimeEvents(freshEvents));
-      const liveRenderState = applySidecarLiveEventsToAgentMessage(
-        session.assistantMessageId,
-        session.threadId,
-        '',
-        events,
-      );
-      updateLiveThreadFromSidecarEvents(
-        session.assistantMessageId,
-        session.threadId,
-        events,
-        liveRenderState,
-      );
-    });
-    let unlistenSidecarStream: (() => void) | null = null;
-
-    try {
-      unlistenSidecarStream = await subscribeSidecarSessionStream(session.sessionId, (event) => {
-        liveEventBuffer.push(event);
-      });
-      const payload = await aiService.sidecarResolveAskUser({
-        ...buildAskUserResumeRequest({
-          requestId: question.requestId,
-          result,
-          sessionId: session.sessionId,
-        }),
-        goal: session.messageContent,
-        messages: toSidecarMessages(session.baseEntries),
-        workspaceRootPath: options.workspaceRootPath.value,
-        context: session.references,
-        ...(session.threadId ? { threadId: session.threadId } : {}),
-      });
-      liveEventBuffer.flush();
-      unlistenSidecarStream?.();
-      unlistenSidecarStream = null;
-      clearSidecarUserQuestion(question.requestId);
-      await finalizeSidecarTurn(payload, {
-        assistantMessageId: session.assistantMessageId,
-        threadId: session.threadId,
-        fallbackActivityText: session.messageContent,
-        patchTaskId: session.turnId ?? session.assistantMessageId,
-        patchSessionId: payload.sessionId,
-        updateSteps: false,
-        onPendingConfirmation: (pendingConfirmation) => {
-          persistSidecarToolConfirmation(pendingConfirmation, {
-            ...session,
-            sessionId: payload.sessionId,
-          });
-        },
-        onPendingUserQuestion: (pendingUserQuestion) => {
-          persistSidecarUserQuestion(pendingUserQuestion, {
-            ...session,
-            sessionId: payload.sessionId,
-          });
-        },
-      });
-    } catch (error) {
-      failSidecarAgentMessage(
-        session.assistantMessageId,
-        toErrorMessage(error, '处理反向提问失败。'),
-      );
-    } finally {
-      liveEventBuffer.dispose();
-      unlistenSidecarStream?.();
-      activeAgentMessageId.value = null;
-      activeSidecarAgentSession.value = null;
-      clearActiveBufferedThread(session.threadId);
-      isSending.value = false;
-    }
-  };
   // -----------------------------------------------------------------------
   // Computed
   // -----------------------------------------------------------------------
@@ -1543,30 +728,6 @@ export const useAiAssistant = (options: IUseAiAssistantOptions) => {
 
   const buildReferences = async (): Promise<IAiContextReference[]> =>
     attachedFiles.value.map((file) => file.reference);
-
-  const buildSidecarToolReferences = (): IAiContextReference[] => {
-    const currentFile = buildCurrentFileReference(options.document.value);
-
-    return currentFile ? [currentFile] : [];
-  };
-
-  const buildSidecarContextReferences = (
-    references: IAiContextReference[] = currentReferences.value,
-  ): IAiContextReference[] => {
-    const seen = new Set<string>();
-    const merged: IAiContextReference[] = [];
-
-    for (const reference of [...references, ...buildSidecarToolReferences()]) {
-      if (seen.has(reference.id)) {
-        continue;
-      }
-
-      seen.add(reference.id);
-      merged.push(reference);
-    }
-
-    return merged;
-  };
 
   // -----------------------------------------------------------------------
   // Quick actions / attachments
@@ -1900,145 +1061,6 @@ export const useAiAssistant = (options: IUseAiAssistantOptions) => {
     }
   };
 
-  const executeAiRequest = async (
-    requestMessages: IAiChatMessage[],
-    references: IAiContextReference[],
-    threadId: string | null,
-  ): Promise<void> => {
-    // chat 模式现走 ACP:后端 chat_stream_via_acp 回填 sessionId,投影事件
-    // (message_delta / done / error)落在 ai:sidecar-stream,复用 agent 同款消费机制。
-    errorMessage.value = '';
-    isSending.value = true;
-    activeBufferedThreadId.value = threadId;
-
-    const assistantMessageId = createMessageId('assistant');
-    const targetThreadId = threadId;
-    const placeholderMessage: IAiChatMessage = {
-      id: assistantMessageId,
-      role: 'assistant',
-      content: '',
-      createdAt: new Date().toISOString(),
-      references: [],
-      stream: {
-        status: 'streaming',
-      },
-    };
-
-    aiThreadStore.patchActiveThreadEntries((entries) => [
-      ...entries,
-      ...legacyMessageToEntries(placeholderMessage),
-    ]);
-    activeAgentMessageId.value = assistantMessageId;
-    activeAbortController.value = new AbortController();
-    const requestAbortController = activeAbortController.value;
-
-    let hasSettledStream = false;
-    const settle = (): void => {
-      hasSettledStream = true;
-      activeStreamResolve.value?.();
-    };
-
-    const liveEventBuffer = createSidecarLiveEventBuffer((events, freshEvents) => {
-      if (requestAbortController.signal.aborted) {
-        return;
-      }
-      // 关键修复(chat 卡死回归):settle() 是本回合唯一的完成信号(解开 await、复位 isSending),
-      // 必须在收到 done/error 帧时永远触发,不能被渲染富集写入的异常饿死——该回调跑在缓冲的
-      // raf/timeout flush 里,抛错是游离的未处理异常,不会 reject 外层 await,会造成永久「正在准备回复」。
-      const { doneEvent, errorEvent } = getLatestSidecarLiveEvents(events);
-
-      try {
-        appendVisibleRuntimeTimelineEvents(extractVisibleAgentRuntimeEvents(freshEvents));
-        const liveRenderState = applySidecarLiveEventsToAgentMessage(
-          assistantMessageId,
-          targetThreadId,
-          '',
-          events,
-        );
-        updateLiveThreadFromSidecarEvents(
-          assistantMessageId,
-          targetThreadId,
-          events,
-          liveRenderState,
-        );
-      } catch (error) {
-        logger.error({ event: 'ai.chat.live_render_failed', err: error });
-        if (!errorMessage.value) {
-          errorMessage.value = toErrorMessage(error, MSG_CALL_FAILED);
-        }
-      } finally {
-        if (errorEvent) {
-          errorMessage.value = errorEvent.message;
-        }
-        if (doneEvent || errorEvent) {
-          settle();
-        }
-      }
-    });
-    const sidecarSessionId = `sidecar:${assistantMessageId}`;
-    let unlistenSidecarStream: (() => void) | null = null;
-
-    try {
-      // chat 模式与外部 agent 同款零竞态流式：用前端预生成的 sidecarSessionId 在发起回合
-      // 「之前」订阅 session/update 帧；后端 chat_stream_via_acp 据此把本回合帧的 session_id
-      // 由 ACP 会话 UUID 重写为该键（见 Rust host.agent_chat_with_stream_key），逐 token 实时
-      // 渲染。取代旧的「subscribeSidecarStreamWithPrebuffer + 回合返回后 bind(sessionId)」。
-      unlistenSidecarStream = await subscribeSidecarSessionStream(sidecarSessionId, (event) => {
-        if (requestAbortController.signal.aborted) {
-          return;
-        }
-        liveEventBuffer.push(event);
-      });
-
-      const stream = await aiService.chatStream({
-        threadId,
-        streamSessionId: sidecarSessionId,
-        messages: requestMessages,
-        references,
-      });
-
-      activeStreamId.value = stream.streamId;
-
-      if (requestAbortController.signal.aborted) {
-        settle();
-      }
-
-      await new Promise<void>((resolve) => {
-        if (hasSettledStream) {
-          resolve();
-          return;
-        }
-
-        activeStreamResolve.value = resolve;
-      });
-
-      liveEventBuffer.flush();
-      unlistenSidecarStream?.();
-      unlistenSidecarStream = null;
-
-      if (!errorMessage.value) {
-        clearAttachedFiles({ revokePreviews: false });
-      }
-    } catch (error) {
-      if (!requestAbortController.signal.aborted) {
-        failSidecarAgentMessage(assistantMessageId, toErrorMessage(error, MSG_CALL_FAILED));
-      }
-    } finally {
-      liveEventBuffer.dispose();
-      unlistenSidecarStream?.();
-      activeStreamResolve.value = null;
-      activeStreamId.value = null;
-      activeAbortController.value = null;
-      activeAgentMessageId.value = null;
-      clearActiveBufferedThread(targetThreadId);
-      isSending.value = false;
-    }
-  };
-
-  // -----------------------------------------------------------------------
-  // sendMessage / planAgentTask
-  // -----------------------------------------------------------------------
-
   const restoreConversationCheckpoint = async (checkpointId: string): Promise<void> => {
     if (isSending.value || restoringCheckpointId.value) {
       return;
@@ -2074,7 +1096,6 @@ export const useAiAssistant = (options: IUseAiAssistantOptions) => {
       clearSidecarToolConfirmation();
       clearSidecarUserQuestion();
       activeAgentMessageId.value = null;
-      agentPlan.resetPlan();
       errorMessage.value = '';
     } catch (error) {
       errorMessage.value = toErrorMessage(error, '恢复回滚检查点失败');
@@ -2197,7 +1218,6 @@ export const useAiAssistant = (options: IUseAiAssistantOptions) => {
     clearSidecarUserQuestionForThread(unref(conversationStore.activeThreadId));
     conversationStore.clearActiveThread();
     resetConversationUiState();
-    agentPlan.resetPlan();
   };
 
   const deleteConversation = (threadId: string): boolean => {
@@ -2213,7 +1233,6 @@ export const useAiAssistant = (options: IUseAiAssistantOptions) => {
 
     if (wasActiveThread) {
       resetConversationUiState();
-      agentPlan.resetPlan();
     }
 
     return true;
@@ -2222,7 +1241,6 @@ export const useAiAssistant = (options: IUseAiAssistantOptions) => {
   const startNewConversation = (): void => {
     conversationStore.startNewThread();
     resetConversationUiState();
-    agentPlan.resetPlan();
   };
 
   const switchConversation = (threadId: string): void => {
@@ -2553,7 +1571,6 @@ export const useAiAssistant = (options: IUseAiAssistantOptions) => {
   // -----------------------------------------------------------------------
 
   return {
-    agentPlan,
     acpAvailableCommands,
     acpPlan,
     acpUsage,
@@ -2598,8 +1615,6 @@ export const useAiAssistant = (options: IUseAiAssistantOptions) => {
     // conversation lifecycle
     sendMessage,
     restoreConversationCheckpoint,
-    resolveSidecarToolConfirmation,
-    resolveSidecarUserQuestion,
     clearConversation,
     deleteConversation,
     startNewConversation,
