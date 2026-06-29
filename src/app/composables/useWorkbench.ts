@@ -5,12 +5,12 @@ import { useMessage } from '@/composables/useMessage';
 import { useTheme } from '@/composables/useTheme';
 import { useWindowResizeState } from '@/composables/useWindowResizeState';
 import { useWorkbenchDocumentIO } from '@/composables/useWorkbenchDocumentIO';
+import { useGitStore } from '@/domains/git/state/git';
 import { useTerminalRun } from '@/domains/terminal/composables/useTerminalRun';
 import { saveSession } from '@/services/session/store';
 import { tauriService } from '@/services/tauri';
 import { useAppStore } from '@/store/app';
 import { useEditorStore } from '@/store/editor';
-import { useGitStore } from '@/store/git';
 import { isAppError } from '@/types/app-error';
 import type {
   ICommandTemplate,

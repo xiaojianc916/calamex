@@ -1,8 +1,8 @@
 import { useDebounceFn } from '@vueuse/core';
 import type { Ref } from 'vue';
 import { events } from '@/bindings/tauri';
+import { useGitStore } from '@/domains/git/state/git';
 import { tauriService } from '@/services/tauri';
-import { useGitStore } from '@/store/git';
 import type { IWorkspaceDirectoryPayload, IWorkspaceEntry } from '@/types/editor';
 import { areFileSystemPathsEqual } from '@/utils/file/path';
 

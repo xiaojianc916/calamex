@@ -1,5 +1,5 @@
 import { type ComputedRef, type Ref, watch } from 'vue';
-import { useGitStore } from '@/store/git';
+import { useGitStore } from '@/domains/git/state/git';
 
 type TReactiveValue<T> = Ref<T> | ComputedRef<T>;
 

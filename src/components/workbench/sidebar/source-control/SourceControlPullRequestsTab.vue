@@ -180,7 +180,7 @@ import { RefreshCw } from '@lucide/vue';
 import { computed, ref } from 'vue';
 import { useDialog } from '@/composables/useDialog';
 import { useMessage } from '@/composables/useMessage';
-import { useGitStore } from '@/store/git';
+import { useGitStore } from '@/domains/git/state/git';
 import type {
   IGitPullRequestDetailPayload,
   IGitPullRequestSummaryPayload,

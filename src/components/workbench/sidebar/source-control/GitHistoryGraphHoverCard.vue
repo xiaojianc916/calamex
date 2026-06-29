@@ -3,7 +3,7 @@ import { Check, Copy, UserRound } from '@lucide/vue';
 import { useTimeoutFn } from '@vueuse/core';
 import { computed, ref } from 'vue';
 import Github from '@/components/ui/icon/GithubIcon.vue';
-import type { IGitHubCommitAuthorSnapshot } from '@/services/github-author';
+import type { IGitHubCommitAuthorSnapshot } from '@/domains/git/services/github-author';
 import type { IGitCommitDetailPayload, IGitCommitSummaryPayload } from '@/types/git';
 
 const props = defineProps<{

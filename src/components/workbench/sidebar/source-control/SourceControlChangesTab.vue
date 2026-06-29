@@ -87,13 +87,13 @@ import { useMessage } from '@/composables/useMessage';
 import {
   type TGitEntryActionKey,
   useSourceControlActions,
-} from '@/composables/useSourceControlActions';
+} from '@/domains/git/composables/useSourceControlActions';
 import {
   type TGitSectionKey,
   type TSourceControlMenuGroup,
   useSourceControlContextMenu,
-} from '@/composables/useSourceControlContextMenu';
-import { useGitStore } from '@/store/git';
+} from '@/domains/git/composables/useSourceControlContextMenu';
+import { useGitStore } from '@/domains/git/state/git';
 import type {
   IGitDiffPreviewRequest,
   IGitFileStatusPayload,

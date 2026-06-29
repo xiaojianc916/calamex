@@ -1,5 +1,6 @@
 import '@/assets/fonts/inter/inter.css';
 import { VueQueryPlugin } from '@tanstack/vue-query';
+import { initGitHubAuthHeaderEnhancement } from '@/domains/git/utils/github-auth-header';
 import { queryClient, setupQueryPersistence } from '@/lib/query-client';
 import { applyWindowStage } from '@/services/ipc/window.service';
 import { pinia } from '@/store';
@@ -12,7 +13,6 @@ import {
 import { hydrateSessionStorage } from '@/store/plugins/tauriSessionStorage';
 import { initEditorScrollbarActivity } from '@/utils/editor/editor-scrollbar-activity';
 import { renderFatalBootstrapError } from '@/utils/error/bootstrap-fatal-error';
-import { initGitHubAuthHeaderEnhancement } from '@/utils/git/github-auth-header';
 import {
   recordRecursiveUpdateCulprit,
   registerRuntimeDiagnostics,

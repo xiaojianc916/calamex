@@ -18,7 +18,6 @@ import type {
 } from '@/types/git';
 import { areFileSystemPathsEqual, normalizeFileSystemPath } from '@/utils/file/path';
 import { logger } from '@/utils/platform/logger';
-import { useBackgroundQueue } from './git/use-background-queue';
 import {
   createEmptyPullRequestSupport,
   createPullRequestRepositoryScope,
@@ -36,6 +35,7 @@ import {
   type TPullRequestState,
   updatePullRequestListForState,
 } from './git-pull-request-helpers';
+import { useBackgroundQueue } from './use-background-queue';
 
 /** Git store 后台任务（commit 统计 / PR 预载）失败时的统一日志通道。 */
 const gitLogger = logger.child({ module: 'git' });

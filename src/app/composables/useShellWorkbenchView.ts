@@ -3,8 +3,8 @@ import { useShellWorkbenchAiBridge } from '@/app/composables/useShellWorkbenchAi
 import { useShellWorkbenchViewportState } from '@/app/composables/useShellWorkbenchViewportState';
 import { useWorkbench } from '@/app/composables/useWorkbench';
 import { useDocumentNavigationHistory } from '@/composables/useDocumentNavigationHistory';
-import { useGitRepositoryStatusBootstrap } from '@/composables/useGitRepositoryStatusBootstrap';
-import { useGitStore } from '@/store/git';
+import { useGitRepositoryStatusBootstrap } from '@/domains/git/composables/useGitRepositoryStatusBootstrap';
+import { useGitStore } from '@/domains/git/state/git';
 import type { TWorkbenchPrimaryMode, TWorkbenchSidebarView } from '@/types/app';
 import type {
   IAnalyzeScriptPayload,

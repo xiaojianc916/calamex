@@ -1,7 +1,7 @@
 import { useDialog } from '@/composables/useDialog';
 import { useMessage } from '@/composables/useMessage';
+import type { useGitStore } from '@/domains/git/state/git';
 import type { useEditorStore } from '@/store/editor';
-import type { useGitStore } from '@/store/git';
 import type { IEditorDocument } from '@/types/editor';
 import { waitForDesktopRuntime } from '@/utils/platform/desktop-runtime';
 import {

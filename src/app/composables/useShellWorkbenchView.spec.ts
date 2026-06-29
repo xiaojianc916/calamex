@@ -171,7 +171,7 @@ vi.mock('@/app/composables/useWorkbench', () => ({
   }),
 }));
 
-vi.mock('@/store/git', () => ({
+vi.mock('@/domains/git/state/git', () => ({
   useGitStore: () => ({
     status: {
       headBranchName: null,

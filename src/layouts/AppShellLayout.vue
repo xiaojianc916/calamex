@@ -64,7 +64,7 @@ v-for="handle in resizeHandles" :key="handle.direction" class="window-resize-han
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue';
 import GitHubAuthPill from '@/components/workbench/GitHubAuthPill.vue';
-import { useGitStore } from '@/store/git';
+import { useGitStore } from '@/domains/git/state/git';
 import {
   SHELL_WINDOW_RESIZE_END_EVENT,
   SHELL_WINDOW_RESIZE_START_EVENT,

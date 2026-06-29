@@ -93,7 +93,7 @@
 import { RefreshCw } from '@lucide/vue';
 import { computed, nextTick, ref } from 'vue';
 import { useMessage } from '@/composables/useMessage';
-import { useGitStore } from '@/store/git';
+import { useGitStore } from '@/domains/git/state/git';
 import type { IGitBranchPayload } from '@/types/git';
 import { toErrorMessage } from '@/utils/error/error';
 

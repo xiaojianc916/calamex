@@ -31,7 +31,7 @@
 import { RefreshCw } from '@lucide/vue';
 import { computed } from 'vue';
 import { useMessage } from '@/composables/useMessage';
-import { useGitStore } from '@/store/git';
+import { useGitStore } from '@/domains/git/state/git';
 import type { IGitCommitSummaryPayload } from '@/types/git';
 import { toErrorMessage } from '@/utils/error/error';
 import GitHistoryGraph from './GitHistoryGraph.vue';

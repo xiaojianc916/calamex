@@ -1,6 +1,6 @@
 import type { useDialog } from '@/composables/useDialog';
 import type { useMessage } from '@/composables/useMessage';
-import type { useGitStore } from '@/store/git';
+import type { useGitStore } from '@/domains/git/state/git';
 import type { IGitFileStatusPayload } from '@/types/git';
 import { toErrorMessage } from '@/utils/error/error';
 import { areFileSystemPathsEqual } from '@/utils/file/path';

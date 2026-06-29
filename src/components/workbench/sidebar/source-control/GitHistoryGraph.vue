@@ -4,8 +4,8 @@ import { useEventListener } from '@vueuse/core';
 import { computed, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue';
 import type { ILinearContextMenuItem } from '@/components/common/linear-context-menu.types';
 import LucideIcon from '@/components/ui/icon/LucideIcon.vue';
+import { useGitStore } from '@/domains/git/state/git';
 import { useEditorStore } from '@/store/editor';
-import { useGitStore } from '@/store/git';
 import type {
   IGitCommitDetailPayload,
   IGitCommitFileChangePayload,

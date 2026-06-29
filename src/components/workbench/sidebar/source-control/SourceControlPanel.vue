@@ -168,8 +168,8 @@
 import { computed, ref, watch } from 'vue';
 import { useDialog } from '@/composables/useDialog';
 import { useMessage } from '@/composables/useMessage';
-import { useSourceControlActions } from '@/composables/useSourceControlActions';
-import { useGitStore } from '@/store/git';
+import { useSourceControlActions } from '@/domains/git/composables/useSourceControlActions';
+import { useGitStore } from '@/domains/git/state/git';
 import type {
   IGitBranchPayload,
   IGitCommitSummaryPayload,

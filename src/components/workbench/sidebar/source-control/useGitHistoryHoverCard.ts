@@ -3,8 +3,8 @@ import {
   fetchGithubCommitAuthorSnapshot,
   type IGitHubCommitAuthorSnapshot,
   readCachedGithubCommitAuthor,
-} from '@/services/github-author';
-import type { useGitStore } from '@/store/git';
+} from '@/domains/git/services/github-author';
+import type { useGitStore } from '@/domains/git/state/git';
 import type { IGitCommitDetailPayload, IGitCommitSummaryPayload } from '@/types/git';
 import { openExternalUrl } from '@/utils/platform/browser';
 import { writeClipboardText } from '@/utils/platform/clipboard';

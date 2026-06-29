@@ -123,7 +123,7 @@ import { useEventListener } from '@vueuse/core';
 import { computed, ref, watch } from 'vue';
 import Github from '@/components/ui/icon/GithubIcon.vue';
 import LucideIcon from '@/components/ui/icon/LucideIcon.vue';
-import { useGitHubAuthStore } from '@/store/github-auth';
+import { useGitHubAuthStore } from '@/domains/git/state/github-auth';
 
 const props = defineProps<{
   repositoryRootPath: string | null;

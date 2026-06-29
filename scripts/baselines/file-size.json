@@ -387,7 +387,7 @@
             "expiresAt": "2026-12-31"
         },
         {
-            "path": "src/store/git.ts",
+            "path": "src/domains/git/state/git.ts",
             "rule": "max-lines-400",
             "reason": "存量超限：登记时 585 行 > 400，待按 R-20.x 拆分还债",
             "owner": "@xiaojianc",

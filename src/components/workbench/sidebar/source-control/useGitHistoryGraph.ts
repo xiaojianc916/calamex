@@ -1,7 +1,7 @@
 import { type ComputedRef, computed, type Ref } from 'vue';
+import type { IGitGraphEdge } from '@/domains/git/utils/git-graph';
+import { buildGitGraph, resolveGitGraphLaneColor } from '@/domains/git/utils/git-graph';
 import type { IGitCommitSummaryPayload } from '@/types/git';
-import type { IGitGraphEdge } from '@/utils/git/git-graph';
-import { buildGitGraph, resolveGitGraphLaneColor } from '@/utils/git/git-graph';
 
 export const LANE_WIDTH = 13;
 export const ROW_HEIGHT = 28;

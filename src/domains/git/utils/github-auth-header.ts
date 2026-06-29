@@ -1,7 +1,7 @@
 import { type App, computed, createApp, defineComponent, h } from 'vue';
 import GitHubAuthPill from '@/components/workbench/GitHubAuthPill.vue';
+import { useGitStore } from '@/domains/git/state/git';
 import { pinia } from '@/store';
-import { useGitStore } from '@/store/git';
 
 const BRANCH_SYNC_SELECTOR = '.source-control-branch-sync';
 const SOURCE_CONTROL_SIDEBAR_SELECTOR = '.source-control-sidebar';

@@ -1,7 +1,7 @@
 import { createPinia, setActivePinia } from 'pinia';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { effectScope, nextTick, ref } from 'vue';
-import { useGitStore } from '@/store/git';
+import { useGitStore } from '@/domains/git/state/git';
 
 import { useGitRepositoryStatusBootstrap } from './useGitRepositoryStatusBootstrap';
 
