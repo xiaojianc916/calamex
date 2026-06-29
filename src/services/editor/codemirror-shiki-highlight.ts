@@ -43,6 +43,12 @@ const HIGHLIGHT_OVERSCAN_LINES = 72;
 // token 预取/缓存范围可以大，但 RangeSetBuilder 不应为大量屏幕外行重复创建 Decoration。
 const DECORATION_RENDER_MARGIN_LINES = 8;
 
+// 装饰渲染范围的块对齐粒度（行）。renderViewportFromCache 把「视口 ± margin」的上下沿分别
+// 向下/向上对齐到该块边界，使在同一块内滚动时渲染范围（及其缓存 key）保持不变 → 直接命中
+// decorationCache 复用，免去逐帧 RangeSetBuilder 重建（上下滑动丝滑的关键）；仅跨块时重建
+// 一次（覆盖 1~2 块）。取 64 在「每帧零重建」与「跨块单次重建体积」之间取得平衡。
+const DECORATION_RENDER_CHUNK_LINES = 64;
+
 // 输入停顿后过多久触发一次重算（毫秒）；过小会让连续输入仍频繁重算，过大高亮滑后明显。
 const HIGHLIGHT_RECOMPUTE_DEBOUNCE_MS = 90;
 
@@ -624,14 +630,25 @@ const shikiHighlightPlugin = ViewPlugin.fromClass(
       if (!visible) {
         return;
       }
-      const renderRange = computeShikiHighlightRange({
+      const totalLines = view.state.doc.lines;
+      const rawRange = computeShikiHighlightRange({
         firstVisibleLine: visible.first,
         lastVisibleLine: visible.last,
-        totalLines: view.state.doc.lines,
+        totalLines,
         overscanLines: DECORATION_RENDER_MARGIN_LINES,
         leadInLines: DECORATION_RENDER_MARGIN_LINES,
         fromDocumentStart: false,
       });
+      // 把渲染范围上下沿对齐到块边界：同一块内滚动时 renderRange 不变 → 下方 decorationCache
+      // 直接命中复用，逐帧零重建装饰（上下滑动丝滑的关键）；仅跨块时重建一次。
+      const renderBlock = DECORATION_RENDER_CHUNK_LINES;
+      const renderRange = {
+        startLine: Math.max(
+          1,
+          Math.floor((rawRange.startLine - 1) / renderBlock) * renderBlock + 1,
+        ),
+        endLine: Math.min(totalLines, Math.ceil(rawRange.endLine / renderBlock) * renderBlock),
+      };
       const renderCacheKey = [
         this.cacheLanguage ?? '',
         this.cacheDocVersion,
