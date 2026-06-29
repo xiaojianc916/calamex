@@ -684,6 +684,9 @@ useShellResizeFrameScheduler({
 // Context menu
 // ──────────────────────────────
 const closeContextMenu = (): void => {
+  // 幂等保护：菜单本就关闭且分组已空时直接返回，避免每帧滚动都给 contextMenuGroups 赋新空
+  // 数组（handleEditorUpdate 的 viewportChanged 分支每帧调用本函数），触发无意义 Vue 响应式更新。
+  if (!contextMenuState.value.open && contextMenuGroups.value.length === 0) return;
   contextMenuState.value.open = false;
   contextMenuGroups.value = [];
 };
