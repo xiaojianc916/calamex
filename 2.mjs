@@ -1,119 +1,210 @@
-#!/usr/bin/env node
-// arch-cleanup.mjs
-// 清理两处死配置（架构级审查第四轮）：
-//   1) 从 package.json devDependencies 移除未使用的 dependency-cruiser
-//   2) 从 vite.config.ts 删除死的 @copilotkit 分包 matcher，并修正过时注释
-// 默认 dry-run，仅打印将做的改动；加 --apply 才写盘。幂等：已清理则报无操作。
-//
-// 用法：
-//   node arch-cleanup.mjs            # 预览
-//   node arch-cleanup.mjs --apply    # 落盘
+// b1b-3-use-acp-plan-wire.mjs
+// B1b 第三片：ACP-native plan 帧消费闭环。新增 useAcpPlan(与 useAcpUsage 同构,消费 from-acp-plan
+// ACL),并接入宿主 useAiAssistant 的接收侧唯一路由 applyAcpReceiveSideEvents。不动 legacy
+// useAiAgentPlan/aiAgent store(留待 D1 删除),先建后删、暂时共存、终态无兼容层。不提交。
+// 运行：node b1b-3-use-acp-plan-wire.mjs
 
-import { readFile, writeFile } from 'node:fs/promises';
-import path from 'node:path';
+import { existsSync, readFileSync, writeFileSync } from "node:fs"
+import { join } from "node:path"
 
-const APPLY = process.argv.includes('--apply');
-const ROOT = process.cwd();
-let changed = 0;
-let skipped = 0;
+const ROOT = process.cwd()
 
-function log(tag, msg) {
-  const c = { OK: '\x1b[32m', SKIP: '\x1b[33m', ERR: '\x1b[31m', INFO: '\x1b[36m' }[tag] || '';
-  console.log(`${c}${tag}\x1b[0m ${msg}`);
+function detectEol(raw) {
+	const crlf = (raw.match(/\r\n/g) || []).length
+	const lfOnly = (raw.match(/(?<!\r)\n/g) || []).length
+	return { text: raw.replace(/\r\n/g, "\n"), eol: crlf > lfOnly ? "\r\n" : "\n" }
+}
+function replaceOnce(text, oldStr, newStr, label) {
+	const idx = text.indexOf(oldStr)
+	if (idx === -1) throw new Error(`[${label}] 未找到锚点：\n${oldStr}`)
+	if (text.indexOf(oldStr, idx + oldStr.length) !== -1)
+		throw new Error(`[${label}] 锚点出现多次，拒绝模糊替换：\n${oldStr}`)
+	return text.slice(0, idx) + newStr + text.slice(idx + oldStr.length)
+}
+function writeNew(relPath, contentLf, eol) {
+	const abs = join(ROOT, relPath)
+	if (existsSync(abs)) throw new Error(`[${relPath}] 已存在，拒绝覆盖`)
+	writeFileSync(abs, contentLf.replace(/\n/g, eol), "utf8")
+	console.log(`+ ${relPath}`)
 }
 
-async function readMaybe(file) {
-  try {
-    return await readFile(file, 'utf8');
-  } catch {
-    return null;
-  }
+// 用宿主文件的 EOL 作为新文件 EOL，保持一致
+const hostRel = "src/composables/ai/useAiAssistant.ts"
+const hostAbs = join(ROOT, hostRel)
+const { text: hostText0, eol } = detectEol(readFileSync(hostAbs, "utf8"))
+
+// ── A) 新增 composable：useAcpPlan.ts ──────────────────────────────────────
+const composableSource = `import { type ComputedRef, computed, ref } from 'vue';
+
+import { mapAcpPlanToTaskSteps } from '@/components/business/ai/thread/projection/from-acp-plan';
+import type { IAiTaskPlanStep } from '@/types/ai';
+import type { TAcpPlan } from '@/types/ai/acp-tool-call';
+
+/* ============================================================================
+ * ACP-native 计划的前端闭环（ADR-20260617 · D7 接收侧）。
+ *
+ * 职责：消费 ACP session/update 的 plan UI 事件（acpUpdate: TAcpPlan，经 Rust 逐字透传），
+ * 经 ACL from-acp-plan 归一为线程 plan 步骤 VM（IAiTaskPlanStep[]）。UI 只消费该结构，不
+ * 直接触碰 ACP 原始 plan 负载。
+ *
+ * 设计取舍（与 useAcpUsage / useAcpSessionConfigOptions 一致，不自创）：
+ * - 纯状态化、可在测试中脱离 .vue 单测；
+ * - 不在此自订阅 sidecar 流：宿主（useAiAssistant）持唯一 onSidecarStream 并路由全部 UI
+ *   事件，故由宿主在收到 plan 帧时调 applyPlanUpdate，避免重复订阅；
+ * - ACP plan 为全量快照 → 整份替换（含空快照：agent 主动清空计划的合法态）；
+ * - 坏帧（entries 非数组）no-op，保留既有快照，避免把已显示的计划清零回退。
+ *
+ * 与 legacy useAiAgentPlan + aiAgent store 计划字段（审批流）并行存在仅为先建后删过渡，
+ * 终态由本 composable 承载 ACP-native 计划，legacy 审批管线在 D1 删除。
+ * ========================================================================== */
+
+export interface IUseAcpPlanReturn {
+  /** 当前 ACP 计划步骤快照；空数组表示尚无 / 已清空计划。 */
+  steps: ComputedRef<IAiTaskPlanStep[]>;
+  hasPlan: ComputedRef<boolean>;
+  /** 消费 plan 帧：全量快照整份替换；坏帧（entries 非数组）no-op 保留既有。 */
+  applyPlanUpdate: (update: TAcpPlan) => void;
+  /** 清空 VM（如切换 thread / 清空会话）。 */
+  reset: () => void;
 }
 
-// --- 1) package.json: 移除 dependency-cruiser -------------------------------
-async function cleanPackageJson() {
-  const file = path.join(ROOT, 'package.json');
-  const raw = await readMaybe(file);
-  if (raw == null) {
-    log('ERR', 'package.json 未找到，跳过（请在仓库根目录运行）');
-    return;
-  }
+export const useAcpPlan = (): IUseAcpPlanReturn => {
+  const steps = ref<IAiTaskPlanStep[]>([]);
 
-  // 探测缩进（默认 2 空格）与是否带尾换行，写回时保持原样
-  const indentMatch = raw.match(/\n([ \t]+)"/);
-  const indent = indentMatch ? indentMatch[1] : '  ';
-  const hadTrailingNewline = raw.endsWith('\n');
+  const applyPlanUpdate = (update: TAcpPlan): void => {
+    // 坏帧防御：plan 负载逐字透传，entries 非数组视为坏帧 → no-op（保留既有，避免清零回退）。
+    if (!Array.isArray((update as { entries?: unknown }).entries)) {
+      return;
+    }
+    // 全量快照：整份替换（空数组为合法态——agent 主动清空计划）。
+    steps.value = mapAcpPlanToTaskSteps(update);
+  };
 
-  const pkg = JSON.parse(raw);
-  const dev = pkg.devDependencies || {};
+  const reset = (): void => {
+    steps.value = [];
+  };
 
-  if (!('dependency-cruiser' in dev)) {
-    log('SKIP', 'package.json: dependency-cruiser 不存在（已清理）');
-    skipped++;
-    return;
-  }
+  return {
+    steps: computed(() => steps.value),
+    hasPlan: computed(() => steps.value.length > 0),
+    applyPlanUpdate,
+    reset,
+  };
+};
+`
+writeNew("src/composables/ai/useAcpPlan.ts", composableSource, eol)
 
-  delete dev['dependency-cruiser'];
-  let out = JSON.stringify(pkg, null, indent);
-  if (hadTrailingNewline) out += '\n';
+// ── B) 配套 spec ───────────────────────────────────────────────────────────
+const specSource = `import { describe, expect, it } from 'vitest';
 
-  if (APPLY) {
-    await writeFile(file, out, 'utf8');
-    log('OK', 'package.json: 已移除 devDependency "dependency-cruiser"（记得重跑 pnpm install 更新 lockfile）');
-  } else {
-    log('INFO', 'package.json: [dry-run] 将移除 devDependency "dependency-cruiser"');
-  }
-  changed++;
+import type { TAcpPlan } from '@/types/ai/acp-tool-call';
+
+import { useAcpPlan } from './useAcpPlan';
+
+const makePlan = (entries: unknown): TAcpPlan =>
+  ({ sessionUpdate: 'plan', entries }) as unknown as TAcpPlan;
+
+describe('useAcpPlan', () => {
+  it('全量快照整份替换（后到覆盖前者）', () => {
+    const plan = useAcpPlan();
+    plan.applyPlanUpdate(
+      makePlan([
+        { content: 'A', status: 'completed' },
+        { content: 'B', status: 'in_progress' },
+      ]),
+    );
+    expect(plan.hasPlan.value).toBe(true);
+    expect(plan.steps.value.map((step) => [step.title, step.status])).toEqual([
+      ['A', 'done'],
+      ['B', 'running'],
+    ]);
+
+    plan.applyPlanUpdate(makePlan([{ content: 'C', status: 'pending' }]));
+    expect(plan.steps.value.map((step) => step.title)).toEqual(['C']);
+  });
+
+  it('空快照合法清空（agent 主动清计划）', () => {
+    const plan = useAcpPlan();
+    plan.applyPlanUpdate(makePlan([{ content: 'A', status: 'pending' }]));
+    plan.applyPlanUpdate(makePlan([]));
+    expect(plan.steps.value).toEqual([]);
+    expect(plan.hasPlan.value).toBe(false);
+  });
+
+  it('坏帧（entries 非数组）no-op，保留既有快照', () => {
+    const plan = useAcpPlan();
+    plan.applyPlanUpdate(makePlan([{ content: 'A', status: 'pending' }]));
+    plan.applyPlanUpdate(makePlan(undefined));
+    plan.applyPlanUpdate(makePlan('nope' as unknown));
+    expect(plan.steps.value.map((step) => step.title)).toEqual(['A']);
+  });
+
+  it('reset 清空', () => {
+    const plan = useAcpPlan();
+    plan.applyPlanUpdate(makePlan([{ content: 'A', status: 'pending' }]));
+    plan.reset();
+    expect(plan.steps.value).toEqual([]);
+    expect(plan.hasPlan.value).toBe(false);
+  });
+});
+`
+writeNew("src/composables/ai/useAcpPlan.spec.ts", specSource, eol)
+
+// ── C) 宿主 useAiAssistant.ts 五处接线 ──────────────────────────────────────
+let host = hostText0
+
+// C1) import（字母序：AvailableCommands < Plan < SessionConfigOptions）
+host = replaceOnce(
+	host,
+	"import { useAcpAvailableCommands } from '@/composables/ai/useAcpAvailableCommands';\n",
+	"import { useAcpAvailableCommands } from '@/composables/ai/useAcpAvailableCommands';\nimport { useAcpPlan } from '@/composables/ai/useAcpPlan';\n",
+	"host/import",
+)
+
+// C2) 实例化
+host = replaceOnce(
+	host,
+	"  const acpAvailableCommands = useAcpAvailableCommands();\n",
+	"  const acpAvailableCommands = useAcpAvailableCommands();\n  const acpPlan = useAcpPlan();\n",
+	"host/instantiate",
+)
+
+// C3) 接收侧路由新增 case 'plan'
+host = replaceOnce(
+	host,
+	"          acpSessionConfigOptions.applyConfigOptionUpdate(event.configOptions);\n          break;\n        default:\n",
+	"          acpSessionConfigOptions.applyConfigOptionUpdate(event.configOptions);\n          break;\n        case 'plan':\n          acpPlan.applyPlanUpdate(event.acpUpdate);\n          break;\n        default:\n",
+	"host/switch-case",
+)
+
+// C4) 会话重置时一并清空 ACP 计划 VM
+host = replaceOnce(
+	host,
+	"    acpAvailableCommands.reset();\n",
+	"    acpAvailableCommands.reset();\n    acpPlan.reset();\n",
+	"host/reset",
+)
+
+// C5) 公共 surface 导出
+host = replaceOnce(
+	host,
+	"    agentPlan,\n    acpAvailableCommands,\n",
+	"    agentPlan,\n    acpAvailableCommands,\n    acpPlan,\n",
+	"host/return",
+)
+
+// 自检：5 处接线全部命中
+for (const probe of [
+	"import { useAcpPlan }",
+	"const acpPlan = useAcpPlan();",
+	"acpPlan.applyPlanUpdate(event.acpUpdate);",
+	"acpPlan.reset();",
+]) {
+	if (!host.includes(probe)) throw new Error(`[host] 自检失败，缺少：${probe}`)
 }
 
-// --- 2) vite.config.ts: 删除死的 @copilotkit matcher + 修正注释 -------------
-async function cleanViteConfig() {
-  const file = path.join(ROOT, 'vite.config.ts');
-  let src = await readMaybe(file);
-  if (src == null) {
-    log('ERR', 'vite.config.ts 未找到，跳过');
-    return;
-  }
-  const before = src;
+writeFileSync(hostAbs, host.replace(/\n/g, eol), "utf8")
+console.log(`✓ ${hostRel}（import / 实例化 / case 'plan' / reset / 导出）`)
 
-  // 2a) 删除 vendor-ai patterns 里的死 matcher（容忍单/双引号与其后逗号+空格）
-  const deadMatcher = /(['"])\/node_modules\/@copilotkit\/\1,\s*/;
-  if (deadMatcher.test(src)) {
-    src = src.replace(deadMatcher, '');
-  } else {
-    log('SKIP', "vite.config.ts: 未找到 '@copilotkit/' 死 matcher（已清理）");
-    skipped++;
-  }
-
-  // 2b) 修正 vendor-zod 的过时注释（把 @copilotkit/CopilotKit 改为真实消费者 ai）
-  const staleComment =
-    `  // zod 是首屏核心路径(tauri.contracts / store / IPC 工厂都用),但 @copilotkit\n` +
-    `  // 也引用它,默认会被 Rollup 合进最大消费者 vendor-ai(2MB),导致首屏把整个\n` +
-    `  // CopilotKit 也拽进来。这里单独拆出,既避免重复,也让 vendor-ai 退出首屏。\n`;
-  const freshComment =
-    `  // zod 是首屏核心路径(tauri.contracts / store / IPC 工厂都用),但 ai SDK\n` +
-    `  // 也引用它,默认会被 Rollup 合进其消费者 vendor-ai,导致首屏把懒加载的 ai\n` +
-    `  // 也拽进来。这里单独拆出,既避免重复,也让 vendor-ai 退出首屏。\n`;
-  if (src.includes(staleComment)) {
-    src = src.replace(staleComment, freshComment);
-  } else if (src.includes('@copilotkit') || src.includes('CopilotKit')) {
-    log('SKIP', 'vite.config.ts: 注释块与预期不完全一致，未自动改注释（请手动核对 @copilotkit 字样）');
-    skipped++;
-  }
-
-  if (src === before) return;
-
-  if (APPLY) {
-    await writeFile(file, src, 'utf8');
-    log('OK', 'vite.config.ts: 已删除死 matcher 并修正注释');
-  } else {
-    log('INFO', 'vite.config.ts: [dry-run] 将删除死 matcher 并修正注释');
-  }
-  changed++;
-}
-
-console.log(`\n=== arch-cleanup (${APPLY ? 'APPLY' : 'DRY-RUN'}) ===\n`);
-await cleanPackageJson();
-await cleanViteConfig();
-console.log(`\n--- 完成：${changed} 处待改 / ${skipped} 处已是目标态 ---`);
-if (!APPLY && changed > 0) console.log('预览无误后加 --apply 落盘。\n');
+console.log("\nB1b 第三片（useAcpPlan + 接收侧接线）完成。")
+console.log("建议：pnpm vitest run src/composables/ai/useAcpPlan.spec.ts && pnpm typecheck")
