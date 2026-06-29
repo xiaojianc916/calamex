@@ -645,9 +645,6 @@ const entryMatchesQuery = (entry: IShellCompletionEntry, partial: string): boole
   if (isSubsequenceMatch(entry.label, partial)) {
     return true;
   }
-  if (entry.aliases?.some((alias) => isSubsequenceMatch(alias, partial))) {
-    return true;
-  }
   return entry.detail.toLowerCase().includes(partial.toLowerCase());
 };
 
@@ -672,42 +669,81 @@ const createVariableEntries = (labels: string[], priority: number): IShellComple
     priority,
   }));
 
-const createCommandEntryFromCatalog = (entry: IShellCommandNodeSpec): IShellCompletionEntry => ({
-  label: getPrimarySpecName(entry),
-  kind: 'command',
-  detail:
-    getSpecAliases(entry).length > 0
-      ? `${entry.detail ?? '命令目录条目'} · 别名: ${getSpecAliases(entry).join(', ')}`
-      : (entry.detail ?? '命令目录条目'),
-  aliases: getSpecAliases(entry),
-  priority: entry.priority ?? 6,
-});
+// 将「规范名 + 别名」展开为多条独立候选：规范名一条、每个别名各一条。
+// 别名作为独立 label 交给 CodeMirror autocomplete 直接匹配 / 打分 / 高亮，
+// 不再依赖手写的别名匹配；规范名保留其插入行为（含 snippet），别名按字面量插入。
+// 别名 priority = 规范名 + 0.5，同等匹配时排在规范名之后。
+export const appendAliasEntries = (
+  primaryEntry: IShellCompletionEntry,
+  baseDetail: string,
+  aliases: string[],
+): IShellCompletionEntry[] => {
+  if (aliases.length === 0) {
+    return [primaryEntry];
+  }
+  const aliasPriority = (primaryEntry.priority ?? 99) + 0.5;
+  return [
+    primaryEntry,
+    ...aliases.map<IShellCompletionEntry>((alias) => ({
+      label: alias,
+      kind: primaryEntry.kind,
+      detail: `${baseDetail} · ${primaryEntry.label} 的别名`,
+      priority: aliasPriority,
+    })),
+  ];
+};
 
-const createFlagEntryFromSpec = (entry: IShellCommandOptionSpec): IShellCompletionEntry => ({
-  label: getPrimarySpecName(entry),
-  kind: 'flag',
-  detail:
-    getSpecAliases(entry).length > 0
-      ? `${entry.detail ?? '命令选项'} · 别名: ${getSpecAliases(entry).join(', ')}`
-      : (entry.detail ?? '命令选项'),
-  aliases: getSpecAliases(entry),
-  insertText: entry.insertText,
-  insertAsSnippet: entry.insertAsSnippet,
-  priority: entry.priority ?? 7,
-});
+const createCommandEntryFromCatalog = (entry: IShellCommandNodeSpec): IShellCompletionEntry[] => {
+  const aliases = getSpecAliases(entry);
+  const baseDetail = entry.detail ?? '命令目录条目';
+  return appendAliasEntries(
+    {
+      label: getPrimarySpecName(entry),
+      kind: 'command',
+      detail: aliases.length > 0 ? `${baseDetail} · 别名: ${aliases.join(', ')}` : baseDetail,
+      priority: entry.priority ?? 6,
+    },
+    baseDetail,
+    aliases,
+  );
+};
+
+const createFlagEntryFromSpec = (entry: IShellCommandOptionSpec): IShellCompletionEntry[] => {
+  const aliases = getSpecAliases(entry);
+  const baseDetail = entry.detail ?? '命令选项';
+  return appendAliasEntries(
+    {
+      label: getPrimarySpecName(entry),
+      kind: 'flag',
+      detail: aliases.length > 0 ? `${baseDetail} · 别名: ${aliases.join(', ')}` : baseDetail,
+      insertText: entry.insertText,
+      insertAsSnippet: entry.insertAsSnippet,
+      priority: entry.priority ?? 7,
+    },
+    baseDetail,
+    aliases,
+  );
+};
 
 const createValueEntryFromSuggestionSpec = (
   entry: IShellCommandValueSuggestionSpec,
   argumentSpec: IShellCommandArgumentSpec,
-): IShellCompletionEntry => ({
-  label: getPrimarySpecName(entry),
-  kind: 'value',
-  detail: entry.detail || argumentSpec.detail || '参数候选值',
-  aliases: getSpecAliases(entry),
-  insertText: entry.insertText,
-  insertAsSnippet: entry.insertAsSnippet,
-  priority: entry.priority ?? 5,
-});
+): IShellCompletionEntry[] => {
+  const aliases = getSpecAliases(entry);
+  const baseDetail = entry.detail || argumentSpec.detail || '参数候选值';
+  return appendAliasEntries(
+    {
+      label: getPrimarySpecName(entry),
+      kind: 'value',
+      detail: baseDetail,
+      insertText: entry.insertText,
+      insertAsSnippet: entry.insertAsSnippet,
+      priority: entry.priority ?? 5,
+    },
+    baseDetail,
+    aliases,
+  );
+};
 
 const getOptionArgumentSpecs = (entry: IShellCommandOptionSpec): IShellCommandArgumentSpec[] => {
   if (entry.arg) {
@@ -741,7 +777,7 @@ const buildArgumentValueEntries = (
     return [];
   }
   return filterEntries(
-    argumentSpec.suggestions.map((entry) =>
+    argumentSpec.suggestions.flatMap((entry) =>
       createValueEntryFromSuggestionSpec(entry, argumentSpec),
     ),
     partial,
@@ -1104,10 +1140,10 @@ const buildArgumentEntries = async (
         catalogContext.positionalArgumentIndex,
         partial,
       );
-  const flagEntries = collectAvailableFlags(catalogContext.visitedNodes).map(
+  const flagEntries = collectAvailableFlags(catalogContext.visitedNodes).flatMap(
     createFlagEntryFromSpec,
   );
-  const subcommandEntries = (catalogContext.activeNode.subcommands ?? []).map(
+  const subcommandEntries = (catalogContext.activeNode.subcommands ?? []).flatMap(
     createCommandEntryFromCatalog,
   );
   const candidates = partial.startsWith('-')
