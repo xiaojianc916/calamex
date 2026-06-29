@@ -1,5 +1,8 @@
 import { describe, expect, it } from 'vitest';
-import { TERMINAL_RUN_LOG_CODES, TERMINAL_RUN_LOG_TITLES } from '@/utils/terminal/terminal-run';
+import {
+  TERMINAL_RUN_LOG_CODES,
+  TERMINAL_RUN_LOG_TITLES,
+} from '@/domains/terminal/utils/terminal-run';
 import { buildStructuredRunReport } from './structured-run-report';
 
 describe('structured-run-report', () => {

@@ -11,7 +11,7 @@
             "expiresAt": "2026-06-30"
         },
         {
-            "path": "src/composables/useIntegratedTerminal.ts",
+            "path": "src/domains/terminal/composables/useIntegratedTerminal.ts",
             "rule": "max-lines-400",
             "reason": "存量违规：当前 ~1219 行，计划在 iteration 2 T-2.3 拆分终端域三层",
             "owner": "@xiaojianc",
@@ -307,7 +307,7 @@
             "expiresAt": "2026-12-31"
         },
         {
-            "path": "src/composables/useTerminalRun.ts",
+            "path": "src/domains/terminal/composables/useTerminalRun.ts",
             "rule": "max-lines-400",
             "reason": "存量超限：登记时 580 行 > 400，待按 R-20.x 拆分还债",
             "owner": "@xiaojianc",
@@ -363,7 +363,7 @@
             "expiresAt": "2026-12-31"
         },
         {
-            "path": "src/services/terminal/facade.ts",
+            "path": "src/domains/terminal/services/facade.ts",
             "rule": "max-lines-400",
             "reason": "存量超限：登记时 474 行 > 400，待按 R-20.x 拆分还债",
             "owner": "@xiaojianc",
@@ -395,7 +395,7 @@
             "expiresAt": "2026-12-31"
         },
         {
-            "path": "src/store/terminal.ts",
+            "path": "src/domains/terminal/state/terminal.ts",
             "rule": "max-lines-400",
             "reason": "存量超限：登记时 401 行 > 400，待按 R-20.x 拆分还债",
             "owner": "@xiaojianc",
@@ -403,7 +403,7 @@
             "expiresAt": "2026-12-31"
         },
         {
-            "path": "src/terminal/session.ts",
+            "path": "src/domains/terminal/core/session.ts",
             "rule": "max-lines-400",
             "reason": "存量超限：登记时 1928 行 > 400，待按 R-20.x 拆分还债",
             "owner": "@xiaojianc",

@@ -1,4 +1,4 @@
-import { createTerminalOutputBuffer } from '@/utils/terminal/terminal-output-buffer';
+import { createTerminalOutputBuffer } from '@/domains/terminal/utils/terminal-output-buffer';
 
 export type THiddenWriteBacklogOptions = {
   /** backlog 总字符上限（含省略提示标记）。 */

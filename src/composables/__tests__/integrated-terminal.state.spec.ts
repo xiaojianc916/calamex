@@ -7,12 +7,12 @@ import { flushPromises, mount } from '@vue/test-utils';
 import { createPinia, setActivePinia } from 'pinia';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { defineComponent, ref } from 'vue';
-import { useEditorStore } from '@/store/editor';
-import { useTerminalRunRoutingStore } from '@/store/terminalRunRouting';
 import {
   normalizeTerminalAnsiForTheme,
   stripInjectedRunSeparatorForTerminalData,
-} from '@/terminal/session';
+} from '@/domains/terminal/core/session';
+import { useTerminalRunRoutingStore } from '@/domains/terminal/state/terminalRunRouting';
+import { useEditorStore } from '@/store/editor';
 import type { TThemeMode } from '@/types/app';
 import type { ITerminalSettings } from '@/types/settings';
 import type { ITerminalStatusChangePayload } from '@/types/terminal';
@@ -20,7 +20,7 @@ import {
   useIntegratedTerminal,
   useIntegratedTerminalControls,
   useIntegratedTerminalStatus,
-} from '../useIntegratedTerminal';
+} from '../../domains/terminal/composables/useIntegratedTerminal';
 
 // ─────────────────────────────────────────────
 // Mock 变量（vi.hoisted 保证提升前可访问）

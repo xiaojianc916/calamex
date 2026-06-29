@@ -1,4 +1,4 @@
-import { formatShellScript } from '@/utils/terminal/shfmt';
+import { formatShellScript } from '@/domains/terminal/utils/shfmt';
 import type { IFormatter } from './types';
 
 /**

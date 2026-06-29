@@ -140,14 +140,14 @@ const createEmptyAnalysis = (): IAnalyzeScriptPayload => ({
 // ──────────────────────────────
 // Lazy / cached shell completion source
 // ──────────────────────────────
-// `import('@/utils/terminal/shell-completion')` 自身会被打包器缓存，但每次 completion 都
+// `import('@/domains/terminal/utils/shell-completion')` 自身会被打包器缓存，但每次 completion 都
 // 重新 `.then(...)` 并重新 `createShellCodeMirrorCompletionSource()` 仍有不必要的
 // 微开销，且每次都拿到一个新的 source 实例，影响内部可能的状态复用。
 let cachedShellCompletionSourcePromise: Promise<CompletionSource> | null = null;
 const getShellCompletionSource = (): Promise<CompletionSource> => {
   if (!cachedShellCompletionSourcePromise) {
-    cachedShellCompletionSourcePromise = import('@/utils/terminal/shell-completion').then((mod) =>
-      mod.createShellCodeMirrorCompletionSource(),
+    cachedShellCompletionSourcePromise = import('@/domains/terminal/utils/shell-completion').then(
+      (mod) => mod.createShellCodeMirrorCompletionSource(),
     );
   }
   return cachedShellCompletionSourcePromise;

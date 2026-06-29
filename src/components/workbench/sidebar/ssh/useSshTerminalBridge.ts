@@ -1,6 +1,6 @@
 import { type ComputedRef, computed } from 'vue';
-import { useIntegratedTerminalControls } from '@/composables/useIntegratedTerminal';
 import { useMessage } from '@/composables/useMessage';
+import { useIntegratedTerminalControls } from '@/domains/terminal/composables/useIntegratedTerminal';
 import type { SshConnectionFormValues } from '@/types/ssh/connection.schema';
 import {
   DEFAULT_SSH_PORT,

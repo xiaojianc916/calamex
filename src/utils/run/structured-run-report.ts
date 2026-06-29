@@ -1,10 +1,3 @@
-import type { IRunLogEntry, IRunResult, TExecutorKind } from '@/types/editor';
-import { formatTime } from '@/utils/core/date';
-import {
-  formatFileSystemTextForDisplay,
-  getPathBaseName,
-  getRelativeFileSystemPath,
-} from '@/utils/file/path';
 import {
   isTerminalRunCompletedLog,
   isTerminalRunDispatchedLog,
@@ -15,7 +8,14 @@ import {
   isTerminalRunTimeoutLog,
   resolveTerminalRunLogKind,
   TERMINAL_RUN_LOG_TITLES,
-} from '@/utils/terminal/terminal-run';
+} from '@/domains/terminal/utils/terminal-run';
+import type { IRunLogEntry, IRunResult, TExecutorKind } from '@/types/editor';
+import { formatTime } from '@/utils/core/date';
+import {
+  formatFileSystemTextForDisplay,
+  getPathBaseName,
+  getRelativeFileSystemPath,
+} from '@/utils/file/path';
 
 export type TInsightTone = 'neutral' | 'success' | 'warning' | 'error' | 'running';
 export type TInsightStepStatus = 'done' | 'running' | 'warning' | 'error';

@@ -432,7 +432,7 @@ export const useBrowserContextMenu = () => {
 
   const getTerminalControls = async (): Promise<TTerminalControls | null> => {
     if (!terminalControlsPromise) {
-      terminalControlsPromise = import('@/composables/useIntegratedTerminal')
+      terminalControlsPromise = import('@/domains/terminal/composables/useIntegratedTerminal')
         .then(({ useIntegratedTerminalControls }) => useIntegratedTerminalControls())
         .catch(() => null);
     }

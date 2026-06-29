@@ -2,7 +2,7 @@
  * check-terminal-singleton.ts
  * 扫描 `new Terminal(` 出现位置，白名单仅允许在 terminal session 模块中（R-18.4.1 / R-20.2.1）
  *
- * T-2.3 完成后白名单仅 src/terminal/session.ts
+ * T-2.3 完成后白名单仅 src/domains/terminal/core/session.ts
  */
 import fs from 'node:fs';
 import path from 'node:path';
@@ -10,7 +10,7 @@ import { CheckResult, ROOT, printResult, summarize } from './guard-utils.js';
 
 /** 允许创建 Terminal 实例的白名单（相对路径，正斜杠） */
 const WHITELIST = [
-    'src/terminal/session.ts', // T-2.3 后的唯一合法位置（R-18.4.1 / R-20.2.1）
+    'src/domains/terminal/core/session.ts', // T-2.3 后的唯一合法位置（R-18.4.1 / R-20.2.1）
 ];
 
 const NEW_TERMINAL_RE = /new\s+Terminal\s*\(/g;

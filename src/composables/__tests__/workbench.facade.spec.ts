@@ -8,11 +8,11 @@ import { createPinia, setActivePinia } from 'pinia';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { type EffectScope, effectScope } from 'vue';
 import { WORKBENCH_TAB_LIMITS } from '@/constants/workbench';
-import { __resetTerminalEventBusForTesting } from '@/services/terminal/eventBus';
-import { __resetTerminalRunOrchestratorForTesting } from '@/services/terminal/runOrchestrator';
+import { useTerminalRegistryStore } from '@/domains/terminal/core/registry';
+import { __resetTerminalEventBusForTesting } from '@/domains/terminal/services/eventBus';
+import { __resetTerminalRunOrchestratorForTesting } from '@/domains/terminal/services/runOrchestrator';
 import { useAppStore } from '@/store/app';
 import { useEditorStore } from '@/store/editor';
-import { useTerminalRegistryStore } from '@/terminal/registry';
 import { useWorkbench } from '../useWorkbench';
 
 // ─────────────────────────────────────────────
@@ -137,7 +137,7 @@ vi.mock('@/utils/window/window-close', () => ({
 // ─────────────────────────────────────────────
 // Mock：shfmt（格式化 wasm，动态导入）
 // ─────────────────────────────────────────────
-vi.mock('@/utils/terminal/shfmt', () => ({
+vi.mock('@/domains/terminal/utils/shfmt', () => ({
   formatShellScript: vi.fn((source: string) => Promise.resolve(source)),
 }));
 

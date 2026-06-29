@@ -57,7 +57,7 @@ vi.mock('@/composables/useDocumentLifecycle', () => ({
   }),
 }));
 
-vi.mock('@/composables/useTerminalRun', () => ({
+vi.mock('@/domains/terminal/composables/useTerminalRun', () => ({
   useTerminalRun: () => ({
     runScript: vi.fn(),
     handleIntegratedTerminalRunCompleted: vi.fn(),

@@ -67,9 +67,9 @@ const CHUNK_RULES: ReadonlyArray<{ name: string; patterns: string[] }> = [
       '/node_modules/web-tree-sitter/',
       '/node_modules/tree-sitter-bash/',
       '/node_modules/@wasm-fmt/shfmt/',
-      '/src/utils/terminal/shell-completion.ts',
+      '/src/domains/terminal/utils/shell-completion.ts',
       '/src/constants/shell/command-catalog.ts',
-      '/src/utils/terminal/shfmt.ts',
+      '/src/domains/terminal/utils/shfmt.ts',
     ],
   },
 ];

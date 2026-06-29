@@ -19,7 +19,7 @@ const mockClipboard = vi.hoisted(() => ({
   writeClipboardText: vi.fn<[string], Promise<void>>(async () => {}),
 }));
 
-vi.mock('@/composables/useIntegratedTerminal', () => ({
+vi.mock('@/domains/terminal/composables/useIntegratedTerminal', () => ({
   useIntegratedTerminalControls: () => mockTerminalControls,
 }));
 

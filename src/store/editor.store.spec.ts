@@ -1,8 +1,11 @@
 import { createPinia, setActivePinia } from 'pinia';
 import { beforeEach, describe, expect, it } from 'vitest';
 import { WORKBENCH_TAB_LIMITS } from '@/constants/workbench';
+import {
+  TERMINAL_RUN_LOG_CODES,
+  TERMINAL_RUN_LOG_TITLES,
+} from '@/domains/terminal/utils/terminal-run';
 import { useEditorStore } from '@/store/editor';
-import { TERMINAL_RUN_LOG_CODES, TERMINAL_RUN_LOG_TITLES } from '@/utils/terminal/terminal-run';
 
 const buildScriptPayload = (index: number) => ({
   path: `/tmp/${index}.sh`,
