@@ -29,10 +29,8 @@ const streamLanguageLoader =
 // 规范 id → 语法支持懒加载器。这是本模块唯一与 @codemirror 解析器强耦合的部分;
 // 词表 / 别名 / 标签 / 展示名全部来自 language-registry。
 // 共享解析器:javascript 与 jsx 同用 javascript({jsx});css / scss / less 同用 css()。
-const CODEMIRROR_LANGUAGE_LOADERS: Readonly<Record<string, () => Promise<LanguageSupport>>> = {
-  shell: streamLanguageLoader(() =>
-    import('@codemirror/legacy-modes/mode/shell').then((m) => m.shell),
-  ),
+const CODEMIRROR_LANGUAGE_LOADERS: Readonly<Record<string, () => Promise<Extension>>> = {
+  shell: () => import('./codemirror-bash-language').then((m) => m.bashLanguageExtensions()),
   javascript: () => import('@codemirror/lang-javascript').then((m) => m.javascript({ jsx: true })),
   jsx: () => import('@codemirror/lang-javascript').then((m) => m.javascript({ jsx: true })),
   typescript: () =>
@@ -155,15 +153,15 @@ export function resolveCodeMirrorLanguageId(language: string): TCodeMirrorLangua
 }
 
 // 已经按需加载完成的语法支持(同步命中)。
-const loadedLanguageSupports = new Map<string, LanguageSupport>();
+const loadedLanguageSupports = new Map<string, Extension>();
 // 正在加载中的语法支持,避免并发重复 import。
-const pendingLanguageSupports = new Map<string, Promise<LanguageSupport | null>>();
+const pendingLanguageSupports = new Map<string, Promise<Extension | null>>();
 
 /**
  * 同步获取\"已加载\"的语言支持;若该语法尚未按需加载完成,返回 null。
  * 调用方应配合 loadCodeMirrorLanguageSupport 触发加载。
  */
-export const resolveCodeMirrorLanguageSupport = (language: string): LanguageSupport | null => {
+export const resolveCodeMirrorLanguageSupport = (language: string): Extension | null => {
   const languageId = resolveCodeMirrorLanguageId(language);
   if (languageId === PLAIN_TEXT_ID) {
     return null;
@@ -177,7 +175,7 @@ export const resolveCodeMirrorLanguageSupport = (language: string): LanguageSupp
  */
 export const loadCodeMirrorLanguageSupport = async (
   language: string,
-): Promise<LanguageSupport | null> => {
+): Promise<Extension | null> => {
   const languageId = resolveCodeMirrorLanguageId(language);
   if (languageId === PLAIN_TEXT_ID) {
     return null;
@@ -199,10 +197,10 @@ export const loadCodeMirrorLanguageSupport = async (
   }
 
   const promise = loader()
-    .then((support) => {
-      if (support instanceof LanguageSupport) {
-        loadedLanguageSupports.set(languageId, support);
-        return support;
+    .then((extension) => {
+      if (extension) {
+        loadedLanguageSupports.set(languageId, extension);
+        return extension;
       }
       return null;
     })

@@ -1,18 +1,21 @@
-#!/usr/bin/env node
-// fix-catalog-indent.mjs —— §5.3：用仓库自己的 Prettier 配置归一缩进/风格，纯格式化、语义不变。
-// 用仓库 prettier 配置 → 自动沿用其 endOfLine，不会引入换行符噪声。
-// 仓库根目录运行：node fix-catalog-indent.mjs
-import { readFile, writeFile } from 'node:fs/promises';
-import prettier from 'prettier';
+// 1.mjs —— 修复 codemirror-bash-language.ts 的 noAssignInExpressions
+import { readFileSync, writeFileSync } from 'node:fs'
 
-const target = 'scripts/generate-shell-command-catalog.ts';
-const src = await readFile(target, 'utf8');
-const config = (await prettier.resolveConfig(target)) ?? {};
-const out = await prettier.format(src, { ...config, parser: 'typescript' });
+const rel = 'src/services/editor/codemirror-bash-language.ts'
+const raw = readFileSync(rel, 'utf8')
+const eol = raw.includes('\r\n') ? '\r\n' : '\n'   // 探测并保留原始行尾
+const text = raw.split('\r\n').join('\n')          // 归一化为 LF 处理
 
-if (out !== src) {
-  await writeFile(target, out, 'utf8');
-  console.log('✅ 已按仓库 Prettier 配置归一 generate-shell-command-catalog.ts。');
-} else {
-  console.log('ℹ️ 无变化（已符合配置）。');
+// 精确匹配出问题的那一行，捕获其缩进
+const re = /^([ \t]*)const generation = \(this\.generation \+= 1\);$/m
+if (!re.test(text)) {
+  throw new Error('未找到目标行：可能已被修复，或源码已变化。请人工确认 runParse() 第 165 行。')
 }
+
+const next = text.replace(
+  re,
+  (_m, indent) => `${indent}this.generation += 1;\n${indent}const generation = this.generation;`,
+)
+
+writeFileSync(rel, next.split('\n').join(eol))      // 按原始 EOL 写回
+console.log('✓ 已拆分复合赋值，修复 noAssignInExpressions')

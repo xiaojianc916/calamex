@@ -11,9 +11,10 @@ describe('loadCodeMirrorLanguageSupport', () => {
     expect((support as LanguageSupport).language.name).toBe('vue');
   });
 
-  it('为 Shell 文件按需加载 CodeMirror 官方 legacy shell mode', async () => {
-    const support = await loadCodeMirrorLanguageSupport('shell');
+  it('为 Shell 文件按需加载 tree-sitter 语言服务(非 LanguageSupport 扩展)', async () => {
+    const extensions = await loadCodeMirrorLanguageSupport('shell');
 
-    expect(support).toBeInstanceOf(LanguageSupport);
+    expect(extensions).not.toBeNull();
+    expect(extensions).not.toBeInstanceOf(LanguageSupport);
   });
 });

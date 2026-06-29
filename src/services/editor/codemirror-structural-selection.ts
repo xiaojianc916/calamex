@@ -1,6 +1,7 @@
 import { syntaxTree } from '@codemirror/language';
 import { EditorSelection, type EditorState, StateEffect, StateField } from '@codemirror/state';
 import type { Command } from '@codemirror/view';
+import { expandRangeWithBashTree } from './codemirror-bash-language';
 
 /**
  * 结构化选区(structural selection)。
@@ -9,8 +10,9 @@ import type { Command } from '@codemirror/view';
  * - 缩小选区:沿“扩大”历史栈逐级回退到上一次更小的选区。
  *
  * 仅对拥有真实 syntaxTree 的 Lezer 语言(js/ts/vue/html/css/json/md/cpp/go/java/
- * python/rust/sql/xml 等)能做到语法级精确扩选;StreamLanguage(shell 等)没有 AST,
- * 扩选会直接跳到整篇文档,属预期降级,结构级能力需由 Rust tree-sitter 提供。
+ * python/rust/sql/xml 等)能做到语法级精确扩选。shell 由 tree-sitter-bash 提供 AST
+ * (见 codemirror-bash-language),同样支持语法级扩选;其余 StreamLanguage 暂无 AST,
+ * 扩选会直接跳到整篇文档,属预期降级。
  */
 
 type TStructuralSelectionAction = 'expand' | 'shrink';
@@ -42,6 +44,10 @@ const resolveExpandedSelection = (state: EditorState): EditorSelection => {
   const tree = syntaxTree(state);
   return EditorSelection.create(
     state.selection.ranges.map((range) => {
+      const bashRange = expandRangeWithBashTree(state, range.from, range.to);
+      if (bashRange) {
+        return EditorSelection.range(bashRange.from, bashRange.to);
+      }
       let node: ReturnType<typeof tree.resolveInner> | null = tree.resolveInner(range.from, 1);
       while (node) {
         if (
