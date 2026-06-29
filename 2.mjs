@@ -1,100 +1,261 @@
-// fix-ai-review-batch-3.mjs  (A7：移除 reasoning 兼容垫片；CRLF 兼容；幂等)
-// 在仓库根目录执行：node fix-ai-review-batch-3.mjs
-import { readFileSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
+// scripts/refactor/b4-s3-builtin-acp-native.mjs
+//
+// B4 · S3 —— builtin 切入唯一标准 ACP 管线（session/prompt + set_session_mode）。
+//
+// 决策（你已确认）：统一 builtin 的 chat/agent/plan 三模式，全部经标准 ACP session/prompt
+// 发送；模式经官方 set_session_mode 一次性切换（不入 prompt 负载）；legacy 分流全停用待 D1 删。
+//
+// 本脚本只改前端编排层 src/composables/ai/useAiAssistant.ts（按域、不碰面板/类型/后端）：
+//   1) 新增 builtin 三模式 → ACP 模式 id 映射常量（chat→ask / agent→agent / plan→plan）。
+//   2) executeExternalAgentRequest 增加可选 sessionMode 形参；builtin 在 prompt 前先
+//      ensureAcpSession 建会话、再 set_session_mode 一次性切到目标模式（同一 thread 键，故被
+//      本回合 prompt 复用），随后标准 session/prompt 按会话模式分流（见 builtin-agent agent.prompt）。
+//   3) sendMessage：所有后端（builtin / Kimi / Codex）统一走 executeExternalAgentRequest；
+//      删除 agent/plan/chat 三条 legacy 分支与穷举兜底，及仅 chat 用的 nextMessages 局部量。
+//
+// 先建后删（过渡期，符合「暂时无法编译可接受」）：executeSidecarAgentRequest / executeAiRequest
+// 失去调用点后成为未使用函数（typecheck/lint 报 no-unused-vars），连同 finalizeSidecarTurn /
+// applySidecarPatchSets / agentPlan.createPlan 等一并在 D1 删除，本步不动以防功能回退。
+//
+// 后端前置假设（运行前请确认其一已就绪）：宿主 ai_ensure_acp_session / ai_set_session_mode
+// 能按 threadId 解析 builtin 后端会话（与 Kimi 同构）。S2 已把 builtin 收敛到同一
+// ensure_session/new_session 路径，故按 thread 键解析应成立；若宿主未路由 builtin 这两个命令，
+// 需在后端步补齐（属 host 路由，不在本前端脚本范围）。
+//
+// 用法：node scripts/refactor/b4-s3-builtin-acp-native.mjs   （不提交）
 
-const root = process.cwd();
-const read = (rel) => readFileSync(join(root, rel), "utf8");
-const write = (rel, s) => writeFileSync(join(root, rel), s);
-const eolOf = (s) => (s.includes("\r\n") ? "\r\n" : "\n");
+import { readFileSync, writeFileSync } from 'node:fs';
+import { resolve } from 'node:path';
 
-function replaceBlock(rel, oldLines, newLines, label) {
-  const s = read(rel);
-  const eol = eolOf(s);
-  const oldStr = oldLines.join(eol);
-  const newStr = newLines.join(eol);
-  const n = s.split(oldStr).length - 1;
-  if (n === 0) {
-    if (s.includes(newStr)) {
-      console.log(`[skip] ${label}（已应用）`);
-      return;
-    }
-    throw new Error(`未找到锚点: ${label} @ ${rel}`);
-  }
-  if (n > 1) throw new Error(`锚点出现 ${n} 次(应唯一): ${label} @ ${rel}`);
-  write(rel, s.replace(oldStr, newStr));
-  console.log(`[fix] ${label}`);
+const ROOT = process.cwd();
+const TARGET = 'src/composables/ai/useAiAssistant.ts';
+
+function read(rel) {
+  const abs = resolve(ROOT, rel);
+  const raw = readFileSync(abs, 'utf8');
+  const eol = raw.includes('\r\n') ? '\r\n' : '\n';
+  return { abs, lf: raw.replace(/\r\n/g, '\n'), eol };
 }
 
-const TYPES = "builtin-agent/src/engines/shared/types.ts";
-const UTILS = "builtin-agent/src/engines/stream/stream-utils.ts";
+function write(abs, lfContent, eol) {
+  const out = eol === '\r\n' ? lfContent.replace(/\n/g, '\r\n') : lfContent;
+  writeFileSync(abs, out, 'utf8');
+}
 
-// (1) types.ts：清理 import 里不再使用的 ReasoningDeltaPayload。
-replaceBlock(
-  TYPES,
-  ["import type { AgentChunkType, DataChunkType, DynamicToolResultPayload, ReasoningDeltaPayload, ToolResultPayload } from '@mastra/core/stream';"],
-  ["import type { AgentChunkType, DataChunkType, DynamicToolResultPayload, ToolResultPayload } from '@mastra/core/stream';"],
-  "A7: types.ts 移除未用的 ReasoningDeltaPayload import",
-);
+function replaceOnce(haystack, oldStr, newStr, label) {
+  const i = haystack.indexOf(oldStr);
+  if (i === -1) throw new Error('[S3] 锚点未命中: ' + label);
+  if (haystack.indexOf(oldStr, i + oldStr.length) !== -1) {
+    throw new Error('[S3] 锚点不唯一: ' + label);
+  }
+  return haystack.slice(0, i) + newStr + haystack.slice(i + oldStr.length);
+}
 
-// (2) types.ts：删除整段 TCompatibleReasoningDeltaChunk（连同其后换行），保留下一行类型。
-replaceBlock(
-  TYPES,
-  [
-    "export type TCompatibleReasoningDeltaChunk = TMastraReasoningDeltaChunk & {",
-    "    payload: ReasoningDeltaPayload & {",
-    "        reasoningText?: string;",
-    "        delta?: string;",
-    "        reasoning_content?: string;",
-    "        reasoningContent?: string;",
-    "    };",
-    "};",
-    "export type TCompatibleToolResultPayload = ToolResultPayload | DynamicToolResultPayload;",
-  ],
-  [
-    "export type TCompatibleToolResultPayload = ToolResultPayload | DynamicToolResultPayload;",
-  ],
-  "A7: types.ts 删除 TCompatibleReasoningDeltaChunk",
-);
+const L = (lines) => lines.join('\n');
 
-// (3) stream-utils.ts：import 改引官方 TMastraReasoningDeltaChunk。
-replaceBlock(
-  UTILS,
-  ["type TCompatibleReasoningDeltaChunk"],
-  ["type TMastraReasoningDeltaChunk"],
-  "A7: stream-utils.ts import 改用 TMastraReasoningDeltaChunk",
-);
+// ---------------------------------------------------------------------------
+// Edit 1 —— 模式映射常量（插入到 SIDECAR_EXPLICIT_CONTEXT_MESSAGE_LIMIT 之后）。
+// ---------------------------------------------------------------------------
+const EDIT1_OLD = 'const SIDECAR_EXPLICIT_CONTEXT_MESSAGE_LIMIT = 12;';
+const EDIT1_NEW = L([
+  'const SIDECAR_EXPLICIT_CONTEXT_MESSAGE_LIMIT = 12;',
+  '',
+  '// builtin 是标准 ACP 后端：前端三模式（chat/agent/plan）→ Agent 公示的 ACP 会话模式 id',
+  '// （ask/plan/agent，见 builtin-agent AGENT_MODES / RUNTIME_METHOD_BY_MODE）。经官方',
+  '// set_session_mode 一次性切换会话模式，绝不随 session/prompt 负载携带（IAgentExternalChatRequest',
+  '// 无 mode 字段）。',
+  'const BUILTIN_ACP_MODE_BY_ASSISTANT_MODE: Record<TAiAssistantMode, string> = {',
+  "  chat: 'ask',",
+  "  agent: 'agent',",
+  "  plan: 'plan',",
+  '};',
+]);
 
-// (4) stream-utils.ts：类型谓词改用官方类型。
-replaceBlock(
-  UTILS,
-  ["): chunk is TCompatibleReasoningDeltaChunk => chunk.type === 'reasoning-delta';"],
-  ["): chunk is TMastraReasoningDeltaChunk => chunk.type === 'reasoning-delta';"],
-  "A7: stream-utils.ts isReasoningDeltaChunk 谓词",
-);
+// ---------------------------------------------------------------------------
+// Edit 2 —— executeExternalAgentRequest 注释 + 形参（加 sessionMode）。
+// ---------------------------------------------------------------------------
+const EDIT2_OLD = L([
+  '  // 外部 ACP 编码 agent（Kimi / Codex，ADR-0015）发送链路：经 builtin_agent_external_chat',
+  '  // 驱动一轮标准 session/prompt。外部 agent 无富信封，过程增量经 session/update 帧走既有',
+  '  // sidecar 流（subscribeSidecarSessionStream + applySidecarLiveEventsToAgentMessage）。',
+  '  // 流式关键：用前端预生成的 sidecarSessionId 在发起回合「之前」订阅，后端据此把外部帧的',
+  '  // session_id 由 ACP 会话 UUID 重写为该键（见 Rust host.prompt_with_stream_key），实现逐',
+  '  // token 实时渲染；prompt 返回即整轮结束，flush 后把消息状态收口为 completed。',
+  '  const executeExternalAgentRequest = async (',
+  '    backend: TAgentBackendKind,',
+  '    messageContent: string,',
+  '    threadId: string | null,',
+  '  ): Promise<void> => {',
+]);
+const EDIT2_NEW = L([
+  '  // 唯一标准发送链路（ADR-20260617）：所有 ACP 后端（builtin / Kimi / Codex）一律经',
+  '  // builtin_agent_external_chat 驱动一轮标准 session/prompt。builtin 的 chat/plan/agent 三模式经',
+  '  // 官方 set_session_mode 在发起回合前一次性切换（见下方 sessionMode 分支，映射 ask/plan/agent），',
+  '  // 不再走自研边车的 mode 分流；Kimi / Codex 自管会话模式，不下发 sessionMode。过程增量经',
+  '  // session/update 帧走既有 sidecar 流（subscribeSidecarSessionStream +',
+  '  // applySidecarLiveEventsToAgentMessage）；工具审批 / 反向提问经 session/request_permission 由',
+  '  // 面板级 useAcpApproval 闭环呈现，均不在本链路内联处理。',
+  '  // 流式关键：用前端预生成的 sidecarSessionId 在发起回合「之前」订阅，后端据此把帧的 session_id',
+  '  // 由 ACP 会话 UUID 重写为该键（见 Rust host.prompt_with_stream_key），实现逐 token 实时渲染；',
+  '  // prompt 返回即整轮结束，flush 后把消息状态收口为 completed。',
+  '  const executeExternalAgentRequest = async (',
+  '    backend: TAgentBackendKind,',
+  '    messageContent: string,',
+  '    threadId: string | null,',
+  '    sessionMode?: string,',
+  '  ): Promise<void> => {',
+]);
 
-// (5) stream-utils.ts：getReasoningDelta 收敛到官方 text 一路。
-replaceBlock(
-  UTILS,
-  [
-    "export const getReasoningDelta = (chunk: TMastraStreamChunk): string | null => {",
-    "    if (isReasoningDeltaChunk(chunk)) {",
-    "        return chunk.payload.text",
-    "            ?? chunk.payload.reasoningText",
-    "            ?? chunk.payload.delta",
-    "            ?? chunk.payload.reasoning_content",
-    "            ?? chunk.payload.reasoningContent",
-    "            ?? null;",
-    "    }",
-    "",
-    "    return null;",
-    "};",
-  ],
-  [
-    "export const getReasoningDelta = (chunk: TMastraStreamChunk): string | null =>",
-    "    isReasoningDeltaChunk(chunk) ? (chunk.payload.text ?? null) : null;",
-  ],
-  "A7: stream-utils.ts getReasoningDelta 收敛单路",
-);
+// ---------------------------------------------------------------------------
+// Edit 3 —— prompt 前为 builtin 注入 ensureAcpSession + set_session_mode。
+// ---------------------------------------------------------------------------
+const EDIT3_OLD = L([
+  '      await aiService.sidecarExternalChat({',
+  '        backend,',
+  '        text: messageContent,',
+  '        sessionId: sidecarSessionId,',
+  '        workspaceRootPath: options.workspaceRootPath.value,',
+  '        ...(targetThreadId ? { threadId: targetThreadId } : {}),',
+  '      });',
+]);
+const EDIT3_NEW = L([
+  "      if (backend === 'builtin' && sessionMode !== undefined) {",
+  '        // builtin 也是标准 ACP 后端：先确保会话建立（与本回合 prompt 同一 thread 键，故被 prompt',
+  '        // 复用），再经官方 set_session_mode 把会话一次性切到目标模式；随后标准 session/prompt 即按',
+  '        // 会话模式分流到 chat/plan/execute（见 builtin-agent CalamexAcpAgent.prompt）。',
+  "        const sessionThreadId = targetThreadId ?? '';",
+  '        await aiService.ensureAcpSession({',
+  '          threadId: sessionThreadId,',
+  '          backend,',
+  '          workspaceRootPath: options.workspaceRootPath.value,',
+  '        });',
+  '        await aiService.setSessionMode({ threadId: sessionThreadId, modeId: sessionMode });',
+  '      }',
+  '',
+  '      await aiService.sidecarExternalChat({',
+  '        backend,',
+  '        text: messageContent,',
+  '        sessionId: sidecarSessionId,',
+  '        workspaceRootPath: options.workspaceRootPath.value,',
+  '        ...(targetThreadId ? { threadId: targetThreadId } : {}),',
+  '      });',
+]);
 
-console.log("\n全部完成。建议执行：pnpm -C builtin-agent typecheck && pnpm -C builtin-agent test");
+// ---------------------------------------------------------------------------
+// Edit 4 —— sendMessage 路由收敛为唯一标准管线（删 nextMessages + 三条 legacy 分支 + 穷举兜底）。
+// ---------------------------------------------------------------------------
+const EDIT4_OLD = L([
+  '    const nextMessages = unref(conversationStore.activeMessages);',
+  '',
+  '    // 外部 ACP 编码 agent（Kimi / Codex）走独立发送链路，与 activeMode（chat/agent/plan）无关：',
+  '    // 外部 agent 自管会话与运行循环，不复用自研边车的 mode 分流。',
+  '    const externalBackend = sendOptions?.agentBackend;',
+  "    if (externalBackend && externalBackend !== 'builtin') {",
+  '      await executeExternalAgentRequest(externalBackend, messageContent, titleThreadId);',
+  '',
+  '      if (!errorMessage.value) {',
+  '        void maybeGenerateConversationTitle(titleThreadId);',
+  '      }',
+  '',
+  '      return;',
+  '    }',
+  '',
+  "    if (activeMode.value === 'agent') {",
+  '      await executeSidecarAgentRequest(messageContent, references, userMessage.id, titleThreadId);',
+  '',
+  '      if (!errorMessage.value) {',
+  '        void maybeGenerateConversationTitle(titleThreadId);',
+  '      }',
+  '',
+  '      return;',
+  '    }',
+  '',
+  "    if (activeMode.value === 'plan') {",
+  '      agentSteps.value = [];',
+  '      let planSucceeded = false;',
+  '',
+  '      try {',
+  '        const planResult = await agentPlan.createPlan(',
+  '          messageContent,',
+  '          buildSidecarContextReferences(references),',
+  '          options.workspaceRootPath.value,',
+  '          titleThreadId ? { threadId: titleThreadId } : {},',
+  '        );',
+  '',
+  '        agentSteps.value = planResult.steps.map((step) => ({',
+  '          id: step.id,',
+  '          title: step.title,',
+  '          status: step.status,',
+  '        }));',
+  '',
+  '        clearAttachedFiles({ revokePreviews: false });',
+  '        planSucceeded = true;',
+  '      } catch (error) {',
+  "        const message = toErrorMessage(error, '生成计划失败。');",
+  '        errorMessage.value = message;',
+  '        agentSteps.value = [];',
+  '        aiThreadStore.patchActiveThreadEntries((entries) => [',
+  '          ...entries,',
+  '          ...legacyMessageToEntries({',
+  "            id: createMessageId('assistant'),",
+  "            role: 'assistant',",
+  '            content: `计划生成失败：${message}`,',
+  '            createdAt: new Date().toISOString(),',
+  '            references: [],',
+  '          }),',
+  '        ]);',
+  '      } finally {',
+  '        clearActiveBufferedThread(titleThreadId);',
+  '        isSending.value = false;',
+  '        if (planSucceeded) {',
+  '          void maybeGenerateConversationTitle(titleThreadId);',
+  '        }',
+  '      }',
+  '',
+  '      return;',
+  '    }',
+  "    if (activeMode.value === 'chat') {",
+  '      try {',
+  '        await executeAiRequest(nextMessages, references, titleThreadId);',
+  '        if (!errorMessage.value) {',
+  '          void maybeGenerateConversationTitle(titleThreadId);',
+  '        }',
+  '      } catch (error) {',
+  '        errorMessage.value = toErrorMessage(error, MSG_CALL_FAILED);',
+  '      }',
+  '      return;',
+  '    }',
+  '',
+  '    const exhaustiveModeCheck: never = activeMode.value;',
+  '    throw new Error(`未处理的 AI 助手模式：${String(exhaustiveModeCheck)}`);',
+]);
+const EDIT4_NEW = L([
+  '    // 唯一标准管线（ADR-20260617）：所有后端（builtin / Kimi / Codex）一律经标准 ACP',
+  '    // session/prompt 发送。builtin 的 chat/agent/plan 三模式经官方 set_session_mode 一次性切换',
+  '    // （见 executeExternalAgentRequest 的 sessionMode 分支，映射 ask/plan/agent）；Kimi / Codex',
+  '    // 自管会话模式，故不下发 sessionMode。legacy 分流（executeSidecarAgentRequest /',
+  '    // agentPlan.createPlan / executeAiRequest）已停用，随 D1 删除（先建后删，过渡期保留以防回退）。',
+  "    const backend: TAgentBackendKind = sendOptions?.agentBackend ?? 'builtin';",
+  '    const sessionMode =',
+  "      backend === 'builtin' ? BUILTIN_ACP_MODE_BY_ASSISTANT_MODE[activeMode.value] : undefined;",
+  '',
+  '    await executeExternalAgentRequest(backend, messageContent, titleThreadId, sessionMode);',
+  '',
+  '    if (!errorMessage.value) {',
+  '      void maybeGenerateConversationTitle(titleThreadId);',
+  '    }',
+]);
+
+// ---------------------------------------------------------------------------
+// Apply
+// ---------------------------------------------------------------------------
+const { abs, lf, eol } = read(TARGET);
+let next = lf;
+next = replaceOnce(next, EDIT1_OLD, EDIT1_NEW, 'Edit1: mode map const');
+next = replaceOnce(next, EDIT2_OLD, EDIT2_NEW, 'Edit2: executeExternalAgentRequest signature');
+next = replaceOnce(next, EDIT3_OLD, EDIT3_NEW, 'Edit3: ensureAcpSession + setSessionMode');
+next = replaceOnce(next, EDIT4_OLD, EDIT4_NEW, 'Edit4: sendMessage unified routing');
+write(abs, next, eol);
+
+console.log('[S3] 已更新 ' + TARGET + '（EOL=' + (eol === '\r\n' ? 'CRLF' : 'LF') + '）');
+console.log('[S3] builtin 已切入唯一标准 ACP 管线；legacy 分流停用待 D1 删除（过渡期 typecheck 会报未使用函数，符合预期）。');
