@@ -8,11 +8,6 @@ import { countJsonChars, countTextChars, estimateInputTokensByChars, stringifyFo
 import { resolveContextBudgetDecision } from './context-budget-policy.js';
 import { resolveContextManagementStrategy } from './context-strategy-policy.js';
 
-// Char/token helpers now live in ../../text-metrics.js. Re-exported here so the
-// existing import surface of this module is preserved.
-export { countJsonChars, countTextChars, estimateInputTokensByChars };
-export const stringifyForBudget = stringifyForJson;
-
 export const createJsonToolModelOutput = (value: unknown): { type: 'json'; value: unknown } => ({
     type: 'json',
     value,
@@ -123,8 +118,8 @@ export const createAcontextTokenEventDraft = (input: {
     toolChoice: 'auto' | 'none';
     modelCapabilities?: Pick<IAgentModelCapabilities, 'contextWindowTokens' | 'maxOutputTokens'> | undefined;
 }): TAcontextTokenEventDraft => {
-    const messagesText = stringifyForBudget(input.messages);
-    const toolsText = stringifyForBudget(Object.entries(input.tools).map(([name, tool]) =>
+    const messagesText = stringifyForJson(input.messages);
+    const toolsText = stringifyForJson(Object.entries(input.tools).map(([name, tool]) =>
         createProviderToolBudgetShape(name, tool),
     ));
     const systemPromptCharCount = countTextChars(input.systemPrompt);
