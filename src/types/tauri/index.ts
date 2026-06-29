@@ -73,8 +73,6 @@ import type {
   IAgentSidecarWarmupPayload,
 } from '../ai/sidecar';
 import type {
-  IAnalyzeScriptPayload,
-  IAnalyzeScriptRequest,
   IExecutionEnvironment,
   IFormatDocumentPayload,
   IFormatDocumentRequest,
@@ -307,7 +305,6 @@ export interface ITauriService {
     handler: (payload: IAgentSidecarStreamEventPayload) => void,
   ): Promise<() => void>;
   onAcpApproval(handler: (payload: IAcpPermissionRequestPayload) => void): Promise<() => void>;
-  analyzeScript(payload: IAnalyzeScriptRequest): Promise<IAnalyzeScriptPayload>;
   formatScript(payload: IFormatScriptRequest): Promise<IFormatScriptPayload>;
   formatDocument(payload: IFormatDocumentRequest): Promise<IFormatDocumentPayload>;
   loadScript(path: string, workspaceRootPath?: string | null): Promise<IScriptFilePayload>;

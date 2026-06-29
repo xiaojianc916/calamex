@@ -27,7 +27,6 @@ const saveFileFilters = [
 
 type TWorkspaceTauriService = Pick<
   ITauriService,
-  | 'analyzeScript'
   | 'formatScript'
   | 'formatDocument'
   | 'loadScript'
@@ -53,11 +52,6 @@ type TWorkspaceTauriService = Pick<
 };
 
 const WORKSPACE_COMMAND_META = {
-  analyzeScript: {
-    command: 'analyze_script',
-    guardHint: '执行 ShellCheck 实时诊断',
-    idempotent: true,
-  },
   formatScript: {
     command: 'format_script',
     guardHint: '使用 shfmt 格式化脚本',
@@ -145,12 +139,6 @@ const WORKSPACE_COMMAND_META = {
 } satisfies Record<string, ICommandMeta>;
 
 export const workspaceTauriService: TWorkspaceTauriService = {
-  analyzeScript(payload, options?: IIpcCallOptions) {
-    return runCommand(WORKSPACE_COMMAND_META.analyzeScript, payload, options, () =>
-      commands.analyzeScript(payload),
-    );
-  },
-
   formatScript(payload, options?: IIpcCallOptions) {
     return runCommand(WORKSPACE_COMMAND_META.formatScript, payload, options, () =>
       commands.formatScript(payload),

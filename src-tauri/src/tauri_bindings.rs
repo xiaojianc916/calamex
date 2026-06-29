@@ -23,7 +23,6 @@ pub fn builder() -> Builder<tauri::Wry> {
             search::apply_workspace_replacement,
             search::preview_workspace_replacement,
             search::search_workspace,
-            shell_tools::analyze_script,
             shell_tools::format_script,
             format::format_document,
             skills::list_skills,

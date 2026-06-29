@@ -12,16 +12,6 @@
  * - model/chat：原始模型透传（runtime.modelChat）——一次性、无工具/记忆/历史、不套 agent
  *   系统提示，调用方 messages（含 system）原样下发；承载标题生成 / 行内补全 / 连接测试等
  *   「工具型」模型调用，仿 Zed 的独立模型请求；不实现该可选能力时返回 methodNotFound。
- * - agent/chat、agent/chat/resolve：agent 模式对话回合（runtime.chat / runtime.resolveApproval）
- *   的「带外」承载。ACP 原生 session/prompt 的 session/update 投影是有损的（仅文本/思考
- *   增量），会丢失结构化补丁 / 检查点 / 回滚 / 富审批字段 / plan_ready 等 agent UI 词表；
- *   故这两个扩展把过程增量经 session/update 仅作实时预览下发，真正权威的富事件由方法
- *   返回值的完整 toAgentSidecarResponse 信封承载（与旧 HTTP /agent/chat 同构，前端无感）。
- * - agent/ask-user/resume：ask_user 反向提问（HITL）挂起恢复（runtime.resolveAskUser）。
- *   agent/chat/resolve 的姊妹方法：上一段信封里的 ask_user_required 事件携 requestId，
- *   本方法携用户回填的 outcome + 结构化 answers 回灌挂起的 ask_user 工具续跑同一回合。
- *   不复用 session/request_permission（扁平 approve/reject 选项无法表达多问多选表单），
- *   也不复用 agent/chat/resolve（其 decision-only 入参无法承载富答案）。
  * - web/search、web/fetch：应用级网络检索/抓取（由宙主的 ai::tools 调用，非 agent 工具）。
  * - warmup：LLM 连接预热（宙主启动时显式调用，缩短首 prompt 首字延迟）。
  * - health：健康/活性探活 + MCP 运行状态快照。

@@ -40,12 +40,7 @@ import type {
   IAiThreadEntry,
   IAiThreadToolCall,
 } from '@/types/ai/thread';
-import type {
-  IActiveRunSummary,
-  IAnalyzeScriptPayload,
-  IEditorDocument,
-  IEditorSelectionSummary,
-} from '@/types/editor';
+import type { IActiveRunSummary, IEditorDocument, IEditorSelectionSummary } from '@/types/editor';
 import type { IGitRepositoryStatusPayload } from '@/types/git';
 
 import { toErrorMessage } from '@/utils/error/error';
@@ -148,7 +143,6 @@ export interface IAiFileRollbackPrompt {
 export interface IUseAiAssistantOptions {
   document: Ref<IEditorDocument>;
   activeRun: Ref<IActiveRunSummary | null>;
-  analysis: Ref<IAnalyzeScriptPayload>;
   selection: Ref<IEditorSelectionSummary | null>;
   gitStatus: Ref<IGitRepositoryStatusPayload>;
   workspaceRootPath: Ref<string | null>;

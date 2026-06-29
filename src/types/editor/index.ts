@@ -1,6 +1,4 @@
 import type {
-  AnalyzeScriptPayload,
-  AnalyzeScriptRequest,
   DocumentEncoding,
   ExecutionEnvironment,
   ExecutionOption,
@@ -11,8 +9,6 @@ import type {
   FormatScriptRequest,
   ImageAssetPayload,
   SaveScriptRequest,
-  ScriptDiagnosticPayload,
-  ScriptDiagnosticSeverity,
   ScriptFilePayload,
   WorkspaceDirectoryPayload,
   WorkspaceEntry,
@@ -32,7 +28,6 @@ export type TDocumentKind = 'text' | 'image' | 'ai-diff' | 'git-diff';
 export type TExecutorKind = ExecutorKind;
 export type TLogLevel = 'info' | 'success' | 'error';
 export type TRunLogScope = 'run' | 'workspace' | 'editor' | 'system';
-export type TScriptDiagnosticSeverity = ScriptDiagnosticSeverity;
 export type TRunHistoryStatus = 'success' | 'failed' | 'canceled';
 
 export interface IEditorDocument {
@@ -155,12 +150,6 @@ export interface IRunResult {
   logPath: string | null;
   usedTempFile: boolean;
 }
-
-export type IScriptDiagnostic = ScriptDiagnosticPayload;
-
-export type IAnalyzeScriptRequest = AnalyzeScriptRequest;
-
-export type IAnalyzeScriptPayload = AnalyzeScriptPayload;
 
 export type IImageAssetPayload = ImageAssetPayload;
 

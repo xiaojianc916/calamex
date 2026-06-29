@@ -1,107 +1,235 @@
-#!/usr/bin/env node
-/**
- * scripts/scroll-smoothness-fix.mjs
- *
- * 一次性脚本：进一步优化编辑器「上下滑动」的丝滑度。
- *
- * 背景：codemirror-shiki-highlight.ts 的 renderViewportFromCache 每个 viewportChanged
- * 帧都按「视口 ± DECORATION_RENDER_MARGIN_LINES(8)」算渲染范围。滚动时该范围逐行平移，
- * decorationCacheKey 每帧都变 → 每帧用 RangeSetBuilder 重建整屏装饰，与浏览器滚动/绘制
- * 抢主线程，造成「沉重、不跟手」。
- *
- * 优化：把装饰渲染范围的上下沿块对齐到 DECORATION_RENDER_CHUNK_LINES(64) 边界。同一块内
- * 滚动时渲染范围（及缓存 key）不变 → 命中 decorationCache 直接复用，逐帧零重建；仅跨块时
- * 重建一次（覆盖 1~2 块）。token 着色与正确性不变。
- *
- * 用法（在仓库根目录 D:\com.xiaojianc\my_desktop_app 下）：
- *   node scripts/scroll-smoothness-fix.mjs
- * 然后：git diff 审查 → pnpm build 验证 → 删除本脚本 → 提交并推送 main。
- */
+// 7.mjs — 统一 ShellCheck 管线：删除冗余的后端 analyze_script 引擎，
+// 只保留 bash-language-server (LSP) 这一条诊断管线（不留新旧杂糅/兼容层）。
+// 在仓库根目录运行：  node 7.mjs
+import { readFileSync, writeFileSync, existsSync, unlinkSync, readdirSync, statSync } from 'node:fs';
+import { join, relative, sep } from 'node:path';
 
-import { readFile, writeFile } from "node:fs/promises";
-import { fileURLToPath } from "node:url";
-import path from "node:path";
+const ROOT = process.cwd();
+let changed = 0;
 
-const REPO_ROOT = process.cwd();
-const TARGET = path.join(REPO_ROOT, "src/services/editor/codemirror-shiki-highlight.ts");
+const read = (p) => readFileSync(join(ROOT, p), 'utf8');
+const eolOf = (s) => (s.includes('\r\n') ? '\r\n' : '\n');
 
-const lines = (...xs) => xs.join("\n");
+function edit(rel, ops, mustBeGone = []) {
+  if (!existsSync(join(ROOT, rel))) throw new Error(`缺失文件：${rel}`);
+  let c = read(rel);
+  const eol = eolOf(c);
+  const toEol = (s) => s.split('\n').join(eol);
 
-function replaceOnce(src, label, oldStr, newStr) {
-  const count = src.split(oldStr).length - 1;
-  if (count !== 1) {
-    throw new Error(
-      `[scroll-smoothness-fix] 锚点「${label}」期望命中 1 处，实际 ${count} 处。` +
-        `文件可能已变更，请重新生成脚本后再运行（未写入任何改动）。`,
+  for (const op of ops) {
+    if (op.find !== undefined) {
+      const f = toEol(op.find), r = toEol(op.replace);
+      if (!c.includes(f)) throw new Error(`[${rel}] 锚点未命中:\n${op.find.slice(0, 80)}…`);
+      c = c.replace(f, r);
+    } else {
+      // cut: 删除 [start, end) ；end 省略表示删到文件末尾
+      const s = toEol(op.cutStart);
+      const i = c.indexOf(s);
+      if (i < 0) throw new Error(`[${rel}] cutStart 未命中: ${op.cutStart.slice(0, 60)}…`);
+      let j;
+      if (op.cutEnd === undefined) {
+        c = c.slice(0, i).replace(/(\r?\n)+$/, eol);
+        continue;
+      }
+      const e = toEol(op.cutEnd);
+      j = c.indexOf(e, i);
+      if (j < 0) throw new Error(`[${rel}] cutEnd 未命中: ${op.cutEnd.slice(0, 60)}…`);
+      c = c.slice(0, i) + c.slice(j);
+    }
+  }
+
+  for (const token of mustBeGone) {
+    if (c.includes(token)) throw new Error(`[${rel}] 残留未清除: ${token}`);
+  }
+
+  writeFileSync(join(ROOT, rel), c);
+  changed++;
+  console.log(`✓ 修改 ${rel}`);
+}
+
+// ── 1) 后端：命令注册表去掉 analyze_script ────────────────────────────────
+edit('src-tauri/src/tauri_bindings.rs', [
+  { find: `            shell_tools::analyze_script,\n            shell_tools::format_script,\n`,
+    replace: `            shell_tools::format_script,\n` },
+], ['analyze_script']);
+
+// ── 2) 后端：mod.rs 去掉 4 个契约类型的再导出 ─────────────────────────────
+edit('src-tauri/src/commands/mod.rs', [
+  { find:
+`pub use contracts::{
+    AnalyzeScriptPayload, AnalyzeScriptRequest, DocumentEncoding, ExecutionEnvironment,
+    ScriptDiagnosticPayload, ScriptDiagnosticSeverity,
+    ExecutionOption, ExecutorKind, FormatDocumentPayload, FormatDocumentRequest,`,
+    replace:
+`pub use contracts::{
+    DocumentEncoding, ExecutionEnvironment,
+    ExecutionOption, ExecutorKind, FormatDocumentPayload, FormatDocumentRequest,` },
+], ['AnalyzeScriptPayload', 'AnalyzeScriptRequest', 'ScriptDiagnosticPayload', 'ScriptDiagnosticSeverity']);
+
+// ── 3) 后端：契约里删掉 4 个 ShellCheck 专用类型 ──────────────────────────
+edit('src-tauri/src/commands/contracts/script.rs', [
+  // 删除 ScriptDiagnosticSeverity 枚举 + TryFrom 实现
+  { cutStart: `#[derive(Debug, Clone, Serialize, Deserialize, Type)]\n#[serde(rename_all = "lowercase")]\npub enum ScriptDiagnosticSeverity {`,
+    cutEnd: `#[derive(Debug, Clone, Serialize, Type)]\n#[serde(rename_all = "camelCase")]\npub struct ScriptFilePayload {` },
+  // 删除 AnalyzeScriptRequest / ScriptDiagnosticPayload / AnalyzeScriptPayload
+  { cutStart: `#[derive(Debug, Clone, Deserialize, Type)]\n#[serde(rename_all = "camelCase")]\npub struct AnalyzeScriptRequest {`,
+    cutEnd: `// ============================================================================\n// Execution environment` },
+], ['ScriptDiagnosticSeverity', 'AnalyzeScriptRequest', 'AnalyzeScriptPayload', 'ScriptDiagnosticPayload']);
+
+// ── 4) 后端：shell_tools.rs 删掉 analyze_script 及全部 ShellCheck 辅助/常量/结构/测试 ──
+edit('src-tauri/src/commands/shell_tools.rs', [
+  // 4a 收敛 import（去掉 4 个契约类型 / serde::Deserialize / OsString / Path）
+  { find:
+`use super::{
+    AnalyzeScriptPayload, AnalyzeScriptRequest, FormatScriptPayload, FormatScriptRequest,
+    ScriptDiagnosticPayload, ScriptDiagnosticSeverity, configure_std_command_for_background,
+    configure_tokio_command_for_background, count_to_u32,
+};
+use serde::Deserialize;
+use std::{
+    env,
+    ffi::OsString,
+    path::{Path, PathBuf},
+    process::{Command as StdCommand, Stdio},
+    sync::Arc,
+    time::Duration,
+};`,
+    replace:
+`use super::{
+    FormatScriptPayload, FormatScriptRequest, configure_std_command_for_background,
+    configure_tokio_command_for_background, count_to_u32,
+};
+use std::{
+    env,
+    path::PathBuf,
+    process::{Command as StdCommand, Stdio},
+    sync::Arc,
+    time::Duration,
+};` },
+  // 4b 常量：只保留 SHFMT_TIMEOUT
+  { find:
+`const SHELLCHECK_TIMEOUT: Duration = Duration::from_secs(12);
+const SHFMT_TIMEOUT: Duration = Duration::from_secs(12);
+const SHELLCHECK_SCRIPT_EXTENSIONS: &[&str] = &["sh", "bash", "dash", "ksh", "bats"];
+const SHELLCHECK_SCRIPT_NAMES: &[&str] = &[
+    ".bashrc",
+    ".bash_profile",
+    ".bash_login",
+    ".profile",
+    ".kshrc",
+    "bashrc",
+    "profile",
+];`,
+    replace:
+`const SHFMT_TIMEOUT: Duration = Duration::from_secs(12);` },
+  // 4c 结构体：删 ShellCheckCandidate / ShellCheckJsonPayload / ShellCheckComment，保留 ShfmtCandidate
+  { cutStart: `struct ShellCheckCandidate {`, cutEnd: `struct ShfmtCandidate {` },
+  // 4d 删 analyze_script 命令本体（保留紧随其后的 format_script）
+  { cutStart: `#[tauri::command]\n#[specta::specta]\npub async fn analyze_script(payload: AnalyzeScriptRequest)`,
+    cutEnd: `#[tauri::command]\n#[specta::specta]\npub async fn format_script(payload: FormatScriptRequest)` },
+  // 4e 删 11 个 ShellCheck 辅助函数（到 bundled_resource_roots 文档注释前），保留 shfmt 路径
+  { cutStart: `fn parse_shellcheck_diagnostics(output: &str) -> Result<Vec<ScriptDiagnosticPayload>, String> {`,
+    cutEnd: `/// 候选「随包资源」根目录` },
+  // 4f 删 ShellCheck 专用测试模块（到文件末尾）
+  { cutStart: `#[cfg(test)]\nmod tests {` },
+], ['analyze_script', 'ShellCheck', 'shellcheck', 'ScriptDiagnostic', 'OsString', 'SHELLCHECK_']);
+
+// ── 5) 前端类型：types/editor 去掉 4 个导入 + 4 个别名 ─────────────────────
+edit('src/types/editor/index.ts', [
+  { find: `  AnalyzeScriptPayload,\n`, replace: `` },
+  { find: `  AnalyzeScriptRequest,\n`, replace: `` },
+  { find: `  ScriptDiagnosticPayload,\n`, replace: `` },
+  { find: `  ScriptDiagnosticSeverity,\n`, replace: `` },
+  { find: `export type TScriptDiagnosticSeverity = ScriptDiagnosticSeverity;\n`, replace: `` },
+  { find:
+`export type IScriptDiagnostic = ScriptDiagnosticPayload;
+
+export type IAnalyzeScriptRequest = AnalyzeScriptRequest;
+
+export type IAnalyzeScriptPayload = AnalyzeScriptPayload;
+
+export type IImageAssetPayload = ImageAssetPayload;`,
+    replace:
+`export type IImageAssetPayload = ImageAssetPayload;` },
+], ['AnalyzeScript', 'ScriptDiagnostic']);
+
+// ── 6) 前端类型：ITauriService 去掉 analyzeScript 及其 2 个导入 ────────────
+edit('src/types/tauri/index.ts', [
+  { find: `  IAnalyzeScriptPayload,\n`, replace: `` },
+  { find: `  IAnalyzeScriptRequest,\n`, replace: `` },
+  { find: `  analyzeScript(payload: IAnalyzeScriptRequest): Promise<IAnalyzeScriptPayload>;\n`, replace: `` },
+], ['AnalyzeScript', 'analyzeScript']);
+
+// ── 7) 前端服务：workspace.ts 去掉 analyzeScript（Pick / meta / 方法） ──────
+edit('src/services/tauri/workspace.ts', [
+  { find: `  | 'analyzeScript'\n`, replace: `` },
+  { find:
+`  analyzeScript: {
+    command: 'analyze_script',
+    guardHint: '执行 ShellCheck 实时诊断',
+    idempotent: true,
+  },
+  formatScript: {`,
+    replace: `  formatScript: {` },
+  { find:
+`  analyzeScript(payload, options?: IIpcCallOptions) {
+    return runCommand(WORKSPACE_COMMAND_META.analyzeScript, payload, options, () =>
+      commands.analyzeScript(payload),
     );
-  }
-  return src.replace(oldStr, newStr);
+  },
+
+  formatScript(payload, options?: IIpcCallOptions) {`,
+    replace: `  formatScript(payload, options?: IIpcCallOptions) {` },
+], ['analyzeScript', 'analyze_script']);
+
+// ── 8) 前端：useAiAssistant 去掉无人使用的 analysis 选项 + 其类型导入 ───────
+edit('src/composables/ai/useAiAssistant.ts', [
+  { find: `  IAnalyzeScriptPayload,\n`, replace: `` },
+  { find: `  analysis: Ref<IAnalyzeScriptPayload>;\n`, replace: `` },
+], ['IAnalyzeScriptPayload']);
+
+// ── 9) 删除孤立的 ShellCheck host-tool 切片文件 ────────────────────────────
+const shellcheckFile = 'src/composables/ai/useAiAssistant.shellcheck.ts';
+if (existsSync(join(ROOT, shellcheckFile))) {
+  unlinkSync(join(ROOT, shellcheckFile));
+  changed++;
+  console.log(`✓ 删除 ${shellcheckFile}`);
 }
 
-async function main() {
-  let src = await readFile(TARGET, "utf8");
+// ── 10) 全树自检：列出本机仍存在的引用（我无法遍历你本地全树，交给脚本扫描）──
+const SCAN_DIRS = ['src', 'src-tauri/src'];
+const SKIP = new Set(['node_modules', 'target', 'dist', '.git']);
+const RE = /analyze_script|analyzeScript|AnalyzeScript|ScriptDiagnostic|runShellCheckForAppliedPatch|useAiAssistant\.shellcheck/;
+const isGenerated = (p) => /(^|\/)bindings(\/|$)|(^|\/)generated(\/|$)|tauri\.contracts\.ts$|\/bindings\/tauri\.ts$/.test(p.split(sep).join('/'));
 
-  if (src.includes("DECORATION_RENDER_CHUNK_LINES")) {
-    console.log("[scroll-smoothness-fix] 已检测到 DECORATION_RENDER_CHUNK_LINES，跳过（幂等）。");
-    return;
+const action = [];
+const expected = [];
+function walk(dir) {
+  for (const name of readdirSync(join(ROOT, dir))) {
+    if (SKIP.has(name)) continue;
+    const rel = join(dir, name);
+    const st = statSync(join(ROOT, rel));
+    if (st.isDirectory()) { walk(rel); continue; }
+    if (!/\.(rs|ts|tsx|vue)$/.test(name)) continue;
+    const lines = read(rel).split(/\r?\n/);
+    lines.forEach((ln, i) => {
+      if (RE.test(ln)) {
+        const hit = `${rel.split(sep).join('/')}:${i + 1}: ${ln.trim().slice(0, 100)}`;
+        (isGenerated(rel) ? expected : action).push(hit);
+      }
+    });
   }
-
-  // —— 编辑 1：新增块对齐粒度常量 ——
-  const anchor1 = lines(
-    "// DecorationSet 只需要覆盖真实视口附近。",
-    "// token 预取/缓存范围可以大，但 RangeSetBuilder 不应为大量屏幕外行重复创建 Decoration。",
-    "const DECORATION_RENDER_MARGIN_LINES = 8;",
-  );
-  const replacement1 = lines(
-    anchor1,
-    "",
-    "// 装饰渲染范围的块对齐粒度（行）。renderViewportFromCache 把「视口 ± margin」的上下沿分别",
-    "// 向下/向上对齐到该块边界，使在同一块内滚动时渲染范围（及其缓存 key）保持不变 → 直接命中",
-    "// decorationCache 复用，免去逐帧 RangeSetBuilder 重建（上下滑动丝滑的关键）；仅跨块时重建",
-    "// 一次（覆盖 1~2 块）。取 64 在「每帧零重建」与「跨块单次重建体积」之间取得平衡。",
-    "const DECORATION_RENDER_CHUNK_LINES = 64;",
-  );
-  src = replaceOnce(src, "新增 DECORATION_RENDER_CHUNK_LINES 常量", anchor1, replacement1);
-
-  // —— 编辑 2：renderViewportFromCache 渲染范围块对齐 ——
-  const anchor2 = lines(
-    "      const renderRange = computeShikiHighlightRange({",
-    "        firstVisibleLine: visible.first,",
-    "        lastVisibleLine: visible.last,",
-    "        totalLines: view.state.doc.lines,",
-    "        overscanLines: DECORATION_RENDER_MARGIN_LINES,",
-    "        leadInLines: DECORATION_RENDER_MARGIN_LINES,",
-    "        fromDocumentStart: false,",
-    "      });",
-  );
-  const replacement2 = lines(
-    "      const totalLines = view.state.doc.lines;",
-    "      const rawRange = computeShikiHighlightRange({",
-    "        firstVisibleLine: visible.first,",
-    "        lastVisibleLine: visible.last,",
-    "        totalLines,",
-    "        overscanLines: DECORATION_RENDER_MARGIN_LINES,",
-    "        leadInLines: DECORATION_RENDER_MARGIN_LINES,",
-    "        fromDocumentStart: false,",
-    "      });",
-    "      // 把渲染范围上下沿对齐到块边界：同一块内滚动时 renderRange 不变 → 下方 decorationCache",
-    "      // 直接命中复用，逐帧零重建装饰（上下滑动丝滑的关键）；仅跨块时重建一次。",
-    "      const renderBlock = DECORATION_RENDER_CHUNK_LINES;",
-    "      const renderRange = {",
-    "        startLine: Math.max(1, Math.floor((rawRange.startLine - 1) / renderBlock) * renderBlock + 1),",
-    "        endLine: Math.min(totalLines, Math.ceil(rawRange.endLine / renderBlock) * renderBlock),",
-    "      };",
-  );
-  src = replaceOnce(src, "renderViewportFromCache 渲染范围块对齐", anchor2, replacement2);
-
-  await writeFile(TARGET, src, "utf8");
-  console.log("[scroll-smoothness-fix] 已写入 2 处改动：");
-  console.log("  1) 新增 DECORATION_RENDER_CHUNK_LINES = 64");
-  console.log("  2) renderViewportFromCache 渲染范围块对齐（逐帧零重建装饰）");
-  console.log("请运行 `git diff` 审查，`pnpm build` 验证，确认后删除本脚本并提交推送 main。");
 }
+for (const d of SCAN_DIRS) if (existsSync(join(ROOT, d))) walk(d);
 
-main().catch((err) => {
-  console.error(err.message ?? err);
-  process.exitCode = 1;
-});
+console.log(`\n=== 完成：已修改 ${changed} 个文件 ===`);
+console.log('\n[需手动处理 / vue-tsc 也会报错的剩余引用]');
+console.log(action.length ? action.join('\n') : '  （无 —— 干净）');
+console.log('\n[生成产物中的引用：重新生成 tauri 绑定后会自动消失，无需手改]');
+console.log(expected.length ? expected.join('\n') : '  （无）');
+console.log(`
+后续：
+  1) 重新生成 Tauri 绑定（你的 codegen，会刷新 src/bindings/tauri.ts 与 tauri.contracts.ts）
+  2) cd src-tauri && cargo build && cargo test
+  3) 前端 vue-tsc / 单测；若 [需手动处理] 列出了 useAiAssistant 的 analysis 入参处或 shellcheck 引用，把那几行贴回来，我直接给补丁。
+`);

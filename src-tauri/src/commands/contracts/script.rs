@@ -42,29 +42,6 @@ impl fmt::Display for DocumentEncoding {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, Type)]
-#[serde(rename_all = "lowercase")]
-pub enum ScriptDiagnosticSeverity {
-    Error,
-    Warning,
-    Info,
-    Style,
-}
-
-impl TryFrom<&str> for ScriptDiagnosticSeverity {
-    type Error = String;
-
-    fn try_from(value: &str) -> Result<Self, String> {
-        match value {
-            "error" => Ok(Self::Error),
-            "warning" => Ok(Self::Warning),
-            "info" => Ok(Self::Info),
-            "style" => Ok(Self::Style),
-            other => Err(format!("ShellCheck 返回了未知诊断级别：{other}")),
-        }
-    }
-}
-
 #[derive(Debug, Clone, Serialize, Type)]
 #[serde(rename_all = "camelCase")]
 pub struct ScriptFilePayload {
@@ -113,35 +90,6 @@ pub struct FormatScriptPayload {
     pub(crate) encoding: DocumentEncoding,
     pub(crate) line_count: u32,
     pub(crate) char_count: u32,
-}
-
-#[derive(Debug, Clone, Deserialize, Type)]
-#[serde(rename_all = "camelCase")]
-pub struct AnalyzeScriptRequest {
-    pub(crate) path: Option<String>,
-    pub(crate) name: Option<String>,
-    pub(crate) content: String,
-}
-
-#[derive(Debug, Clone, Serialize, Type)]
-#[serde(rename_all = "camelCase")]
-pub struct ScriptDiagnosticPayload {
-    pub(crate) line: u32,
-    pub(crate) end_line: u32,
-    pub(crate) column: u32,
-    pub(crate) end_column: u32,
-    pub(crate) level: ScriptDiagnosticSeverity,
-    pub(crate) code: String,
-    pub(crate) message: String,
-}
-
-#[derive(Debug, Clone, Serialize, Type)]
-#[serde(rename_all = "camelCase")]
-pub struct AnalyzeScriptPayload {
-    pub(crate) available: bool,
-    pub(crate) message: Option<String>,
-    pub(crate) dialect: String,
-    pub(crate) diagnostics: Vec<ScriptDiagnosticPayload>,
 }
 
 // ============================================================================
