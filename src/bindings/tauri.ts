@@ -147,8 +147,6 @@ export const commands = {
 	builtinAgentResolveApproval: (payload: AgentSidecarApprovalResolveRequest_Deserialize) => __TAURI_INVOKE<AgentSidecarResponsePayload_Serialize>("builtin_agent_resolve_approval", { payload }),
 	builtinAgentResolveAskUser: (payload: AgentSidecarAskUserResumeRequest_Deserialize) => __TAURI_INVOKE<AgentSidecarResponsePayload_Serialize>("builtin_agent_resolve_ask_user", { payload }),
 	builtinAgentRestoreCheckpoint: (payload: AgentSidecarCheckpointRestoreRequest_Deserialize) => __TAURI_INVOKE<AgentSidecarResponsePayload_Serialize>("builtin_agent_restore_checkpoint", { payload }),
-	builtinAgentOrchestrate: (payload: AgentSidecarOrchestrateRequest_Deserialize) => __TAURI_INVOKE<AgentSidecarOrchestratePayload>("builtin_agent_orchestrate", { payload }),
-	builtinAgentOrchestrateResume: (payload: AgentSidecarOrchestrateResumeRequest_Deserialize) => __TAURI_INVOKE<AgentSidecarOrchestratePayload>("builtin_agent_orchestrate_resume", { payload }),
 	/**  Create (or reuse) the child webview and start the CDP control plane. Idempotent. */
 	agentWebviewCreate: (input: AgentWebviewCreateInput, traceId: string | null) => __TAURI_INVOKE<null>("agent_webview_create", { input, traceId }),
 	/**  Sync child webview bounds. */
@@ -563,62 +561,6 @@ export type AgentSidecarModelConfigPayload_Serialize = {
 	modelId: string,
 	apiKey: SecretString,
 	baseUrl?: string | null,
-};
-
-export type AgentSidecarOrchestratePayload = {
-	runId: string,
-	/**
-	 *  Final orchestration result; passed through verbatim and validated by the
-	 *  frontend (Zod). Mapped to TS `unknown` via specta_typescript::Unknown to
-	 *  avoid serde_json::Number tripping specta's BigInt-forbidden check.
-	 */
-	result?: unknown,
-};
-
-export type AgentSidecarOrchestrateRequest = AgentSidecarOrchestrateRequest_Serialize | AgentSidecarOrchestrateRequest_Deserialize;
-
-export type AgentSidecarOrchestrateRequest_Deserialize = {
-	sessionId: string | null,
-	goal: string,
-	threadId: string | null,
-	/**
-	 *  Per-run execution preference (`interactive` | `autonomous`), threaded
-	 *  through verbatim like `thread_id` and validated by the sidecar (Zod
-	 *  enum, defaults to `interactive`). Omitted from the body when blank so the
-	 *  sidecar applies its default; the Rust layer never interprets the value.
-	 */
-	executionMode: string | null,
-	modelConfig: AgentSidecarModelConfigPayload_Deserialize | null,
-};
-
-export type AgentSidecarOrchestrateRequest_Serialize = {
-	sessionId?: string | null,
-	goal: string,
-	threadId?: string | null,
-	/**
-	 *  Per-run execution preference (`interactive` | `autonomous`), threaded
-	 *  through verbatim like `thread_id` and validated by the sidecar (Zod
-	 *  enum, defaults to `interactive`). Omitted from the body when blank so the
-	 *  sidecar applies its default; the Rust layer never interprets the value.
-	 */
-	executionMode?: string | null,
-	modelConfig?: AgentSidecarModelConfigPayload_Serialize | null,
-};
-
-export type AgentSidecarOrchestrateResumeRequest = AgentSidecarOrchestrateResumeRequest_Serialize | AgentSidecarOrchestrateResumeRequest_Deserialize;
-
-export type AgentSidecarOrchestrateResumeRequest_Deserialize = {
-	runId: string,
-	decision: string,
-	reason: string | null,
-	modelConfig: AgentSidecarModelConfigPayload_Deserialize | null,
-};
-
-export type AgentSidecarOrchestrateResumeRequest_Serialize = {
-	runId: string,
-	decision: string,
-	reason?: string | null,
-	modelConfig?: AgentSidecarModelConfigPayload_Serialize | null,
 };
 
 export type AgentSidecarResponsePayload = AgentSidecarResponsePayload_Serialize | AgentSidecarResponsePayload_Deserialize;
