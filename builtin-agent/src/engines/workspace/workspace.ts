@@ -114,9 +114,6 @@ export const buildWindowsHostPath = (): string => {
     return mergedPath.join(';');
 };
 
-export const normalizeNewlines = (value: string): string =>
-    value.replace(/\r\n/gu, '\n').replace(/\r/gu, '\n');
-
 export const decodeUtf8CommandChunk = (
     decoder: TextDecoder,
     chunk?: Buffer,

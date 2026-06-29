@@ -300,7 +300,7 @@ export class MastraRuntimePlan extends MastraRuntimeChat {
             return createErrorResponse(
                 sessionId,
                 `Mastra Plan 执行失败：${normalizeMastraError(error)}`,
-                [],
+                events,
                 options,
             );
         } finally {
