@@ -1,7 +1,7 @@
 //! 网关侧的提示词 / 上下文拼装。
 //!
 //! 从 conversation.rs 收拢而来，集中所有"发往模型前"的文本成形逻辑。
-//! 脱敏（redact_text）仍由 conversation 在调用点执行，本模块只负责拼字符串。
+//! 本模块只负责拼字符串，不做脱敏：敏感内容检测在 ai_web_search 入口以 scan_for_secrets 拦截。
 
 use super::*;
 
