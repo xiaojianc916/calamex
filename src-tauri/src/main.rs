@@ -6,6 +6,7 @@ mod ai;
 mod assets;
 #[macro_use]
 mod commands;
+mod lifecycle;
 mod process_guard;
 mod storage_paths;
 mod tauri_bindings;
@@ -121,6 +122,11 @@ fn run_exit_cleanup<R: tauri::Runtime>(app_handle: &tauri::AppHandle<R>) {
     if !lifecycle.begin_cleanup() {
         return;
     }
+
+    // 0) 取消进程级关停令牌：即时唤醒并停止所有后台常驻循环（终端孤儿会话收割、SSH 连接池
+    //    清理）。所有后台循环统一观察此单一信号，替代此前各自维护的 AtomicBool / Notify 关停
+    //    标志；随后再逐一拆解各子系统持有的资源。
+    crate::lifecycle::trigger_shutdown();
 
     // 1) 终端会话（同步收口 PTY 子进程）
     let terminal_state = app_handle.state::<TerminalSessionState>();

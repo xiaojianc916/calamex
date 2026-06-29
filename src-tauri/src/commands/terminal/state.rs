@@ -6,7 +6,7 @@ use std::{
     path::PathBuf,
     sync::{
         Arc, Mutex,
-        atomic::{AtomicBool, AtomicU32},
+        atomic::AtomicU32,
     },
     time::{Duration, Instant},
 };
@@ -111,8 +111,6 @@ pub struct TerminalSessionState {
     /// 状态机 / 流控器 / 心跳）合并到单一表，按 session_id 一把锁取用。相比原先 7 张独立 map，
     /// 显著降低 `remove_interactive_terminal_after_exit` 等路径的取锁次数（7 把锁 -> 1 把）。
     per_session: Arc<Mutex<HashMap<String, PerSessionState>>>,
-    /// 优雅关闭信号：设为 true 时孤儿收割线程退出循环。
-    pub(super) shutdown: Arc<AtomicBool>,
     pub(super) creation_guard: Arc<Mutex<()>>,
 }
 
