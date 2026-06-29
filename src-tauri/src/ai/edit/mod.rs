@@ -6,7 +6,7 @@ pub mod patch;
 pub mod security;
 
 use self::history::{edit_journal, pins, revert, snapshot, timeline};
-use self::io::{self, file_transaction};
+use self::io::file_transaction;
 use self::security::path_security;
 
 use crate::ai::audit::{self, AiAuditEventKind};

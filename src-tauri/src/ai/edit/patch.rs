@@ -450,7 +450,10 @@ mod tests {
             },
             &state,
             Vec::new(),
-            edit_journal::list_operations(&snapshot_root).expect("operations should be listed"),
+            ai_edit::io::with_aed_database_read(&snapshot_root, "测试读取 AED 操作日志", |db| {
+                edit_journal::list_operations(db)
+            })
+            .expect("operations should be listed"),
         )
         .expect("timeline should be listed");
 
