@@ -92,7 +92,7 @@ const resolveGithubCommitApiUrl = (repoUrl: string, commitId: string): string | 
   if (!parsed) return null;
 
   const apiBase =
-    parsed.host === 'github.com' ? 'https://api.github.com' : `https://api.${parsed.host}`;
+    parsed.host === 'github.com' ? 'https://api.github.com' : `https://${parsed.host}/api/v3`;
   return `${apiBase}/repos/${encodeURIComponent(parsed.owner)}/${encodeURIComponent(parsed.repo)}/commits/${commitId}`;
 };
 

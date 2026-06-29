@@ -19,9 +19,9 @@
 //! 交前端 ACL 按 `toolCallId` 归一到 thread 协议 VM（见 src/types/ai/sidecar.ts 的
 //! tool_call(_update) 变体与 acp-tool-call.ts 的 SDK 类型）。
 //!
-//! 其余 session/update 变体（`plan` 等）
-//! 暂未投影：plan 经信封回宿主，会话元数据待后续 slice 接入，故此处显式返回 None
-//! 作为可扩展接入点。
+//! 计划快照（`plan`）经最小透传投影为 `TAgentUiEvent{type:'plan'}`（acpUpdate 原样
+//! 挂载，含 entries 的 content/priority/status 与可选 _meta 富载荷），交前端 ACL 归一到
+//! 计划 VM。其余未列出的 session/update 变体仍显式返回 None，作为可扩展接入点。
 
 // 过渡期：终态合成 helper（build_done_ui_event / build_error_ui_event）尚未接线到宿主
 // chat_stream 补发点（接线在后续 slice）。接线后移除该 allow。
@@ -102,6 +102,16 @@ fn config_option_update_ui_event(config_options: &Value) -> Value {
     json!({ "type": "config_option_update", "configOptions": config_options.clone() })
 }
 
+/// 构造计划快照 `TAgentUiEvent`（`type` 为 `plan`）。
+///
+/// 投影 ACP `plan`（全量计划快照，client 整体替换）：最小透传整个 ACP `update` 对象
+/// （含 `entries[]` 的 content/priority/status 与可选 `_meta` 富载荷）作为 `acpUpdate`，
+/// 宿主侧不解读其结构、不压平，交前端 ACL 归一到计划 VM（见 src/types/ai/sidecar.ts 的
+/// TAgentUiEventPlan 与 from-acp-plan.ts）。
+fn plan_ui_event(update: Value) -> Value {
+    json!({ "type": "plan", "acpUpdate": update })
+}
+
 /// 将单条 ACP `SessionNotification` JSON 投影为 0..1 条 `TAgentUiEvent` JSON。
 ///
 /// 入参为 client 层 `AcpStreamFrame.event`（官方 `SessionNotification` 的 camelCase JSON：
@@ -151,7 +161,13 @@ pub fn session_notification_to_ui_event(mut notification: Value) -> Option<Value
             let config_options = update.get("configOptions")?;
             Some(config_option_update_ui_event(config_options))
         }
-        // 其余变体暂未投影（plan 经信封回宿主，待后续 slice）。显式 None 作为接入点。
+        // 外部/内置 agent 下发计划快照（标准 plan，全量条目替换）：最小透传整个 update
+        // 作为 acpUpdate（含 entries 与可选 _meta 富载荷），交前端 ACL 归一到计划 VM。
+        "plan" => {
+            let owned_update = std::mem::take(update);
+            Some(plan_ui_event(owned_update))
+        }
+        // 其余未列出的变体暂未投影。显式 None 作为可扩展接入点。
         _ => None,
     }
 }
@@ -335,10 +351,25 @@ mod tests {
     }
 
     #[test]
+    fn plan_passes_through_whole_update_as_acp_update() {
+        // 最小透传：整个 ACP plan update（含 entries 与可选 _meta）原样落在 acpUpdate。
+        let update = json!({
+            "sessionUpdate": "plan",
+            "entries": [
+                { "content": "读取文件", "priority": "high", "status": "pending" },
+                { "content": "应用补丁", "priority": "medium", "status": "in_progress" }
+            ]
+        });
+        let ui = session_notification_to_ui_event(notif(update.clone())).unwrap();
+        assert_eq!(ui["type"], "plan");
+        assert_eq!(ui["acpUpdate"], update);
+    }
+
+    #[test]
     fn unmapped_session_update_yields_none() {
         let n = notif(json!({
-            "sessionUpdate": "plan",
-            "entries": []
+            "sessionUpdate": "unknown_future_update",
+            "payload": {}
         }));
         assert!(session_notification_to_ui_event(n).is_none());
     }
