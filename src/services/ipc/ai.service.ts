@@ -2,7 +2,6 @@ import type {
   AiAgentClassifyTaskPayload,
   AiAgentNetworkPermissionPayload,
   AiApplyPatchRequest,
-  AiChatStreamPayload,
   AiConfigPayload,
   AiInlineCompletionResult,
   AiProviderConnectionPayload,
@@ -16,7 +15,6 @@ import type {
   IAiAgentSetNetworkPermissionRequest,
   IAiApplyPatchPayload,
   IAiCancelRequest,
-  IAiChatRequest,
   IAiConversationTitlePayload,
   IAiConversationTitleRequest,
   IAiEnsureAcpSessionRequest,
@@ -143,9 +141,6 @@ export const aiService = {
   },
   generateSuggestionPool(payload: IAiSuggestionPoolRequest): Promise<IAiSuggestionPoolPayload> {
     return tauriService.aiGenerateSuggestionPool(payload);
-  },
-  chatStream(payload: IAiChatRequest): Promise<AiChatStreamPayload> {
-    return tauriService.aiChatStream(payload);
   },
   cancel(payload: IAiCancelRequest): Promise<void> {
     return tauriService.aiCancel(payload);

@@ -1,7 +1,7 @@
 use crate::ai::audit::{self, AiAuditEventKind};
 use crate::ai::gateway;
 use crate::commands::contracts::{
-    AiCancelRequest, AiChatRequest, AiChatStreamPayload, AiConfigPayload,
+    AiCancelRequest, AiConfigPayload,
     AiConversationTitlePayload, AiConversationTitleRequest, AiEnsureAcpSessionRequest,
     AiGetSessionModesRequest, AiInlineCompletionRangePayload, AiInlineCompletionRequest,
     AiInlineCompletionResult, AiProviderConnectionPayload, AiProviderConnectionRequest,
@@ -244,22 +244,6 @@ pub async fn ai_generate_suggestion_pool(
 
 #[tauri::command]
 #[specta::specta]
-pub async fn ai_chat_stream(
-    app: AppHandle,
-    payload: AiChatRequest,
-) -> Result<AiChatStreamPayload, String> {
-    let started = gateway::chat_stream(app, payload).await?;
-    Ok(AiChatStreamPayload {
-        stream_id: started.stream_id,
-        assistant_message_id: started.assistant_message_id,
-        provider_type: started.provider_type,
-        model: started.model,
-        session_id: started.session_id,
-    })
-}
-
-#[tauri::command]
-#[specta::specta]
 pub fn ai_cancel(app: AppHandle, payload: AiCancelRequest) -> Result<(), String> {
     let thread_id = payload
         .thread_id
@@ -382,7 +366,7 @@ pub async fn ai_ensure_acp_session(
         .state::<crate::acp::AcpRuntime>()
         .get_or_spawn_backend(&app, backend)
         .map_err(|error| format!("AI_ENSURE_ACP_SESSION_FAILED: {error}"))?;
-    host.ensure_session(thread_id, workspace_root_path)
+    host.ensure_session(thread_id, workspace_root_path, None)
         .await
         .map_err(|error| format!("AI_ENSURE_ACP_SESSION_FAILED: {error}"))?;
     Ok(())

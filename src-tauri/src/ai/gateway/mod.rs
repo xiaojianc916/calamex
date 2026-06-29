@@ -2,23 +2,18 @@ use super::audit::{self, AiAuditEventKind};
 use super::credential::CredentialStore;
 use super::errors;
 use super::provider::{AiProviderChatRequest, AiProviderMessage};
-use super::security::redaction::redact_text;
 use crate::ai::agent::planner::AgentPlanner;
 use crate::commands::contracts::{
-    AiAgentClassifyTaskPayload, AiAgentClassifyTaskRequest, AiChatRequest, AiConfigPayload,
-    AiContextReferencePayload, AiConversationTitlePayload, AiConversationTitleRequest,
-    AiCredentialStatusPayload, AiInlineCompletionRangePayload, AiInlineCompletionRequest,
-    AiInlineCompletionResult, AiModelEndpointConfigPayload, AiSuggestionPoolPayload,
-    AiSuggestionPoolRequest,
+    AiAgentClassifyTaskPayload, AiAgentClassifyTaskRequest, AiConfigPayload,
+    AiConversationTitlePayload, AiConversationTitleRequest, AiCredentialStatusPayload,
+    AiInlineCompletionRangePayload, AiInlineCompletionRequest, AiInlineCompletionResult,
+    AiModelEndpointConfigPayload, AiSuggestionPoolPayload, AiSuggestionPoolRequest,
 };
 use fs_err as fs;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::path::PathBuf;
-use std::sync::{
-    Mutex, OnceLock,
-    atomic::{AtomicU64, Ordering},
-};
+use std::sync::{Mutex, OnceLock};
 use tauri::AppHandle;
 
 mod config;
@@ -32,20 +27,13 @@ mod suggestions;
 mod tests;
 
 pub use config::{clear_credentials, get_config, save_config, save_credentials, set_seeded_models};
-pub use connection::{
-    ProviderConnectionOutcome, connect_provider, test_provider, test_provider_config,
-};
-pub use conversation::{chat_stream, classify_task, generate_conversation_title, inline_complete};
+pub use connection::{connect_provider, test_provider, test_provider_config};
+pub use conversation::{classify_task, generate_conversation_title, inline_complete};
 pub(crate) use model_config::{
     current_sidecar_model_config, narrator_sidecar_model_config, seeded_sidecar_model_configs,
 };
 pub use suggestions::{generate_suggestion_pool, get_suggestion_pool_cache};
 
-const MAX_AI_MESSAGES: usize = 32;
-const MAX_MESSAGE_CHARS: usize = 16_000;
-const MAX_CONTEXT_REFERENCES: usize = 8;
-const MAX_CONTEXT_BLOCK_CHARS: usize = 12_000;
-const MAX_REFERENCE_PREVIEW_CHARS: usize = 4_000;
 const MAX_TITLE_SOURCE_CHARS: usize = 1_200;
 const MIN_GENERATED_TITLE_CHARS: usize = 5;
 const MAX_GENERATED_TITLE_CHARS: usize = 10;
@@ -57,7 +45,6 @@ const DEFAULT_MASTRA_MODEL: &str = "deepseek/deepseek-v4-pro";
 const DEFAULT_NARRATOR_MODEL: &str = "zhipuai/glm-4.7-flash";
 
 static CONFIG: OnceLock<Mutex<AiRuntimeConfig>> = OnceLock::new();
-static STREAM_SEQUENCE: AtomicU64 = AtomicU64::new(1);
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
 struct AiRuntimeConfig {
@@ -123,14 +110,6 @@ impl Default for AiModelEndpointRuntimeConfig {
             base_url: None,
         }
     }
-}
-
-pub struct AiChatStreamStart {
-    pub stream_id: String,
-    pub assistant_message_id: String,
-    pub provider_type: String,
-    pub model: String,
-    pub session_id: String,
 }
 
 fn config_state() -> &'static Mutex<AiRuntimeConfig> {
@@ -401,17 +380,6 @@ fn default_base_url(provider_type: &str) -> Option<String> {
         "mastra" => None,
         _ => None,
     }
-}
-
-fn next_runtime_id(prefix: &str) -> String {
-    let sequence = STREAM_SEQUENCE.fetch_add(1, Ordering::Relaxed);
-
-    format!(
-        "{}-{}-{}",
-        prefix,
-        jiff::Timestamp::now().as_millisecond(),
-        sequence
-    )
 }
 
 fn sanitize_fenced_text(value: &str) -> String {

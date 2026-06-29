@@ -1,438 +1,338 @@
-// 2.mjs —— 终端补全统一到 @codemirror/autocomplete（CRLF 安全版）
-//
-// 作用：拆掉 shell-completion.ts 里残留的手写匹配过滤，匹配/打分/排序/高亮/限量统一交给
-// @codemirror/autocomplete（消除双管线 + 隐性 priority 截断）；上下文判定（命令/子命令/
-// flag/参数位）保留。同步更新单测。每处替换要求精确命中 1 次，否则中止且不写入任何文件。
-//
-// 用法：node 2.mjs [仓库根目录，默认当前目录]
+// fix-restore-livechat-and-demolish-chat_stream.mjs
+// 作用域(唯一标准管线 / 不留新旧杂糅):
+//  A. 恢复被误删的 LIVE 一次性 model/chat 契约:AgentSidecarChatRequest + AgentSidecarMessagePayload
+//     (+ AiContextReferencePayload import + 两个契约序列化测试) —— 修 E0432 x4
+//  B. 彻底拆除死链 chat_stream 全管线(conversation/mod/prompt) —— 修 E0425/E0599/E0061
+//  C. 移除 ai_chat_stream 命令 + 绑定注册 + 前端 service 方法
+//  D. 修 ai_ensure_acp_session 的 ensure_session 2->3 参(补 None)
+//  E. 删失活契约类型 AiChatRequest / AiChatStreamPayload / AiChatMessagePayload
+//  F. 清理既有未用 import:gateway::ProviderConnectionOutcome 重导出、terminal AtomicU32
+import { readFileSync, writeFileSync, existsSync } from 'node:fs';
+import { join } from 'node:path';
 
-import { readFileSync, writeFileSync } from 'node:fs';
-import { join, resolve } from 'node:path';
+const ROOT = process.cwd();
+const detectEol = (s) => (s.includes('\r\n') ? '\r\n' : '\n');
+const toLf = (s) => s.replace(/\r\n/g, '\n');
+const fromLf = (s, eol) => (eol === '\r\n' ? s.replace(/\n/g, '\r\n') : s);
 
-const baseDir = resolve(process.argv[2] ?? process.cwd());
-
-/** 读取文件 → 归一化换行为 \n → 逐条精确替换（每条须恰好命中 1 次）→ 还原原换行风格。 */
-function applyEdits(relPath, edits) {
-  const filePath = join(baseDir, relPath);
-  const raw = readFileSync(filePath, 'utf8');
-  const usesCRLF = raw.includes('\r\n'); // 记录原始换行风格，写回时还原
-  let text = raw.replace(/\r\n/g, '\n');
-
-  edits.forEach(({ find, replace }, i) => {
-    const occurrences = text.split(find).length - 1;
-    if (occurrences !== 1) {
-      throw new Error(
-        `[${relPath}] 第 ${i + 1} 处替换预期命中 1 次，实际 ${occurrences} 次。` +
-          `文件可能已与脚本不一致（本地落后于远端 main？请先 git pull），已中止且未写入任何文件。`,
-      );
-    }
-    text = text.replace(find, () => replace); // 用函数替换，避免 $ 被当成特殊模式
-  });
-
-  const out = usesCRLF ? text.replace(/\n/g, '\r\n') : text;
-  return { filePath, relPath, out, normalized: text, count: edits.length };
+function replaceOnce(src, oldStr, newStr) {
+  const i = src.indexOf(oldStr);
+  if (i < 0) throw new Error('replaceOnce 未命中: ' + JSON.stringify(oldStr.slice(0, 70)));
+  if (src.indexOf(oldStr, i + oldStr.length) >= 0)
+    throw new Error('replaceOnce 歧义(多处命中): ' + JSON.stringify(oldStr.slice(0, 70)));
+  return src.slice(0, i) + newStr + src.slice(i + oldStr.length);
+}
+function cutRange(src, startNeedle, endNeedle) {
+  const s = src.indexOf(startNeedle);
+  if (s < 0) throw new Error('cutRange 起点未命中: ' + JSON.stringify(startNeedle.slice(0, 60)));
+  const e = src.indexOf(endNeedle, s + startNeedle.length);
+  if (e < 0) throw new Error('cutRange 终点未命中: ' + JSON.stringify(endNeedle.slice(0, 60)));
+  return src.slice(0, s) + src.slice(e);
 }
 
-const SHELL = 'src/domains/terminal/utils/shell-completion.ts';
-const SPEC = 'src/domains/terminal/utils/shell-completion.spec.ts';
-
-const shellEdits = [
-  // 1) 删除 MAX_SUGGESTIONS 常量
-  { find: `const MAX_SUGGESTIONS = 80;\n\n`, replace: `` },
-
-  // 2) 删除手写匹配三件套（含上方注释）
-  {
-    find: `// 子序列门控：仅决定「哪些候选进入 MAX_SUGGESTIONS 截断」。真正的模糊打分、排序与高亮
-// 交给 CodeMirror autocomplete（CompletionResult.filter 默认开启）。'gt' 仍能命中 'git'。
-const isSubsequenceMatch = (text: string, query: string): boolean => {
-  if (!query) {
-    return true;
-  }
-  const haystack = text.toLowerCase();
-  const needle = query.toLowerCase();
-  let cursor = 0;
-  for (let index = 0; index < haystack.length && cursor < needle.length; index += 1) {
-    if (haystack[index] === needle[cursor]) {
-      cursor += 1;
-    }
-  }
-  return cursor === needle.length;
-};
-
-const entryMatchesQuery = (entry: IShellCompletionEntry, partial: string): boolean => {
-  if (!partial) {
-    return true;
-  }
-  if (isSubsequenceMatch(entry.label, partial)) {
-    return true;
-  }
-  return entry.detail.toLowerCase().includes(partial.toLowerCase());
-};
-
-const filterEntries = (
-  entries: IShellCompletionEntry[],
-  partial: string,
-): IShellCompletionEntry[] => entries.filter((entry) => entryMatchesQuery(entry, partial));
-
-`,
-    replace: ``,
-  },
-
-  // 3) buildArgumentValueEntries：去掉 partial 与 filterEntries
-  {
-    find: `const buildArgumentValueEntries = (
-  argumentSpec: IShellCommandArgumentSpec | null,
-  partial: string,
-): IShellCompletionEntry[] => {
-  if (!argumentSpec?.suggestions?.length) {
-    return [];
-  }
-  return filterEntries(
-    argumentSpec.suggestions.flatMap((entry) =>
-      createValueEntryFromSuggestionSpec(entry, argumentSpec),
-    ),
-    partial,
-  );
-};`,
-    replace: `const buildArgumentValueEntries = (
-  argumentSpec: IShellCommandArgumentSpec | null,
-): IShellCompletionEntry[] => {
-  if (!argumentSpec?.suggestions?.length) {
-    return [];
-  }
-  return argumentSpec.suggestions.flatMap((entry) =>
-    createValueEntryFromSuggestionSpec(entry, argumentSpec),
-  );
-};`,
-  },
-
-  // 4) buildOptionValueEntries：去掉 partial
-  {
-    find: `const buildOptionValueEntries = (
-  flagSpec: IShellCommandOptionSpec,
-  argumentIndex: number,
-  partial: string,
-): IShellCompletionEntry[] =>
-  buildArgumentValueEntries(
-    getArgumentSpecAtIndex(getOptionArgumentSpecs(flagSpec), argumentIndex),
-    partial,
-  );`,
-    replace: `const buildOptionValueEntries = (
-  flagSpec: IShellCommandOptionSpec,
-  argumentIndex: number,
-): IShellCompletionEntry[] =>
-  buildArgumentValueEntries(getArgumentSpecAtIndex(getOptionArgumentSpecs(flagSpec), argumentIndex));`,
-  },
-
-  // 5) buildPositionalArgumentValueEntries：去掉 partial
-  {
-    find: `const buildPositionalArgumentValueEntries = (
-  commandNode: IShellCommandNodeSpec,
-  argumentIndex: number,
-  partial: string,
-): IShellCompletionEntry[] =>
-  buildArgumentValueEntries(getArgumentSpecAtIndex(commandNode.args ?? [], argumentIndex), partial);`,
-    replace: `const buildPositionalArgumentValueEntries = (
-  commandNode: IShellCommandNodeSpec,
-  argumentIndex: number,
-): IShellCompletionEntry[] =>
-  buildArgumentValueEntries(getArgumentSpecAtIndex(commandNode.args ?? [], argumentIndex));`,
-  },
-
-  // 6) resolveInlineFlagValueContext：返回值去掉不再使用的 partial
-  {
-    find: `): (IFlagValueContext & { partial: string }) | null => {
-  if (!currentToken.startsWith('-')) {
-    return null;
-  }
-  const separatorIndex = currentToken.indexOf('=');
-  if (separatorIndex === -1) {
-    return null;
-  }
-  const flagToken = currentToken.slice(0, separatorIndex);
-  const matchedFlag = findFlagSpec(collectAvailableFlags(catalogContext.visitedNodes), flagToken);
-  if (!matchedFlag || getOptionArgumentCount(matchedFlag) === 0) {
-    return null;
-  }
-  return {
-    flag: matchedFlag,
-    argumentIndex: 0,
-    partial: currentToken.slice(separatorIndex + 1),
-  };
-};`,
-    replace: `): IFlagValueContext | null => {
-  if (!currentToken.startsWith('-')) {
-    return null;
-  }
-  const separatorIndex = currentToken.indexOf('=');
-  if (separatorIndex === -1) {
-    return null;
-  }
-  const flagToken = currentToken.slice(0, separatorIndex);
-  const matchedFlag = findFlagSpec(collectAvailableFlags(catalogContext.visitedNodes), flagToken);
-  if (!matchedFlag || getOptionArgumentCount(matchedFlag) === 0) {
-    return null;
-  }
-  return {
-    flag: matchedFlag,
-    argumentIndex: 0,
-  };
-};`,
-  },
-
-  // 7) buildVariableEntries：去掉 context 与 filterEntries
-  {
-    find: `const buildVariableEntries = (
-  context: ICompletionContext,
-  symbols: ISymbolSnapshot,
-): IShellCompletionEntry[] => {
-  const partial = context.variableContext?.partial ?? context.wordPrefix;
-  const entries = [...createVariableEntries(symbols.variableNames, 2), ...COMMON_VARIABLE_ENTRIES];
-  return filterEntries(entries, partial);
-};`,
-    replace: `const buildVariableEntries = (symbols: ISymbolSnapshot): IShellCompletionEntry[] => [
-  ...createVariableEntries(symbols.variableNames, 2),
-  ...COMMON_VARIABLE_ENTRIES,
-];`,
-  },
-
-  // 8) buildCommandEntries：去掉 context 与 filterEntries
-  {
-    find: `const buildCommandEntries = async (
-  context: ICompletionContext,
-  symbols: ISymbolSnapshot,
-): Promise<IShellCompletionEntry[]> => {
-  const localCommandEntries = createCommandEntries(symbols.functionNames, 1);
-  const recentCommandEntries = createCommandEntries(symbols.recentCommandNames, 8);
-  const commandCatalogRootEntries = await loadCommandCatalogRootEntries();
-  return filterEntries(
-    [
-      ...localCommandEntries,
-      ...recentCommandEntries,
-      ...commandCatalogRootEntries,
-      ...SHELL_COMMAND_ENTRIES,
-    ],
-    context.wordPrefix,
-  );
-};`,
-    replace: `const buildCommandEntries = async (
-  symbols: ISymbolSnapshot,
-): Promise<IShellCompletionEntry[]> => {
-  const localCommandEntries = createCommandEntries(symbols.functionNames, 1);
-  const recentCommandEntries = createCommandEntries(symbols.recentCommandNames, 8);
-  const commandCatalogRootEntries = await loadCommandCatalogRootEntries();
-  return [
-    ...localCommandEntries,
-    ...recentCommandEntries,
-    ...commandCatalogRootEntries,
-    ...SHELL_COMMAND_ENTRIES,
-  ];
-};`,
-  },
-
-  // 9) buildKeywordEntries：去掉 context 与 filterEntries
-  {
-    find: `const buildKeywordEntries = (context: ICompletionContext): IShellCompletionEntry[] =>
-  filterEntries([...SHELL_KEYWORD_ENTRIES, ...SHELL_SNIPPET_ENTRIES], context.wordPrefix);`,
-    replace: `const buildKeywordEntries = (): IShellCompletionEntry[] => [
-  ...SHELL_KEYWORD_ENTRIES,
-  ...SHELL_SNIPPET_ENTRIES,
-];`,
-  },
-
-  // 10a) test 运算符不再过滤
-  {
-    find: `  if (isTestCommand(normalizedCommandName)) {
-    return filterEntries(TEST_OPERATOR_ENTRIES, partial);
-  }`,
-    replace: `  if (isTestCommand(normalizedCommandName)) {
-    return TEST_OPERATOR_ENTRIES;
-  }`,
-  },
-
-  // 10b) wrapper 命令：根候选不再过滤
-  {
-    find: `    if (wrapperCommandSet.has(normalizedCommandName)) {
-      return filterEntries(await loadCommandCatalogRootEntries(), partial);
-    }`,
-    replace: `    if (wrapperCommandSet.has(normalizedCommandName)) {
-      return loadCommandCatalogRootEntries();
-    }`,
-  },
-
-  // 10c) wrapperAwaitingCommand：根候选不再过滤
-  {
-    find: `  if (catalogContext.wrapperAwaitingCommand) {
-    return filterEntries(await loadCommandCatalogRootEntries(), partial);
-  }`,
-    replace: `  if (catalogContext.wrapperAwaitingCommand) {
-    return loadCommandCatalogRootEntries();
-  }`,
-  },
-
-  // 10d) 内联 flag 值：去掉 partial 实参
-  {
-    find: `    return buildOptionValueEntries(
-      inlineFlagValueContext.flag,
-      inlineFlagValueContext.argumentIndex,
-      inlineFlagValueContext.partial,
-    );`,
-    replace: `    return buildOptionValueEntries(
-      inlineFlagValueContext.flag,
-      inlineFlagValueContext.argumentIndex,
-    );`,
-  },
-
-  // 10e) 等待 flag 值：去掉 partial 实参
-  {
-    find: `    return buildOptionValueEntries(
-      catalogContext.awaitingFlagValue.flag,
-      catalogContext.awaitingFlagValue.argumentIndex,
-      partial,
-    );`,
-    replace: `    return buildOptionValueEntries(
-      catalogContext.awaitingFlagValue.flag,
-      catalogContext.awaitingFlagValue.argumentIndex,
-    );`,
-  },
-
-  // 10f) 位置参数：去掉 partial 实参
-  {
-    find: `  const positionalArgumentEntries = partial.startsWith('-')
-    ? []
-    : buildPositionalArgumentValueEntries(
-        catalogContext.activeNode,
-        catalogContext.positionalArgumentIndex,
-        partial,
-      );`,
-    replace: `  const positionalArgumentEntries = partial.startsWith('-')
-    ? []
-    : buildPositionalArgumentValueEntries(
-        catalogContext.activeNode,
-        catalogContext.positionalArgumentIndex,
-      );`,
-  },
-
-  // 10g) 最终候选：不再过滤，直接返回
-  {
-    find: `  const candidates = partial.startsWith('-')
-    ? flagEntries
-    : [...positionalArgumentEntries, ...subcommandEntries, ...flagEntries];
-  return filterEntries(candidates, partial);
-};`,
-    replace: `  const candidates = partial.startsWith('-')
-    ? flagEntries
-    : [...positionalArgumentEntries, ...subcommandEntries, ...flagEntries];
-  return candidates;
-};`,
-  },
-
-  // 11) buildCompletionEntries：更新调用、移除 priority 截断、加说明注释
-  {
-    find: `const buildCompletionEntries = async (
-  language: Language,
-  context: ICompletionContext,
-  symbols: ISymbolSnapshot,
-): Promise<IShellCompletionEntry[]> => {
-  if (context.isInComment) {
-    return [];
-  }
-  const lookaheadEntries = collectLookaheadEntries(language, context, symbols);
-  if (context.variableContext || context.isDeclarationContext) {
-    return dedupeEntries([...lookaheadEntries, ...buildVariableEntries(context, symbols)]).slice(
-      0,
-      MAX_SUGGESTIONS,
+const edits = {
+  // ───────────────────────── A) 恢复 live 契约 ─────────────────────────
+  'src-tauri/src/commands/contracts/builtin_agent.rs': (src) => {
+    // A1 恢复 AiContextReferencePayload import(AgentSidecarChatRequest.context 需要)
+    src = replaceOnce(
+      src,
+      'use super::secret::SecretString;',
+      'use super::ai_chat::AiContextReferencePayload;\nuse super::secret::SecretString;',
     );
-  }
-  const entries: IShellCompletionEntry[] = [...lookaheadEntries];
-  if (context.isCommandNameContext) {
-    entries.push(...(await buildCommandEntries(context, symbols)));
-    entries.push(...buildKeywordEntries(context));
-  } else {
-    entries.push(...(await buildArgumentEntries(context)));
-    if (context.isInString) {
-      entries.push(...buildVariableEntries(context, symbols));
-    }
-  }
-  if (entries.length === 0 || context.wordPrefix.length > 0) {
-    entries.push(...buildKeywordEntries(context));
-  }
-  return dedupeEntries(entries).slice(0, MAX_SUGGESTIONS);
-};`,
-    replace: `// 匹配 / 打分 / 排序 / 高亮 / 限量统一交给 @codemirror/autocomplete：此处只负责
-// 「按光标上下文产出候选集合」与去重，不做任何查询过滤，也不按 priority 截断
-//（截断会在 CM 匹配之前丢弃可命中的低优先级候选）。priority 通过 boost 传达给 CM。
-const buildCompletionEntries = async (
-  language: Language,
-  context: ICompletionContext,
-  symbols: ISymbolSnapshot,
-): Promise<IShellCompletionEntry[]> => {
-  if (context.isInComment) {
-    return [];
-  }
-  const lookaheadEntries = collectLookaheadEntries(language, context, symbols);
-  if (context.variableContext || context.isDeclarationContext) {
-    return dedupeEntries([...lookaheadEntries, ...buildVariableEntries(symbols)]);
-  }
-  const entries: IShellCompletionEntry[] = [...lookaheadEntries];
-  if (context.isCommandNameContext) {
-    entries.push(...(await buildCommandEntries(symbols)));
-    entries.push(...buildKeywordEntries());
-  } else {
-    entries.push(...(await buildArgumentEntries(context)));
-    if (context.isInString) {
-      entries.push(...buildVariableEntries(symbols));
-    }
-  }
-  if (entries.length === 0 || context.wordPrefix.length > 0) {
-    entries.push(...buildKeywordEntries());
-  }
-  return dedupeEntries(entries);
-};`,
+    // A2 在 ModelConfigPayload 之前插回 MessagePayload
+    const modelCfgAnchor =
+      '#[derive(Debug, Clone, Serialize, Deserialize, Type)]\n#[serde(rename_all = "camelCase")]\npub struct AgentSidecarModelConfigPayload {';
+    const msgStruct =
+      '#[derive(Debug, Clone, Serialize, Deserialize, Type)]\n' +
+      '#[serde(rename_all = "camelCase")]\n' +
+      'pub struct AgentSidecarMessagePayload {\n' +
+      '    pub(crate) role: String,\n' +
+      '    pub(crate) content: String,\n' +
+      '}';
+    src = replaceOnce(src, modelCfgAnchor, msgStruct + '\n\n' + modelCfgAnchor);
+    // A3 在 RollbackStepPath 之前插回 ChatRequest
+    const rollbackAnchor =
+      '#[derive(Debug, Clone, Serialize, Deserialize, Type)]\n#[serde(untagged)]\npub enum AgentSidecarRollbackStepPath {';
+    const chatStruct =
+      '#[derive(Debug, Clone, Serialize, Deserialize, Type)]\n' +
+      '#[serde(rename_all = "camelCase")]\n' +
+      'pub struct AgentSidecarChatRequest {\n' +
+      '    #[serde(skip_serializing_if = "is_blank_optional_string")]\n' +
+      '    pub(crate) session_id: Option<String>,\n' +
+      '    #[serde(skip_serializing_if = "is_blank_optional_string")]\n' +
+      '    pub(crate) mode: Option<String>,\n' +
+      '    #[serde(skip_serializing_if = "is_blank_optional_string")]\n' +
+      '    pub(crate) goal: Option<String>,\n' +
+      '    pub(crate) messages: Vec<AgentSidecarMessagePayload>,\n' +
+      '    #[serde(skip_serializing_if = "is_blank_optional_string")]\n' +
+      '    pub(crate) workspace_root_path: Option<String>,\n' +
+      '    #[serde(default)]\n' +
+      '    pub(crate) context: Vec<AiContextReferencePayload>,\n' +
+      '    #[serde(skip_serializing_if = "Option::is_none")]\n' +
+      '    pub(crate) model_config: Option<AgentSidecarModelConfigPayload>,\n' +
+      '    #[serde(skip_serializing_if = "is_blank_optional_string")]\n' +
+      '    pub(crate) thread_id: Option<String>,\n' +
+      '}';
+    src = replaceOnce(src, rollbackAnchor, chatStruct + '\n\n' + rollbackAnchor);
+    // A4 测试 use 列表补回两个类型
+    src = replaceOnce(
+      src,
+      '    use super::{\n' +
+        '        AgentBackendKind, AgentExternalChatRequest, AgentSidecarCheckpointRestoreRequest,\n' +
+        '        AgentSidecarRollbackStepPath,\n' +
+        '    };',
+      '    use super::{\n' +
+        '        AgentBackendKind, AgentExternalChatRequest, AgentSidecarChatRequest,\n' +
+        '        AgentSidecarCheckpointRestoreRequest, AgentSidecarMessagePayload,\n' +
+        '        AgentSidecarRollbackStepPath,\n' +
+        '    };',
+    );
+    // A5 测试辅助 sidecar_message()
+    const serObjAnchor = '    fn serialize_object<T: Serialize>(value: &T) -> Map<String, Value> {';
+    const msgHelper =
+      '    fn sidecar_message() -> AgentSidecarMessagePayload {\n' +
+      '        AgentSidecarMessagePayload {\n' +
+      '            role: "user".to_string(),\n' +
+      '            content: "run".to_string(),\n' +
+      '        }\n' +
+      '    }';
+    src = replaceOnce(src, serObjAnchor, msgHelper + '\n\n' + serObjAnchor);
+    // A6 恢复两个 chat_request 序列化测试
+    const restoreTestAnchor =
+      '    #[test]\n    fn restore_checkpoint_request_omits_absent_optional_fields() {';
+    const chatTests =
+      '    #[test]\n' +
+      '    fn chat_request_omits_blank_optional_fields() {\n' +
+      '        let request = AgentSidecarChatRequest {\n' +
+      '            session_id: None,\n' +
+      '            mode: Some(" ".to_string()),\n' +
+      '            goal: Some("".to_string()),\n' +
+      '            messages: vec![sidecar_message()],\n' +
+      '            workspace_root_path: None,\n' +
+      '            context: Vec::new(),\n' +
+      '            model_config: None,\n' +
+      '            thread_id: Some(" ".to_string()),\n' +
+      '        };\n\n' +
+      '        let object = serialize_object(&request);\n\n' +
+      '        assert!(!object.contains_key("sessionId"));\n' +
+      '        assert!(!object.contains_key("mode"));\n' +
+      '        assert!(!object.contains_key("goal"));\n' +
+      '        assert!(!object.contains_key("workspaceRootPath"));\n' +
+      '        assert!(!object.contains_key("threadId"));\n' +
+      '        assert!(object.contains_key("messages"));\n' +
+      '        assert!(object.contains_key("context"));\n' +
+      '    }\n\n' +
+      '    #[test]\n' +
+      '    fn chat_request_keeps_non_empty_thread_id() {\n' +
+      '        let request = AgentSidecarChatRequest {\n' +
+      '            session_id: Some("sidecar-chat-1".to_string()),\n' +
+      '            mode: Some("ask".to_string()),\n' +
+      '            goal: Some("继续".to_string()),\n' +
+      '            messages: vec![sidecar_message()],\n' +
+      '            workspace_root_path: None,\n' +
+      '            context: Vec::new(),\n' +
+      '            model_config: None,\n' +
+      '            thread_id: Some("thread-chat-1".to_string()),\n' +
+      '        };\n\n' +
+      '        let object = serialize_object(&request);\n\n' +
+      '        assert_eq!(\n' +
+      '            object.get("threadId"),\n' +
+      '            Some(&Value::String("thread-chat-1".to_string()))\n' +
+      '        );\n' +
+      '    }';
+    src = replaceOnce(src, restoreTestAnchor, chatTests + '\n\n' + restoreTestAnchor);
+    return src;
   },
-];
 
-const specEdits = [
-  {
-    find: `  it('模糊匹配可命中非前缀候选（如 "gt" → "git"）', async () => {
-    mocks.parserInit.mockResolvedValue(undefined);
-    const runCompletion = createSource();
-
-    const result = await runCompletion('gt', 2);
-
-    expect(result?.options.some((entry) => entry.label === 'git')).toBe(true);
-  });`,
-    replace: `  it('补全统一交给 CodeMirror 过滤：provider 返回完整候选且不设 filter:false', async () => {
-    mocks.parserInit.mockResolvedValue(undefined);
-    const runCompletion = createSource();
-
-    const result = await runCompletion('gt', 2);
-
-    // 不再手写过滤：'git' 作为候选交给 CodeMirror，由其内建模糊匹配命中 gt→git
-    expect(result?.options.some((entry) => entry.label === 'git')).toBe(true);
-    // 未设 filter:false，表示匹配/打分/排序/高亮统一由 @codemirror/autocomplete 负责
-    expect(result?.filter).not.toBe(false);
-  });`,
+  // ───────────────────── E) 删失活契约类型 ─────────────────────
+  'src-tauri/src/commands/contracts/ai_chat.rs': (src) => {
+    src = cutRange(
+      src,
+      '#[derive(Debug, Clone, Deserialize, Serialize, Type)]\n#[serde(rename_all = "camelCase")]\npub struct AiChatMessagePayload {',
+      '#[derive(Debug, Clone, Deserialize, Serialize, Type)]\n#[serde(rename_all = "camelCase")]\npub struct AiContextRangePayload {',
+    );
+    src = cutRange(
+      src,
+      '#[derive(Debug, Clone, Deserialize, Type)]\n#[serde(rename_all = "camelCase")]\npub struct AiChatRequest {',
+      '#[derive(Debug, Clone, Deserialize, Type)]\n#[serde(rename_all = "camelCase")]\npub struct AiConversationTitleRequest {',
+    );
+    src = cutRange(
+      src,
+      '#[derive(Debug, Clone, Serialize, Type)]\n#[serde(rename_all = "camelCase")]\npub struct AiChatStreamPayload {',
+      '#[derive(Debug, Clone, Deserialize, Type)]\n#[serde(rename_all = "camelCase")]\npub struct AiCancelRequest {',
+    );
+    return src;
   },
-];
 
-try {
-  // 先全部在内存里改好并校验，任何一处失败都不落盘（原子性）。
-  const results = [applyEdits(SHELL, shellEdits), applyEdits(SPEC, specEdits)];
+  // ───────────────────── B) 拆 chat_stream(conversation) ─────────────────────
+  'src-tauri/src/ai/gateway/conversation.rs': (src) => {
+    src = replaceOnce(
+      src,
+      'use super::prompt::{\n    build_context_block, build_conversation_title_prompt, build_inline_prompt, clip_title_source,\n};',
+      'use super::prompt::{\n    build_conversation_title_prompt, build_inline_prompt, clip_title_source,\n};',
+    );
+    src = replaceOnce(src, 'use tauri::{Emitter as _, Manager as _};', 'use tauri::Manager as _;');
+    // 删 chat_stream + chat_stream_via_acp + emit_acp_stream_{frame,done,error}
+    src = cutRange(src, 'pub async fn chat_stream(', 'pub async fn inline_complete(');
+    // 删 collect_messages
+    src = cutRange(
+      src,
+      'fn collect_messages(',
+      '#[cfg(test)]\npub(super) fn with_identity_system_message(',
+    );
+    return src;
+  },
 
-  // 额外护栏：确认 shell-completion.ts 里手写匹配残留已清零（基于归一化文本判断）。
-  for (const leftover of ['filterEntries', 'entryMatchesQuery', 'isSubsequenceMatch', 'MAX_SUGGESTIONS']) {
-    if (results[0].normalized.includes(leftover)) {
-      throw new Error(`迁移后仍残留 ${leftover}，已中止且未写入。请检查脚本与文件版本是否匹配。`);
-    }
-  }
+  // ───────────────────── B) 拆 build_context_block(prompt) ─────────────────────
+  'src-tauri/src/ai/gateway/prompt.rs': (src) => {
+    const anchor = 'pub(super) fn build_context_block(references: &[AiContextReferencePayload]) -> String {';
+    const i = src.indexOf(anchor);
+    if (i < 0) throw new Error('prompt.rs build_context_block 锚点未命中');
+    return src.slice(0, i).replace(/\n+$/, '\n');
+  },
 
-  for (const r of results) {
-    writeFileSync(r.filePath, r.out, 'utf8');
-    console.log(`✔ 已更新 ${r.relPath}（${r.count} 处替换）`);
-  }
-  console.log('\n完成。建议接着跑：pnpm lint && pnpm test && pnpm build');
-} catch (error) {
-  console.error(`✘ 失败：${error.message}`);
-  process.exitCode = 1;
+  // ───────────────────── B+F) mod.rs 级联清理 ─────────────────────
+  'src-tauri/src/ai/gateway/mod.rs': (src) => {
+    // 收紧契约 import:删 AiChatRequest / AiContextReferencePayload
+    src = replaceOnce(
+      src,
+      'use crate::commands::contracts::{\n' +
+        '    AiAgentClassifyTaskPayload, AiAgentClassifyTaskRequest, AiChatRequest, AiConfigPayload,\n' +
+        '    AiContextReferencePayload, AiConversationTitlePayload, AiConversationTitleRequest,\n' +
+        '    AiCredentialStatusPayload, AiInlineCompletionRangePayload, AiInlineCompletionRequest,\n' +
+        '    AiInlineCompletionResult, AiModelEndpointConfigPayload, AiSuggestionPoolPayload,\n' +
+        '    AiSuggestionPoolRequest,\n' +
+        '};',
+      'use crate::commands::contracts::{\n' +
+        '    AiAgentClassifyTaskPayload, AiAgentClassifyTaskRequest, AiConfigPayload,\n' +
+        '    AiConversationTitlePayload, AiConversationTitleRequest, AiCredentialStatusPayload,\n' +
+        '    AiInlineCompletionRangePayload, AiInlineCompletionRequest, AiInlineCompletionResult,\n' +
+        '    AiModelEndpointConfigPayload, AiSuggestionPoolPayload, AiSuggestionPoolRequest,\n' +
+        '};',
+    );
+    // redact_text 仅 collect_messages 用,删 import
+    src = replaceOnce(src, 'use super::security::redaction::redact_text;\n', '');
+    // 原子序列仅 next_runtime_id 用,收紧 std::sync import
+    src = replaceOnce(
+      src,
+      'use std::sync::{\n    Mutex, OnceLock,\n    atomic::{AtomicU64, Ordering},\n};',
+      'use std::sync::{Mutex, OnceLock};',
+    );
+    // 重导出去掉 chat_stream
+    src = replaceOnce(
+      src,
+      'pub use conversation::{chat_stream, classify_task, generate_conversation_title, inline_complete};',
+      'pub use conversation::{classify_task, generate_conversation_title, inline_complete};',
+    );
+    // 重导出去掉未用的 ProviderConnectionOutcome
+    src = replaceOnce(
+      src,
+      'pub use connection::{\n    ProviderConnectionOutcome, connect_provider, test_provider, test_provider_config,\n};',
+      'pub use connection::{connect_provider, test_provider, test_provider_config};',
+    );
+    // 删仅 chat_stream/collect_messages/build_context_block 用的 5 个常量
+    src = replaceOnce(
+      src,
+      'const MAX_AI_MESSAGES: usize = 32;\n' +
+        'const MAX_MESSAGE_CHARS: usize = 16_000;\n' +
+        'const MAX_CONTEXT_REFERENCES: usize = 8;\n' +
+        'const MAX_CONTEXT_BLOCK_CHARS: usize = 12_000;\n' +
+        'const MAX_REFERENCE_PREVIEW_CHARS: usize = 4_000;\n' +
+        'const MAX_TITLE_SOURCE_CHARS: usize = 1_200;',
+      'const MAX_TITLE_SOURCE_CHARS: usize = 1_200;',
+    );
+    // 删 STREAM_SEQUENCE 静态
+    src = replaceOnce(src, 'static STREAM_SEQUENCE: AtomicU64 = AtomicU64::new(1);\n', '');
+    // 删 AiChatStreamStart 结构体
+    src = cutRange(src, 'pub struct AiChatStreamStart {', 'fn config_state()');
+    // 删 next_runtime_id
+    src = cutRange(src, 'fn next_runtime_id(prefix: &str) -> String {', 'fn sanitize_fenced_text(');
+    return src;
+  },
+
+  // ───────────────── C+D) 命令层:删 ai_chat_stream + 修 ensure_session 三参 ─────────────────
+  'src-tauri/src/commands/ai/gateway.rs': (src) => {
+    src = replaceOnce(
+      src,
+      '    AiCancelRequest, AiChatRequest, AiChatStreamPayload, AiConfigPayload,',
+      '    AiCancelRequest, AiConfigPayload,',
+    );
+    src = cutRange(
+      src,
+      '#[tauri::command]\n#[specta::specta]\npub async fn ai_chat_stream(',
+      '#[tauri::command]\n#[specta::specta]\npub fn ai_cancel(',
+    );
+    src = replaceOnce(
+      src,
+      'host.ensure_session(thread_id, workspace_root_path)\n        .await',
+      'host.ensure_session(thread_id, workspace_root_path, None)\n        .await',
+    );
+    return src;
+  },
+
+  // ───────────────── C) 绑定注册去掉 ai_chat_stream ─────────────────
+  'src-tauri/src/tauri_bindings.rs': (src) =>
+    replaceOnce(src, '            ai::gateway::ai_chat_stream,\n', ''),
+
+  // ───────────────── F) terminal 未用 AtomicU32 ─────────────────
+  'src-tauri/src/commands/terminal/commands.rs': (src) =>
+    replaceOnce(
+      src,
+      'use std::{\n    sync::{\n        Arc,\n        atomic::AtomicU32,\n    },\n    time::{Duration, Instant},\n};',
+      'use std::{\n    sync::Arc,\n    time::{Duration, Instant},\n};',
+    ),
+
+  // ───────────────── C) 前端 service 去掉 chatStream ─────────────────
+  'src/services/ipc/ai.service.ts': (src) => {
+    src = replaceOnce(src, '  AiChatStreamPayload,\n', '');
+    src = replaceOnce(src, '  IAiChatRequest,\n', '');
+    src = replaceOnce(
+      src,
+      '  chatStream(payload: IAiChatRequest): Promise<AiChatStreamPayload> {\n' +
+        '    return tauriService.aiChatStream(payload);\n' +
+        '  },\n',
+      '',
+    );
+    return src;
+  },
+};
+
+// ── 应用 + 写回(保留 EOL) ──
+const applied = [];
+for (const [rel, fn] of Object.entries(edits)) {
+  const abs = join(ROOT, rel);
+  if (!existsSync(abs)) throw new Error('文件不存在: ' + rel);
+  const raw = readFileSync(abs, 'utf8');
+  const eol = detectEol(raw);
+  const next = fn(toLf(raw));
+  writeFileSync(abs, fromLf(next, eol), 'utf8');
+  applied.push(rel);
 }
+
+// ── 定义形式守卫(预防回归/误删) ──
+const must = (rel, has, missing) => {
+  const s = toLf(readFileSync(join(ROOT, rel), 'utf8'));
+  for (const m of has) if (!s.includes(m)) throw new Error(`[守卫] ${rel} 应包含但缺失: ${m}`);
+  for (const m of missing) if (s.includes(m)) throw new Error(`[守卫] ${rel} 应已删除但残留: ${m}`);
+};
+must('src-tauri/src/commands/contracts/builtin_agent.rs',
+  ['pub struct AgentSidecarChatRequest {', 'pub struct AgentSidecarMessagePayload {',
+   'use super::ai_chat::AiContextReferencePayload;'], []);
+must('src-tauri/src/commands/contracts/ai_chat.rs',
+  ['pub struct AiContextReferencePayload {', 'pub struct AiContextRangePayload {'],
+  ['pub struct AiChatRequest {', 'pub struct AiChatStreamPayload {', 'pub struct AiChatMessagePayload {']);
+must('src-tauri/src/ai/gateway/conversation.rs', [],
+  ['fn chat_stream(', 'fn chat_stream_via_acp(', 'fn collect_messages(', 'Emitter as _']);
+must('src-tauri/src/ai/gateway/prompt.rs', [], ['build_context_block']);
+must('src-tauri/src/ai/gateway/mod.rs', ['pub use conversation::{classify_task,'],
+  ['chat_stream', 'AiChatStreamStart', 'next_runtime_id', 'STREAM_SEQUENCE', 'ProviderConnectionOutcome']);
+must('src-tauri/src/commands/ai/gateway.rs',
+  ['host.ensure_session(thread_id, workspace_root_path, None)'], ['pub async fn ai_chat_stream(']);
+must('src-tauri/src/tauri_bindings.rs', [], ['ai_chat_stream']);
+must('src-tauri/src/commands/terminal/commands.rs', [], ['atomic::AtomicU32']);
+must('src/services/ipc/ai.service.ts', [], ['chatStream(', 'aiChatStream']);
+
+console.log('✅ 完成,已改写 ' + applied.length + ' 个文件:\n  - ' + applied.join('\n  - '));
+console.log('\n下一步(建议先不带 -D warnings,让残留 dead_code 以告警呈现):');
+console.log('  cargo clippy --features acp_client --manifest-path src-tauri/Cargo.toml --all-targets');
+console.log('  cargo test --features acp_client --manifest-path src-tauri/Cargo.toml');

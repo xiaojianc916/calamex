@@ -4,10 +4,7 @@
 
 use jiff::Timestamp;
 use std::{
-    sync::{
-        Arc,
-        atomic::AtomicU32,
-    },
+    sync::Arc,
     time::{Duration, Instant},
 };
 

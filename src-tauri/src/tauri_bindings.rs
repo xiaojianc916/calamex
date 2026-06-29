@@ -122,7 +122,6 @@ pub fn builder() -> Builder<tauri::Wry> {
             ai::gateway::ai_generate_conversation_title,
             ai::gateway::ai_get_suggestion_pool_cache,
             ai::gateway::ai_generate_suggestion_pool,
-            ai::gateway::ai_chat_stream,
             ai::gateway::ai_cancel,
             ai::gateway::ai_resolve_approval,
             ai::gateway::ai_set_session_config_option,

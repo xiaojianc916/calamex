@@ -1,11 +1,19 @@
 use serde::{Deserialize, Serialize};
 use specta::Type;
 
+use super::ai_chat::AiContextReferencePayload;
 use super::secret::SecretString;
 
 // ============================================================================
 // Agent sidecar
 // ============================================================================
+
+#[derive(Debug, Clone, Serialize, Deserialize, Type)]
+#[serde(rename_all = "camelCase")]
+pub struct AgentSidecarMessagePayload {
+    pub(crate) role: String,
+    pub(crate) content: String,
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize, Type)]
 #[serde(rename_all = "camelCase")]
@@ -22,6 +30,26 @@ fn is_blank_optional_string(value: &Option<String>) -> bool {
         .map(str::trim)
         .unwrap_or_default()
         .is_empty()
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Type)]
+#[serde(rename_all = "camelCase")]
+pub struct AgentSidecarChatRequest {
+    #[serde(skip_serializing_if = "is_blank_optional_string")]
+    pub(crate) session_id: Option<String>,
+    #[serde(skip_serializing_if = "is_blank_optional_string")]
+    pub(crate) mode: Option<String>,
+    #[serde(skip_serializing_if = "is_blank_optional_string")]
+    pub(crate) goal: Option<String>,
+    pub(crate) messages: Vec<AgentSidecarMessagePayload>,
+    #[serde(skip_serializing_if = "is_blank_optional_string")]
+    pub(crate) workspace_root_path: Option<String>,
+    #[serde(default)]
+    pub(crate) context: Vec<AiContextReferencePayload>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) model_config: Option<AgentSidecarModelConfigPayload>,
+    #[serde(skip_serializing_if = "is_blank_optional_string")]
+    pub(crate) thread_id: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Type)]
@@ -155,9 +183,17 @@ mod builtin_agent_contract_tests {
     use serde_json::{Map, Value};
 
     use super::{
-        AgentBackendKind, AgentExternalChatRequest, AgentSidecarCheckpointRestoreRequest,
+        AgentBackendKind, AgentExternalChatRequest, AgentSidecarChatRequest,
+        AgentSidecarCheckpointRestoreRequest, AgentSidecarMessagePayload,
         AgentSidecarRollbackStepPath,
     };
+
+    fn sidecar_message() -> AgentSidecarMessagePayload {
+        AgentSidecarMessagePayload {
+            role: "user".to_string(),
+            content: "run".to_string(),
+        }
+    }
 
     fn serialize_object<T: Serialize>(value: &T) -> Map<String, Value> {
         let serialized = match serde_json::to_value(value) {
@@ -169,6 +205,51 @@ mod builtin_agent_contract_tests {
             Value::Object(object) => object,
             other => panic!("expected object, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn chat_request_omits_blank_optional_fields() {
+        let request = AgentSidecarChatRequest {
+            session_id: None,
+            mode: Some(" ".to_string()),
+            goal: Some("".to_string()),
+            messages: vec![sidecar_message()],
+            workspace_root_path: None,
+            context: Vec::new(),
+            model_config: None,
+            thread_id: Some(" ".to_string()),
+        };
+
+        let object = serialize_object(&request);
+
+        assert!(!object.contains_key("sessionId"));
+        assert!(!object.contains_key("mode"));
+        assert!(!object.contains_key("goal"));
+        assert!(!object.contains_key("workspaceRootPath"));
+        assert!(!object.contains_key("threadId"));
+        assert!(object.contains_key("messages"));
+        assert!(object.contains_key("context"));
+    }
+
+    #[test]
+    fn chat_request_keeps_non_empty_thread_id() {
+        let request = AgentSidecarChatRequest {
+            session_id: Some("sidecar-chat-1".to_string()),
+            mode: Some("ask".to_string()),
+            goal: Some("继续".to_string()),
+            messages: vec![sidecar_message()],
+            workspace_root_path: None,
+            context: Vec::new(),
+            model_config: None,
+            thread_id: Some("thread-chat-1".to_string()),
+        };
+
+        let object = serialize_object(&request);
+
+        assert_eq!(
+            object.get("threadId"),
+            Some(&Value::String("thread-chat-1".to_string()))
+        );
     }
 
     #[test]

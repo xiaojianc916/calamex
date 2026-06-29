@@ -7,17 +7,6 @@ use specta::Type;
 
 #[derive(Debug, Clone, Deserialize, Serialize, Type)]
 #[serde(rename_all = "camelCase")]
-pub struct AiChatMessagePayload {
-    /// 已知值："user" | "assistant" | "system" | "tool"。
-    pub(crate) role: String,
-    pub(crate) content: String,
-    pub(crate) id: String,
-    pub(crate) created_at: String,
-    pub(crate) references: Vec<AiContextReferencePayload>,
-}
-
-#[derive(Debug, Clone, Deserialize, Serialize, Type)]
-#[serde(rename_all = "camelCase")]
 pub struct AiContextRangePayload {
     pub(crate) start_line: u32,
     pub(crate) end_line: u32,
@@ -34,18 +23,6 @@ pub struct AiContextReferencePayload {
     pub(crate) range: Option<AiContextRangePayload>,
     pub(crate) content_preview: String,
     pub(crate) redacted: bool,
-}
-
-#[derive(Debug, Clone, Deserialize, Type)]
-#[serde(rename_all = "camelCase")]
-pub struct AiChatRequest {
-    pub(crate) thread_id: Option<String>,
-    pub(crate) messages: Vec<AiChatMessagePayload>,
-    pub(crate) references: Vec<AiContextReferencePayload>,
-    /// 前端预生成的流式关联键（sidecar:assistantMessageId）。chat 模式发起回合前据此
-    /// 订阅 ai:sidecar-stream；后端把本回合 session/update 帧的 session_id 重写为该键，
-    /// 实现逐 token 实时渲染。与 thread_id 同为可选可空（前端总会携带，缺省回退会话 id）。
-    pub(crate) stream_session_id: Option<String>,
 }
 
 #[derive(Debug, Clone, Deserialize, Type)]
@@ -77,16 +54,6 @@ pub struct AiSuggestionPoolPayload {
     pub(crate) suggestions: Vec<String>,
     pub(crate) model: String,
     pub(crate) generated_at: String,
-}
-
-#[derive(Debug, Clone, Serialize, Type)]
-#[serde(rename_all = "camelCase")]
-pub struct AiChatStreamPayload {
-    pub(crate) stream_id: String,
-    pub(crate) assistant_message_id: String,
-    pub(crate) provider_type: String,
-    pub(crate) model: String,
-    pub(crate) session_id: String,
 }
 
 #[derive(Debug, Clone, Deserialize, Type)]
