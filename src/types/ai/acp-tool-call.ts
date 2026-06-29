@@ -31,6 +31,14 @@ export type TAcpToolCall = Extract<SessionUpdate, { sessionUpdate: 'tool_call' }
 export type TAcpToolCallUpdate = Extract<SessionUpdate, { sessionUpdate: 'tool_call_update' }>;
 
 /**
+ * ACP `session/update` 的计划快照（`sessionUpdate: 'plan'`）。
+ * 携带 `entries[]`，每条为 `{ content, priority, status }`（以 SDK 定义为准，
+ * 与 sidecar `from-runtime-event.ts` 投影的 PlanEntry 同源）。每帧为**全量快照**，
+ * 非增量；前端 ACL 据此整体归一为 plan 步骤 VM。
+ */
+export type TAcpPlan = Extract<SessionUpdate, { sessionUpdate: 'plan' }>;
+
+/**
  * 工具产出内容块（content | diff | terminal）与工具种类，原名 re-export，
  * 供投影层单点引用，避免多处直接依赖 SDK 路径。
  */

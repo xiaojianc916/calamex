@@ -1,5 +1,5 @@
 import type { IAiLanguageModelUsage } from '@/types/ai';
-import type { TAcpToolCall, TAcpToolCallUpdate } from '@/types/ai/acp-tool-call';
+import type { TAcpPlan, TAcpToolCall, TAcpToolCallUpdate } from '@/types/ai/acp-tool-call';
 import type { IAiContextReference } from '@/types/ai/context';
 
 /* ============================================================================
@@ -627,6 +627,21 @@ export type TAgentUiEventToolCallUpdate = {
 };
 
 /* ----------------------------------------------------------------------------
+ * ACP-native 计划 UI 事件（ADR-20260617 · D2）
+ *
+ * 与 tool_call 同源的「第二语言」：sidecar 把运行时 agent.plan.updated 投影为 ACP
+ * session/update 的 plan 快照（见 builtin-agent/src/acp/from-runtime-event.ts），
+ * Rust host(src-tauri/src/acp/ui_event.rs) 最小透传，plan 原始负载以 acpUpdate 整体
+ * 挂载（**不**伪造 Mastra 信封 plan_ready/plan_record 的富字段）。acpUpdate 直接复用
+ * @agentclientprotocol/sdk 的 SessionUpdate 'plan' 变体（见 @/types/ai/acp-tool-call）。
+ * 每帧为全量快照；前端 ACL（projection/from-acp-plan）据此整体归一为 plan 步骤 VM。
+ * -------------------------------------------------------------------------- */
+export type TAgentUiEventPlan = {
+  type: 'plan';
+  acpUpdate: TAcpPlan;
+};
+
+/* ----------------------------------------------------------------------------
  * ACP 可用斜杠命令 VM（ADR-20260617 · D7-④）
  *
  * 投影 ACP session/update 的 available_commands_update（外部 agent 声明本会话可用的
@@ -771,6 +786,7 @@ export type TAgentUiEvent =
   | { type: 'tool_result'; toolName: string; output: TJsonValue }
   | TAgentUiEventToolCall
   | TAgentUiEventToolCallUpdate
+  | TAgentUiEventPlan
   | TAgentUiEventAvailableCommandsUpdate
   | TAgentUiEventUsageUpdate
   | TAgentUiEventConfigOptionUpdate
