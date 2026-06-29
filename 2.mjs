@@ -1,170 +1,119 @@
-// b1b-2-from-acp-plan-acl.mjs
-// B1b 第二片：新增 from-acp-plan ACL，把 ACP-native plan 帧(TAcpPlan)归一为线程 plan
-// 步骤 VM(IAiTaskPlanStep[])，与 Mastra 信封经 mapSidecarPlanToTaskSteps 的产物同型，
-// 复用同一渲染/派生链路(derive-thread-plan-details)。新增 2 文件 + 改 1 barrel，不提交。
-// 运行：node b1b-2-from-acp-plan-acl.mjs
+#!/usr/bin/env node
+// arch-cleanup.mjs
+// 清理两处死配置（架构级审查第四轮）：
+//   1) 从 package.json devDependencies 移除未使用的 dependency-cruiser
+//   2) 从 vite.config.ts 删除死的 @copilotkit 分包 matcher，并修正过时注释
+// 默认 dry-run，仅打印将做的改动；加 --apply 才写盘。幂等：已清理则报无操作。
+//
+// 用法：
+//   node arch-cleanup.mjs            # 预览
+//   node arch-cleanup.mjs --apply    # 落盘
 
-import { existsSync, readFileSync, writeFileSync } from "node:fs"
-import { join } from "node:path"
+import { readFile, writeFile } from 'node:fs/promises';
+import path from 'node:path';
 
-const ROOT = process.cwd()
-const DIR = "src/components/business/ai/thread/projection"
+const APPLY = process.argv.includes('--apply');
+const ROOT = process.cwd();
+let changed = 0;
+let skipped = 0;
 
-function detectEol(raw) {
-	const crlf = (raw.match(/\r\n/g) || []).length
-	const lfOnly = (raw.match(/(?<!\r)\n/g) || []).length
-	return { text: raw.replace(/\r\n/g, "\n"), eol: crlf > lfOnly ? "\r\n" : "\n" }
-}
-function replaceOnce(text, oldStr, newStr, label) {
-	const idx = text.indexOf(oldStr)
-	if (idx === -1) throw new Error(`[${label}] 未找到锚点：\n${oldStr}`)
-	if (text.indexOf(oldStr, idx + oldStr.length) !== -1)
-		throw new Error(`[${label}] 锚点出现多次，拒绝模糊替换：\n${oldStr}`)
-	return text.slice(0, idx) + newStr + text.slice(idx + oldStr.length)
-}
-function writeNew(relPath, contentLf, eol) {
-	const abs = join(ROOT, relPath)
-	if (existsSync(abs)) throw new Error(`[${relPath}] 已存在，拒绝覆盖`)
-	writeFileSync(abs, contentLf.replace(/\n/g, eol), "utf8")
-	console.log(`+ ${relPath}`)
+function log(tag, msg) {
+  const c = { OK: '\x1b[32m', SKIP: '\x1b[33m', ERR: '\x1b[31m', INFO: '\x1b[36m' }[tag] || '';
+  console.log(`${c}${tag}\x1b[0m ${msg}`);
 }
 
-// 用 barrel 的 EOL 作为新文件 EOL，保持一致
-const indexAbs = join(ROOT, DIR, "index.ts")
-const { text: indexText, eol } = detectEol(readFileSync(indexAbs, "utf8"))
-
-// ── A) 新增 ACL：from-acp-plan.ts ──────────────────────────────────────────
-const aclSource = `/* ============================================================================
- * ACP-native 计划 ACL（ADR-20260617 · D2）
- *
- * 把 ACP session/update 的 plan 快照（TAcpPlan）归一为线程 plan 步骤 VM
- * （IAiTaskPlanStep[]），与 Mastra 信封 plan_ready 经 mapSidecarPlanToTaskSteps
- * 产出的步骤同型，复用同一渲染 / 派生链路（derive-thread-plan-details）。
- *
- * ACP 标准 plan 是「粗粒度清单」：每条 entry 仅 { content, priority, status }
- * （见 @agentclientprotocol/sdk PlanEntry，与 sidecar from-runtime-event 投影同源）。
- * 富计划字段（goal / tools / files / risks / acceptanceCriteria / 逐步审批）不在标准
- * plan 帧内 —— 按 α 取向有意舍弃为 Mastra 信封专属，逐步审批安全性独立由
- * session/request_permission 保障。priority 语义 ≠ riskLevel，不臆造映射。
- *
- * 纯函数、防御式读取（plan 负载经 Rust 逐字透传，形状按 unknown 处理）：非法 entry
- * 跳过，整体非法返回空步骤数组，不抛错、不伪造。
- * ========================================================================== */
-import type { IAiTaskPlanStep, TAiAgentPlanStepStatus } from '@/types/ai';
-import type { TAcpPlan } from '@/types/ai/acp-tool-call';
-
-/** ACP PlanEntry.status（pending | in_progress | completed）→ 线程步骤状态。 */
-const ACP_PLAN_STATUS_TO_STEP_STATUS: Readonly<Record<string, TAiAgentPlanStepStatus>> = {
-  pending: 'pending',
-  in_progress: 'running',
-  completed: 'done',
-};
-
-const mapAcpPlanStatus = (status: unknown): TAiAgentPlanStepStatus =>
-  (typeof status === 'string' ? ACP_PLAN_STATUS_TO_STEP_STATUS[status] : undefined) ?? 'pending';
-
-const isRecord = (value: unknown): value is Record<string, unknown> =>
-  value !== null && typeof value === 'object' && !Array.isArray(value);
-
-/** entry.content 为空白时回退到稳定占位标题，避免渲染空步骤。 */
-const readEntryContent = (entry: Record<string, unknown>, index: number): string => {
-  const content = entry.content;
-  return typeof content === 'string' && content.trim().length > 0
-    ? content.trim()
-    : \`步骤 \${index + 1}\`;
-};
-
-/**
- * ACP plan 快照 → 线程 plan 步骤 VM。entries 为全量快照，按出现顺序映射；
- * 无 entries / 非数组时返回空数组。
- */
-export const mapAcpPlanToTaskSteps = (update: TAcpPlan): IAiTaskPlanStep[] => {
-  const entries: unknown = (update as { entries?: unknown }).entries;
-  if (!Array.isArray(entries)) {
-    return [];
+async function readMaybe(file) {
+  try {
+    return await readFile(file, 'utf8');
+  } catch {
+    return null;
   }
-  return entries.filter(isRecord).map((entry, index): IAiTaskPlanStep => {
-    const content = readEntryContent(entry, index);
-    return {
-      id: \`acp-plan-step:\${index}\`,
-      index,
-      title: content,
-      goal: content,
-      kind: 'inspect',
-      status: mapAcpPlanStatus(entry.status),
-      expectedOutput: '',
-      tools: [],
-      requiresUserApproval: false,
-      riskLevel: 'medium',
-    };
-  });
-};
-`
-writeNew(`${DIR}/from-acp-plan.ts`, aclSource, eol)
+}
 
-// ── B) 配套 spec（覆盖顺序 / 状态映射 / 占位 / 非法输入分支） ─────────────────
-const specSource = `import { describe, expect, it } from 'vitest';
+// --- 1) package.json: 移除 dependency-cruiser -------------------------------
+async function cleanPackageJson() {
+  const file = path.join(ROOT, 'package.json');
+  const raw = await readMaybe(file);
+  if (raw == null) {
+    log('ERR', 'package.json 未找到，跳过（请在仓库根目录运行）');
+    return;
+  }
 
-import type { TAcpPlan } from '@/types/ai/acp-tool-call';
+  // 探测缩进（默认 2 空格）与是否带尾换行，写回时保持原样
+  const indentMatch = raw.match(/\n([ \t]+)"/);
+  const indent = indentMatch ? indentMatch[1] : '  ';
+  const hadTrailingNewline = raw.endsWith('\n');
 
-import { mapAcpPlanToTaskSteps } from './from-acp-plan';
+  const pkg = JSON.parse(raw);
+  const dev = pkg.devDependencies || {};
 
-const makePlan = (entries: unknown): TAcpPlan =>
-  ({ sessionUpdate: 'plan', entries }) as unknown as TAcpPlan;
+  if (!('dependency-cruiser' in dev)) {
+    log('SKIP', 'package.json: dependency-cruiser 不存在（已清理）');
+    skipped++;
+    return;
+  }
 
-describe('mapAcpPlanToTaskSteps', () => {
-  it('按顺序把 ACP plan entries 归一为线程步骤（含状态映射）', () => {
-    const steps = mapAcpPlanToTaskSteps(
-      makePlan([
-        { content: '读取代码', priority: 'high', status: 'completed' },
-        { content: '修改实现', priority: 'medium', status: 'in_progress' },
-        { content: '运行测试', priority: 'low', status: 'pending' },
-      ]),
-    );
+  delete dev['dependency-cruiser'];
+  let out = JSON.stringify(pkg, null, indent);
+  if (hadTrailingNewline) out += '\n';
 
-    expect(steps.map((step) => [step.index, step.title, step.status])).toEqual([
-      [0, '读取代码', 'done'],
-      [1, '修改实现', 'running'],
-      [2, '运行测试', 'pending'],
-    ]);
-    expect(steps[0]?.id).toBe('acp-plan-step:0');
-    expect(steps[0]?.tools).toEqual([]);
-    expect(steps[0]?.requiresUserApproval).toBe(false);
-  });
+  if (APPLY) {
+    await writeFile(file, out, 'utf8');
+    log('OK', 'package.json: 已移除 devDependency "dependency-cruiser"（记得重跑 pnpm install 更新 lockfile）');
+  } else {
+    log('INFO', 'package.json: [dry-run] 将移除 devDependency "dependency-cruiser"');
+  }
+  changed++;
+}
 
-  it('content 空白时回退占位标题', () => {
-    const steps = mapAcpPlanToTaskSteps(makePlan([{ content: '   ', status: 'pending' }]));
-    expect(steps[0]?.title).toBe('步骤 1');
-  });
+// --- 2) vite.config.ts: 删除死的 @copilotkit matcher + 修正注释 -------------
+async function cleanViteConfig() {
+  const file = path.join(ROOT, 'vite.config.ts');
+  let src = await readMaybe(file);
+  if (src == null) {
+    log('ERR', 'vite.config.ts 未找到，跳过');
+    return;
+  }
+  const before = src;
 
-  it('entries 缺失 / 非数组时返回空数组', () => {
-    expect(mapAcpPlanToTaskSteps(makePlan(undefined))).toEqual([]);
-    expect(mapAcpPlanToTaskSteps(makePlan('nope' as unknown))).toEqual([]);
-  });
+  // 2a) 删除 vendor-ai patterns 里的死 matcher（容忍单/双引号与其后逗号+空格）
+  const deadMatcher = /(['"])\/node_modules\/@copilotkit\/\1,\s*/;
+  if (deadMatcher.test(src)) {
+    src = src.replace(deadMatcher, '');
+  } else {
+    log('SKIP', "vite.config.ts: 未找到 '@copilotkit/' 死 matcher（已清理）");
+    skipped++;
+  }
 
-  it('跳过非对象 entry', () => {
-    expect(mapAcpPlanToTaskSteps(makePlan([null, 42, 'x']))).toEqual([]);
-  });
+  // 2b) 修正 vendor-zod 的过时注释（把 @copilotkit/CopilotKit 改为真实消费者 ai）
+  const staleComment =
+    `  // zod 是首屏核心路径(tauri.contracts / store / IPC 工厂都用),但 @copilotkit\n` +
+    `  // 也引用它,默认会被 Rollup 合进最大消费者 vendor-ai(2MB),导致首屏把整个\n` +
+    `  // CopilotKit 也拽进来。这里单独拆出,既避免重复,也让 vendor-ai 退出首屏。\n`;
+  const freshComment =
+    `  // zod 是首屏核心路径(tauri.contracts / store / IPC 工厂都用),但 ai SDK\n` +
+    `  // 也引用它,默认会被 Rollup 合进其消费者 vendor-ai,导致首屏把懒加载的 ai\n` +
+    `  // 也拽进来。这里单独拆出,既避免重复,也让 vendor-ai 退出首屏。\n`;
+  if (src.includes(staleComment)) {
+    src = src.replace(staleComment, freshComment);
+  } else if (src.includes('@copilotkit') || src.includes('CopilotKit')) {
+    log('SKIP', 'vite.config.ts: 注释块与预期不完全一致，未自动改注释（请手动核对 @copilotkit 字样）');
+    skipped++;
+  }
 
-  it('未知 status 兜底为 pending', () => {
-    const steps = mapAcpPlanToTaskSteps(makePlan([{ content: 'x', status: 'weird' }]));
-    expect(steps[0]?.status).toBe('pending');
-  });
-});
-`
-writeNew(`${DIR}/from-acp-plan.spec.ts`, specSource, eol)
+  if (src === before) return;
 
-// ── C) barrel 导出（字母序：events < plan < terminal） ───────────────────────
-const nextIndex = replaceOnce(
-	indexText,
-	"export * from './from-acp-events';\n",
-	"export * from './from-acp-events';\nexport * from './from-acp-plan';\n",
-	"index/barrel",
-)
-if (!nextIndex.includes("export * from './from-acp-plan';"))
-	throw new Error("[index.ts] 自检失败：barrel 未写入 from-acp-plan 导出")
-writeFileSync(indexAbs, nextIndex.replace(/\n/g, eol), "utf8")
-console.log(`✓ ${DIR}/index.ts`)
+  if (APPLY) {
+    await writeFile(file, src, 'utf8');
+    log('OK', 'vite.config.ts: 已删除死 matcher 并修正注释');
+  } else {
+    log('INFO', 'vite.config.ts: [dry-run] 将删除死 matcher 并修正注释');
+  }
+  changed++;
+}
 
-console.log("\nB1b 第二片（ACL + spec + barrel）完成。")
-console.log("建议：pnpm vitest run src/components/business/ai/thread/projection/from-acp-plan.spec.ts")
+console.log(`\n=== arch-cleanup (${APPLY ? 'APPLY' : 'DRY-RUN'}) ===\n`);
+await cleanPackageJson();
+await cleanViteConfig();
+console.log(`\n--- 完成：${changed} 处待改 / ${skipped} 处已是目标态 ---`);
+if (!APPLY && changed > 0) console.log('预览无误后加 --apply 落盘。\n');

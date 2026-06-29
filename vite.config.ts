@@ -42,7 +42,7 @@ const CHUNK_RULES: ReadonlyArray<{ name: string; patterns: string[] }> = [
   },
   {
     name: 'vendor-ai',
-    patterns: ['/node_modules/@copilotkit/', '/node_modules/ai/'],
+    patterns: ['/node_modules/ai/'],
   },
   {
     name: 'vendor-markdown',
