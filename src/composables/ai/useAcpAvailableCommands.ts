@@ -14,7 +14,7 @@ import type {
  * （逐字透传，形状 unknown），经 ACL from-acp-available-commands 归一为命令面板
  * VM；UI 只消费该结构，不直接触碰 ACP 原始负载。
  *
- * 设计取舍（与 useAcpSessionModes 一致，不自创）：
+ * 设计取舍（与 useAcpSessionConfigOptions 一致，不自创）：
  * - 纯状态化、可在 effectScope 内单测，与 .vue 解耦；
  * - 不在此自订阅 sidecar 流：宿主（useAiAssistant）持有唯一的 onSidecarStream 并路由
  *   全部 UI 事件，故由宿主在收到 available_commands_update 时调用 applyCommandsUpdate，

@@ -11,7 +11,7 @@ import type { TJsonValue } from '@/types/ai/sidecar';
  * ACL from-acp-usage safeParse 为共享 IAiLanguageModelUsage VM；UI（token 用量条等）
  * 只消费该结构，不直接触碰 ACP 原始负载。
  *
- * 设计取舍（与 useAcpAvailableCommands / useAcpSessionModes 一致，不自创）：
+ * 设计取舍（与 useAcpAvailableCommands / useAcpSessionConfigOptions 一致，不自创）：
  * - 纯状态化、可在 effectScope 内单测，与 .vue 解耦；
  * - 不在此自订阅 sidecar 流：宿主（useAiAssistant）持有唯一 onSidecarStream 并路由全部
  *   UI 事件，故由宿主在收到 usage_update 时调 applyUsageUpdate，避免重复订阅；

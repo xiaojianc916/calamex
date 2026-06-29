@@ -741,42 +741,6 @@ export type TAgentUiEventConfigOptionUpdate = {
   configOptions: TJsonValue[];
 };
 
-/* ----------------------------------------------------------------------------
- * ACP 会话模式选择器 VM（session/set_mode 协议）
- *
- * 投影 ACP session/new|load 的 modes（SessionModeState = currentModeId + availableModes[]）。
- * 前端 ACL（components/business/ai/thread/projection/from-acp-session-modes）从
- * ai_get_session_modes 的原始 modes 解析。VM 与 ACP wire 解耦：UI 只消费此结构，不直接
- * 触碰原始负载。当 Agent 为 Kimi 时，模式选择器直接驱动 ai_set_session_mode（复用 Kimi
- * 自身的模式切换语义，绝不本地伪造），默认高亮 agent 公示的 currentModeId（如 Auto）。
- *
- * 形状对齐 agent-client-protocol 序列化 wire（camelCase）：
- *   SessionMode      = { id, name, description? }
- *   SessionModeState = { currentModeId, availableModes: SessionMode[] }
- * -------------------------------------------------------------------------- */
-export interface IAcpSessionMode {
-  id: string;
-  name: string;
-  description?: string;
-}
-
-export interface IAcpSessionModesState {
-  currentModeId: string | null;
-  availableModes: IAcpSessionMode[];
-}
-
-/* ----------------------------------------------------------------------------
- * ACP 会话当前模式变更 UI 事件（session/update 的 current_mode_update）
- *
- * 外部 agent（如 Kimi）在回合中自行切换模式时，经 session/update 下发
- * current_mode_update（仅携带新的 currentModeId）。前端据此回灌模式选择器高亮，
- * 不整份替换 availableModes（沿用 ai_get_session_modes 拉取的完整列表）。
- * -------------------------------------------------------------------------- */
-export type TAgentUiEventCurrentModeUpdate = {
-  type: 'current_mode_update';
-  currentModeId: string | null;
-};
-
 export type TAgentUiEvent =
   | { type: 'message_delta'; text: string; phase?: 'stage' | 'final' }
   | { type: 'agent_event'; event: TAgentRuntimeEvent }
@@ -790,7 +754,6 @@ export type TAgentUiEvent =
   | TAgentUiEventAvailableCommandsUpdate
   | TAgentUiEventUsageUpdate
   | TAgentUiEventConfigOptionUpdate
-  | TAgentUiEventCurrentModeUpdate
   | { type: 'approval_required'; request: IApprovalRequest }
   | { type: 'ask_user_required'; requestId: string; request: IAskUserRequest }
   | { type: 'diff_ready'; files: IDiffFile[] }

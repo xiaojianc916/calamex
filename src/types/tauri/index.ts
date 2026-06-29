@@ -19,7 +19,6 @@ import type {
   IAiConversationTitlePayload,
   IAiConversationTitleRequest,
   IAiEnsureAcpSessionRequest,
-  IAiGetSessionModesRequest,
   IAiInlineCompletionRequest,
   IAiProposePatchPayload,
   IAiProposePatchRequest,
@@ -29,9 +28,7 @@ import type {
   IAiSaveConfigRequest,
   IAiSaveCredentialsRequest,
   IAiSessionConfigOptionsPayload,
-  IAiSessionModesPayload,
   IAiSetSessionConfigOptionRequest,
-  IAiSetSessionModeRequest,
   IAiSuggestionPoolPayload,
   IAiSuggestionPoolRequest,
   IAiWebFetchInput,
@@ -399,8 +396,6 @@ export interface ITauriService {
   aiSetSessionConfigOption(
     payload: IAiSetSessionConfigOptionRequest,
   ): Promise<IAiSessionConfigOptionsPayload | null>;
-  aiGetSessionModes(payload: IAiGetSessionModesRequest): Promise<IAiSessionModesPayload | null>;
-  aiSetSessionMode(payload: IAiSetSessionModeRequest): Promise<boolean>;
   aiInlineComplete(payload: IAiInlineCompletionRequest): Promise<AiInlineCompletionResult>;
   aiAgentClassifyTask(payload: IAiAgentClassifyTaskRequest): Promise<AiAgentClassifyTaskPayload>;
   aiWebSearch(payload: AiWebSearchInput): Promise<AiWebSearchPayload>;

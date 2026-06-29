@@ -10,7 +10,7 @@ import type { TJsonValue } from '@/types/ai/sidecar';
  * 职责：按 terminalId 维护 client 侧终端的最新快照（IAiThreadTerminalSnapshot），
  * 供 tool-view 的 toAiThreadToolView 经 resolveTerminal 依赖渲染终端内容块。
  *
- * 设计取舍（与 useAcpAvailableCommands / useAcpSessionModes 一致，不自创）：
+ * 设计取舍（与 useAcpAvailableCommands / useAcpSessionConfigOptions 一致，不自创）：
  * - 纯状态化、可在 effectScope 内单测，与 .vue 解耦；
  * - 不在此自订阅 sidecar 流 / 不直接调 IPC：宿主（useAiAssistant）持有唯一事件源，
  *   在收到终端输出更新时调 applyTerminalSnapshot；terminal/release 时 removeTerminal；

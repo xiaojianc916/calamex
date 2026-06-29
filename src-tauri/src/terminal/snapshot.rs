@@ -66,10 +66,13 @@ fn advance_char_boundary(value: &str, index: usize) -> usize {
 }
 
 
+/// 整屏交互式 resize 重绘帧判定。
+///
+/// 旧实现用 .contains("\x1b[H") 裸字节匹配叠加英文文案启发式，依赖英文 locale，
+/// 中文 Windows 或改过 UAC 文案即失效。现委托 vte_detect 用标准 VT 状态机按 CSI 指令语义
+/// （光标归位 + 整屏/多行擦除）判定，与 scan_ansi_csi_events 同源，locale 无关。
 pub fn is_likely_interactive_resize_repaint_frame(data: &str) -> bool {
-    data.contains("\x1b[H")
-        && data.contains("\x1b[K")
-        && (data.contains("To run a command as administrator") || data.contains("sudo <command>"))
+    super::vte_detect::is_full_screen_repaint_frame(data)
 }
 
 #[cfg(test)]
