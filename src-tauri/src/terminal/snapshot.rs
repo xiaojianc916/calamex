@@ -65,26 +65,6 @@ fn advance_char_boundary(value: &str, index: usize) -> usize {
     boundary
 }
 
-/// 扫描数据中是否存在 CSI 序列且其 final byte 落在 `final_bytes` 集合内。
-///
-/// final byte 是 CSI 的终止符，按 ECMA-48 落在 `0x40..=0x7E`。
-/// 参数/中间字节（`0x20..=0x3F`）会被跳过。
-pub fn contains_alt_screen_switch(data: &str) -> bool {
-    super::vte_detect::scan_ansi_csi_events(data).alt_screen_switched
-}
-
-/// 按数据中出现顺序应用 alt-screen 私有模式，返回最终状态。
-///
-/// 当数据中无 alt-screen 切换事件时，直接返回 `current`；
-/// 否则返回最后一条事件决定的状态。
-pub fn resolve_alt_screen_state_after_data(current: bool, data: &str) -> bool {
-    let events = super::vte_detect::scan_ansi_csi_events(data);
-    if events.alt_screen_switched {
-        events.alt_screen_active
-    } else {
-        current
-    }
-}
 
 pub fn is_likely_interactive_resize_repaint_frame(data: &str) -> bool {
     data.contains("\x1b[H")

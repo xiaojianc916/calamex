@@ -20,8 +20,6 @@ pub const HIGH_WATERMARK_CHARS: usize = 100_000;
 /// 低水位：暂停后，未确认字符数回落到该值以下才恢复读取（迟滞，避免抖动）。
 /// 对照 VSCode FlowControlConstants.LowWatermarkChars。
 pub const LOW_WATERMARK_CHARS: usize = 5_000;
-/// 前端每消费这么多字符回一次 ack。对照 VSCode FlowControlConstants.CharCountAckSize。
-pub const CHAR_COUNT_ACK_SIZE: usize = 5_000;
 
 /// 防御性暂停上限：即便 ack 始终未到（前端异常 / 事件丢失），读线程被暂停累计超过该时长后
 /// 也强制恢复一次，保证 EOF 可被探测、读线程不被永久饥死。正常 ack 通路下不会触发。

@@ -14,10 +14,10 @@ use tauri::AppHandle;
 
 fn classify_provider_test_error_code(error: &str) -> String {
     // 优先解析结构化错误 JSON（由 errors::error() 构造的 AiErrorPayload）。
-    if let Ok(payload) = serde_json::from_str::<serde_json::Value>(error) {
-        if let Some(code) = payload.get("code").and_then(|v| v.as_str()) {
-            return code.to_string();
-        }
+    if let Ok(payload) = serde_json::from_str::<serde_json::Value>(error)
+        && let Some(code) = payload.get("code").and_then(|v| v.as_str())
+    {
+        return code.to_string();
     }
 
     let normalized = error.to_ascii_lowercase();

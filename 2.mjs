@@ -1,128 +1,657 @@
-// p7-runtime-parity.mjs  （EOL 健壮版：LF/CRLF 通吃）
-// 用法：仓库根 D:\com.xiaojianc\my_desktop_app 下 `node 2.mjs`
-// 作用：P7（A 方向）—— 内置边车 runtime.ts 从“多运行时选择脚手架”收敛为单引擎契约。
-// 无备份文件；改完自检残引用；成功后可删本脚本。
-import { readFileSync, writeFileSync, readdirSync, statSync } from "node:fs"
-import { join } from "node:path"
+// cleanup-slice23-warnings.mjs  —  在仓库根目录 (D:\com.xiaojianc\my_desktop_app) 运行：node cleanup-slice23-warnings.mjs
+import fs from "node:fs";
+import path from "node:path";
 
-const ROOT = process.cwd()
-const RUNTIME = join(ROOT, "builtin-agent/src/engines/runtime/runtime.ts")
-const ENTRY = join(ROOT, "builtin-agent/src/acp/stdio-entry.ts")
+const ROOT = process.cwd();
+const L = (...lines) => lines.join("\n");
+const toLf = (s) => s.replace(/\r\n/g, "\n");
+const detectEol = (s) => (s.includes("\r\n") ? "\r\n" : "\n");
+const fromLf = (s, eol) => (eol === "\r\n" ? s.replace(/\n/g, "\r\n") : s);
 
-/** 读文件并归一为 LF；记录原行尾，便于写回时还原（不制造全文件 EOL 噪声）。 */
-function readLF(path) {
-	const raw = readFileSync(path, "utf8")
-	return { lf: raw.replace(/\r\n/g, "\n"), crlf: /\r\n/.test(raw) }
-}
-/** 按原行尾约定写回。 */
-function writeEOL(path, lf, crlf) {
-	writeFileSync(path, crlf ? lf.replace(/\n/g, "\r\n") : lf, "utf8")
-}
-/** 精确一次替换：命中数必须恰为 1，否则抛错（拒绝模糊匹配）。 */
 function replaceOnce(src, oldStr, newStr, label) {
-	const parts = src.split(oldStr)
-	if (parts.length !== 2) {
-		throw new Error(`[${label}] 期望恰好 1 处匹配，实际 ${parts.length - 1} 处。已中止，未写入。`)
-	}
-	return parts.join(newStr)
+  const first = src.indexOf(oldStr);
+  if (first < 0) throw new Error("[未命中] " + label);
+  if (src.indexOf(oldStr, first + oldStr.length) >= 0) throw new Error("[多处匹配] " + label);
+  return src.slice(0, first) + newStr + src.slice(first + oldStr.length);
 }
 
-// ── 1) runtime.ts ────────────────────────────────────────────────────────────
-let { lf: rt, crlf: rtCrlf } = readLF(RUNTIME)
+// —— 待删除文件（ansi.rs 仅剩一个已死函数）——
+const DELETE_FILES = ["src-tauri/src/terminal/ansi.rs"];
 
-// 1a. 移除不再使用的具体实现 import（契约模块不应依赖实现）。
-rt = replaceOnce(rt, `import { MastraRuntime } from './composition.js';\n`, ``, "runtime:import")
+// —— 编辑计划：{ file, edits: [[old, new, label], ...] } ——
+const PLAN = [
+  // ===== terminal/mod.rs：移除 ansi 模块声明 =====
+  { file: "src-tauri/src/terminal/mod.rs", edits: [
+    [ L("pub mod ansi;", "pub mod command_contracts;"),
+      "pub mod command_contracts;",
+      "mod.rs 去掉 pub mod ansi" ],
+  ]},
 
-// 1b. 删除多运行时名单 / 默认运行时 / 名称联合（死配置）。
-rt = replaceOnce(
-	rt,
-	`export const SUPPORTED_AGENT_RUNTIMES = ['mastra'] as const;\n` +
-		`\n` +
-		`export type TAgentRuntimeName = (typeof SUPPORTED_AGENT_RUNTIMES)[number];\n` +
-		`\n` +
-		`export const DEFAULT_AGENT_RUNTIME: TAgentRuntimeName = 'mastra';\n` +
-		`\n`,
-	``,
-	"runtime:constants",
-)
+  // ===== terminal/vte_detect.rs：删掉 scroll_region / cursor_position 探测 =====
+  { file: "src-tauri/src/terminal/vte_detect.rs", edits: [
+    [ L("pub struct AnsiCsiEvents {",
+        "    pub alt_screen_switched: bool,",
+        "    pub alt_screen_active: bool,",
+        "    pub scroll_region_changed: bool,",
+        "    pub cursor_position_query: bool,",
+        "}"),
+      L("pub struct AnsiCsiEvents {",
+        "    pub alt_screen_switched: bool,",
+        "    pub alt_screen_active: bool,",
+        "}"),
+      "AnsiCsiEvents 去字段" ],
+    [ L("/// 用单个 vte 解析器扫描整段数据并返回检测结果。",
+        "/// `scan_ansi_csi_events` 与 `has_cursor_position_query` 共用此实现，避免重复解析循环。"),
+      L("/// 用单个 vte 解析器扫描整段数据并返回检测结果。",
+        "/// 供 `scan_ansi_csi_events` 复用，集中 CSI 解析循环。"),
+      "detect_csi_events 文档更新" ],
+    [ L("    AnsiCsiEvents {",
+        "        alt_screen_switched: detector.alt_screen_switched,",
+        "        alt_screen_active: detector.alt_screen_active,",
+        "        scroll_region_changed: detector.scroll_region_changed,",
+        "        cursor_position_query: detector.cursor_position_query,",
+        "    }"),
+      L("    AnsiCsiEvents {",
+        "        alt_screen_switched: detector.alt_screen_switched,",
+        "        alt_screen_active: detector.alt_screen_active,",
+        "    }"),
+      "scan_ansi_csi_events 构造去字段" ],
+    [ L("pub fn has_cursor_position_query(data: &str) -> bool {",
+        "    detect_csi_events(data).cursor_position_query",
+        "}",
+        ""),
+      "",
+      "删除 has_cursor_position_query" ],
+    [ L("struct CsiDetector {",
+        "    private_mode: bool,",
+        "    alt_screen_switched: bool,",
+        "    alt_screen_active: bool,",
+        "    scroll_region_changed: bool,",
+        "    cursor_position_query: bool,",
+        "}"),
+      L("struct CsiDetector {",
+        "    private_mode: bool,",
+        "    alt_screen_switched: bool,",
+        "    alt_screen_active: bool,",
+        "}"),
+      "CsiDetector 去字段" ],
+    [ L("            'r' if !self.private_mode => {",
+        "                self.scroll_region_changed = true;",
+        "            }",
+        "            'n' if !self.private_mode && single_param_value(params) == Some(6) => {",
+        "                self.cursor_position_query = true;",
+        "            }",
+        "            _ => {}"),
+      "            _ => {}",
+      "csi_dispatch 删 'r'/'n' 分支" ],
+  ]},
 
-// 1c. 接口文档：从“多运行时”改为诚实的“内置边车唯一进程内引擎契约”。
-rt = replaceOnce(
-	rt,
-	`/**\n * Surface implemented by every concrete agent runtime (Mastra today, others later).\n *\n`,
-	`/**\n` +
-		` * 内置边车（builtin-agent）唯一的进程内引擎契约：当前仅由 Mastra 实现。\n` +
-		` *\n` +
-		` * Kimi / Codex 等对等编码 agent 是宿主侧独立的 ACP 子进程，经 src-tauri 的\n` +
-		` * AcpBackendId + provisioner 注册表对等挂载，不实现本进程内契约；多 agent 的统一\n` +
-		` * 面在 ACP 协议层与宿主注册表，而非此接口。\n` +
-		` *\n`,
-	"runtime:iface-doc",
-)
+  // ===== terminal/snapshot.rs：删除两个无人调用的 alt-screen 工具函数 =====
+  { file: "src-tauri/src/terminal/snapshot.rs", edits: [
+    [ L("/// 扫描数据中是否存在 CSI 序列且其 final byte 落在 `final_bytes` 集合内。",
+        "///",
+        "/// final byte 是 CSI 的终止符，按 ECMA-48 落在 `0x40..=0x7E`。",
+        "/// 参数/中间字节（`0x20..=0x3F`）会被跳过。",
+        "pub fn contains_alt_screen_switch(data: &str) -> bool {",
+        "    super::vte_detect::scan_ansi_csi_events(data).alt_screen_switched",
+        "}",
+        "",
+        "/// 按数据中出现顺序应用 alt-screen 私有模式，返回最终状态。",
+        "///",
+        "/// 当数据中无 alt-screen 切换事件时，直接返回 `current`；",
+        "/// 否则返回最后一条事件决定的状态。",
+        "pub fn resolve_alt_screen_state_after_data(current: bool, data: &str) -> bool {",
+        "    let events = super::vte_detect::scan_ansi_csi_events(data);",
+        "    if events.alt_screen_switched {",
+        "        events.alt_screen_active",
+        "    } else {",
+        "        current",
+        "    }",
+        "}",
+        ""),
+      "",
+      "删除 contains_alt_screen_switch / resolve_alt_screen_state_after_data" ],
+  ]},
 
-// 1d. name 字段类型：联合 → string（边车只有一个引擎，名称无需受限联合）。
-rt = replaceOnce(rt, `    readonly name: TAgentRuntimeName;`, `    readonly name: string;`, "runtime:name-type")
+  // ===== terminal/flow_control.rs：删除未用常量 =====
+  { file: "src-tauri/src/terminal/flow_control.rs", edits: [
+    [ L("/// 前端每消费这么多字符回一次 ack。对照 VSCode FlowControlConstants.CharCountAckSize。",
+        "pub const CHAR_COUNT_ACK_SIZE: usize = 5_000;",
+        ""),
+      "",
+      "删除 CHAR_COUNT_ACK_SIZE" ],
+  ]},
 
-// 1e. 截断尾部整段 “Configuration & factory”（env/switch/factory 全删），收敛为纯契约模块。
-const FACTORY_MARKER =
-	`// -----------------------------------------------------------------------------\n` +
-	`// Configuration & factory\n` +
-	`// -----------------------------------------------------------------------------`
-{
-	const idx = rt.indexOf(FACTORY_MARKER)
-	if (idx === -1 || rt.indexOf(FACTORY_MARKER, idx + 1) !== -1) {
-		throw new Error("[runtime:factory] 未唯一定位 Configuration & factory 区块。已中止，未写入。")
-	}
-	rt = rt.slice(0, idx).replace(/\s+$/, "") + "\n"
+  // ===== terminal/local_wsl_protocol.rs：协议瘦身 + 变体改名（解 enum_variant_names）=====
+  { file: "src-tauri/src/terminal/local_wsl_protocol.rs", edits: [
+    [ L("#[derive(Debug, Clone)]",
+        "pub struct LocalWslTerminalInteractiveOpened {",
+        "    pub session_id: String,",
+        "    pub cwd: String,",
+        "    pub pid: u32,",
+        "    pub opened_at_unix_ms: i64,",
+        "}",
+        ""),
+      "",
+      "删除 InteractiveOpened 结构体" ],
+    [ L("pub struct LocalWslTerminalInteractiveData {",
+        "    pub session_id: String,",
+        "    pub data: String,",
+        "}"),
+      L("pub struct LocalWslTerminalInteractiveData {",
+        "    pub data: String,",
+        "}"),
+      "Data 去 session_id" ],
+    [ L("pub struct LocalWslTerminalInteractiveClosed {",
+        "    pub session_id: String,",
+        "    pub exit_code: Option<i32>,",
+        "    pub finished_at_unix_ms: i64,",
+        "}"),
+      L("pub struct LocalWslTerminalInteractiveClosed {",
+        "    pub exit_code: Option<i32>,",
+        "}"),
+      "Closed 去 session_id/finished_at" ],
+    [ L("#[derive(Debug, Clone)]",
+        "pub struct LocalWslTerminalInteractiveAck {",
+        "    pub session_id: Option<String>,",
+        "    pub action: String,",
+        "}",
+        ""),
+      "",
+      "删除 InteractiveAck 结构体" ],
+    [ L("#[derive(Debug, Clone)]",
+        "pub struct LocalWslTerminalInteractiveError {",
+        "    pub session_id: Option<String>,",
+        "    pub message: String,",
+        "    pub exit_code: Option<i32>,",
+        "    pub finished_at_unix_ms: i64,",
+        "}",
+        ""),
+      "",
+      "删除 InteractiveError 结构体" ],
+    [ L("pub struct LocalWslTerminalInteractiveMark {",
+        "    pub session_id: String,",
+        "    pub mark: super::shell_integration::ShellIntegrationMark,",
+        "}"),
+      L("pub struct LocalWslTerminalInteractiveMark {",
+        "    pub mark: super::shell_integration::ShellIntegrationMark,",
+        "}"),
+      "Mark 去 session_id" ],
+    [ L("#[derive(Debug, Clone)]",
+        "pub enum LocalWslTerminalServerPayload {",
+        "    InteractiveOpened(LocalWslTerminalInteractiveOpened),",
+        "    InteractiveData(LocalWslTerminalInteractiveData),",
+        "    InteractiveClosed(LocalWslTerminalInteractiveClosed),",
+        "    InteractiveAck(LocalWslTerminalInteractiveAck),",
+        "    InteractiveError(LocalWslTerminalInteractiveError),",
+        "    InteractiveMark(LocalWslTerminalInteractiveMark),",
+        "}"),
+      L("#[derive(Debug, Clone)]",
+        "pub enum LocalWslTerminalServerPayload {",
+        "    Opened,",
+        "    Data(LocalWslTerminalInteractiveData),",
+        "    Closed(LocalWslTerminalInteractiveClosed),",
+        "    Mark(LocalWslTerminalInteractiveMark),",
+        "}"),
+      "枚举去 Ack/Error + 变体改名 + Opened 无字段" ],
+  ]},
+
+  // ===== terminal/wsl_pty.rs：随协议瘦身的构造点 + 去 session_id 字段/方法 + 去 now_unix_ms =====
+  { file: "src-tauri/src/terminal/wsl_pty.rs", edits: [
+    [ L("use super::local_wsl_protocol::{",
+        "    LocalWslTerminalInteractiveClosed, LocalWslTerminalInteractiveData,",
+        "    LocalWslTerminalInteractiveMark, LocalWslTerminalInteractiveOpened,",
+        "    LocalWslTerminalOpenInteractiveRequest, LocalWslTerminalServerPayload,",
+        "    LocalWslUtf8ChunkDecoder,",
+        "};"),
+      L("use super::local_wsl_protocol::{",
+        "    LocalWslTerminalInteractiveClosed, LocalWslTerminalInteractiveData,",
+        "    LocalWslTerminalInteractiveMark, LocalWslTerminalOpenInteractiveRequest,",
+        "    LocalWslTerminalServerPayload, LocalWslUtf8ChunkDecoder,",
+        "};"),
+      "import 去 InteractiveOpened" ],
+    [ "    time::{Duration, SystemTime, UNIX_EPOCH},",
+      "    time::Duration,",
+      "time import 去 SystemTime/UNIX_EPOCH" ],
+    [ L("/// 本地 PTY 交互式终端句柄：对外提供 session_id / write_input / resize / close，",
+        "/// 以及关闭看门狗所需的 is_finished / force_kill。"),
+      L("/// 本地 PTY 交互式终端句柄：对外提供 write_input / resize / close，",
+        "/// 以及关闭看门狗所需的 is_finished / force_kill。"),
+      "句柄文档去 session_id" ],
+    [ L("pub struct LocalWslPtyHandle {",
+        "    session_id: String,",
+        "    writer: Arc<Mutex<Box<dyn Write + Send>>>,"),
+      L("pub struct LocalWslPtyHandle {",
+        "    writer: Arc<Mutex<Box<dyn Write + Send>>>,"),
+      "句柄去 session_id 字段" ],
+    [ L("impl LocalWslPtyHandle {",
+        "    pub fn session_id(&self) -> &str {",
+        "        &self.session_id",
+        "    }",
+        "",
+        "    /// 底层交互 shell 是否已结束（读线程在 child.wait 返回后置位）。关闭看门狗据此判断"),
+      L("impl LocalWslPtyHandle {",
+        "    /// 底层交互 shell 是否已结束（读线程在 child.wait 返回后置位）。关闭看门狗据此判断"),
+      "删除 session_id() 方法" ],
+    [ "/// on_event 在独立读线程中被调用：InteractiveOpened → 若干 InteractiveData → InteractiveClosed。",
+      "/// on_event 在独立读线程中被调用：Opened → 若干 Data → Closed。",
+      "open 文档变体名" ],
+    [ L("    spawn_interactive_reader(",
+        "        session_id.clone(),",
+        "        working_directory,",
+        "        pid,",
+        "        reader,"),
+      L("    spawn_interactive_reader(",
+        "        session_id.clone(),",
+        "        pid,",
+        "        reader,"),
+      "调用点去 working_directory 实参" ],
+    [ L("    Ok(LocalWslPtyHandle {",
+        "        session_id,",
+        "        writer: Arc::new(Mutex::new(writer)),"),
+      L("    Ok(LocalWslPtyHandle {",
+        "        writer: Arc::new(Mutex::new(writer)),"),
+      "句柄构造去 session_id" ],
+    [ L("fn spawn_interactive_reader<F>(",
+        "    session_id: String,",
+        "    working_directory: String,",
+        "    pid: u32,",
+        "    mut reader: Box<dyn Read + Send>,"),
+      L("fn spawn_interactive_reader<F>(",
+        "    session_id: String,",
+        "    pid: u32,",
+        "    mut reader: Box<dyn Read + Send>,"),
+      "reader 形参去 working_directory" ],
+    [ L("            on_event(LocalWslTerminalServerPayload::InteractiveOpened(",
+        "                LocalWslTerminalInteractiveOpened {",
+        "                    session_id: session_id.clone(),",
+        "                    cwd: working_directory,",
+        "                    pid,",
+        "                    opened_at_unix_ms: now_unix_ms(),",
+        "                },",
+        "            ));"),
+      "            on_event(LocalWslTerminalServerPayload::Opened);",
+      "Opened 构造无字段" ],
+    [ L("                            for mark in marks {",
+        "                                on_event(LocalWslTerminalServerPayload::InteractiveMark(",
+        "                                    LocalWslTerminalInteractiveMark {",
+        "                                        session_id: session_id.clone(),",
+        "                                        mark,",
+        "                                    },",
+        "                                ));",
+        "                            }"),
+      L("                            for mark in marks {",
+        "                                on_event(LocalWslTerminalServerPayload::Mark(",
+        "                                    LocalWslTerminalInteractiveMark { mark },",
+        "                                ));",
+        "                            }"),
+      "循环内 Mark 构造" ],
+    [ L("                            on_event(LocalWslTerminalServerPayload::InteractiveData(",
+        "                                LocalWslTerminalInteractiveData {",
+        "                                    session_id: session_id.clone(),",
+        "                                    data: clean,",
+        "                                },",
+        "                            ));"),
+      L("                            on_event(LocalWslTerminalServerPayload::Data(",
+        "                                LocalWslTerminalInteractiveData { data: clean },",
+        "                            ));"),
+      "循环内 Data 构造" ],
+    [ L("            for mark in tail_marks {",
+        "                on_event(LocalWslTerminalServerPayload::InteractiveMark(",
+        "                    LocalWslTerminalInteractiveMark {",
+        "                        session_id: session_id.clone(),",
+        "                        mark,",
+        "                    },",
+        "                ));",
+        "            }"),
+      L("            for mark in tail_marks {",
+        "                on_event(LocalWslTerminalServerPayload::Mark(",
+        "                    LocalWslTerminalInteractiveMark { mark },",
+        "                ));",
+        "            }"),
+      "收尾 Mark 构造" ],
+    [ L("                on_event(LocalWslTerminalServerPayload::InteractiveData(",
+        "                    LocalWslTerminalInteractiveData {",
+        "                        session_id: session_id.clone(),",
+        "                        data: tail,",
+        "                    },",
+        "                ));"),
+      L("                on_event(LocalWslTerminalServerPayload::Data(",
+        "                    LocalWslTerminalInteractiveData { data: tail },",
+        "                ));"),
+      "收尾 Data 构造" ],
+    [ L("            on_event(LocalWslTerminalServerPayload::InteractiveClosed(",
+        "                LocalWslTerminalInteractiveClosed {",
+        "                    session_id,",
+        "                    exit_code,",
+        "                    finished_at_unix_ms: now_unix_ms(),",
+        "                },",
+        "            ));"),
+      L("            on_event(LocalWslTerminalServerPayload::Closed(",
+        "                LocalWslTerminalInteractiveClosed { exit_code },",
+        "            ));"),
+      "Closed 构造" ],
+    [ L("fn now_unix_ms() -> i64 {",
+        "    SystemTime::now()",
+        "        .duration_since(UNIX_EPOCH)",
+        "        .map(|duration| i64::try_from(duration.as_millis()).unwrap_or(i64::MAX))",
+        "        .unwrap_or(0)",
+        "}",
+        ""),
+      "",
+      "删除 now_unix_ms" ],
+    [ L("    #[test]",
+        "    fn now_unix_ms_is_positive() {",
+        "        assert!(now_unix_ms() > 0);",
+        "    }",
+        ""),
+      "",
+      "删除 now_unix_ms 测试" ],
+  ]},
+
+  // ===== commands/terminal/events.rs：match 变体改名 + 删 Error/Ack 分支 + doc_lazy_continuation =====
+  { file: "src-tauri/src/commands/terminal/events.rs", edits: [
+    [ "        LocalWslTerminalServerPayload::InteractiveOpened(_) => {",
+      "        LocalWslTerminalServerPayload::Opened => {",
+      "match Opened" ],
+    [ "        LocalWslTerminalServerPayload::InteractiveData(payload) => {",
+      "        LocalWslTerminalServerPayload::Data(payload) => {",
+      "match Data" ],
+    [ "        LocalWslTerminalServerPayload::InteractiveClosed(payload) => {",
+      "        LocalWslTerminalServerPayload::Closed(payload) => {",
+      "match Closed" ],
+    [ L("        LocalWslTerminalServerPayload::InteractiveError(payload) => {",
+        "            if let Some(message_session_id) = payload.session_id.as_ref()",
+        "                && message_session_id == session_id",
+        "            {",
+        "                emit_terminal_interactive_output(",
+        "                    app,",
+        "                    state,",
+        "                    session_id,",
+        "                    format!(\"{}\\n\", payload.message),",
+        "                );",
+        "            }",
+        "            remove_interactive_terminal_after_exit(state, session_id);",
+        "            mark_terminal_interactive_exited(",
+        "                app,",
+        "                state,",
+        "                TerminalExitEvent {",
+        "                    session_id: session_id.to_string(),",
+        "                    exit_code: payload.exit_code,",
+        "                },",
+        "            );",
+        "        }",
+        "        LocalWslTerminalServerPayload::InteractiveAck(_) => {}",
+        "        LocalWslTerminalServerPayload::InteractiveMark(payload) => {"),
+      "        LocalWslTerminalServerPayload::Mark(payload) => {",
+      "删 Error/Ack 分支 + Mark 改名" ],
+    [ L("/// - D[;exit]（命令完成）：该会话若有处于 Running 的活动运行 → 回收会话态并发 RunCompleted。",
+        "/// 无活动运行（用户在终端里手动敲的命令）一律忽略，不为手输命令合成 run 事件。"),
+      L("/// - D[;exit]（命令完成）：该会话若有处于 Running 的活动运行 → 回收会话态并发 RunCompleted。",
+        "///",
+        "/// 无活动运行（用户在终端里手动敲的命令）一律忽略，不为手输命令合成 run 事件。"),
+      "doc_lazy_continuation：列表后补空行" ],
+  ]},
+
+  // ===== ai/credential/mod.rs：set_tavily #[expect] + ResolvedCredential 去 provider_id =====
+  { file: "src-tauri/src/ai/credential/mod.rs", edits: [
+    [ L("    /// 写入 Tavily API Key 到独立 keyring 账户：`trim` 后非空则写入；为空即视为「清除」。",
+        "    pub fn set_tavily(api_key: &str) -> Result<(), String> {"),
+      L("    /// 写入 Tavily API Key 到独立 keyring 账户：`trim` 后非空则写入；为空即视为「清除」。",
+        "    ///",
+        "    /// 暂未接线：写入侧将在 P5c「web/* → tavily-mcp」管线落地时由设置层调用，与 `get_tavily`",
+        "    /// / `clear_tavily` 读取/清除对称保留；`#[expect]` 在其被消费后自动失效以提醒移除本标注。",
+        "    #[expect(",
+        "        dead_code,",
+        "        reason = \"P5c web/* → tavily-mcp 接线后消费；保留写入侧 API 与读取/清除对称\"",
+        "    )]",
+        "    pub fn set_tavily(api_key: &str) -> Result<(), String> {"),
+      "set_tavily 加 #[expect(dead_code)]" ],
+    [ L("pub struct ResolvedCredential {",
+        "    pub provider_id: String,",
+        "    pub api_key: String,",
+        "    pub base_url: Option<String>,",
+        "}"),
+      L("pub struct ResolvedCredential {",
+        "    pub api_key: String,",
+        "    pub base_url: Option<String>,",
+        "}"),
+      "ResolvedCredential 去 provider_id" ],
+    [ L("        Ok(ResolvedCredential {",
+        "            provider_id: normalized_provider_id.to_string(),",
+        "            api_key,",
+        "            base_url,",
+        "        })"),
+      "        Ok(ResolvedCredential { api_key, base_url })",
+      "resolve() 去 provider_id" ],
+    [ L("    #[test]",
+        "    fn resolved_credential_exposes_provider_and_base_url() {",
+        "        let resolved = ResolvedCredential {",
+        "            provider_id: \"deepseek\".to_string(),",
+        "            api_key: \"sk-test\".to_string(),",
+        "            base_url: resolve_provider_base_url(\"deepseek\", None),",
+        "        };",
+        "        assert_eq!(resolved.provider_id, \"deepseek\");",
+        "        assert_eq!(",
+        "            resolved.base_url.as_deref(),",
+        "            Some(\"https://api.deepseek.com/v1\")",
+        "        );",
+        "        assert!(!resolved.api_key.is_empty());",
+        "    }"),
+      L("    #[test]",
+        "    fn resolved_credential_exposes_base_url() {",
+        "        let resolved = ResolvedCredential {",
+        "            api_key: \"sk-test\".to_string(),",
+        "            base_url: resolve_provider_base_url(\"deepseek\", None),",
+        "        };",
+        "        assert_eq!(",
+        "            resolved.base_url.as_deref(),",
+        "            Some(\"https://api.deepseek.com/v1\")",
+        "        );",
+        "        assert!(!resolved.api_key.is_empty());",
+        "    }"),
+      "测试去 provider_id 断言" ],
+  ]},
+
+  // ===== ai/edit/history/snapshot.rs：删 3 个死壳函数 + 测试改走 store_checkpoint_snapshots =====
+  { file: "src-tauri/src/ai/edit/history/snapshot.rs", edits: [
+    [ L("pub fn store_pre_tool_snapshot(",
+        "    storage_root: &Path,",
+        "    files: &[SnapshotSourceFile<'_>],",
+        "    metadata: Option<&AiApplyPatchMetadataRequest>,",
+        "    summary: &str,",
+        ") -> Result<AiSnapshotPayload, String> {",
+        "    storage_lock::with_storage_write_lock(storage_root, \"写入 AED 快照\", || {",
+        "        let store = open_store(storage_root)?;",
+        "        store_pre_tool_snapshot_with_store(storage_root, &store, files, metadata, summary)",
+        "    })",
+        "}",
+        ""),
+      "",
+      "删除 store_pre_tool_snapshot 壳" ],
+    [ L("pub fn store_task_start_snapshot(",
+        "    storage_root: &Path,",
+        "    files: &[SnapshotSourceFile<'_>],",
+        "    metadata: Option<&AiApplyPatchMetadataRequest>,",
+        "    summary: &str,",
+        ") -> Result<AiSnapshotPayload, String> {",
+        "    storage_lock::with_storage_write_lock(storage_root, \"写入 AED 快照\", || {",
+        "        let store = open_store(storage_root)?;",
+        "        store_task_start_snapshot_with_store(storage_root, &store, files, metadata, summary)",
+        "    })",
+        "}",
+        ""),
+      "",
+      "删除 store_task_start_snapshot 壳" ],
+    [ L("pub fn store_turn_start_snapshot(",
+        "    storage_root: &Path,",
+        "    files: &[SnapshotSourceFile<'_>],",
+        "    metadata: Option<&AiApplyPatchMetadataRequest>,",
+        "    summary: &str,",
+        ") -> Result<AiSnapshotPayload, String> {",
+        "    storage_lock::with_storage_write_lock(storage_root, \"写入 AED 快照\", || {",
+        "        let store = open_store(storage_root)?;",
+        "        store_turn_start_snapshot_with_store(storage_root, &store, files, metadata, summary)",
+        "    })",
+        "}",
+        ""),
+      "",
+      "删除 store_turn_start_snapshot 壳" ],
+    [ L("    use super::{",
+        "        SnapshotRetentionPolicy, SnapshotSourceFile, apply_snapshot_retention,",
+        "        list_stored_snapshots, load_stored_snapshot, store_manual_snapshot,",
+        "        store_pre_tool_snapshot,",
+        "    };"),
+      L("    use super::{",
+        "        SnapshotRetentionPolicy, SnapshotSourceFile, apply_snapshot_retention,",
+        "        list_stored_snapshots, load_stored_snapshot, store_checkpoint_snapshots,",
+        "        store_manual_snapshot,",
+        "    };"),
+      "测试 import 换 store_checkpoint_snapshots" ],
+    [ L("    #[test]",
+        "    fn store_pre_tool_snapshot_writes_manifest_and_dedupes_small_blobs_in_fjall() {",
+        "        let temp_dir = temp_dir(\"aed-snapshot\");",
+        "        fs::create_dir_all(&temp_dir).expect(\"temp directory should be created\");",
+        "",
+        "        let snapshot = store_pre_tool_snapshot(",
+        "            &temp_dir,",
+        "            &[",
+        "                SnapshotSourceFile {",
+        "                    path: \"src/a.sh\",",
+        "                    content_hash: \"blake3:shared\",",
+        "                    content: \"echo shared\",",
+        "                },",
+        "                SnapshotSourceFile {",
+        "                    path: \"src/b.sh\",",
+        "                    content_hash: \"blake3:shared\",",
+        "                    content: \"echo shared\",",
+        "                },",
+        "            ],",
+        "            Some(&AiApplyPatchMetadataRequest {",
+        "                task_id: Some(\"task-1\".to_string()),",
+        "                turn_id: None,",
+        "                reason: Some(\"预快照\".to_string()),",
+        "                tool_call_id: None,",
+        "                confirmed_by_user: None,",
+        "                agent_run_id: None,",
+        "                agent_step_id: None,",
+        "                workspace_root_path: None,",
+        "            }),",
+        "            \"应用 AI Patch\",",
+        "        )",
+        "        .expect(\"snapshot should be written\");",
+        "",
+        "        let restored = list_stored_snapshots(&temp_dir).expect(\"snapshots should be listed\");",
+        "        let stored = load_stored_snapshot(&temp_dir, &snapshot.id).expect(\"snapshot should load\");",
+        "",
+        "        assert_eq!(snapshot.scope, \"pre-tool\");",
+        "        assert_eq!(snapshot.task_id, \"task-1\");",
+        "        assert_eq!(snapshot.file_refs.len(), 2);",
+        "        assert!(snapshot.storage_key.starts_with(\"fjall://snapshots/\"));",
+        "        assert_eq!(restored.len(), 1);",
+        "        assert_eq!(stored.files.len(), 2);",
+        "        assert_eq!(stored.files[0].content, \"echo shared\");",
+        "        assert!(!temp_dir.join(\"snapshots\").exists());",
+        "",
+        "        let _ = fs::remove_dir_all(&temp_dir);",
+        "    }"),
+      L("    #[test]",
+        "    fn store_checkpoint_pre_tool_snapshot_writes_manifest_and_dedupes_small_blobs_in_fjall() {",
+        "        let temp_dir = temp_dir(\"aed-snapshot\");",
+        "        fs::create_dir_all(&temp_dir).expect(\"temp directory should be created\");",
+        "",
+        "        let (task_start, turn_start, snapshot) = store_checkpoint_snapshots(",
+        "            &temp_dir,",
+        "            &[",
+        "                SnapshotSourceFile {",
+        "                    path: \"src/a.sh\",",
+        "                    content_hash: \"blake3:shared\",",
+        "                    content: \"echo shared\",",
+        "                },",
+        "                SnapshotSourceFile {",
+        "                    path: \"src/b.sh\",",
+        "                    content_hash: \"blake3:shared\",",
+        "                    content: \"echo shared\",",
+        "                },",
+        "            ],",
+        "            Some(&AiApplyPatchMetadataRequest {",
+        "                task_id: Some(\"task-1\".to_string()),",
+        "                turn_id: None,",
+        "                reason: Some(\"预快照\".to_string()),",
+        "                tool_call_id: None,",
+        "                confirmed_by_user: None,",
+        "                agent_run_id: None,",
+        "                agent_step_id: None,",
+        "                workspace_root_path: None,",
+        "            }),",
+        "            \"应用 AI Patch\",",
+        "            false,",
+        "            false,",
+        "            false,",
+        "        )",
+        "        .expect(\"snapshot should be written\");",
+        "",
+        "        assert!(task_start.is_none());",
+        "        assert!(turn_start.is_none());",
+        "",
+        "        let restored = list_stored_snapshots(&temp_dir).expect(\"snapshots should be listed\");",
+        "        let stored = load_stored_snapshot(&temp_dir, &snapshot.id).expect(\"snapshot should load\");",
+        "",
+        "        assert_eq!(snapshot.scope, \"pre-tool\");",
+        "        assert_eq!(snapshot.task_id, \"task-1\");",
+        "        assert_eq!(snapshot.file_refs.len(), 2);",
+        "        assert!(snapshot.storage_key.starts_with(\"fjall://snapshots/\"));",
+        "        assert_eq!(restored.len(), 1);",
+        "        assert_eq!(stored.files.len(), 2);",
+        "        assert_eq!(stored.files[0].content, \"echo shared\");",
+        "        assert!(!temp_dir.join(\"snapshots\").exists());",
+        "",
+        "        let _ = fs::remove_dir_all(&temp_dir);",
+        "    }"),
+      "测试改走 store_checkpoint_snapshots" ],
+  ]},
+
+  // ===== commands/ai/gateway.rs：collapsible_if → let-chain =====
+  { file: "src-tauri/src/commands/ai/gateway.rs", edits: [
+    [ L("    if let Ok(payload) = serde_json::from_str::<serde_json::Value>(error) {",
+        "        if let Some(code) = payload.get(\"code\").and_then(|v| v.as_str()) {",
+        "            return code.to_string();",
+        "        }",
+        "    }"),
+      L("    if let Ok(payload) = serde_json::from_str::<serde_json::Value>(error)",
+        "        && let Some(code) = payload.get(\"code\").and_then(|v| v.as_str())",
+        "    {",
+        "        return code.to_string();",
+        "    }"),
+      "classify_provider_test_error_code let-chain" ],
+  ]},
+
+  // ===== commands/search/scan.rs：manual_pattern_char_comparison =====
+  { file: "src-tauri/src/commands/search/scan.rs", edits: [
+    [ ".trim_end_matches(|ch| ch == '\\r' || ch == '\\n')",
+      ".trim_end_matches(['\\r', '\\n'])",
+      "trim_end_matches 用字符数组" ],
+  ]},
+];
+
+// —— 执行（事务式）——
+const results = [];
+for (const { file, edits } of PLAN) {
+  const abs = path.join(ROOT, file);
+  if (!fs.existsSync(abs)) throw new Error("文件不存在：" + file);
+  const raw = fs.readFileSync(abs, "utf8");
+  const eol = detectEol(raw);
+  let body = toLf(raw);
+  for (const [oldStr, newStr, label] of edits) {
+    body = replaceOnce(body, oldStr, newStr, file + " :: " + label);
+  }
+  results.push({ abs, file, content: fromLf(body, eol) });
 }
 
-writeEOL(RUNTIME, rt, rtCrlf)
-console.log(`✓ runtime.ts 已收敛为纯契约模块（${rtCrlf ? "CRLF" : "LF"}）`)
-
-// ── 2) stdio-entry.ts ─────────────────────────────────────────────────────────
-let { lf: entry, crlf: entryCrlf } = readLF(ENTRY)
-entry = replaceOnce(
-	entry,
-	`import { createConfiguredRuntime } from "../engines/runtime/runtime.js"`,
-	`import { MastraRuntime } from "../engines/runtime/composition.js"`,
-	"entry:import",
-)
-entry = replaceOnce(entry, `const runtime = createConfiguredRuntime()`, `const runtime = new MastraRuntime()`, "entry:construct")
-writeEOL(ENTRY, entry, entryCrlf)
-console.log(`✓ stdio-entry.ts 组合根已直连 MastraRuntime（${entryCrlf ? "CRLF" : "LF"}）`)
-
-// ── 3) 残引用自检（不靠经验，靠扫描） ─────────────────────────────────────────
-const REMOVED = [
-	"SUPPORTED_AGENT_RUNTIMES",
-	"TAgentRuntimeName",
-	"DEFAULT_AGENT_RUNTIME",
-	"resolveConfiguredRuntimeName",
-	"ICreateRuntimeOptions",
-	"createConfiguredRuntime",
-]
-const SRC = join(ROOT, "builtin-agent/src")
-const hits = []
-;(function walk(dir) {
-	for (const name of readdirSync(dir)) {
-		const p = join(dir, name)
-		const st = statSync(p)
-		if (st.isDirectory()) walk(p)
-		else if (name.endsWith(".ts")) {
-			const lines = readFileSync(p, "utf8").replace(/\r\n/g, "\n").split("\n")
-			lines.forEach((line, i) => {
-				for (const id of REMOVED) {
-					if (line.includes(id)) hits.push(`${p}:${i + 1}: ${line.trim()}`)
-				}
-			})
-		}
-	}
-})(SRC)
-
-if (hits.length) {
-	console.log("\n⚠ 仍存在对已删符号的引用，请处理后再 typecheck：")
-	for (const h of hits) console.log("  " + h)
-	process.exitCode = 1
-} else {
-	console.log("\n✓ 残引用扫描通过：builtin-agent/src 内无对已删符号的引用")
-	console.log("下一步：pnpm -C builtin-agent typecheck && pnpm -C builtin-agent test && pnpm lint")
+// 全部命中后才落盘
+for (const { abs, content } of results) fs.writeFileSync(abs, content, "utf8");
+for (const rel of DELETE_FILES) {
+  const abs = path.join(ROOT, rel);
+  if (fs.existsSync(abs)) { fs.rmSync(abs); console.log("删除文件：" + rel); }
 }
+console.log("✅ 完成：编辑 " + results.length + " 个文件，删除 " + DELETE_FILES.length + " 个文件。");

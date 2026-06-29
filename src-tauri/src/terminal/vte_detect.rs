@@ -7,12 +7,10 @@ use vte::{Params, Parser, Perform};
 pub struct AnsiCsiEvents {
     pub alt_screen_switched: bool,
     pub alt_screen_active: bool,
-    pub scroll_region_changed: bool,
-    pub cursor_position_query: bool,
 }
 
 /// 用单个 vte 解析器扫描整段数据并返回检测结果。
-/// `scan_ansi_csi_events` 与 `has_cursor_position_query` 共用此实现，避免重复解析循环。
+/// 供 `scan_ansi_csi_events` 复用，集中 CSI 解析循环。
 fn detect_csi_events(data: &str) -> CsiDetector {
     let mut detector = CsiDetector::default();
     if data.is_empty() {
@@ -30,22 +28,15 @@ pub fn scan_ansi_csi_events(data: &str) -> AnsiCsiEvents {
     AnsiCsiEvents {
         alt_screen_switched: detector.alt_screen_switched,
         alt_screen_active: detector.alt_screen_active,
-        scroll_region_changed: detector.scroll_region_changed,
-        cursor_position_query: detector.cursor_position_query,
     }
 }
 
-pub fn has_cursor_position_query(data: &str) -> bool {
-    detect_csi_events(data).cursor_position_query
-}
 
 #[derive(Debug, Default)]
 struct CsiDetector {
     private_mode: bool,
     alt_screen_switched: bool,
     alt_screen_active: bool,
-    scroll_region_changed: bool,
-    cursor_position_query: bool,
 }
 
 /// 当 CSI 序列「恰好只有一个参数」时返回其首个子参数值，否则返回 None。
@@ -83,12 +74,6 @@ impl Perform for CsiDetector {
                     self.alt_screen_switched = true;
                     self.alt_screen_active = entering;
                 }
-            }
-            'r' if !self.private_mode => {
-                self.scroll_region_changed = true;
-            }
-            'n' if !self.private_mode && single_param_value(params) == Some(6) => {
-                self.cursor_position_query = true;
             }
             _ => {}
         }

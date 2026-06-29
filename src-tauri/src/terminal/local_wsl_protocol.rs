@@ -24,57 +24,32 @@ impl LocalWslTerminalOpenInteractiveRequest {
     }
 }
 
-#[derive(Debug, Clone)]
-pub struct LocalWslTerminalInteractiveOpened {
-    pub session_id: String,
-    pub cwd: String,
-    pub pid: u32,
-    pub opened_at_unix_ms: i64,
-}
 
 #[derive(Debug, Clone)]
 pub struct LocalWslTerminalInteractiveData {
-    pub session_id: String,
     pub data: String,
 }
 
 #[derive(Debug, Clone)]
 pub struct LocalWslTerminalInteractiveClosed {
-    pub session_id: String,
     pub exit_code: Option<i32>,
-    pub finished_at_unix_ms: i64,
 }
 
-#[derive(Debug, Clone)]
-pub struct LocalWslTerminalInteractiveAck {
-    pub session_id: Option<String>,
-    pub action: String,
-}
 
-#[derive(Debug, Clone)]
-pub struct LocalWslTerminalInteractiveError {
-    pub session_id: Option<String>,
-    pub message: String,
-    pub exit_code: Option<i32>,
-    pub finished_at_unix_ms: i64,
-}
 
 /// 交互 shell 经 OSC 133/633 上报的生命周期标记（Shell Integration）。由交互读线程从输出流中
 /// 剥离后上抛，events 层据此合成运行的 RunStarted/RunCompleted，取代旧的抓取/合成提示符方案。
 #[derive(Debug, Clone)]
 pub struct LocalWslTerminalInteractiveMark {
-    pub session_id: String,
     pub mark: super::shell_integration::ShellIntegrationMark,
 }
 
 #[derive(Debug, Clone)]
 pub enum LocalWslTerminalServerPayload {
-    InteractiveOpened(LocalWslTerminalInteractiveOpened),
-    InteractiveData(LocalWslTerminalInteractiveData),
-    InteractiveClosed(LocalWslTerminalInteractiveClosed),
-    InteractiveAck(LocalWslTerminalInteractiveAck),
-    InteractiveError(LocalWslTerminalInteractiveError),
-    InteractiveMark(LocalWslTerminalInteractiveMark),
+    Opened,
+    Data(LocalWslTerminalInteractiveData),
+    Closed(LocalWslTerminalInteractiveClosed),
+    Mark(LocalWslTerminalInteractiveMark),
 }
 
 fn ensure_field_non_empty(

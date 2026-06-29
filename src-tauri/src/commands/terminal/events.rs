@@ -155,16 +155,16 @@ pub(super) fn handle_local_wsl_interactive_terminal_event(
     event: LocalWslTerminalServerPayload,
 ) {
     match event {
-        LocalWslTerminalServerPayload::InteractiveOpened(_) => {
+        LocalWslTerminalServerPayload::Opened => {
             mark_terminal_interactive_ready(app);
             // 每会话态：交互 shell 就绪即把「这个会话」置为 IdleInteractive（每会话各自从
             // Booting 起步），作为后续 dispatch -> SwitchingToRun 的合法起点。
             set_session_state_and_emit(app, state, session_id, TerminalState::IdleInteractive);
         }
-        LocalWslTerminalServerPayload::InteractiveData(payload) => {
+        LocalWslTerminalServerPayload::Data(payload) => {
             emit_terminal_interactive_output(app, state, session_id, payload.data);
         }
-        LocalWslTerminalServerPayload::InteractiveClosed(payload) => {
+        LocalWslTerminalServerPayload::Closed(payload) => {
             remove_interactive_terminal_after_exit(state, session_id);
             mark_terminal_interactive_exited(
                 app,
@@ -175,29 +175,7 @@ pub(super) fn handle_local_wsl_interactive_terminal_event(
                 },
             );
         }
-        LocalWslTerminalServerPayload::InteractiveError(payload) => {
-            if let Some(message_session_id) = payload.session_id.as_ref()
-                && message_session_id == session_id
-            {
-                emit_terminal_interactive_output(
-                    app,
-                    state,
-                    session_id,
-                    format!("{}\n", payload.message),
-                );
-            }
-            remove_interactive_terminal_after_exit(state, session_id);
-            mark_terminal_interactive_exited(
-                app,
-                state,
-                TerminalExitEvent {
-                    session_id: session_id.to_string(),
-                    exit_code: payload.exit_code,
-                },
-            );
-        }
-        LocalWslTerminalServerPayload::InteractiveAck(_) => {}
-        LocalWslTerminalServerPayload::InteractiveMark(payload) => {
+        LocalWslTerminalServerPayload::Mark(payload) => {
             handle_interactive_shell_mark(app, state, session_id, payload.mark);
         }
     }
@@ -206,6 +184,7 @@ pub(super) fn handle_local_wsl_interactive_terminal_event(
 /// 消费交互 shell 上报的 OSC 133 生命周期标记，合成运行的 RunStarted/RunCompleted：
 /// - C（命令开始执行）：该会话若有处于 SwitchingToRun 的活动运行 → 进入 Running 并发 RunStarted。
 /// - D[;exit]（命令完成）：该会话若有处于 Running 的活动运行 → 回收会话态并发 RunCompleted。
+///
 /// 无活动运行（用户在终端里手动敲的命令）一律忽略，不为手输命令合成 run 事件。
 /// 单命令/会话模型下 pid 不再有独立含义，取 0。
 fn handle_interactive_shell_mark(

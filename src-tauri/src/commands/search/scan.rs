@@ -726,7 +726,7 @@ fn line_text_at_byte(source: &[u8], byte_offset: usize) -> String {
         .map(|index| offset + index)
         .unwrap_or(source.len());
     String::from_utf8_lossy(&source[start..end])
-        .trim_end_matches(|ch| ch == '\r' || ch == '\n')
+        .trim_end_matches(['\r', '\n'])
         .to_string()
 }
 

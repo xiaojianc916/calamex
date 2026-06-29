@@ -1,6 +1,5 @@
 // 终端域模块：iPTY 长寿命交互会话 + 本地 WSL 脚本运行通道。
 
-pub mod ansi;
 pub mod command_contracts;
 pub mod dispatch;
 pub mod flow_control;

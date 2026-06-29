@@ -91,6 +91,13 @@ impl CredentialStore {
     }
 
     /// 写入 Tavily API Key 到独立 keyring 账户：`trim` 后非空则写入；为空即视为「清除」。
+    ///
+    /// 暂未接线：写入侧将在 P5c「web/* → tavily-mcp」管线落地时由设置层调用，与 `get_tavily`
+    /// / `clear_tavily` 读取/清除对称保留；`#[expect]` 在其被消费后自动失效以提醒移除本标注。
+    #[expect(
+        dead_code,
+        reason = "P5c web/* → tavily-mcp 接线后消费；保留写入侧 API 与读取/清除对称"
+    )]
     pub fn set_tavily(api_key: &str) -> Result<(), String> {
         let trimmed = api_key.trim();
         if trimmed.is_empty() {
@@ -150,7 +157,6 @@ pub fn default_provider_base_url(provider_id: &str) -> Option<&'static str> {
 /// builtin sidecar 与各外部 agent 的 provisioner 均以此为唯一入口，
 /// 杜绝多处各自从 keyring / 端点表取值导致的漂移。
 pub struct ResolvedCredential {
-    pub provider_id: String,
     pub api_key: String,
     pub base_url: Option<String>,
 }
@@ -183,11 +189,7 @@ impl CredentialStore {
         let api_key = Self::get(normalized_provider_id)?;
         let base_url = resolve_provider_base_url(normalized_provider_id, explicit_base_url);
 
-        Ok(ResolvedCredential {
-            provider_id: normalized_provider_id.to_string(),
-            api_key,
-            base_url,
-        })
+        Ok(ResolvedCredential { api_key, base_url })
     }
 }
 
@@ -233,13 +235,11 @@ mod tests {
     }
 
     #[test]
-    fn resolved_credential_exposes_provider_and_base_url() {
+    fn resolved_credential_exposes_base_url() {
         let resolved = ResolvedCredential {
-            provider_id: "deepseek".to_string(),
             api_key: "sk-test".to_string(),
             base_url: resolve_provider_base_url("deepseek", None),
         };
-        assert_eq!(resolved.provider_id, "deepseek");
         assert_eq!(
             resolved.base_url.as_deref(),
             Some("https://api.deepseek.com/v1")

@@ -99,17 +99,6 @@ struct SnapshotManifestFile {
     byte_size: u64,
 }
 
-pub fn store_pre_tool_snapshot(
-    storage_root: &Path,
-    files: &[SnapshotSourceFile<'_>],
-    metadata: Option<&AiApplyPatchMetadataRequest>,
-    summary: &str,
-) -> Result<AiSnapshotPayload, String> {
-    storage_lock::with_storage_write_lock(storage_root, "写入 AED 快照", || {
-        let store = open_store(storage_root)?;
-        store_pre_tool_snapshot_with_store(storage_root, &store, files, metadata, summary)
-    })
-}
 
 fn store_pre_tool_snapshot_with_store(
     storage_root: &Path,
@@ -131,17 +120,6 @@ fn store_pre_tool_snapshot_with_store(
     )
 }
 
-pub fn store_task_start_snapshot(
-    storage_root: &Path,
-    files: &[SnapshotSourceFile<'_>],
-    metadata: Option<&AiApplyPatchMetadataRequest>,
-    summary: &str,
-) -> Result<AiSnapshotPayload, String> {
-    storage_lock::with_storage_write_lock(storage_root, "写入 AED 快照", || {
-        let store = open_store(storage_root)?;
-        store_task_start_snapshot_with_store(storage_root, &store, files, metadata, summary)
-    })
-}
 
 fn store_task_start_snapshot_with_store(
     storage_root: &Path,
@@ -164,17 +142,6 @@ fn store_task_start_snapshot_with_store(
     )
 }
 
-pub fn store_turn_start_snapshot(
-    storage_root: &Path,
-    files: &[SnapshotSourceFile<'_>],
-    metadata: Option<&AiApplyPatchMetadataRequest>,
-    summary: &str,
-) -> Result<AiSnapshotPayload, String> {
-    storage_lock::with_storage_write_lock(storage_root, "写入 AED 快照", || {
-        let store = open_store(storage_root)?;
-        store_turn_start_snapshot_with_store(storage_root, &store, files, metadata, summary)
-    })
-}
 
 fn store_turn_start_snapshot_with_store(
     storage_root: &Path,
@@ -949,8 +916,8 @@ fn read_blob(
 mod tests {
     use super::{
         SnapshotRetentionPolicy, SnapshotSourceFile, apply_snapshot_retention,
-        list_stored_snapshots, load_stored_snapshot, store_manual_snapshot,
-        store_pre_tool_snapshot,
+        list_stored_snapshots, load_stored_snapshot, store_checkpoint_snapshots,
+        store_manual_snapshot,
     };
     use crate::ai::edit::history::pins::PinIndex;
     use crate::ai::edit::io;
@@ -958,11 +925,11 @@ mod tests {
     use std::fs;
 
     #[test]
-    fn store_pre_tool_snapshot_writes_manifest_and_dedupes_small_blobs_in_fjall() {
+    fn store_checkpoint_pre_tool_snapshot_writes_manifest_and_dedupes_small_blobs_in_fjall() {
         let temp_dir = temp_dir("aed-snapshot");
         fs::create_dir_all(&temp_dir).expect("temp directory should be created");
 
-        let snapshot = store_pre_tool_snapshot(
+        let (task_start, turn_start, snapshot) = store_checkpoint_snapshots(
             &temp_dir,
             &[
                 SnapshotSourceFile {
@@ -987,8 +954,14 @@ mod tests {
                 workspace_root_path: None,
             }),
             "应用 AI Patch",
+            false,
+            false,
+            false,
         )
         .expect("snapshot should be written");
+
+        assert!(task_start.is_none());
+        assert!(turn_start.is_none());
 
         let restored = list_stored_snapshots(&temp_dir).expect("snapshots should be listed");
         let stored = load_stored_snapshot(&temp_dir, &snapshot.id).expect("snapshot should load");

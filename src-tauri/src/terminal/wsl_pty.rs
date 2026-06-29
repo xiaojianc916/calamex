@@ -14,7 +14,7 @@ use std::{
         atomic::{AtomicBool, Ordering},
         mpsc::{self, Receiver, RecvTimeoutError, Sender},
     },
-    time::{Duration, SystemTime, UNIX_EPOCH},
+    time::Duration,
 };
 
 use portable_pty::{Child, ChildKiller, CommandBuilder, MasterPty, PtySize, native_pty_system};
@@ -24,9 +24,8 @@ use wait_timeout::ChildExt;
 use super::flow_control::{FlowController, utf16_len};
 use super::local_wsl_protocol::{
     LocalWslTerminalInteractiveClosed, LocalWslTerminalInteractiveData,
-    LocalWslTerminalInteractiveMark, LocalWslTerminalInteractiveOpened,
-    LocalWslTerminalOpenInteractiveRequest, LocalWslTerminalServerPayload,
-    LocalWslUtf8ChunkDecoder,
+    LocalWslTerminalInteractiveMark, LocalWslTerminalOpenInteractiveRequest,
+    LocalWslTerminalServerPayload, LocalWslUtf8ChunkDecoder,
 };
 use super::wsl::bash_quote;
 
@@ -58,11 +57,10 @@ pub enum LocalWslPtyError {
     Close(String),
 }
 
-/// 本地 PTY 交互式终端句柄：对外提供 session_id / write_input / resize / close，
+/// 本地 PTY 交互式终端句柄：对外提供 write_input / resize / close，
 /// 以及关闭看门狗所需的 is_finished / force_kill。
 #[derive(Clone)]
 pub struct LocalWslPtyHandle {
-    session_id: String,
     writer: Arc<Mutex<Box<dyn Write + Send>>>,
     /// resize 合批通道发送端：所有 resize 经此投递给该会话独占的合批线程串行应用（见 spawn_resize_worker）。
     resize_tx: Sender<(u16, u16)>,
@@ -76,10 +74,6 @@ pub struct LocalWslPtyHandle {
 }
 
 impl LocalWslPtyHandle {
-    pub fn session_id(&self) -> &str {
-        &self.session_id
-    }
-
     /// 底层交互 shell 是否已结束（读线程在 child.wait 返回后置位）。关闭看门狗据此判断
     /// kill 后读线程是否已正常收尾。
     pub fn is_finished(&self) -> bool {
@@ -143,7 +137,7 @@ impl LocalWslPtyHandle {
 
 /// 打开一个本地 PTY 交互式 WSL2 终端，并接入每会话输出流控器（P2 ack 背压）。
 ///
-/// on_event 在独立读线程中被调用：InteractiveOpened → 若干 InteractiveData → InteractiveClosed。
+/// on_event 在独立读线程中被调用：Opened → 若干 Data → Closed。
 /// flow 为 None 时不施加背压。
 pub fn open_interactive_terminal_local_with_flow<F>(
     request: LocalWslTerminalOpenInteractiveRequest,
@@ -214,7 +208,6 @@ where
 
     spawn_interactive_reader(
         session_id.clone(),
-        working_directory,
         pid,
         reader,
         child,
@@ -232,7 +225,6 @@ where
     spawn_resize_worker(session_id.clone(), pair.master, resize_rx);
 
     Ok(LocalWslPtyHandle {
-        session_id,
         writer: Arc::new(Mutex::new(writer)),
         resize_tx,
         killer: Arc::new(Mutex::new(killer)),
@@ -244,7 +236,6 @@ where
 #[allow(clippy::too_many_arguments)]
 fn spawn_interactive_reader<F>(
     session_id: String,
-    working_directory: String,
     pid: u32,
     mut reader: Box<dyn Read + Send>,
     mut child: Box<dyn Child + Send + Sync>,
@@ -258,14 +249,7 @@ where
     std::thread::Builder::new()
         .name(format!("wsl-pty-{session_id}"))
         .spawn(move || {
-            on_event(LocalWslTerminalServerPayload::InteractiveOpened(
-                LocalWslTerminalInteractiveOpened {
-                    session_id: session_id.clone(),
-                    cwd: working_directory,
-                    pid,
-                    opened_at_unix_ms: now_unix_ms(),
-                },
-            ));
+            on_event(LocalWslTerminalServerPayload::Opened);
             log::debug!("WSL 交互终端读线程已启动（session_id={session_id}, pid={pid}）。");
 
             // Shell Integration 过滤器：从交互输出流中剥离注入的 OSC 133/633 标记（Batch 1 丢弃
@@ -293,11 +277,8 @@ where
                             let (clean, marks) = shell_filter.filter(&chunk);
                             // 先把本批解析出的 OSC 133/633 标记上抛（clean 为空时标记也不能丢）。
                             for mark in marks {
-                                on_event(LocalWslTerminalServerPayload::InteractiveMark(
-                                    LocalWslTerminalInteractiveMark {
-                                        session_id: session_id.clone(),
-                                        mark,
-                                    },
+                                on_event(LocalWslTerminalServerPayload::Mark(
+                                    LocalWslTerminalInteractiveMark { mark },
                                 ));
                             }
                             if clean.is_empty() {
@@ -307,11 +288,8 @@ where
                             if let Some(flow) = &flow {
                                 flow.record_produced(utf16_len(&clean));
                             }
-                            on_event(LocalWslTerminalServerPayload::InteractiveData(
-                                LocalWslTerminalInteractiveData {
-                                    session_id: session_id.clone(),
-                                    data: clean,
-                                },
+                            on_event(LocalWslTerminalServerPayload::Data(
+                                LocalWslTerminalInteractiveData { data: clean },
                             ));
                         }
                     }
@@ -326,11 +304,8 @@ where
             decoder.decode_into(&[], &mut pending_out, true);
             let (mut tail, tail_marks) = shell_filter.filter(&std::mem::take(&mut pending_out));
             for mark in tail_marks {
-                on_event(LocalWslTerminalServerPayload::InteractiveMark(
-                    LocalWslTerminalInteractiveMark {
-                        session_id: session_id.clone(),
-                        mark,
-                    },
+                on_event(LocalWslTerminalServerPayload::Mark(
+                    LocalWslTerminalInteractiveMark { mark },
                 ));
             }
             tail.push_str(&shell_filter.flush_remaining());
@@ -338,11 +313,8 @@ where
                 if let Some(flow) = &flow {
                     flow.record_produced(utf16_len(&tail));
                 }
-                on_event(LocalWslTerminalServerPayload::InteractiveData(
-                    LocalWslTerminalInteractiveData {
-                        session_id: session_id.clone(),
-                        data: tail,
-                    },
+                on_event(LocalWslTerminalServerPayload::Data(
+                    LocalWslTerminalInteractiveData { data: tail },
                 ));
             }
 
@@ -363,12 +335,8 @@ where
             );
             // 在 session_id 被移入关闭事件前算出集成脚本路径，供事件发出后清理（不阻塞关闭通知）。
             let integration_script_path = shell_integration_script_path(&session_id);
-            on_event(LocalWslTerminalServerPayload::InteractiveClosed(
-                LocalWslTerminalInteractiveClosed {
-                    session_id,
-                    exit_code,
-                    finished_at_unix_ms: now_unix_ms(),
-                },
+            on_event(LocalWslTerminalServerPayload::Closed(
+                LocalWslTerminalInteractiveClosed { exit_code },
             ));
             // 关闭事件已发出后再清理遗留的集成脚本；覆盖正常退出 / kill / 看门狗各路径。
             if let Err(error) = cleanup_wsl_script(&integration_script_path) {
@@ -588,12 +556,6 @@ fn normalize_interactive_cwd(working_directory: &str) -> String {
     }
 }
 
-fn now_unix_ms() -> i64 {
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map(|duration| i64::try_from(duration.as_millis()).unwrap_or(i64::MAX))
-        .unwrap_or(0)
-}
 
 #[cfg(test)]
 mod tests {
@@ -614,10 +576,6 @@ mod tests {
         );
     }
 
-    #[test]
-    fn now_unix_ms_is_positive() {
-        assert!(now_unix_ms() > 0);
-    }
 
     #[test]
     fn coalesces_while_saturated_and_flushes_on_drain() {
