@@ -37,7 +37,12 @@ const createStrictContext = <TContext extends object>(context: TContext): TConte
 
 export const compilePromptTemplate = <TContext extends object>(
     source: string,
-): ICompiledPromptTemplate<TContext> => ({
-    render: (context: TContext): string =>
-        eta.renderString(source, createStrictContext(context)) as string,
-});
+): ICompiledPromptTemplate<TContext> => {
+    // 预编译一次：eta 的核心能力是 compile（模板 -> 可复用函数），渲染时仅执行。
+    // 旧实现用 renderString 会在每次渲染时重新解析模板字符串，等于关掉了 eta 的预编译优势。
+    const templateFn = eta.compile(source);
+    return {
+        render: (context: TContext): string =>
+            eta.render(templateFn, createStrictContext(context)),
+    };
+};
