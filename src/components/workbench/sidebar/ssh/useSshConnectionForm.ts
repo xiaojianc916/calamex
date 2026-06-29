@@ -1,6 +1,4 @@
-import { toTypedSchema } from '@vee-validate/zod';
-import { useForm } from 'vee-validate';
-import { computed, ref } from 'vue';
+import { computed, reactive, ref, toRefs } from 'vue';
 import { tauriService } from '@/services/tauri';
 import { useSshStore } from '@/store/ssh';
 import {
@@ -12,6 +10,9 @@ import {
 } from '@/types/ssh/connection.schema';
 import type { ISshFileWriteRequest } from '@/types/tauri';
 import { DEFAULT_SSH_PORT } from './ssh-sidebar.constants';
+
+/** 字段级错误信息:字段名 -> 第一条校验错误文案 */
+type SshConnectionFieldErrors = Record<string, string>;
 
 export const useSshConnectionForm = () => {
   const sshStore = useSshStore();
@@ -31,26 +32,62 @@ export const useSshConnectionForm = () => {
     };
   };
 
-  const {
-    values: connectionForm,
-    errors: connectionFieldErrors,
-    defineField,
-    handleSubmit: handleVeeSubmit,
-    resetForm,
-    setFieldValue,
-    validate: validateConnection,
-  } = useForm<SshConnectionFormValues>({
-    validationSchema: toTypedSchema(sshConnectionSchema),
-    initialValues: buildInitialFormValues(),
-    validateOnMount: false,
-  });
+  // 构造时快照一份初始值:resetForm() 无参时回到这份快照,与原 vee-validate 行为一致。
+  const initialFormValues = buildInitialFormValues();
+  const connectionForm = reactive<SshConnectionFormValues>({ ...initialFormValues });
+  const connectionFieldErrors = reactive<SshConnectionFieldErrors>({});
 
-  const [host] = defineField('host');
-  const [port] = defineField('port');
-  const [username] = defineField('username');
-  const [authMode] = defineField('authMode');
-  const [identityPath] = defineField('identityPath');
-  const [password] = defineField('password');
+  const { host, port, username, authMode, identityPath, password } = toRefs(connectionForm);
+
+  const clearConnectionFieldErrors = (): void => {
+    for (const key of Object.keys(connectionFieldErrors)) {
+      delete connectionFieldErrors[key];
+    }
+  };
+
+  // 每个字段只保留第一条错误,行为对齐表单库的 errors 映射。
+  const applyValidationIssues = (
+    issues: ReadonlyArray<{ path: ReadonlyArray<PropertyKey>; message: string }>,
+  ): void => {
+    clearConnectionFieldErrors();
+    for (const issue of issues) {
+      const key = issue.path[0];
+      if (typeof key === 'string' && connectionFieldErrors[key] === undefined) {
+        connectionFieldErrors[key] = issue.message;
+      }
+    }
+  };
+
+  const validateConnection = async (): Promise<{ valid: boolean }> => {
+    const result = sshConnectionSchema.safeParse({ ...connectionForm });
+    if (result.success) {
+      clearConnectionFieldErrors();
+      return { valid: true };
+    }
+    applyValidationIssues(result.error.issues);
+    return { valid: false };
+  };
+
+  const handleVeeSubmit =
+    (onValid: (values: SshConnectionFormValues) => unknown | Promise<unknown>) =>
+    async (event?: Event): Promise<void> => {
+      event?.preventDefault();
+      const { valid } = await validateConnection();
+      if (!valid) return;
+      await onValid({ ...connectionForm });
+    };
+
+  const setFieldValue = <K extends keyof SshConnectionFormValues>(
+    field: K,
+    value: SshConnectionFormValues[K],
+  ): void => {
+    connectionForm[field] = value;
+  };
+
+  const resetForm = (options?: { values?: SshConnectionFormValues }): void => {
+    Object.assign(connectionForm, options?.values ?? { ...initialFormValues });
+    clearConnectionFieldErrors();
+  };
 
   const isPasswordVisible = ref(false);
   const passwordInputType = computed(() => (isPasswordVisible.value ? 'text' : 'password'));
