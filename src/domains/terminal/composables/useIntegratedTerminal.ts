@@ -86,7 +86,7 @@ export const useIntegratedTerminalControls = () => {
       const runId = editorStore.currentRunId;
       if (editorStore.isRunning && runId) {
         try {
-          await terminalFacade.cancelRun(runId, 'graceful');
+          await terminalFacade.cancelRun(runId);
           return;
         } catch (error) {
           if (!shouldFallbackToInteractiveInterrupt(error)) {
