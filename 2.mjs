@@ -1,270 +1,261 @@
-// fix-ai-review-batch-2.mjs  (A3 + A6；兼容 Windows CRLF；幂等)
-// 在仓库根目录执行：node fix-ai-review-batch-2.mjs
-import { readFileSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
+// scripts/refactor/b4-s3-builtin-acp-native.mjs
+//
+// B4 · S3 —— builtin 切入唯一标准 ACP 管线（session/prompt + set_session_mode）。
+//
+// 决策（你已确认）：统一 builtin 的 chat/agent/plan 三模式，全部经标准 ACP session/prompt
+// 发送；模式经官方 set_session_mode 一次性切换（不入 prompt 负载）；legacy 分流全停用待 D1 删。
+//
+// 本脚本只改前端编排层 src/composables/ai/useAiAssistant.ts（按域、不碰面板/类型/后端）：
+//   1) 新增 builtin 三模式 → ACP 模式 id 映射常量（chat→ask / agent→agent / plan→plan）。
+//   2) executeExternalAgentRequest 增加可选 sessionMode 形参；builtin 在 prompt 前先
+//      ensureAcpSession 建会话、再 set_session_mode 一次性切到目标模式（同一 thread 键，故被
+//      本回合 prompt 复用），随后标准 session/prompt 按会话模式分流（见 builtin-agent agent.prompt）。
+//   3) sendMessage：所有后端（builtin / Kimi / Codex）统一走 executeExternalAgentRequest；
+//      删除 agent/plan/chat 三条 legacy 分支与穷举兜底，及仅 chat 用的 nextMessages 局部量。
+//
+// 先建后删（过渡期，符合「暂时无法编译可接受」）：executeSidecarAgentRequest / executeAiRequest
+// 失去调用点后成为未使用函数（typecheck/lint 报 no-unused-vars），连同 finalizeSidecarTurn /
+// applySidecarPatchSets / agentPlan.createPlan 等一并在 D1 删除，本步不动以防功能回退。
+//
+// 后端前置假设（运行前请确认其一已就绪）：宿主 ai_ensure_acp_session / ai_set_session_mode
+// 能按 threadId 解析 builtin 后端会话（与 Kimi 同构）。S2 已把 builtin 收敛到同一
+// ensure_session/new_session 路径，故按 thread 键解析应成立；若宿主未路由 builtin 这两个命令，
+// 需在后端步补齐（属 host 路由，不在本前端脚本范围）。
+//
+// 用法：node scripts/refactor/b4-s3-builtin-acp-native.mjs   （不提交）
 
-const root = process.cwd();
-const read = (rel) => readFileSync(join(root, rel), "utf8");
-const write = (rel, s) => writeFileSync(join(root, rel), s);
-const eolOf = (s) => (s.includes("\r\n") ? "\r\n" : "\n");
+import { readFileSync, writeFileSync } from 'node:fs';
+import { resolve } from 'node:path';
 
-// 替换一段连续文本（幂等：原锚点已消失但新文本已存在则跳过）。
-function replaceBlock(rel, oldLines, newLines, label) {
-  const s = read(rel);
-  const eol = eolOf(s);
-  const oldStr = oldLines.join(eol);
-  const newStr = newLines.join(eol);
-  const n = s.split(oldStr).length - 1;
-  if (n === 0) {
-    if (s.includes(newStr)) {
-      console.log(`[skip] ${label}（已应用）`);
-      return;
-    }
-    throw new Error(`未找到锚点: ${label} @ ${rel}`);
+const ROOT = process.cwd();
+const TARGET = 'src/composables/ai/useAiAssistant.ts';
+
+function read(rel) {
+  const abs = resolve(ROOT, rel);
+  const raw = readFileSync(abs, 'utf8');
+  const eol = raw.includes('\r\n') ? '\r\n' : '\n';
+  return { abs, lf: raw.replace(/\r\n/g, '\n'), eol };
+}
+
+function write(abs, lfContent, eol) {
+  const out = eol === '\r\n' ? lfContent.replace(/\n/g, '\r\n') : lfContent;
+  writeFileSync(abs, out, 'utf8');
+}
+
+function replaceOnce(haystack, oldStr, newStr, label) {
+  const i = haystack.indexOf(oldStr);
+  if (i === -1) throw new Error('[S3] 锚点未命中: ' + label);
+  if (haystack.indexOf(oldStr, i + oldStr.length) !== -1) {
+    throw new Error('[S3] 锚点不唯一: ' + label);
   }
-  if (n > 1) throw new Error(`锚点出现 ${n} 次(应唯一): ${label} @ ${rel}`);
-  write(rel, s.replace(oldStr, newStr));
-  console.log(`[fix] ${label}`);
+  return haystack.slice(0, i) + newStr + haystack.slice(i + oldStr.length);
 }
 
-// 在锚点之后插入文本（幂等：marker 已存在则跳过）。
-function insertAfter(rel, anchorLines, insertLines, marker, label) {
-  const s = read(rel);
-  const eol = eolOf(s);
-  if (s.includes(marker)) {
-    console.log(`[skip] ${label}（已应用）`);
-    return;
-  }
-  const anchor = anchorLines.join(eol);
-  const n = s.split(anchor).length - 1;
-  if (n === 0) throw new Error(`未找到锚点: ${label} @ ${rel}`);
-  if (n > 1) throw new Error(`锚点出现 ${n} 次(应唯一): ${label} @ ${rel}`);
-  write(rel, s.replace(anchor, anchor + eol + eol + insertLines.join(eol)));
-  console.log(`[fix] ${label}`);
-}
+const L = (lines) => lines.join('\n');
 
-// ════════ A3：acp/agent.ts —— 抽取 buildExtRunOptions 消除 5 处重复 ════════
-const AGENT = "builtin-agent/src/acp/agent.ts";
+// ---------------------------------------------------------------------------
+// Edit 1 —— 模式映射常量（插入到 SIDECAR_EXPLICIT_CONTEXT_MESSAGE_LIMIT 之后）。
+// ---------------------------------------------------------------------------
+const EDIT1_OLD = 'const SIDECAR_EXPLICIT_CONTEXT_MESSAGE_LIMIT = 12;';
+const EDIT1_NEW = L([
+  'const SIDECAR_EXPLICIT_CONTEXT_MESSAGE_LIMIT = 12;',
+  '',
+  '// builtin 是标准 ACP 后端：前端三模式（chat/agent/plan）→ Agent 公示的 ACP 会话模式 id',
+  '// （ask/plan/agent，见 builtin-agent AGENT_MODES / RUNTIME_METHOD_BY_MODE）。经官方',
+  '// set_session_mode 一次性切换会话模式，绝不随 session/prompt 负载携带（IAgentExternalChatRequest',
+  '// 无 mode 字段）。',
+  'const BUILTIN_ACP_MODE_BY_ASSISTANT_MODE: Record<TAiAssistantMode, string> = {',
+  "  chat: 'ask',",
+  "  agent: 'agent',",
+  "  plan: 'plan',",
+  '};',
+]);
 
-// (1) 在 extMethod 之后插入私有 helper。
-insertAfter(
-  AGENT,
-  [
-    "\t\t\tdefault:",
-    "\t\t\t\tthrow RequestError.methodNotFound(method)",
-    "\t\t}",
-    "\t}",
-  ],
-  [
-    "\t/**",
-    "\t * 构造一次带外（非 prompt 回合）运行时调用的 run options：调用作用域的",
-    "\t * AbortController + 逐次新生 requestId + advisory 超时；携带 sessionId 时附加",
-    "\t * onEvent 投影（实时预览下发），否则不投影。抽出以消除各扩展 handler 间重复（A3）。",
-    "\t */",
-    "\tprivate buildExtRunOptions(sessionId?: string): IAgentRuntimeRunOptions {",
-    "\t\tconst controller = new AbortController()",
-    "\t\treturn {",
-    "\t\t\tcontext: {",
-    "\t\t\t\trequestId: this.generateRequestId(),",
-    "\t\t\t\tsignal: controller.signal,",
-    "\t\t\t\ttimeoutMs: this.turnTimeoutMs,",
-    "\t\t\t},",
-    "\t\t\t...(sessionId !== undefined",
-    "\t\t\t\t? {",
-    "\t\t\t\t\t\tonEvent: (event: TAgentRuntimeOutputEvent) =>",
-    "\t\t\t\t\t\t\tthis.emitOutputEvent(sessionId, event),",
-    "\t\t\t\t\t}",
-    "\t\t\t\t: {}),",
-    "\t\t}",
-    "\t}",
-  ],
-  "private buildExtRunOptions(",
-  "A3: agent.ts 插入 buildExtRunOptions helper",
-);
+// ---------------------------------------------------------------------------
+// Edit 2 —— executeExternalAgentRequest 注释 + 形参（加 sessionMode）。
+// ---------------------------------------------------------------------------
+const EDIT2_OLD = L([
+  '  // 外部 ACP 编码 agent（Kimi / Codex，ADR-0015）发送链路：经 builtin_agent_external_chat',
+  '  // 驱动一轮标准 session/prompt。外部 agent 无富信封，过程增量经 session/update 帧走既有',
+  '  // sidecar 流（subscribeSidecarSessionStream + applySidecarLiveEventsToAgentMessage）。',
+  '  // 流式关键：用前端预生成的 sidecarSessionId 在发起回合「之前」订阅，后端据此把外部帧的',
+  '  // session_id 由 ACP 会话 UUID 重写为该键（见 Rust host.prompt_with_stream_key），实现逐',
+  '  // token 实时渲染；prompt 返回即整轮结束，flush 后把消息状态收口为 completed。',
+  '  const executeExternalAgentRequest = async (',
+  '    backend: TAgentBackendKind,',
+  '    messageContent: string,',
+  '    threadId: string | null,',
+  '  ): Promise<void> => {',
+]);
+const EDIT2_NEW = L([
+  '  // 唯一标准发送链路（ADR-20260617）：所有 ACP 后端（builtin / Kimi / Codex）一律经',
+  '  // builtin_agent_external_chat 驱动一轮标准 session/prompt。builtin 的 chat/plan/agent 三模式经',
+  '  // 官方 set_session_mode 在发起回合前一次性切换（见下方 sessionMode 分支，映射 ask/plan/agent），',
+  '  // 不再走自研边车的 mode 分流；Kimi / Codex 自管会话模式，不下发 sessionMode。过程增量经',
+  '  // session/update 帧走既有 sidecar 流（subscribeSidecarSessionStream +',
+  '  // applySidecarLiveEventsToAgentMessage）；工具审批 / 反向提问经 session/request_permission 由',
+  '  // 面板级 useAcpApproval 闭环呈现，均不在本链路内联处理。',
+  '  // 流式关键：用前端预生成的 sidecarSessionId 在发起回合「之前」订阅，后端据此把帧的 session_id',
+  '  // 由 ACP 会话 UUID 重写为该键（见 Rust host.prompt_with_stream_key），实现逐 token 实时渲染；',
+  '  // prompt 返回即整轮结束，flush 后把消息状态收口为 completed。',
+  '  const executeExternalAgentRequest = async (',
+  '    backend: TAgentBackendKind,',
+  '    messageContent: string,',
+  '    threadId: string | null,',
+  '    sessionMode?: string,',
+  '  ): Promise<void> => {',
+]);
 
-// (2) 替换 5 个 handler 中重复的 run-options 构造。
-const OPTS_SESSION = [
-  "\t\tconst controller = new AbortController()",
-  "\t\tconst { sessionId } = input",
-  "\t\tconst options: IAgentRuntimeRunOptions = {",
-  "\t\t\tcontext: {",
-  "\t\t\t\trequestId: this.generateRequestId(),",
-  "\t\t\t\tsignal: controller.signal,",
-  "\t\t\t\ttimeoutMs: this.turnTimeoutMs,",
-  "\t\t\t},",
-  "\t\t\t...(sessionId !== undefined",
-  "\t\t\t\t? {",
-  "\t\t\t\t\t\tonEvent: (event: TAgentRuntimeOutputEvent) =>",
-  "\t\t\t\t\t\t\tthis.emitOutputEvent(sessionId, event),",
-  "\t\t\t\t\t}",
-  "\t\t\t\t: {}),",
-  "\t\t}",
-];
-const OPTS_NO_SESSION = [
-  "\t\tconst controller = new AbortController()",
-  "\t\tconst options: IAgentRuntimeRunOptions = {",
-  "\t\t\tcontext: {",
-  "\t\t\t\trequestId: this.generateRequestId(),",
-  "\t\t\t\tsignal: controller.signal,",
-  "\t\t\t\ttimeoutMs: this.turnTimeoutMs,",
-  "\t\t\t},",
-  "\t\t}",
-];
+// ---------------------------------------------------------------------------
+// Edit 3 —— prompt 前为 builtin 注入 ensureAcpSession + set_session_mode。
+// ---------------------------------------------------------------------------
+const EDIT3_OLD = L([
+  '      await aiService.sidecarExternalChat({',
+  '        backend,',
+  '        text: messageContent,',
+  '        sessionId: sidecarSessionId,',
+  '        workspaceRootPath: options.workspaceRootPath.value,',
+  '        ...(targetThreadId ? { threadId: targetThreadId } : {}),',
+  '      });',
+]);
+const EDIT3_NEW = L([
+  "      if (backend === 'builtin' && sessionMode !== undefined) {",
+  '        // builtin 也是标准 ACP 后端：先确保会话建立（与本回合 prompt 同一 thread 键，故被 prompt',
+  '        // 复用），再经官方 set_session_mode 把会话一次性切到目标模式；随后标准 session/prompt 即按',
+  '        // 会话模式分流到 chat/plan/execute（见 builtin-agent CalamexAcpAgent.prompt）。',
+  "        const sessionThreadId = targetThreadId ?? '';",
+  '        await aiService.ensureAcpSession({',
+  '          threadId: sessionThreadId,',
+  '          backend,',
+  '          workspaceRootPath: options.workspaceRootPath.value,',
+  '        });',
+  '        await aiService.setSessionMode({ threadId: sessionThreadId, modeId: sessionMode });',
+  '      }',
+  '',
+  '      await aiService.sidecarExternalChat({',
+  '        backend,',
+  '        text: messageContent,',
+  '        sessionId: sidecarSessionId,',
+  '        workspaceRootPath: options.workspaceRootPath.value,',
+  '        ...(targetThreadId ? { threadId: targetThreadId } : {}),',
+  '      });',
+]);
 
-const handlers = [
-  { parse: "parseCheckpointRestoreParams", call: "this.runtime.restoreCheckpoint", arg: "input.sessionId", session: true },
-  { parse: "parseModelChatParams", call: "this.runtime.modelChat", arg: "", session: false },
-  { parse: "parseAgentChatParams", call: "this.runtime.chat", arg: "input.sessionId", session: true },
-  { parse: "parseAgentChatResolveParams", call: "this.runtime.resolveApproval", arg: "input.sessionId", session: true },
-  { parse: "parseAgentAskUserResumeParams", call: "this.runtime.resolveAskUser", arg: "input.sessionId", session: true },
-];
+// ---------------------------------------------------------------------------
+// Edit 4 —— sendMessage 路由收敛为唯一标准管线（删 nextMessages + 三条 legacy 分支 + 穷举兜底）。
+// ---------------------------------------------------------------------------
+const EDIT4_OLD = L([
+  '    const nextMessages = unref(conversationStore.activeMessages);',
+  '',
+  '    // 外部 ACP 编码 agent（Kimi / Codex）走独立发送链路，与 activeMode（chat/agent/plan）无关：',
+  '    // 外部 agent 自管会话与运行循环，不复用自研边车的 mode 分流。',
+  '    const externalBackend = sendOptions?.agentBackend;',
+  "    if (externalBackend && externalBackend !== 'builtin') {",
+  '      await executeExternalAgentRequest(externalBackend, messageContent, titleThreadId);',
+  '',
+  '      if (!errorMessage.value) {',
+  '        void maybeGenerateConversationTitle(titleThreadId);',
+  '      }',
+  '',
+  '      return;',
+  '    }',
+  '',
+  "    if (activeMode.value === 'agent') {",
+  '      await executeSidecarAgentRequest(messageContent, references, userMessage.id, titleThreadId);',
+  '',
+  '      if (!errorMessage.value) {',
+  '        void maybeGenerateConversationTitle(titleThreadId);',
+  '      }',
+  '',
+  '      return;',
+  '    }',
+  '',
+  "    if (activeMode.value === 'plan') {",
+  '      agentSteps.value = [];',
+  '      let planSucceeded = false;',
+  '',
+  '      try {',
+  '        const planResult = await agentPlan.createPlan(',
+  '          messageContent,',
+  '          buildSidecarContextReferences(references),',
+  '          options.workspaceRootPath.value,',
+  '          titleThreadId ? { threadId: titleThreadId } : {},',
+  '        );',
+  '',
+  '        agentSteps.value = planResult.steps.map((step) => ({',
+  '          id: step.id,',
+  '          title: step.title,',
+  '          status: step.status,',
+  '        }));',
+  '',
+  '        clearAttachedFiles({ revokePreviews: false });',
+  '        planSucceeded = true;',
+  '      } catch (error) {',
+  "        const message = toErrorMessage(error, '生成计划失败。');",
+  '        errorMessage.value = message;',
+  '        agentSteps.value = [];',
+  '        aiThreadStore.patchActiveThreadEntries((entries) => [',
+  '          ...entries,',
+  '          ...legacyMessageToEntries({',
+  "            id: createMessageId('assistant'),",
+  "            role: 'assistant',",
+  '            content: `计划生成失败：${message}`,',
+  '            createdAt: new Date().toISOString(),',
+  '            references: [],',
+  '          }),',
+  '        ]);',
+  '      } finally {',
+  '        clearActiveBufferedThread(titleThreadId);',
+  '        isSending.value = false;',
+  '        if (planSucceeded) {',
+  '          void maybeGenerateConversationTitle(titleThreadId);',
+  '        }',
+  '      }',
+  '',
+  '      return;',
+  '    }',
+  "    if (activeMode.value === 'chat') {",
+  '      try {',
+  '        await executeAiRequest(nextMessages, references, titleThreadId);',
+  '        if (!errorMessage.value) {',
+  '          void maybeGenerateConversationTitle(titleThreadId);',
+  '        }',
+  '      } catch (error) {',
+  '        errorMessage.value = toErrorMessage(error, MSG_CALL_FAILED);',
+  '      }',
+  '      return;',
+  '    }',
+  '',
+  '    const exhaustiveModeCheck: never = activeMode.value;',
+  '    throw new Error(`未处理的 AI 助手模式：${String(exhaustiveModeCheck)}`);',
+]);
+const EDIT4_NEW = L([
+  '    // 唯一标准管线（ADR-20260617）：所有后端（builtin / Kimi / Codex）一律经标准 ACP',
+  '    // session/prompt 发送。builtin 的 chat/agent/plan 三模式经官方 set_session_mode 一次性切换',
+  '    // （见 executeExternalAgentRequest 的 sessionMode 分支，映射 ask/plan/agent）；Kimi / Codex',
+  '    // 自管会话模式，故不下发 sessionMode。legacy 分流（executeSidecarAgentRequest /',
+  '    // agentPlan.createPlan / executeAiRequest）已停用，随 D1 删除（先建后删，过渡期保留以防回退）。',
+  "    const backend: TAgentBackendKind = sendOptions?.agentBackend ?? 'builtin';",
+  '    const sessionMode =',
+  "      backend === 'builtin' ? BUILTIN_ACP_MODE_BY_ASSISTANT_MODE[activeMode.value] : undefined;",
+  '',
+  '    await executeExternalAgentRequest(backend, messageContent, titleThreadId, sessionMode);',
+  '',
+  '    if (!errorMessage.value) {',
+  '      void maybeGenerateConversationTitle(titleThreadId);',
+  '    }',
+]);
 
-for (const h of handlers) {
-  const inputLine = `\t\tconst input = ${h.parse}(params)`;
-  const oldLines = [
-    inputLine,
-    ...(h.session ? OPTS_SESSION : OPTS_NO_SESSION),
-    `\t\tconst response = await ${h.call}(input, options)`,
-  ];
-  const newLines = [
-    inputLine,
-    `\t\tconst response = await ${h.call}(`,
-    "\t\t\tinput,",
-    `\t\t\tthis.buildExtRunOptions(${h.arg}),`,
-    "\t\t)",
-  ];
-  replaceBlock(AGENT, oldLines, newLines, `A3: agent.ts ${h.call} 改用 buildExtRunOptions`);
-}
+// ---------------------------------------------------------------------------
+// Apply
+// ---------------------------------------------------------------------------
+const { abs, lf, eol } = read(TARGET);
+let next = lf;
+next = replaceOnce(next, EDIT1_OLD, EDIT1_NEW, 'Edit1: mode map const');
+next = replaceOnce(next, EDIT2_OLD, EDIT2_NEW, 'Edit2: executeExternalAgentRequest signature');
+next = replaceOnce(next, EDIT3_OLD, EDIT3_NEW, 'Edit3: ensureAcpSession + setSessionMode');
+next = replaceOnce(next, EDIT4_OLD, EDIT4_NEW, 'Edit4: sendMessage unified routing');
+write(abs, next, eol);
 
-// ════════ A6：models/output-budget.ts —— grapheme 改惰性单遍，去掉整串物化 ════════
-const BUDGET = "builtin-agent/src/models/output-budget.ts";
-
-// (1) IGraphemeSegment 增加 index（Intl.Segmenter 原生即带 index）。
-replaceBlock(
-  BUDGET,
-  ["interface IGraphemeSegment {", "  segment: string;", "}"],
-  ["interface IGraphemeSegment {", "  segment: string;", "  index: number;", "}"],
-  "A6: IGraphemeSegment 增加 index",
-);
-
-// (2) 用惰性 iterateGraphemes + 单遍 measureGraphemes 取代 segmentGraphemes。
-replaceBlock(
-  BUDGET,
-  [
-    "const segmentGraphemes = (value: string, locale: string): string[] => {",
-    "  const segmenter = getGraphemeSegmenter(locale);",
-    "  if (segmenter) {",
-    "    return Array.from(segmenter.segment(value), (segment) => segment.segment);",
-    "  }",
-    "  // 兜底：按 Unicode codepoint 切分。能正确处理代理对，但 ZWJ 复合 emoji 会被拆成多个，",
-    "  // 仅用于预算估算可接受（会略偏多）。",
-    "  return Array.from(value);",
-    "};",
-  ],
-  [
-    "// 惰性逐 grapheme 遍历：产出每个 grapheme 及其在原串中的起始 code-unit 下标，",
-    "// 供计数与「按下标切片」复用同一遍，避免把整串物化成数组（大输出热路径的额外分配）。",
-    "function* iterateGraphemes(",
-    "  value: string,",
-    "  locale: string,",
-    "): Generator<IGraphemeSegment> {",
-    "  const segmenter = getGraphemeSegmenter(locale);",
-    "  if (segmenter) {",
-    "    yield* segmenter.segment(value);",
-    "    return;",
-    "  }",
-    "  // 兜底：按 Unicode codepoint 切分。能正确处理代理对，但 ZWJ 复合 emoji 会被拆成多个，",
-    "  // 仅用于预算估算可接受（会略偏多）。",
-    "  let index = 0;",
-    "  for (const codePoint of value) {",
-    "    yield { segment: codePoint, index };",
-    "    index += codePoint.length;",
-    "  }",
-    "}",
-    "",
-    "interface IGraphemeMeasurement {",
-    "  count: number;",
-    "  // 第 clipAt 个 grapheme 的起始 code-unit 下标；未到达 clipAt 时为 -1。",
-    "  clipIndex: number;",
-    "}",
-    "",
-    "// 单遍测量：返回 grapheme 总数，并在恰好数到第 clipAt 个 grapheme 时记录其起始",
-    "// code-unit 下标（用于按原串切片得到「前 clipAt 个 grapheme」，无需 join）。",
-    "const measureGraphemes = (",
-    "  value: string,",
-    "  locale: string,",
-    "  clipAt: number,",
-    "): IGraphemeMeasurement => {",
-    "  let count = 0;",
-    "  let clipIndex = -1;",
-    "  for (const { index } of iterateGraphemes(value, locale)) {",
-    "    if (count === clipAt) {",
-    "      clipIndex = index;",
-    "    }",
-    "    count += 1;",
-    "  }",
-    "  return { count, clipIndex };",
-    "};",
-  ],
-  "A6: 引入 iterateGraphemes + measureGraphemes",
-);
-
-// (3) countModelOutputChars 改用 measureGraphemes（不再物化数组）。
-replaceBlock(
-  BUDGET,
-  [
-    "export const countModelOutputChars = (value: string, locale = DEFAULT_LOCALE): number =>",
-    "  segmentGraphemes(value, locale).length;",
-  ],
-  [
-    "export const countModelOutputChars = (value: string, locale = DEFAULT_LOCALE): number =>",
-    "  measureGraphemes(value, locale, Number.POSITIVE_INFINITY).count;",
-  ],
-  "A6: countModelOutputChars 改用 measureGraphemes",
-);
-
-// (4) truncateModelOutputText 改为单遍：按下标切片，不再 slice+join 数组。
-replaceBlock(
-  BUDGET,
-  [
-    "  const safeMaxChars = Math.max(0, Math.floor(maxChars));",
-    "  const locale = options.locale ?? DEFAULT_LOCALE;",
-    "  const graphemes = segmentGraphemes(value, locale);",
-    "  const originalCharCount = graphemes.length;",
-    "  if (originalCharCount <= safeMaxChars) {",
-    "    return {",
-    "      text: value,",
-    "      truncated: false,",
-    "      originalCharCount,",
-    "      omittedCharCount: 0,",
-    "    };",
-    "  }",
-    "  const clippedText = graphemes.slice(0, safeMaxChars).join('');",
-    "  const omittedCharCount = originalCharCount - safeMaxChars;",
-  ],
-  [
-    "  const safeMaxChars = Math.max(0, Math.floor(maxChars));",
-    "  const locale = options.locale ?? DEFAULT_LOCALE;",
-    "  // 单遍惰性遍历：拿到总字数与截断点下标，避免物化整串 grapheme 数组再 join。",
-    "  const { count: originalCharCount, clipIndex } = measureGraphemes(",
-    "    value,",
-    "    locale,",
-    "    safeMaxChars,",
-    "  );",
-    "  if (originalCharCount <= safeMaxChars) {",
-    "    return {",
-    "      text: value,",
-    "      truncated: false,",
-    "      originalCharCount,",
-    "      omittedCharCount: 0,",
-    "    };",
-    "  }",
-    "  const clippedText = clipIndex >= 0 ? value.slice(0, clipIndex) : '';",
-    "  const omittedCharCount = originalCharCount - safeMaxChars;",
-  ],
-  "A6: truncateModelOutputText 改用单遍 measureGraphemes",
-);
-
-console.log(
-  "\n全部完成。建议执行：pnpm -C builtin-agent typecheck && pnpm -C builtin-agent test",
-);
+console.log('[S3] 已更新 ' + TARGET + '（EOL=' + (eol === '\r\n' ? 'CRLF' : 'LF') + '）');
+console.log('[S3] builtin 已切入唯一标准 ACP 管线；legacy 分流停用待 D1 删除（过渡期 typecheck 会报未使用函数，符合预期）。');

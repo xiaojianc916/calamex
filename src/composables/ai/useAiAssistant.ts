@@ -133,6 +133,16 @@ type TAiFileRollbackStatus = 'ready' | 'reverting' | 'reverted';
 
 const SIDECAR_EXPLICIT_CONTEXT_MESSAGE_LIMIT = 12;
 
+// builtin 是标准 ACP 后端：前端三模式（chat/agent/plan）→ Agent 公示的 ACP 会话模式 id
+// （ask/plan/agent，见 builtin-agent AGENT_MODES / RUNTIME_METHOD_BY_MODE）。经官方
+// set_session_mode 一次性切换会话模式，绝不随 session/prompt 负载携带（IAgentExternalChatRequest
+// 无 mode 字段）。
+const BUILTIN_ACP_MODE_BY_ASSISTANT_MODE: Record<TAiAssistantMode, string> = {
+  chat: 'ask',
+  agent: 'agent',
+  plan: 'plan',
+};
+
 type TAgentExecutionStepStatus =
   | 'pending'
   | 'running'
@@ -1755,16 +1765,21 @@ export const useAiAssistant = (options: IUseAiAssistantOptions) => {
   // Streaming pipeline
   // -----------------------------------------------------------------------
 
-  // 外部 ACP 编码 agent（Kimi / Codex，ADR-0015）发送链路：经 builtin_agent_external_chat
-  // 驱动一轮标准 session/prompt。外部 agent 无富信封，过程增量经 session/update 帧走既有
-  // sidecar 流（subscribeSidecarSessionStream + applySidecarLiveEventsToAgentMessage）。
-  // 流式关键：用前端预生成的 sidecarSessionId 在发起回合「之前」订阅，后端据此把外部帧的
-  // session_id 由 ACP 会话 UUID 重写为该键（见 Rust host.prompt_with_stream_key），实现逐
-  // token 实时渲染；prompt 返回即整轮结束，flush 后把消息状态收口为 completed。
+  // 唯一标准发送链路（ADR-20260617）：所有 ACP 后端（builtin / Kimi / Codex）一律经
+  // builtin_agent_external_chat 驱动一轮标准 session/prompt。builtin 的 chat/plan/agent 三模式经
+  // 官方 set_session_mode 在发起回合前一次性切换（见下方 sessionMode 分支，映射 ask/plan/agent），
+  // 不再走自研边车的 mode 分流；Kimi / Codex 自管会话模式，不下发 sessionMode。过程增量经
+  // session/update 帧走既有 sidecar 流（subscribeSidecarSessionStream +
+  // applySidecarLiveEventsToAgentMessage）；工具审批 / 反向提问经 session/request_permission 由
+  // 面板级 useAcpApproval 闭环呈现，均不在本链路内联处理。
+  // 流式关键：用前端预生成的 sidecarSessionId 在发起回合「之前」订阅，后端据此把帧的 session_id
+  // 由 ACP 会话 UUID 重写为该键（见 Rust host.prompt_with_stream_key），实现逐 token 实时渲染；
+  // prompt 返回即整轮结束，flush 后把消息状态收口为 completed。
   const executeExternalAgentRequest = async (
     backend: TAgentBackendKind,
     messageContent: string,
     threadId: string | null,
+    sessionMode?: string,
   ): Promise<void> => {
     errorMessage.value = '';
     isSending.value = true;
@@ -1829,6 +1844,19 @@ export const useAiAssistant = (options: IUseAiAssistantOptions) => {
         }
         liveEventBuffer.push(event);
       });
+
+      if (backend === 'builtin' && sessionMode !== undefined) {
+        // builtin 也是标准 ACP 后端：先确保会话建立（与本回合 prompt 同一 thread 键，故被 prompt
+        // 复用），再经官方 set_session_mode 把会话一次性切到目标模式；随后标准 session/prompt 即按
+        // 会话模式分流到 chat/plan/execute（见 builtin-agent CalamexAcpAgent.prompt）。
+        const sessionThreadId = targetThreadId ?? '';
+        await aiService.ensureAcpSession({
+          threadId: sessionThreadId,
+          backend,
+          workspaceRootPath: options.workspaceRootPath.value,
+        });
+        await aiService.setSessionMode({ threadId: sessionThreadId, modeId: sessionMode });
+      }
 
       await aiService.sidecarExternalChat({
         backend,
@@ -2126,89 +2154,20 @@ export const useAiAssistant = (options: IUseAiAssistantOptions) => {
     );
     clearAttachedFiles({ revokePreviews: false });
 
-    const nextMessages = unref(conversationStore.activeMessages);
+    // 唯一标准管线（ADR-20260617）：所有后端（builtin / Kimi / Codex）一律经标准 ACP
+    // session/prompt 发送。builtin 的 chat/agent/plan 三模式经官方 set_session_mode 一次性切换
+    // （见 executeExternalAgentRequest 的 sessionMode 分支，映射 ask/plan/agent）；Kimi / Codex
+    // 自管会话模式，故不下发 sessionMode。legacy 分流（executeSidecarAgentRequest /
+    // agentPlan.createPlan / executeAiRequest）已停用，随 D1 删除（先建后删，过渡期保留以防回退）。
+    const backend: TAgentBackendKind = sendOptions?.agentBackend ?? 'builtin';
+    const sessionMode =
+      backend === 'builtin' ? BUILTIN_ACP_MODE_BY_ASSISTANT_MODE[activeMode.value] : undefined;
 
-    // 外部 ACP 编码 agent（Kimi / Codex）走独立发送链路，与 activeMode（chat/agent/plan）无关：
-    // 外部 agent 自管会话与运行循环，不复用自研边车的 mode 分流。
-    const externalBackend = sendOptions?.agentBackend;
-    if (externalBackend && externalBackend !== 'builtin') {
-      await executeExternalAgentRequest(externalBackend, messageContent, titleThreadId);
+    await executeExternalAgentRequest(backend, messageContent, titleThreadId, sessionMode);
 
-      if (!errorMessage.value) {
-        void maybeGenerateConversationTitle(titleThreadId);
-      }
-
-      return;
+    if (!errorMessage.value) {
+      void maybeGenerateConversationTitle(titleThreadId);
     }
-
-    if (activeMode.value === 'agent') {
-      await executeSidecarAgentRequest(messageContent, references, userMessage.id, titleThreadId);
-
-      if (!errorMessage.value) {
-        void maybeGenerateConversationTitle(titleThreadId);
-      }
-
-      return;
-    }
-
-    if (activeMode.value === 'plan') {
-      agentSteps.value = [];
-      let planSucceeded = false;
-
-      try {
-        const planResult = await agentPlan.createPlan(
-          messageContent,
-          buildSidecarContextReferences(references),
-          options.workspaceRootPath.value,
-          titleThreadId ? { threadId: titleThreadId } : {},
-        );
-
-        agentSteps.value = planResult.steps.map((step) => ({
-          id: step.id,
-          title: step.title,
-          status: step.status,
-        }));
-
-        clearAttachedFiles({ revokePreviews: false });
-        planSucceeded = true;
-      } catch (error) {
-        const message = toErrorMessage(error, '生成计划失败。');
-        errorMessage.value = message;
-        agentSteps.value = [];
-        aiThreadStore.patchActiveThreadEntries((entries) => [
-          ...entries,
-          ...legacyMessageToEntries({
-            id: createMessageId('assistant'),
-            role: 'assistant',
-            content: `计划生成失败：${message}`,
-            createdAt: new Date().toISOString(),
-            references: [],
-          }),
-        ]);
-      } finally {
-        clearActiveBufferedThread(titleThreadId);
-        isSending.value = false;
-        if (planSucceeded) {
-          void maybeGenerateConversationTitle(titleThreadId);
-        }
-      }
-
-      return;
-    }
-    if (activeMode.value === 'chat') {
-      try {
-        await executeAiRequest(nextMessages, references, titleThreadId);
-        if (!errorMessage.value) {
-          void maybeGenerateConversationTitle(titleThreadId);
-        }
-      } catch (error) {
-        errorMessage.value = toErrorMessage(error, MSG_CALL_FAILED);
-      }
-      return;
-    }
-
-    const exhaustiveModeCheck: never = activeMode.value;
-    throw new Error(`未处理的 AI 助手模式：${String(exhaustiveModeCheck)}`);
   };
 
   // -----------------------------------------------------------------------
