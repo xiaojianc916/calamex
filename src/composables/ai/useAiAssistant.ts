@@ -9,7 +9,6 @@ import {
   watch,
 } from 'vue';
 import { parseAiAedPatchRef } from '@/components/business/ai/edit/patch-summary';
-import { extractVisibleAgentRuntimeEvents } from '@/composables/ai/sidecar-events';
 import { subscribeSidecarSessionStream } from '@/composables/ai/sidecar-stream-listener';
 import { useAcpAvailableCommands } from '@/composables/ai/useAcpAvailableCommands';
 import { useAcpPlan } from '@/composables/ai/useAcpPlan';
@@ -86,6 +85,7 @@ import {
   compactRuntimeEvents,
   createMessageId,
   createScopedId,
+  extractVisibleAgentRuntimeEvents,
   getLatestCheckpointEvent,
   type IAiConversationCheckpoint,
   mergeRuntimeEvents,

@@ -1,10 +1,29 @@
 import type { IAiChatMessage } from '@/types/ai';
-import type { IAgentCheckpointEvent, TAgentRuntimeEvent } from '@/types/ai/sidecar';
+import type { IAgentCheckpointEvent, TAgentRuntimeEvent, TAgentUiEvent } from '@/types/ai/sidecar';
 import type { IAiThreadEntry } from '@/types/ai/thread';
 
 // ---------------------------------------------------------------------------
 // Scoped ids + runtime-event timeline helpers (extracted from useAiAssistant.ts)
 // ---------------------------------------------------------------------------
+
+// builtin 专属遥测（非 ACP 标准）：从宿主 UI 事件流抽出对用户可见的运行时事件。
+// visibility==='user' 直出；另放行两类 token 诊断事件（acontext.token.checked /
+// acontext.provider_payload.checked）供运行时时间线与上下文预算读取。
+const TIMELINE_DEBUG_EVENT_TYPES: ReadonlySet<TAgentRuntimeEvent['type']> = new Set([
+  'acontext.token.checked',
+  'acontext.provider_payload.checked',
+]);
+
+export const extractVisibleAgentRuntimeEvents = (
+  events: readonly TAgentUiEvent[],
+): TAgentRuntimeEvent[] =>
+  events
+    .filter(
+      (event): event is Extract<TAgentUiEvent, { type: 'agent_event' }> =>
+        event.type === 'agent_event' &&
+        (event.event.visibility === 'user' || TIMELINE_DEBUG_EVENT_TYPES.has(event.event.type)),
+    )
+    .map((event) => event.event);
 
 const AGENT_RUNTIME_TIMELINE_LIMIT = 32;
 

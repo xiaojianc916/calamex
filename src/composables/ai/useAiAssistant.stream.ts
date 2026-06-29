@@ -1,14 +1,6 @@
-import {
-  extractVisibleAgentRuntimeEvents,
-  type IAgentSidecarExecuteProjection,
-  type TAgentSidecarToolStreamStatus,
-} from '@/composables/ai/sidecar-events';
+import { extractVisibleAgentRuntimeEvents } from '@/composables/ai/useAiAssistant.runtime-events';
 import type { useAiStream } from '@/composables/ai/useAiStream';
-import type {
-  IAiChatMessage,
-  IAiChatStreamRenderState,
-  TAiToolConfirmationDecision,
-} from '@/types/ai';
+import type { IAiChatMessage, IAiChatStreamRenderState } from '@/types/ai';
 import type { IAiEditOperation, IAiEditTimelineEntry } from '@/types/ai/edit';
 import type { TAgentRuntimeEvent, TAgentUiEvent } from '@/types/ai/sidecar';
 
@@ -37,33 +29,6 @@ export const isNonNegativeFiniteNumber = (value: number | null | undefined): val
 
 export const hasMeaningfulAssistantText = (value: string | null | undefined): value is string =>
   typeof value === 'string' && value.trim().length > 0;
-
-export const resolveSidecarWaitingStreamStatus = (
-  projection: IAgentSidecarExecuteProjection,
-): NonNullable<IAiChatMessage['stream']>['status'] =>
-  projection.pendingConfirmation ? 'waiting-confirmation' : 'completed';
-
-export const resolveSidecarToolProjectionStatus = (
-  projection: IAgentSidecarExecuteProjection,
-): TAgentSidecarToolStreamStatus => (projection.pendingConfirmation ? 'streaming' : 'completed');
-
-export const mapToolConfirmationDecisionToSidecarDecision = (
-  decision: TAiToolConfirmationDecision,
-): 'approve' | 'reject' | 'cancel' => {
-  switch (decision) {
-    case 'allow-once':
-    case 'allow-run':
-      return 'approve';
-    case 'skip':
-      return 'reject';
-    case 'stop':
-      return 'cancel';
-    default: {
-      const exhaustive: never = decision;
-      return exhaustive;
-    }
-  }
-};
 
 export const isAiEditOperationEntry = (
   entry: IAiEditTimelineEntry,
