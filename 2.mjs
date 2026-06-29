@@ -1,657 +1,157 @@
-// cleanup-slice23-warnings.mjs  —  在仓库根目录 (D:\com.xiaojianc\my_desktop_app) 运行：node cleanup-slice23-warnings.mjs
-import fs from "node:fs";
-import path from "node:path";
+// 10.mjs —— Finding F(更正版):RunPanel 工具栏 tooltip 迁移到官方 AppTooltip + 删除死系统 app-tooltip.ts
+// 在仓库根目录执行：node 10.mjs
+import { readFileSync, writeFileSync, rmSync, existsSync, readdirSync, statSync } from 'node:fs';
+import { join, posix } from 'node:path';
 
 const ROOT = process.cwd();
-const L = (...lines) => lines.join("\n");
-const toLf = (s) => s.replace(/\r\n/g, "\n");
-const detectEol = (s) => (s.includes("\r\n") ? "\r\n" : "\n");
-const fromLf = (s, eol) => (eol === "\r\n" ? s.replace(/\n/g, "\r\n") : s);
+const RUN_PANEL = 'src/domains/terminal/ui/RunPanel.vue';
+const DEAD = 'src/utils/window/app-tooltip.ts';
+const DEAD_SPEC = 'src/utils/window/app-tooltip.spec.ts';
 
+function die(msg) {
+  console.error('✘ ' + msg + ' 已中止,未写入/删除任何文件。');
+  process.exit(1);
+}
+function readText(rel) {
+  const abs = join(ROOT, rel);
+  if (!existsSync(abs)) die('找不到文件 ' + rel + '。');
+  return readFileSync(abs, 'utf8');
+}
+// CRLF 安全
+function detectCRLF(s) { return s.includes('\r\n'); }
+function toLF(s) { return s.replace(/\r\n/g, '\n'); }
+function restore(s, crlf) { return crlf ? s.replace(/\n/g, '\r\n') : s; }
 function replaceOnce(src, oldStr, newStr, label) {
-  const first = src.indexOf(oldStr);
-  if (first < 0) throw new Error("[未命中] " + label);
-  if (src.indexOf(oldStr, first + oldStr.length) >= 0) throw new Error("[多处匹配] " + label);
-  return src.slice(0, first) + newStr + src.slice(first + oldStr.length);
+  const n = src.split(oldStr).length - 1;
+  if (n !== 1) die('[' + label + '] 预期精确命中 1 次,实际 ' + n + ' 次。');
+  return src.split(oldStr).join(newStr);
 }
 
-// —— 待删除文件（ansi.rs 仅剩一个已死函数）——
-const DELETE_FILES = ["src-tauri/src/terminal/ansi.rs"];
+// ---------- 1) 迁移 RunPanel.vue ----------
+const crlf = detectCRLF(readText(RUN_PANEL));
+let rp = toLF(readText(RUN_PANEL));
 
-// —— 编辑计划：{ file, edits: [[old, new, label], ...] } ——
-const PLAN = [
-  // ===== terminal/mod.rs：移除 ansi 模块声明 =====
-  { file: "src-tauri/src/terminal/mod.rs", edits: [
-    [ L("pub mod ansi;", "pub mod command_contracts;"),
-      "pub mod command_contracts;",
-      "mod.rs 去掉 pub mod ansi" ],
-  ]},
+// 1a. 插入 AppTooltip import(放在 @/composables 之前,符合 biome 导入排序)
+const importAnchor = `import { useMessage } from '@/composables/useMessage';`;
+const importNew = `import AppTooltip from '@/components/ui/tooltip/AppTooltip.vue';\n` + importAnchor;
+rp = replaceOnce(rp, importAnchor, importNew, 'import AppTooltip');
 
-  // ===== terminal/vte_detect.rs：删掉 scroll_region / cursor_position 探测 =====
-  { file: "src-tauri/src/terminal/vte_detect.rs", edits: [
-    [ L("pub struct AnsiCsiEvents {",
-        "    pub alt_screen_switched: bool,",
-        "    pub alt_screen_active: bool,",
-        "    pub scroll_region_changed: bool,",
-        "    pub cursor_position_query: bool,",
-        "}"),
-      L("pub struct AnsiCsiEvents {",
-        "    pub alt_screen_switched: bool,",
-        "    pub alt_screen_active: bool,",
-        "}"),
-      "AnsiCsiEvents 去字段" ],
-    [ L("/// 用单个 vte 解析器扫描整段数据并返回检测结果。",
-        "/// `scan_ansi_csi_events` 与 `has_cursor_position_query` 共用此实现，避免重复解析循环。"),
-      L("/// 用单个 vte 解析器扫描整段数据并返回检测结果。",
-        "/// 供 `scan_ansi_csi_events` 复用，集中 CSI 解析循环。"),
-      "detect_csi_events 文档更新" ],
-    [ L("    AnsiCsiEvents {",
-        "        alt_screen_switched: detector.alt_screen_switched,",
-        "        alt_screen_active: detector.alt_screen_active,",
-        "        scroll_region_changed: detector.scroll_region_changed,",
-        "        cursor_position_query: detector.cursor_position_query,",
-        "    }"),
-      L("    AnsiCsiEvents {",
-        "        alt_screen_switched: detector.alt_screen_switched,",
-        "        alt_screen_active: detector.alt_screen_active,",
-        "    }"),
-      "scan_ansi_csi_events 构造去字段" ],
-    [ L("pub fn has_cursor_position_query(data: &str) -> bool {",
-        "    detect_csi_events(data).cursor_position_query",
-        "}",
-        ""),
-      "",
-      "删除 has_cursor_position_query" ],
-    [ L("struct CsiDetector {",
-        "    private_mode: bool,",
-        "    alt_screen_switched: bool,",
-        "    alt_screen_active: bool,",
-        "    scroll_region_changed: bool,",
-        "    cursor_position_query: bool,",
-        "}"),
-      L("struct CsiDetector {",
-        "    private_mode: bool,",
-        "    alt_screen_switched: bool,",
-        "    alt_screen_active: bool,",
-        "}"),
-      "CsiDetector 去字段" ],
-    [ L("            'r' if !self.private_mode => {",
-        "                self.scroll_region_changed = true;",
-        "            }",
-        "            'n' if !self.private_mode && single_param_value(params) == Some(6) => {",
-        "                self.cursor_position_query = true;",
-        "            }",
-        "            _ => {}"),
-      "            _ => {}",
-      "csi_dispatch 删 'r'/'n' 分支" ],
-  ]},
+// 1b. 四个按钮 → 用官方 AppTooltip 包裹,去掉 data-tooltip* 与 app-tooltip-target
+const stopOld = [
+`        <button v-if="canStopRun" type="button"`,
+`          class="icon-button app-tooltip-target run-panel-action-button run-panel-action-button--stop"`,
+`          data-tooltip="停止 / 重置运行" data-tooltip-placement="top" aria-label="停止 / 重置运行"`,
+`          @click="void handleStopRun()">`,
+`          <Square aria-hidden="true" />`,
+`        </button>`,
+].join('\n');
+const stopNew = [
+`        <AppTooltip v-if="canStopRun" content="停止 / 重置运行">`,
+`          <button type="button"`,
+`            class="icon-button run-panel-action-button run-panel-action-button--stop"`,
+`            aria-label="停止 / 重置运行"`,
+`            @click="void handleStopRun()">`,
+`            <Square aria-hidden="true" />`,
+`          </button>`,
+`        </AppTooltip>`,
+].join('\n');
+rp = replaceOnce(rp, stopOld, stopNew, '停止按钮');
 
-  // ===== terminal/snapshot.rs：删除两个无人调用的 alt-screen 工具函数 =====
-  { file: "src-tauri/src/terminal/snapshot.rs", edits: [
-    [ L("/// 扫描数据中是否存在 CSI 序列且其 final byte 落在 `final_bytes` 集合内。",
-        "///",
-        "/// final byte 是 CSI 的终止符，按 ECMA-48 落在 `0x40..=0x7E`。",
-        "/// 参数/中间字节（`0x20..=0x3F`）会被跳过。",
-        "pub fn contains_alt_screen_switch(data: &str) -> bool {",
-        "    super::vte_detect::scan_ansi_csi_events(data).alt_screen_switched",
-        "}",
-        "",
-        "/// 按数据中出现顺序应用 alt-screen 私有模式，返回最终状态。",
-        "///",
-        "/// 当数据中无 alt-screen 切换事件时，直接返回 `current`；",
-        "/// 否则返回最后一条事件决定的状态。",
-        "pub fn resolve_alt_screen_state_after_data(current: bool, data: &str) -> bool {",
-        "    let events = super::vte_detect::scan_ansi_csi_events(data);",
-        "    if events.alt_screen_switched {",
-        "        events.alt_screen_active",
-        "    } else {",
-        "        current",
-        "    }",
-        "}",
-        ""),
-      "",
-      "删除 contains_alt_screen_switch / resolve_alt_screen_state_after_data" ],
-  ]},
+const reconnectOld = [
+`        <button type="button" class="icon-button app-tooltip-target run-panel-action-button" data-tooltip="重连终端"`,
+`          data-tooltip-placement="top" aria-label="重连终端" @click="void handleRestartTerminal()">`,
+`          <RefreshCcw aria-hidden="true" />`,
+`        </button>`,
+].join('\n');
+const reconnectNew = [
+`        <AppTooltip content="重连终端">`,
+`          <button type="button" class="icon-button run-panel-action-button" aria-label="重连终端"`,
+`            @click="void handleRestartTerminal()">`,
+`            <RefreshCcw aria-hidden="true" />`,
+`          </button>`,
+`        </AppTooltip>`,
+].join('\n');
+rp = replaceOnce(rp, reconnectOld, reconnectNew, '重连按钮');
 
-  // ===== terminal/flow_control.rs：删除未用常量 =====
-  { file: "src-tauri/src/terminal/flow_control.rs", edits: [
-    [ L("/// 前端每消费这么多字符回一次 ack。对照 VSCode FlowControlConstants.CharCountAckSize。",
-        "pub const CHAR_COUNT_ACK_SIZE: usize = 5_000;",
-        ""),
-      "",
-      "删除 CHAR_COUNT_ACK_SIZE" ],
-  ]},
+const clearOld = [
+`        <button type="button" class="icon-button app-tooltip-target run-panel-action-button" data-tooltip="清屏"`,
+`          data-tooltip-placement="top" aria-label="清屏" :disabled="!isTerminalReady" @click="void handleClearTerminal()">`,
+`          <Eraser aria-hidden="true" />`,
+`        </button>`,
+].join('\n');
+const clearNew = [
+`        <AppTooltip content="清屏">`,
+`          <button type="button" class="icon-button run-panel-action-button" aria-label="清屏"`,
+`            :disabled="!isTerminalReady" @click="void handleClearTerminal()">`,
+`            <Eraser aria-hidden="true" />`,
+`          </button>`,
+`        </AppTooltip>`,
+].join('\n');
+rp = replaceOnce(rp, clearOld, clearNew, '清屏按钮');
 
-  // ===== terminal/local_wsl_protocol.rs：协议瘦身 + 变体改名（解 enum_variant_names）=====
-  { file: "src-tauri/src/terminal/local_wsl_protocol.rs", edits: [
-    [ L("#[derive(Debug, Clone)]",
-        "pub struct LocalWslTerminalInteractiveOpened {",
-        "    pub session_id: String,",
-        "    pub cwd: String,",
-        "    pub pid: u32,",
-        "    pub opened_at_unix_ms: i64,",
-        "}",
-        ""),
-      "",
-      "删除 InteractiveOpened 结构体" ],
-    [ L("pub struct LocalWslTerminalInteractiveData {",
-        "    pub session_id: String,",
-        "    pub data: String,",
-        "}"),
-      L("pub struct LocalWslTerminalInteractiveData {",
-        "    pub data: String,",
-        "}"),
-      "Data 去 session_id" ],
-    [ L("pub struct LocalWslTerminalInteractiveClosed {",
-        "    pub session_id: String,",
-        "    pub exit_code: Option<i32>,",
-        "    pub finished_at_unix_ms: i64,",
-        "}"),
-      L("pub struct LocalWslTerminalInteractiveClosed {",
-        "    pub exit_code: Option<i32>,",
-        "}"),
-      "Closed 去 session_id/finished_at" ],
-    [ L("#[derive(Debug, Clone)]",
-        "pub struct LocalWslTerminalInteractiveAck {",
-        "    pub session_id: Option<String>,",
-        "    pub action: String,",
-        "}",
-        ""),
-      "",
-      "删除 InteractiveAck 结构体" ],
-    [ L("#[derive(Debug, Clone)]",
-        "pub struct LocalWslTerminalInteractiveError {",
-        "    pub session_id: Option<String>,",
-        "    pub message: String,",
-        "    pub exit_code: Option<i32>,",
-        "    pub finished_at_unix_ms: i64,",
-        "}",
-        ""),
-      "",
-      "删除 InteractiveError 结构体" ],
-    [ L("pub struct LocalWslTerminalInteractiveMark {",
-        "    pub session_id: String,",
-        "    pub mark: super::shell_integration::ShellIntegrationMark,",
-        "}"),
-      L("pub struct LocalWslTerminalInteractiveMark {",
-        "    pub mark: super::shell_integration::ShellIntegrationMark,",
-        "}"),
-      "Mark 去 session_id" ],
-    [ L("#[derive(Debug, Clone)]",
-        "pub enum LocalWslTerminalServerPayload {",
-        "    InteractiveOpened(LocalWslTerminalInteractiveOpened),",
-        "    InteractiveData(LocalWslTerminalInteractiveData),",
-        "    InteractiveClosed(LocalWslTerminalInteractiveClosed),",
-        "    InteractiveAck(LocalWslTerminalInteractiveAck),",
-        "    InteractiveError(LocalWslTerminalInteractiveError),",
-        "    InteractiveMark(LocalWslTerminalInteractiveMark),",
-        "}"),
-      L("#[derive(Debug, Clone)]",
-        "pub enum LocalWslTerminalServerPayload {",
-        "    Opened,",
-        "    Data(LocalWslTerminalInteractiveData),",
-        "    Closed(LocalWslTerminalInteractiveClosed),",
-        "    Mark(LocalWslTerminalInteractiveMark),",
-        "}"),
-      "枚举去 Ack/Error + 变体改名 + Opened 无字段" ],
-  ]},
+const maxOld = [
+`        <button type="button" class="icon-button app-tooltip-target run-panel-action-button"`,
+`          :data-tooltip="props.isMaximized ? '还原终端高度' : '最大化终端'" data-tooltip-placement="top"`,
+`          :aria-label="props.isMaximized ? '还原终端高度' : '最大化终端'" :aria-pressed="props.isMaximized"`,
+`          @click="$emit('toggle-maximize')">`,
+`          <Maximize2 v-if="!props.isMaximized" aria-hidden="true" />`,
+`          <Minimize2 v-else aria-hidden="true" />`,
+`        </button>`,
+].join('\n');
+const maxNew = [
+`        <AppTooltip :content="props.isMaximized ? '还原终端高度' : '最大化终端'">`,
+`          <button type="button" class="icon-button run-panel-action-button"`,
+`            :aria-label="props.isMaximized ? '还原终端高度' : '最大化终端'" :aria-pressed="props.isMaximized"`,
+`            @click="$emit('toggle-maximize')">`,
+`            <Maximize2 v-if="!props.isMaximized" aria-hidden="true" />`,
+`            <Minimize2 v-else aria-hidden="true" />`,
+`          </button>`,
+`        </AppTooltip>`,
+].join('\n');
+rp = replaceOnce(rp, maxOld, maxNew, '最大化按钮');
 
-  // ===== terminal/wsl_pty.rs：随协议瘦身的构造点 + 去 session_id 字段/方法 + 去 now_unix_ms =====
-  { file: "src-tauri/src/terminal/wsl_pty.rs", edits: [
-    [ L("use super::local_wsl_protocol::{",
-        "    LocalWslTerminalInteractiveClosed, LocalWslTerminalInteractiveData,",
-        "    LocalWslTerminalInteractiveMark, LocalWslTerminalInteractiveOpened,",
-        "    LocalWslTerminalOpenInteractiveRequest, LocalWslTerminalServerPayload,",
-        "    LocalWslUtf8ChunkDecoder,",
-        "};"),
-      L("use super::local_wsl_protocol::{",
-        "    LocalWslTerminalInteractiveClosed, LocalWslTerminalInteractiveData,",
-        "    LocalWslTerminalInteractiveMark, LocalWslTerminalOpenInteractiveRequest,",
-        "    LocalWslTerminalServerPayload, LocalWslUtf8ChunkDecoder,",
-        "};"),
-      "import 去 InteractiveOpened" ],
-    [ "    time::{Duration, SystemTime, UNIX_EPOCH},",
-      "    time::Duration,",
-      "time import 去 SystemTime/UNIX_EPOCH" ],
-    [ L("/// 本地 PTY 交互式终端句柄：对外提供 session_id / write_input / resize / close，",
-        "/// 以及关闭看门狗所需的 is_finished / force_kill。"),
-      L("/// 本地 PTY 交互式终端句柄：对外提供 write_input / resize / close，",
-        "/// 以及关闭看门狗所需的 is_finished / force_kill。"),
-      "句柄文档去 session_id" ],
-    [ L("pub struct LocalWslPtyHandle {",
-        "    session_id: String,",
-        "    writer: Arc<Mutex<Box<dyn Write + Send>>>,"),
-      L("pub struct LocalWslPtyHandle {",
-        "    writer: Arc<Mutex<Box<dyn Write + Send>>>,"),
-      "句柄去 session_id 字段" ],
-    [ L("impl LocalWslPtyHandle {",
-        "    pub fn session_id(&self) -> &str {",
-        "        &self.session_id",
-        "    }",
-        "",
-        "    /// 底层交互 shell 是否已结束（读线程在 child.wait 返回后置位）。关闭看门狗据此判断"),
-      L("impl LocalWslPtyHandle {",
-        "    /// 底层交互 shell 是否已结束（读线程在 child.wait 返回后置位）。关闭看门狗据此判断"),
-      "删除 session_id() 方法" ],
-    [ "/// on_event 在独立读线程中被调用：InteractiveOpened → 若干 InteractiveData → InteractiveClosed。",
-      "/// on_event 在独立读线程中被调用：Opened → 若干 Data → Closed。",
-      "open 文档变体名" ],
-    [ L("    spawn_interactive_reader(",
-        "        session_id.clone(),",
-        "        working_directory,",
-        "        pid,",
-        "        reader,"),
-      L("    spawn_interactive_reader(",
-        "        session_id.clone(),",
-        "        pid,",
-        "        reader,"),
-      "调用点去 working_directory 实参" ],
-    [ L("    Ok(LocalWslPtyHandle {",
-        "        session_id,",
-        "        writer: Arc::new(Mutex::new(writer)),"),
-      L("    Ok(LocalWslPtyHandle {",
-        "        writer: Arc::new(Mutex::new(writer)),"),
-      "句柄构造去 session_id" ],
-    [ L("fn spawn_interactive_reader<F>(",
-        "    session_id: String,",
-        "    working_directory: String,",
-        "    pid: u32,",
-        "    mut reader: Box<dyn Read + Send>,"),
-      L("fn spawn_interactive_reader<F>(",
-        "    session_id: String,",
-        "    pid: u32,",
-        "    mut reader: Box<dyn Read + Send>,"),
-      "reader 形参去 working_directory" ],
-    [ L("            on_event(LocalWslTerminalServerPayload::InteractiveOpened(",
-        "                LocalWslTerminalInteractiveOpened {",
-        "                    session_id: session_id.clone(),",
-        "                    cwd: working_directory,",
-        "                    pid,",
-        "                    opened_at_unix_ms: now_unix_ms(),",
-        "                },",
-        "            ));"),
-      "            on_event(LocalWslTerminalServerPayload::Opened);",
-      "Opened 构造无字段" ],
-    [ L("                            for mark in marks {",
-        "                                on_event(LocalWslTerminalServerPayload::InteractiveMark(",
-        "                                    LocalWslTerminalInteractiveMark {",
-        "                                        session_id: session_id.clone(),",
-        "                                        mark,",
-        "                                    },",
-        "                                ));",
-        "                            }"),
-      L("                            for mark in marks {",
-        "                                on_event(LocalWslTerminalServerPayload::Mark(",
-        "                                    LocalWslTerminalInteractiveMark { mark },",
-        "                                ));",
-        "                            }"),
-      "循环内 Mark 构造" ],
-    [ L("                            on_event(LocalWslTerminalServerPayload::InteractiveData(",
-        "                                LocalWslTerminalInteractiveData {",
-        "                                    session_id: session_id.clone(),",
-        "                                    data: clean,",
-        "                                },",
-        "                            ));"),
-      L("                            on_event(LocalWslTerminalServerPayload::Data(",
-        "                                LocalWslTerminalInteractiveData { data: clean },",
-        "                            ));"),
-      "循环内 Data 构造" ],
-    [ L("            for mark in tail_marks {",
-        "                on_event(LocalWslTerminalServerPayload::InteractiveMark(",
-        "                    LocalWslTerminalInteractiveMark {",
-        "                        session_id: session_id.clone(),",
-        "                        mark,",
-        "                    },",
-        "                ));",
-        "            }"),
-      L("            for mark in tail_marks {",
-        "                on_event(LocalWslTerminalServerPayload::Mark(",
-        "                    LocalWslTerminalInteractiveMark { mark },",
-        "                ));",
-        "            }"),
-      "收尾 Mark 构造" ],
-    [ L("                on_event(LocalWslTerminalServerPayload::InteractiveData(",
-        "                    LocalWslTerminalInteractiveData {",
-        "                        session_id: session_id.clone(),",
-        "                        data: tail,",
-        "                    },",
-        "                ));"),
-      L("                on_event(LocalWslTerminalServerPayload::Data(",
-        "                    LocalWslTerminalInteractiveData { data: tail },",
-        "                ));"),
-      "收尾 Data 构造" ],
-    [ L("            on_event(LocalWslTerminalServerPayload::InteractiveClosed(",
-        "                LocalWslTerminalInteractiveClosed {",
-        "                    session_id,",
-        "                    exit_code,",
-        "                    finished_at_unix_ms: now_unix_ms(),",
-        "                },",
-        "            ));"),
-      L("            on_event(LocalWslTerminalServerPayload::Closed(",
-        "                LocalWslTerminalInteractiveClosed { exit_code },",
-        "            ));"),
-      "Closed 构造" ],
-    [ L("fn now_unix_ms() -> i64 {",
-        "    SystemTime::now()",
-        "        .duration_since(UNIX_EPOCH)",
-        "        .map(|duration| i64::try_from(duration.as_millis()).unwrap_or(i64::MAX))",
-        "        .unwrap_or(0)",
-        "}",
-        ""),
-      "",
-      "删除 now_unix_ms" ],
-    [ L("    #[test]",
-        "    fn now_unix_ms_is_positive() {",
-        "        assert!(now_unix_ms() > 0);",
-        "    }",
-        ""),
-      "",
-      "删除 now_unix_ms 测试" ],
-  ]},
+// 1c. 后置守卫
+if (rp.includes('app-tooltip-target')) die('RunPanel 仍残留 app-tooltip-target。');
+if (rp.includes('data-tooltip')) die('RunPanel 仍残留 data-tooltip。');
+const appTooltipTags = rp.split('<AppTooltip').length - 1;
+if (appTooltipTags !== 4) die('RunPanel 中 <AppTooltip 数量异常:' + appTooltipTags + '(应为 4)。');
+if (!rp.includes(`import AppTooltip from '@/components/ui/tooltip/AppTooltip.vue';`)) die('RunPanel 缺少 AppTooltip 导入。');
 
-  // ===== commands/terminal/events.rs：match 变体改名 + 删 Error/Ack 分支 + doc_lazy_continuation =====
-  { file: "src-tauri/src/commands/terminal/events.rs", edits: [
-    [ "        LocalWslTerminalServerPayload::InteractiveOpened(_) => {",
-      "        LocalWslTerminalServerPayload::Opened => {",
-      "match Opened" ],
-    [ "        LocalWslTerminalServerPayload::InteractiveData(payload) => {",
-      "        LocalWslTerminalServerPayload::Data(payload) => {",
-      "match Data" ],
-    [ "        LocalWslTerminalServerPayload::InteractiveClosed(payload) => {",
-      "        LocalWslTerminalServerPayload::Closed(payload) => {",
-      "match Closed" ],
-    [ L("        LocalWslTerminalServerPayload::InteractiveError(payload) => {",
-        "            if let Some(message_session_id) = payload.session_id.as_ref()",
-        "                && message_session_id == session_id",
-        "            {",
-        "                emit_terminal_interactive_output(",
-        "                    app,",
-        "                    state,",
-        "                    session_id,",
-        "                    format!(\"{}\\n\", payload.message),",
-        "                );",
-        "            }",
-        "            remove_interactive_terminal_after_exit(state, session_id);",
-        "            mark_terminal_interactive_exited(",
-        "                app,",
-        "                state,",
-        "                TerminalExitEvent {",
-        "                    session_id: session_id.to_string(),",
-        "                    exit_code: payload.exit_code,",
-        "                },",
-        "            );",
-        "        }",
-        "        LocalWslTerminalServerPayload::InteractiveAck(_) => {}",
-        "        LocalWslTerminalServerPayload::InteractiveMark(payload) => {"),
-      "        LocalWslTerminalServerPayload::Mark(payload) => {",
-      "删 Error/Ack 分支 + Mark 改名" ],
-    [ L("/// - D[;exit]（命令完成）：该会话若有处于 Running 的活动运行 → 回收会话态并发 RunCompleted。",
-        "/// 无活动运行（用户在终端里手动敲的命令）一律忽略，不为手输命令合成 run 事件。"),
-      L("/// - D[;exit]（命令完成）：该会话若有处于 Running 的活动运行 → 回收会话态并发 RunCompleted。",
-        "///",
-        "/// 无活动运行（用户在终端里手动敲的命令）一律忽略，不为手输命令合成 run 事件。"),
-      "doc_lazy_continuation：列表后补空行" ],
-  ]},
+writeFileSync(join(ROOT, RUN_PANEL), restore(rp, crlf), 'utf8');
+console.log('✔ 已迁移 ' + RUN_PANEL + ':4 个按钮改用官方 <AppTooltip>,清除孤儿 data-tooltip / app-tooltip-target。');
 
-  // ===== ai/credential/mod.rs：set_tavily #[expect] + ResolvedCredential 去 provider_id =====
-  { file: "src-tauri/src/ai/credential/mod.rs", edits: [
-    [ L("    /// 写入 Tavily API Key 到独立 keyring 账户：`trim` 后非空则写入；为空即视为「清除」。",
-        "    pub fn set_tavily(api_key: &str) -> Result<(), String> {"),
-      L("    /// 写入 Tavily API Key 到独立 keyring 账户：`trim` 后非空则写入；为空即视为「清除」。",
-        "    ///",
-        "    /// 暂未接线：写入侧将在 P5c「web/* → tavily-mcp」管线落地时由设置层调用，与 `get_tavily`",
-        "    /// / `clear_tavily` 读取/清除对称保留；`#[expect]` 在其被消费后自动失效以提醒移除本标注。",
-        "    #[expect(",
-        "        dead_code,",
-        "        reason = \"P5c web/* → tavily-mcp 接线后消费；保留写入侧 API 与读取/清除对称\"",
-        "    )]",
-        "    pub fn set_tavily(api_key: &str) -> Result<(), String> {"),
-      "set_tavily 加 #[expect(dead_code)]" ],
-    [ L("pub struct ResolvedCredential {",
-        "    pub provider_id: String,",
-        "    pub api_key: String,",
-        "    pub base_url: Option<String>,",
-        "}"),
-      L("pub struct ResolvedCredential {",
-        "    pub api_key: String,",
-        "    pub base_url: Option<String>,",
-        "}"),
-      "ResolvedCredential 去 provider_id" ],
-    [ L("        Ok(ResolvedCredential {",
-        "            provider_id: normalized_provider_id.to_string(),",
-        "            api_key,",
-        "            base_url,",
-        "        })"),
-      "        Ok(ResolvedCredential { api_key, base_url })",
-      "resolve() 去 provider_id" ],
-    [ L("    #[test]",
-        "    fn resolved_credential_exposes_provider_and_base_url() {",
-        "        let resolved = ResolvedCredential {",
-        "            provider_id: \"deepseek\".to_string(),",
-        "            api_key: \"sk-test\".to_string(),",
-        "            base_url: resolve_provider_base_url(\"deepseek\", None),",
-        "        };",
-        "        assert_eq!(resolved.provider_id, \"deepseek\");",
-        "        assert_eq!(",
-        "            resolved.base_url.as_deref(),",
-        "            Some(\"https://api.deepseek.com/v1\")",
-        "        );",
-        "        assert!(!resolved.api_key.is_empty());",
-        "    }"),
-      L("    #[test]",
-        "    fn resolved_credential_exposes_base_url() {",
-        "        let resolved = ResolvedCredential {",
-        "            api_key: \"sk-test\".to_string(),",
-        "            base_url: resolve_provider_base_url(\"deepseek\", None),",
-        "        };",
-        "        assert_eq!(",
-        "            resolved.base_url.as_deref(),",
-        "            Some(\"https://api.deepseek.com/v1\")",
-        "        );",
-        "        assert!(!resolved.api_key.is_empty());",
-        "    }"),
-      "测试去 provider_id 断言" ],
-  ]},
-
-  // ===== ai/edit/history/snapshot.rs：删 3 个死壳函数 + 测试改走 store_checkpoint_snapshots =====
-  { file: "src-tauri/src/ai/edit/history/snapshot.rs", edits: [
-    [ L("pub fn store_pre_tool_snapshot(",
-        "    storage_root: &Path,",
-        "    files: &[SnapshotSourceFile<'_>],",
-        "    metadata: Option<&AiApplyPatchMetadataRequest>,",
-        "    summary: &str,",
-        ") -> Result<AiSnapshotPayload, String> {",
-        "    storage_lock::with_storage_write_lock(storage_root, \"写入 AED 快照\", || {",
-        "        let store = open_store(storage_root)?;",
-        "        store_pre_tool_snapshot_with_store(storage_root, &store, files, metadata, summary)",
-        "    })",
-        "}",
-        ""),
-      "",
-      "删除 store_pre_tool_snapshot 壳" ],
-    [ L("pub fn store_task_start_snapshot(",
-        "    storage_root: &Path,",
-        "    files: &[SnapshotSourceFile<'_>],",
-        "    metadata: Option<&AiApplyPatchMetadataRequest>,",
-        "    summary: &str,",
-        ") -> Result<AiSnapshotPayload, String> {",
-        "    storage_lock::with_storage_write_lock(storage_root, \"写入 AED 快照\", || {",
-        "        let store = open_store(storage_root)?;",
-        "        store_task_start_snapshot_with_store(storage_root, &store, files, metadata, summary)",
-        "    })",
-        "}",
-        ""),
-      "",
-      "删除 store_task_start_snapshot 壳" ],
-    [ L("pub fn store_turn_start_snapshot(",
-        "    storage_root: &Path,",
-        "    files: &[SnapshotSourceFile<'_>],",
-        "    metadata: Option<&AiApplyPatchMetadataRequest>,",
-        "    summary: &str,",
-        ") -> Result<AiSnapshotPayload, String> {",
-        "    storage_lock::with_storage_write_lock(storage_root, \"写入 AED 快照\", || {",
-        "        let store = open_store(storage_root)?;",
-        "        store_turn_start_snapshot_with_store(storage_root, &store, files, metadata, summary)",
-        "    })",
-        "}",
-        ""),
-      "",
-      "删除 store_turn_start_snapshot 壳" ],
-    [ L("    use super::{",
-        "        SnapshotRetentionPolicy, SnapshotSourceFile, apply_snapshot_retention,",
-        "        list_stored_snapshots, load_stored_snapshot, store_manual_snapshot,",
-        "        store_pre_tool_snapshot,",
-        "    };"),
-      L("    use super::{",
-        "        SnapshotRetentionPolicy, SnapshotSourceFile, apply_snapshot_retention,",
-        "        list_stored_snapshots, load_stored_snapshot, store_checkpoint_snapshots,",
-        "        store_manual_snapshot,",
-        "    };"),
-      "测试 import 换 store_checkpoint_snapshots" ],
-    [ L("    #[test]",
-        "    fn store_pre_tool_snapshot_writes_manifest_and_dedupes_small_blobs_in_fjall() {",
-        "        let temp_dir = temp_dir(\"aed-snapshot\");",
-        "        fs::create_dir_all(&temp_dir).expect(\"temp directory should be created\");",
-        "",
-        "        let snapshot = store_pre_tool_snapshot(",
-        "            &temp_dir,",
-        "            &[",
-        "                SnapshotSourceFile {",
-        "                    path: \"src/a.sh\",",
-        "                    content_hash: \"blake3:shared\",",
-        "                    content: \"echo shared\",",
-        "                },",
-        "                SnapshotSourceFile {",
-        "                    path: \"src/b.sh\",",
-        "                    content_hash: \"blake3:shared\",",
-        "                    content: \"echo shared\",",
-        "                },",
-        "            ],",
-        "            Some(&AiApplyPatchMetadataRequest {",
-        "                task_id: Some(\"task-1\".to_string()),",
-        "                turn_id: None,",
-        "                reason: Some(\"预快照\".to_string()),",
-        "                tool_call_id: None,",
-        "                confirmed_by_user: None,",
-        "                agent_run_id: None,",
-        "                agent_step_id: None,",
-        "                workspace_root_path: None,",
-        "            }),",
-        "            \"应用 AI Patch\",",
-        "        )",
-        "        .expect(\"snapshot should be written\");",
-        "",
-        "        let restored = list_stored_snapshots(&temp_dir).expect(\"snapshots should be listed\");",
-        "        let stored = load_stored_snapshot(&temp_dir, &snapshot.id).expect(\"snapshot should load\");",
-        "",
-        "        assert_eq!(snapshot.scope, \"pre-tool\");",
-        "        assert_eq!(snapshot.task_id, \"task-1\");",
-        "        assert_eq!(snapshot.file_refs.len(), 2);",
-        "        assert!(snapshot.storage_key.starts_with(\"fjall://snapshots/\"));",
-        "        assert_eq!(restored.len(), 1);",
-        "        assert_eq!(stored.files.len(), 2);",
-        "        assert_eq!(stored.files[0].content, \"echo shared\");",
-        "        assert!(!temp_dir.join(\"snapshots\").exists());",
-        "",
-        "        let _ = fs::remove_dir_all(&temp_dir);",
-        "    }"),
-      L("    #[test]",
-        "    fn store_checkpoint_pre_tool_snapshot_writes_manifest_and_dedupes_small_blobs_in_fjall() {",
-        "        let temp_dir = temp_dir(\"aed-snapshot\");",
-        "        fs::create_dir_all(&temp_dir).expect(\"temp directory should be created\");",
-        "",
-        "        let (task_start, turn_start, snapshot) = store_checkpoint_snapshots(",
-        "            &temp_dir,",
-        "            &[",
-        "                SnapshotSourceFile {",
-        "                    path: \"src/a.sh\",",
-        "                    content_hash: \"blake3:shared\",",
-        "                    content: \"echo shared\",",
-        "                },",
-        "                SnapshotSourceFile {",
-        "                    path: \"src/b.sh\",",
-        "                    content_hash: \"blake3:shared\",",
-        "                    content: \"echo shared\",",
-        "                },",
-        "            ],",
-        "            Some(&AiApplyPatchMetadataRequest {",
-        "                task_id: Some(\"task-1\".to_string()),",
-        "                turn_id: None,",
-        "                reason: Some(\"预快照\".to_string()),",
-        "                tool_call_id: None,",
-        "                confirmed_by_user: None,",
-        "                agent_run_id: None,",
-        "                agent_step_id: None,",
-        "                workspace_root_path: None,",
-        "            }),",
-        "            \"应用 AI Patch\",",
-        "            false,",
-        "            false,",
-        "            false,",
-        "        )",
-        "        .expect(\"snapshot should be written\");",
-        "",
-        "        assert!(task_start.is_none());",
-        "        assert!(turn_start.is_none());",
-        "",
-        "        let restored = list_stored_snapshots(&temp_dir).expect(\"snapshots should be listed\");",
-        "        let stored = load_stored_snapshot(&temp_dir, &snapshot.id).expect(\"snapshot should load\");",
-        "",
-        "        assert_eq!(snapshot.scope, \"pre-tool\");",
-        "        assert_eq!(snapshot.task_id, \"task-1\");",
-        "        assert_eq!(snapshot.file_refs.len(), 2);",
-        "        assert!(snapshot.storage_key.starts_with(\"fjall://snapshots/\"));",
-        "        assert_eq!(restored.len(), 1);",
-        "        assert_eq!(stored.files.len(), 2);",
-        "        assert_eq!(stored.files[0].content, \"echo shared\");",
-        "        assert!(!temp_dir.join(\"snapshots\").exists());",
-        "",
-        "        let _ = fs::remove_dir_all(&temp_dir);",
-        "    }"),
-      "测试改走 store_checkpoint_snapshots" ],
-  ]},
-
-  // ===== commands/ai/gateway.rs：collapsible_if → let-chain =====
-  { file: "src-tauri/src/commands/ai/gateway.rs", edits: [
-    [ L("    if let Ok(payload) = serde_json::from_str::<serde_json::Value>(error) {",
-        "        if let Some(code) = payload.get(\"code\").and_then(|v| v.as_str()) {",
-        "            return code.to_string();",
-        "        }",
-        "    }"),
-      L("    if let Ok(payload) = serde_json::from_str::<serde_json::Value>(error)",
-        "        && let Some(code) = payload.get(\"code\").and_then(|v| v.as_str())",
-        "    {",
-        "        return code.to_string();",
-        "    }"),
-      "classify_provider_test_error_code let-chain" ],
-  ]},
-
-  // ===== commands/search/scan.rs：manual_pattern_char_comparison =====
-  { file: "src-tauri/src/commands/search/scan.rs", edits: [
-    [ ".trim_end_matches(|ch| ch == '\\r' || ch == '\\n')",
-      ".trim_end_matches(['\\r', '\\n'])",
-      "trim_end_matches 用字符数组" ],
-  ]},
-];
-
-// —— 执行（事务式）——
-const results = [];
-for (const { file, edits } of PLAN) {
-  const abs = path.join(ROOT, file);
-  if (!fs.existsSync(abs)) throw new Error("文件不存在：" + file);
-  const raw = fs.readFileSync(abs, "utf8");
-  const eol = detectEol(raw);
-  let body = toLf(raw);
-  for (const [oldStr, newStr, label] of edits) {
-    body = replaceOnce(body, oldStr, newStr, file + " :: " + label);
+// ---------- 2) 精确反向引用扫描,确认死系统无人引用 ----------
+const TOKENS = ['window/app-tooltip', 'initAppTooltipSystem', 'IAppTooltipSystem'];
+const skip = new Set([posix.normalize(DEAD), posix.normalize(DEAD_SPEC)]);
+function walk(dirRel, out) {
+  for (const name of readdirSync(join(ROOT, dirRel))) {
+    const rel = posix.join(dirRel, name);
+    const st = statSync(join(ROOT, rel));
+    if (st.isDirectory()) { walk(rel, out); continue; }
+    if (!/\.(ts|vue)$/.test(name)) continue;
+    if (skip.has(posix.normalize(rel))) continue;
+    out.push(rel);
   }
-  results.push({ abs, file, content: fromLf(body, eol) });
+}
+const files = [];
+walk('src', files);
+const refs = [];
+for (const rel of files) {
+  const txt = readFileSync(join(ROOT, rel), 'utf8');
+  if (TOKENS.some((t) => txt.includes(t))) refs.push(rel);
+}
+if (refs.length > 0) {
+  console.error('⚠ 仍发现死系统的真实引用,已保留 RunPanel 改动但不删除死文件:');
+  for (const r of refs) console.error('  ' + r);
+  console.error('请人工复核后再决定是否删除 ' + DEAD + ' / ' + DEAD_SPEC + '。');
+  process.exit(0);
 }
 
-// 全部命中后才落盘
-for (const { abs, content } of results) fs.writeFileSync(abs, content, "utf8");
-for (const rel of DELETE_FILES) {
-  const abs = path.join(ROOT, rel);
-  if (fs.existsSync(abs)) { fs.rmSync(abs); console.log("删除文件：" + rel); }
-}
-console.log("✅ 完成：编辑 " + results.length + " 个文件，删除 " + DELETE_FILES.length + " 个文件。");
+// ---------- 3) 删除死系统文件 ----------
+rmSync(join(ROOT, DEAD), { force: true });
+rmSync(join(ROOT, DEAD_SPEC), { force: true });
+console.log('✔ 已删除死文件:' + DEAD);
+console.log('✔ 已删除死文件:' + DEAD_SPEC);
+
+console.log('\n下一步验证(全绿才算通过):');
+console.log('  pnpm typecheck && pnpm lint && pnpm test && pnpm build');

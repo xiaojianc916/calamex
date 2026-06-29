@@ -13,30 +13,37 @@
       />
 
       <div class="run-panel-actions">
-        <button v-if="canStopRun" type="button"
-          class="icon-button app-tooltip-target run-panel-action-button run-panel-action-button--stop"
-          data-tooltip="停止 / 重置运行" data-tooltip-placement="top" aria-label="停止 / 重置运行"
-          @click="void handleStopRun()">
-          <Square aria-hidden="true" />
-        </button>
+        <AppTooltip v-if="canStopRun" content="停止 / 重置运行">
+          <button type="button"
+            class="icon-button run-panel-action-button run-panel-action-button--stop"
+            aria-label="停止 / 重置运行"
+            @click="void handleStopRun()">
+            <Square aria-hidden="true" />
+          </button>
+        </AppTooltip>
 
-        <button type="button" class="icon-button app-tooltip-target run-panel-action-button" data-tooltip="重连终端"
-          data-tooltip-placement="top" aria-label="重连终端" @click="void handleRestartTerminal()">
-          <RefreshCcw aria-hidden="true" />
-        </button>
+        <AppTooltip content="重连终端">
+          <button type="button" class="icon-button run-panel-action-button" aria-label="重连终端"
+            @click="void handleRestartTerminal()">
+            <RefreshCcw aria-hidden="true" />
+          </button>
+        </AppTooltip>
 
-        <button type="button" class="icon-button app-tooltip-target run-panel-action-button" data-tooltip="清屏"
-          data-tooltip-placement="top" aria-label="清屏" :disabled="!isTerminalReady" @click="void handleClearTerminal()">
-          <Eraser aria-hidden="true" />
-        </button>
+        <AppTooltip content="清屏">
+          <button type="button" class="icon-button run-panel-action-button" aria-label="清屏"
+            :disabled="!isTerminalReady" @click="void handleClearTerminal()">
+            <Eraser aria-hidden="true" />
+          </button>
+        </AppTooltip>
 
-        <button type="button" class="icon-button app-tooltip-target run-panel-action-button"
-          :data-tooltip="props.isMaximized ? '还原终端高度' : '最大化终端'" data-tooltip-placement="top"
-          :aria-label="props.isMaximized ? '还原终端高度' : '最大化终端'" :aria-pressed="props.isMaximized"
-          @click="$emit('toggle-maximize')">
-          <Maximize2 v-if="!props.isMaximized" aria-hidden="true" />
-          <Minimize2 v-else aria-hidden="true" />
-        </button>
+        <AppTooltip :content="props.isMaximized ? '还原终端高度' : '最大化终端'">
+          <button type="button" class="icon-button run-panel-action-button"
+            :aria-label="props.isMaximized ? '还原终端高度' : '最大化终端'" :aria-pressed="props.isMaximized"
+            @click="$emit('toggle-maximize')">
+            <Maximize2 v-if="!props.isMaximized" aria-hidden="true" />
+            <Minimize2 v-else aria-hidden="true" />
+          </button>
+        </AppTooltip>
       </div>
     </header>
 
@@ -65,6 +72,7 @@
 import { Eraser, Maximize2, Minimize2, RefreshCcw, Square } from '@lucide/vue';
 import { storeToRefs } from 'pinia';
 import { computed, nextTick, onMounted, watch } from 'vue';
+import AppTooltip from '@/components/ui/tooltip/AppTooltip.vue';
 import { useMessage } from '@/composables/useMessage';
 import { useTerminalRunControl } from '@/domains/terminal/composables/useTerminalRunControl';
 import { useTerminalRegistryStore } from '@/domains/terminal/core/registry';
