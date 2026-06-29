@@ -9,17 +9,12 @@ import { type IShikiThemedToken, resolveShikiLanguageId, SHIKI_THEME_NAME } from
  * 在方案B（有状态、按块语法状态接续）的基础上新增两项能力，且不保留任何旧路径/兼容层：
  *
  * 1) 增量编辑（edit）：文档变更时主线程只发送行级 delta（起始行 / 删除行数 / 新增行），
- *    Worker 用 splice 原地更新整篇文本，并仅作废受影响块（editedBlock 及其之后）的末态缓存，
- *    无需每次变更都重传整篇代码。对照 microsoft/vscode 的 TextModel 增量分词：编辑只让
- *    编辑点之后的分词状态失效，之前的行保持已算结果。
+ *    Worker 用 splice 原地更新整篇文本，并仅作废受影响块（editedBlock 及其之后）的末态缓存。
  *
  * 2) 后台预热（background pre-warm）：会话建立 / 语言就绪 / 编辑之后，用时间分片（≤ BG_SLICE_MS）
- *    在空闲回合里从 bgCursor 向后逐块计算并缓存块末态。这样向文件深处滚动时，前缀块状态多已就绪，
- *    tokenizeRange 直接从最近块边界以“真实语法状态”续算，无需现场从头补算整段前缀。
+ *    在空闲回合里从 bgCursor 向后逐块计算并缓存块末态。
  *
- * GrammarState 含链式父引用与方法，无法跨线程 postMessage，因此整篇文档与每块末态全部留在
- * Worker 内：主线程只发“会话 + 行范围 / 行级 delta”。需要 Shiki ≥ 1.16
- * （grammarState / getLastGrammarState API）。
+ * GrammarState 无法跨线程 postMessage，因此整篇文档与每块末态全部留在 Worker 内。需 Shiki ≥ 1.16。
  */
 
 const BLOCK_LINES = 512;
@@ -125,7 +120,6 @@ const ensureLanguage = async (language: string): Promise<string | null> => {
   if (loadedLanguages.has(shikiId)) {
     return shikiId;
   }
-
   let pending = pendingLanguages.get(shikiId);
   if (!pending) {
     const loader = bundledLanguages[shikiId as keyof typeof bundledLanguages];
@@ -145,11 +139,9 @@ const ensureLanguage = async (language: string): Promise<string | null> => {
     })();
     pendingLanguages.set(shikiId, pending);
   }
-
   return (await pending) ? shikiId : null;
 };
 
-// 用给定的起始语法状态 tokenize 一段代码，返回 token 与该段结束处的语法状态。
 const tokenizeBlockCode = (
   highlighter: HighlighterCore,
   shikiId: string,
@@ -174,7 +166,6 @@ const tokenizeBlockCode = (
   return { tokens, endState };
 };
 
-// 计算并缓存 blockIndex 结束处的语法状态（含其之前所有块）；blockIndex < 0 => INITIAL(null)。
 const ensureBlockEndState = (
   highlighter: HighlighterCore,
   session: TSession,
@@ -207,7 +198,6 @@ const ensureBlockEndState = (
 const totalBlocks = (session: TSession): number =>
   Math.max(1, Math.ceil(session.lines.length / BLOCK_LINES));
 
-// 异步解析会话语言；就绪后开启后台预热。语言加载经 pendingLanguages 去重。
 const resolveSession = (session: TSession): void => {
   if (session.resolved) {
     scheduleBackground();
@@ -231,7 +221,6 @@ const resolveSession = (session: TSession): void => {
     });
 };
 
-// 后台预热：时间分片地从 bgCursor 向后逐块计算并缓存块末态。返回该会话是否仍有剩余工作。
 const advanceSessionBackground = (
   highlighter: HighlighterCore,
   session: TSession,
@@ -241,7 +230,6 @@ const advanceSessionBackground = (
     return false;
   }
   const blocks = totalBlocks(session);
-  // 最后一块之后没有内容，无需缓存其末态；填到 blocks - 1 即可。
   while (session.bgCursor < blocks - 1) {
     if (Date.now() >= deadline) {
       return true;
@@ -262,7 +250,6 @@ const runBackground = (): void => {
   let moreWork = false;
   for (const [key, session] of sessions) {
     if (key < 0) {
-      // 片段会话（静态高亮）一次性使用、随即 dispose，不做预热。
       continue;
     }
     if (advanceSessionBackground(highlighter, session, deadline)) {
@@ -306,5 +293,116 @@ const applyEdit = (req: TEditRequest): void => {
   scheduleBackground();
 };
 
-const tokenizeRange = async (req: TTokenizeRangeRequest): Promise<IShikiThemedToken[][] | null> => {
-  const session = sessions.
+const tokenizeRange = async (
+  req: TTokenizeRangeRequest,
+): Promise<IShikiThemedToken[][] | null> => {
+  const session = sessions.get(req.sessionKey);
+  if (!session || session.sessionId !== req.sessionId || session.docVersion !== req.docVersion) {
+    return null;
+  }
+  if (!session.resolved) {
+    session.shikiId = await ensureLanguage(session.language);
+    session.resolved = true;
+    session.resolving = false;
+  }
+  const { shikiId } = session;
+  if (!shikiId) {
+    return null;
+  }
+  if (sessions.get(req.sessionKey) !== session || session.docVersion !== req.docVersion) {
+    return null;
+  }
+  const totalLines = session.lines.length;
+  if (totalLines === 0) {
+    return null;
+  }
+  const highlighter = await ensureHighlighter();
+  const startLine = Math.max(1, req.startLine);
+  const endLine = Math.min(totalLines, Math.max(startLine, req.endLine));
+  if (startLine > totalLines) {
+    return null;
+  }
+  const startBlock = Math.floor((startLine - 1) / BLOCK_LINES);
+  const blockStartLine = startBlock * BLOCK_LINES + 1;
+  const startState = ensureBlockEndState(highlighter, session, shikiId, startBlock - 1);
+  const code = session.lines.slice(blockStartLine - 1, endLine).join('\n');
+  const { tokens } = tokenizeBlockCode(highlighter, shikiId, code, startState);
+  const offset = startLine - blockStartLine;
+  const count = endLine - startLine + 1;
+  return tokens.slice(offset, offset + count);
+};
+
+const workerSelf = self as unknown as {
+  addEventListener(
+    type: 'message',
+    listener: (event: MessageEvent<TShikiWorkerRequest>) => void,
+  ): void;
+  postMessage(message: TShikiWorkerResponse): void;
+};
+
+workerSelf.addEventListener('message', (event) => {
+  const data = event.data;
+
+  if (data.type === 'reset') {
+    const session: TSession = {
+      sessionId: data.sessionId,
+      docVersion: data.docVersion,
+      language: data.language,
+      shikiId: null,
+      resolved: false,
+      resolving: false,
+      lines: data.code.split('\n'),
+      blockEndState: new Map(),
+      bgCursor: 0,
+    };
+    sessions.set(data.sessionKey, session);
+    if (sessions.size > MAX_SESSIONS) {
+      for (const [key] of sessions) {
+        if (key < 0 && key !== data.sessionKey) {
+          sessions.delete(key);
+          if (sessions.size <= MAX_SESSIONS) {
+            break;
+          }
+        }
+      }
+    }
+    resolveSession(session);
+    return;
+  }
+
+  if (data.type === 'edit') {
+    applyEdit(data);
+    return;
+  }
+
+  if (data.type === 'dispose') {
+    sessions.delete(data.sessionKey);
+    return;
+  }
+
+  const req = data;
+  void tokenizeRange(req)
+    .then((tokens) => {
+      workerSelf.postMessage({
+        id: req.id,
+        sessionKey: req.sessionKey,
+        sessionId: req.sessionId,
+        docVersion: req.docVersion,
+        startLine: req.startLine,
+        endLine: req.endLine,
+        tokens,
+      });
+    })
+    .catch((error: unknown) => {
+      workerSelf.postMessage({
+        id: req.id,
+        sessionKey: req.sessionKey,
+        sessionId: req.sessionId,
+        docVersion: req.docVersion,
+        startLine: req.startLine,
+        endLine: req.endLine,
+        tokens: null,
+        error: error instanceof Error ? error.message : String(error),
+      });
+    });
+});
