@@ -180,7 +180,7 @@ export interface LspContentChange {
  * 统一前后端 filePath 表示:去掉 Windows 扩展路径前缀，全部用正斜杠。
  *
  * 注意：此函数与 utils/file/path.ts 的 stripWindowsVerbatimPrefix + normalizeFileSystemPath
- * 功能重叠。本模块位于 editor service 层，暂保留本地实现以避免对 utils/file 的依赖。
+ * 功能重叠。本模块位于 editor service 层，直接委托 normalizeFileSystemPath，保持全局路径规范化口径统一。
  * 如未来允许跨层依赖，请直接复用 normalizeFileSystemPath 并删除此函数。
  *
  * Windows 上 Tauri 可能返回 `\\?\D:\workspace\test.sh` 这样的
