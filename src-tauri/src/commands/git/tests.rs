@@ -627,10 +627,12 @@ fn get_git_pull_request_support_parses_gitlab_remote() -> Result<(), String> {
 }
 
 #[test]
-fn short_commit_id_truncates_to_seven_hex_chars() {
+fn short_commit_oid_falls_back_to_seven_hex_chars_for_unknown_object() {
     // 钉住 short_commit_id 依赖的 \`{:.7}\` 截断行为：避免 gix ObjectId 的 Display
     // 实现变更后短 OID 长度悄悄改变而无人察觉。
+    let temp = TempGitDir::new("short-oid-fallback").expect("temp dir");
+    let repo = temp.init_repository().expect("init repo");
     let id = gix::ObjectId::from_hex(b"1234567890abcdef1234567890abcdef12345678")
         .expect("valid sha1 hex");
-    assert_eq!(short_commit_id(id), "1234567");
+    assert_eq!(short_commit_oid(&repo, id), "1234567");
 }
