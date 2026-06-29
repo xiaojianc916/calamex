@@ -111,8 +111,8 @@ export interface IAgentRuntimeInput {
      * be set together when resuming a plan, and all three must be absent
      * when starting a fresh request.
      *
-     * Prefer the nested {@link IAgentRuntimeInput.planContinuation} shape
-     * once downstream consumers migrate.
+     * These may later move to a nested `planContinuation` shape once
+     * downstream consumers migrate.
      */
     planId?: string | undefined;
     planVersion?: number | undefined;

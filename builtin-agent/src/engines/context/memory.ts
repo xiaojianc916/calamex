@@ -139,9 +139,6 @@ export interface ICreateMastraMemoryScopeOptions {
  */
 export type IMastraMemoryReference = IMastraMemoryScope;
 
-// -----------------------------------------------------------------------------
-// Env helpers
-// -----------------------------------------------------------------------------
 
 
 
