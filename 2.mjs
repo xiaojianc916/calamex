@@ -1,211 +1,284 @@
-// fix-ai-review-batch-7.mjs  (G4 + G5 + G6, 已对齐当前 main 树 3246641)
-import { readFileSync, writeFileSync } from 'node:fs';
-import { resolve } from 'node:path';
+// d1s4d-store-trim.mjs
+// D1 Slice 4-D：store/aiAgent.ts 裁剪为 ACP-native lean 形态 + 同步裁其单测。
+//
+// 依据：plan/run 脚手架的写入方（useAiAgentPlan.ts / useAiAgentRun.ts）已随 d1s1 删除，
+// 唯一读取方（AiAssistantPanel 旧 plan/run 派生）已随 d1s3 重写移除；useAiAssistant 仅用
+// mode/HITL 三门，useAiAgentNetwork 仅用 network/execution/errorMessage，useAcpUsage/useAcpPlan
+// 完全不碰本 store。故 steps/classification/plan*/runs/activeRun/*OfficialUsage*/stepDetails/
+// stepFinalAnswers/patchSummaries/toolActivities 及其全部 action/getter/helper + persist pick +
+// hydrate/usage 块均为纯死代码 → 整文件重写删除（删除占比 ~70%，重写比锚点更干净）。
+//
+// 删除占比高，采用整文件覆盖。EOL 健壮：先把内嵌内容归一到 LF，再按目标文件现有 EOL 落盘
+// （本仓本地为 CRLF），无论本脚本自身以何种换行保存都不会产生 \r\r\n。
+import { readFileSync, writeFileSync, existsSync } from 'node:fs';
 
 const ROOT = process.cwd();
-const CHAT = 'builtin-agent/src/engines/modes/chat.ts';
-const VALID = 'builtin-agent/src/engines/modes/validation.ts';
 
-const eolOf = (s) => (s.includes('\r\n') ? '\r\n' : '\n');
+const detectEol = (text) => (text.includes('\r\n') ? '\r\n' : '\n');
+const toLf = (text) => text.replace(/\r\n/g, '\n');
+const fromLf = (text, eol) => (eol === '\r\n' ? text.replace(/\n/g, '\r\n') : text);
 
-function load(rel) {
-  const abs = resolve(ROOT, rel);
-  const raw = readFileSync(abs, 'utf8');
-  const eol = eolOf(raw);
-  const hadTrailing = raw.endsWith(eol);
-  const lines = raw.split(eol);
-  if (hadTrailing) lines.pop();
-  return { abs, eol, lines, hadTrailing };
-}
-
-function save(f) {
-  writeFileSync(f.abs, f.lines.join(f.eol) + (f.hadTrailing ? f.eol : ''), 'utf8');
-}
-
-function findUnique(lines, target) {
-  let idx = -1, count = 0;
-  for (let i = 0; i < lines.length; i++) {
-    if (lines[i] === target) { count++; if (idx === -1) idx = i; }
+const rewrite = (rel, rawContent) => {
+  const abs = `${ROOT}/${rel}`;
+  if (!existsSync(abs)) {
+    throw new Error(`目标不存在，请确认在仓库根目录运行：${rel}`);
   }
-  return { idx, count };
+  const eol = detectEol(readFileSync(abs, 'utf8'));
+  writeFileSync(abs, fromLf(toLf(rawContent), eol));
+  console.log(`✓ rewrote ${rel} (eol=${eol === '\r\n' ? 'CRLF' : 'LF'})`);
+};
+
+// ───────────────────────────────────────────────────────────────────────────
+// src/store/aiAgent.ts —— lean ACP-native 形态
+// ───────────────────────────────────────────────────────────────────────────
+const STORE_TS = `import { defineStore } from 'pinia';
+import { ref } from 'vue';
+import { z } from 'zod';
+import type { IAgentSidecarPendingAskUser } from '@/composables/ai/sidecar-ask-user';
+import type {
+  IAiContextReference,
+  IAiToolConfirmationRequest,
+  TAiAgentNetworkPermission,
+} from '@/types/ai';
+import {
+  aiAgentNetworkPermissionSchema,
+  aiToolConfirmationRequestSchema,
+} from '@/types/ai/agent.schema';
+import { AI_ASSISTANT_MODES, type TAiAssistantMode } from '@/types/ai/assistant-mode';
+import { aiContextReferenceSchema } from '@/types/ai/context.schema';
+import {
+  AI_EXECUTION_MODE_DEFAULT,
+  AI_EXECUTION_MODES,
+  type TAiExecutionMode,
+} from '@/types/ai/execution-mode';
+import { askUserQuestionSchema } from '@/types/ai/sidecar.schema';
+import { aiThreadEntrySchema, type IAiThreadEntry } from '@/types/ai/thread';
+
+// ---------------------------------------------------------------------------
+// Public types
+// ---------------------------------------------------------------------------
+
+export interface IAiPersistedSidecarAgentSession {
+  sessionId: string;
+  assistantMessageId: string;
+  threadId: string | null;
+  turnId: string | null;
+  baseEntries: IAiThreadEntry[];
+  messageContent: string;
+  references: IAiContextReference[];
 }
 
-function findBlock(lines, block, from = 0) {
-  for (let i = from; i + block.length <= lines.length; i++) {
-    let ok = true;
-    for (let j = 0; j < block.length; j++) if (lines[i + j] !== block[j]) { ok = false; break; }
-    if (ok) return i;
-  }
-  return -1;
-}
+export type TAiAgentPanelMode = TAiAssistantMode;
 
-// 锚点 -> 停止行（不含停止行），无论中间多少行都精确删除
-function removeUntil(f, label, startAnchor, stopLine) {
-  const s = findUnique(f.lines, startAnchor);
-  if (s.idx === -1) { console.log(`• 跳过(已删除): ${label}`); return; }
-  if (s.count > 1) throw new Error(`起始锚点不唯一,已中止: ${label}\n锚点: ${JSON.stringify(startAnchor)}`);
-  let stop = -1;
-  for (let i = s.idx + 1; i < f.lines.length; i++) if (f.lines[i] === stopLine) { stop = i; break; }
-  if (stop === -1) throw new Error(`未找到停止行,已中止: ${label}\n停止行: ${JSON.stringify(stopLine)}`);
-  const n = stop - s.idx;
-  f.lines.splice(s.idx, n);
-  console.log(`✓ 删除 ${n} 行: ${label}`);
-}
+// ---------------------------------------------------------------------------
+// Persistence schema
+// ---------------------------------------------------------------------------
 
-function replaceLine(f, label, oldLine, newLine) {
-  const got = findUnique(f.lines, oldLine);
-  if (got.idx === -1) {
-    if (findUnique(f.lines, newLine).idx !== -1) { console.log(`• 跳过(已替换): ${label}`); return; }
-    throw new Error(`未找到待替换行,已中止: ${label}\n行: ${JSON.stringify(oldLine)}`);
-  }
-  if (got.count > 1) throw new Error(`待替换行不唯一,已中止: ${label}`);
-  f.lines[got.idx] = newLine;
-  console.log(`✓ 替换: ${label}`);
-}
+const aiAgentPanelModeSchema = z.enum(AI_ASSISTANT_MODES);
+const aiExecutionModeSchema = z.enum(AI_EXECUTION_MODES);
 
-function insertAfter(f, label, anchor, newLine) {
-  const got = findUnique(f.lines, anchor);
-  if (got.idx === -1) throw new Error(`未找到锚点(after),已中止: ${label}\n锚点: ${JSON.stringify(anchor)}`);
-  if (got.count > 1) throw new Error(`锚点(after)不唯一,已中止: ${label}`);
-  if (f.lines[got.idx + 1] === newLine) { console.log(`• 跳过(已插入): ${label}`); return; }
-  f.lines.splice(got.idx + 1, 0, newLine);
-  console.log(`✓ 插入(after): ${label}`);
-}
+// 续聊 / 审批 resume 的基线上下文：权威 entries 快照。default([]) 兼容尚未写入该字段的旧持久化。
+const aiPersistedSidecarAgentSessionSchema = z.object({
+  sessionId: z.string().min(1),
+  assistantMessageId: z.string().min(1),
+  threadId: z.string().min(1).nullable(),
+  turnId: z.string().min(1).nullable(),
+  baseEntries: z.array(aiThreadEntrySchema).max(200).default([]),
+  messageContent: z.string(),
+  references: z.array(aiContextReferenceSchema).max(20),
+});
 
-function insertBefore(f, label, anchor, newLine) {
-  const got = findUnique(f.lines, anchor);
-  if (got.idx === -1) throw new Error(`未找到锚点(before),已中止: ${label}\n锚点: ${JSON.stringify(anchor)}`);
-  if (got.count > 1) throw new Error(`锚点(before)不唯一,已中止: ${label}`);
-  if (f.lines[got.idx - 1] === newLine) { console.log(`• 跳过(已插入): ${label}`); return; }
-  f.lines.splice(got.idx, 0, newLine);
-  console.log(`✓ 插入(before): ${label}`);
-}
+// ask_user 反向提问的待作答门，复用共享 askUserQuestionSchema（单一来源），requestId 用于 resume。
+const agentSidecarPendingAskUserSchema = z.object({
+  requestId: z.string().min(1),
+  questions: z.array(askUserQuestionSchema).min(1).max(4),
+});
 
-function replaceBlock(f, label, oldLines, newLines) {
-  const at = findBlock(f.lines, oldLines);
-  if (at === -1) {
-    if (findBlock(f.lines, newLines) !== -1) { console.log(`• 跳过(已替换): ${label}`); return; }
-    throw new Error(`未找到待替换块,已中止: ${label}`);
-  }
-  if (findBlock(f.lines, oldLines, at + 1) !== -1) throw new Error(`待替换块不唯一,已中止: ${label}`);
-  f.lines.splice(at, oldLines.length, ...newLines);
-  console.log(`✓ 替换块: ${label}`);
-}
+const aiAgentPersistSchema = z.object({
+  mode: aiAgentPanelModeSchema,
+  networkPermission: aiAgentNetworkPermissionSchema,
+  // 执行自主性：interactive（默认，逐步门控）/ autonomous（自主执行）。default(...) 兼容旧持久化。
+  executionMode: aiExecutionModeSchema.default(AI_EXECUTION_MODE_DEFAULT),
+  pendingToolConfirmation: aiToolConfirmationRequestSchema.nullable(),
+  // default(null) 兼容尚未写入该字段的旧持久化。
+  pendingUserQuestion: agentSidecarPendingAskUserSchema.nullable().default(null),
+  pendingSidecarAgentSession: aiPersistedSidecarAgentSessionSchema.nullable(),
+  errorMessage: z.string(),
+});
 
-// ============ chat.ts：G4 删诊断 + G6 cleanup ============
-const chat = load(CHAT);
+type TAiAgentPersistState = z.infer<typeof aiAgentPersistSchema>;
 
-// G4-a：删除 diagFullStream 包装（从注释一直删到 createRuntimeEvent，含 const diagStream 行）
-removeUntil(
-  chat,
-  'G4-a chat.ts: 删除 diagFullStream 包装',
-  '            // [diag] 临时诊断（只读、可回滚）：透传包装 fullStream，逐块打印 chunk 类型，',
-  '            const createRuntimeEvent = createRuntimeEventFactory({',
+// ---------------------------------------------------------------------------
+// Store
+// ---------------------------------------------------------------------------
+
+export const useAiAgentStore = defineStore(
+  'ai-agent',
+  () => {
+    // -- State --------------------------------
+    const mode = ref<TAiAgentPanelMode>('agent');
+    const networkPermission = ref<TAiAgentNetworkPermission>('ask');
+    const executionMode = ref<TAiExecutionMode>(AI_EXECUTION_MODE_DEFAULT);
+    // HITL 三门（互斥占用同一回合）：工具审批 / 反向提问 / 二者共用的 resume session。
+    const pendingToolConfirmation = ref<IAiToolConfirmationRequest | null>(null);
+    const pendingUserQuestion = ref<IAgentSidecarPendingAskUser | null>(null);
+    const pendingSidecarAgentSession = ref<IAiPersistedSidecarAgentSession | null>(null);
+    const errorMessage = ref<string>('');
+
+    // -- Actions ------------------------------
+    const setMode = (nextMode: TAiAgentPanelMode): void => {
+      mode.value = nextMode;
+    };
+
+    const setNetworkPermission = (permission: TAiAgentNetworkPermission): void => {
+      networkPermission.value = permission;
+    };
+
+    const setExecutionMode = (next: TAiExecutionMode): void => {
+      executionMode.value = next;
+    };
+
+    const setPendingToolConfirmation = (confirmation: IAiToolConfirmationRequest): void => {
+      pendingToolConfirmation.value = confirmation;
+    };
+
+    const clearPendingToolConfirmation = (confirmationId?: string): void => {
+      if (!confirmationId || pendingToolConfirmation.value?.id === confirmationId) {
+        pendingToolConfirmation.value = null;
+        pendingSidecarAgentSession.value = null;
+      }
+    };
+
+    // ask_user 反向提问门，镜像 pendingToolConfirmation：clear 时连带回收共用的 resume session。
+    const setPendingUserQuestion = (question: IAgentSidecarPendingAskUser): void => {
+      pendingUserQuestion.value = question;
+    };
+
+    const clearPendingUserQuestion = (requestId?: string): void => {
+      if (!requestId || pendingUserQuestion.value?.requestId === requestId) {
+        pendingUserQuestion.value = null;
+        pendingSidecarAgentSession.value = null;
+      }
+    };
+
+    const setPendingSidecarAgentSession = (session: IAiPersistedSidecarAgentSession): void => {
+      pendingSidecarAgentSession.value = session;
+    };
+
+    const clearPendingSidecarAgentSession = (): void => {
+      pendingSidecarAgentSession.value = null;
+    };
+
+    return {
+      // state
+      mode,
+      networkPermission,
+      executionMode,
+      pendingToolConfirmation,
+      pendingUserQuestion,
+      pendingSidecarAgentSession,
+      errorMessage,
+      // actions
+      setMode,
+      setNetworkPermission,
+      setExecutionMode,
+      setPendingToolConfirmation,
+      clearPendingToolConfirmation,
+      setPendingUserQuestion,
+      clearPendingUserQuestion,
+      setPendingSidecarAgentSession,
+      clearPendingSidecarAgentSession,
+    };
+  },
+  {
+    persist: {
+      key: 'shell-ide.ai-agent',
+      pick: [
+        'mode',
+        'networkPermission',
+        'executionMode',
+        'pendingToolConfirmation',
+        'pendingUserQuestion',
+        'pendingSidecarAgentSession',
+        'errorMessage',
+      ],
+      afterHydrate(ctx) {
+        const store = ctx.store as unknown as TAiAgentPersistState;
+        // store 上额外挂的 method 在 z.object 默认 strip 下被忽略，可直接整体解析。
+        const parsed = aiAgentPersistSchema.safeParse(store);
+        if (!parsed.success) {
+          return;
+        }
+        // 没有待确认工具、也没有待作答提问时，顺手清掉残留 resume session（两门共用）。
+        Object.assign(store, {
+          ...parsed.data,
+          pendingSidecarAgentSession:
+            parsed.data.pendingToolConfirmation || parsed.data.pendingUserQuestion
+              ? parsed.data.pendingSidecarAgentSession
+              : null,
+        });
+      },
+    },
+  },
 );
+`;
 
-// G4-b：consumeTextStream 改回消费原始 stream
-replaceLine(
-  chat,
-  'G4-b chat.ts: consumeTextStream 改用原始 stream',
-  '                diagStream,',
-  '                stream,',
-);
+// ───────────────────────────────────────────────────────────────────────────
+// src/store/aiAgent.store.spec.ts —— 仅保留 mode / executionMode 持久化用例
+// ───────────────────────────────────────────────────────────────────────────
+const SPEC_TS = `import { createPinia, setActivePinia } from 'pinia';
+import piniaPluginPersistedstate from 'pinia-plugin-persistedstate';
+import { beforeEach, describe, expect, it } from 'vitest';
+import { createApp, nextTick } from 'vue';
 
-// G4-c：删除 streamSummary 诊断打印
-removeUntil(
-  chat,
-  'G4-c chat.ts: 删除 streamSummary 诊断打印',
-  '            // [diag] 临时诊断（只读、可回滚）：打印本回合汇总——总 chunk 数、正文长度/预览、',
-  '            if (streamSummary.streamErrorMessage) {',
-);
+import { useAiAgentStore } from '@/store/aiAgent';
 
-// G4-d：删除 result 诊断打印
-removeUntil(
-  chat,
-  'G4-d chat.ts: 删除 result 诊断打印',
-  '            // [diag] 临时诊断（只读、可回滚）：打印本回合最终 result——若此处非空但前端气泡为空，',
-  '            return {',
-);
+const createPersistedPinia = () => {
+  const pinia = createPinia();
+  pinia.use(piniaPluginPersistedstate);
+  createApp({}).use(pinia);
+  setActivePinia(pinia);
+  return pinia;
+};
 
-// G6-1：声明 streamCleanup（若上次已落盘会自动跳过）
-insertAfter(
-  chat,
-  'G6-1 chat.ts: 声明 streamCleanup',
-  '        let shouldDisconnectBundle = true;',
-  '        let streamCleanup: (() => void) | undefined;',
-);
+describe('aiAgent store persistence', () => {
+  beforeEach(() => {
+    localStorage.clear();
+    setActivePinia(createPinia());
+  });
 
-// G6-2：捕获 stream.cleanup（必须在 G4-a 之后，因为 G4-a 用 createRuntimeEvent 作停止行）
-insertBefore(
-  chat,
-  'G6-2 chat.ts: 捕获 stream.cleanup',
-  '            const createRuntimeEvent = createRuntimeEventFactory({',
-  '            streamCleanup = stream.cleanup;',
-);
+  it('默认使用 agent 模式，并在刷新后恢复用户上次切换的模式', async () => {
+    createPersistedPinia();
+    const store = useAiAgentStore();
 
-// G6-3：finally 中、仅在 shouldDisconnectBundle 为真时释放 stream（挂起续跑路径不释放）
-insertAfter(
-  chat,
-  'G6-3 chat.ts: finally 释放 stream',
-  '            if (shouldDisconnectBundle) {',
-  '                streamCleanup?.();',
-);
+    expect(store.mode).toBe('agent');
 
-save(chat);
+    store.mode = 'plan';
+    await nextTick();
 
-// ============ validation.ts：G5 prepare 异常兜底 ============
-const valid = load(VALID);
+    createPersistedPinia();
+    const restored = useAiAgentStore();
 
-replaceBlock(
-  valid,
-  'G5-1 validation.ts: validatePlan 兜底 prepare 异常',
-  [
-    "            'mastra-plan-validator-run',",
-    "            '计划验证需要 planId 和 planVersion。',",
-    '        );',
-  ],
-  [
-    "            'mastra-plan-validator-run',",
-    "            '计划验证需要 planId 和 planVersion。',",
-    '        ).catch(',
-    '            (error): { ok: false; response: IAgentRuntimeResponse } => ({',
-    '                ok: false,',
-    '                response: createErrorResponse(',
-    '                    sessionId,',
-    '                    `计划验证准备失败：${normalizeMastraError(error)}`,',
-    '                    events,',
-    '                    options,',
-    '                ),',
-    '            }),',
-    '        );',
-  ],
-);
+    expect(restored.mode).toBe('plan');
+  });
 
-replaceBlock(
-  valid,
-  'G5-2 validation.ts: replanPlan 兜底 prepare 异常',
-  [
-    "            'mastra-plan-replanner-run',",
-    "            '重新规划需要 planId 和 planVersion。',",
-    '        );',
-  ],
-  [
-    "            'mastra-plan-replanner-run',",
-    "            '重新规划需要 planId 和 planVersion。',",
-    '        ).catch(',
-    '            (error): { ok: false; response: IAgentRuntimeResponse } => ({',
-    '                ok: false,',
-    '                response: createErrorResponse(',
-    '                    sessionId,',
-    '                    `重新规划准备失败：${normalizeMastraError(error)}`,',
-    '                    events,',
-    '                    options,',
-    '                ),',
-    '            }),',
-    '        );',
-  ],
-);
+  it('默认执行模式为 interactive，并在刷新后恢复用户切换的自主模式', async () => {
+    createPersistedPinia();
+    const store = useAiAgentStore();
 
-save(valid);
+    expect(store.executionMode).toBe('interactive');
 
-console.log('\n全部完成。请运行 typecheck/test/lint 复核。');
+    store.setExecutionMode('autonomous');
+    await nextTick();
+
+    createPersistedPinia();
+    const restored = useAiAgentStore();
+
+    expect(restored.executionMode).toBe('autonomous');
+  });
+});
+`;
+
+rewrite('src/store/aiAgent.ts', STORE_TS);
+rewrite('src/store/aiAgent.store.spec.ts', SPEC_TS);
+console.log('done: aiAgent store trimmed to ACP-native lean form');
