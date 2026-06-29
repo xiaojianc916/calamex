@@ -495,18 +495,13 @@ export class CalamexAcpAgent implements Agent {
 	}
 
 	/**
-	 * 受理检查点回滚扩展方法。回滚不是 prompt 回合，故不经会话登记表的回合管理，
-	 * 用本调用作用域的 AbortController；携带 sessionId 时，过程中可投影的输出事件
-	 * 经 session/update 即时下发(回滚遥测 rollback.* 按既有投影约定不成帧)。
-	 * 失败的回滚依 ACP 约定映射为 JSON-RPC error(由 SDK 包装)，不返回成功信封。
+	 * 构造一次带外（非 prompt 回合）运行时调用的 run options：调用作用域的
+	 * AbortController + 逐次新生 requestId + advisory 超时；携带 sessionId 时附加
+	 * onEvent 投影（实时预览下发），否则不投影。抽出以消除各扩展 handler 间重复（A3）。
 	 */
-	private async handleCheckpointRestore(
-		params: Record<string, unknown>,
-	): Promise<Record<string, unknown>> {
-		const input = parseCheckpointRestoreParams(params)
+	private buildExtRunOptions(sessionId?: string): IAgentRuntimeRunOptions {
 		const controller = new AbortController()
-		const { sessionId } = input
-		const options: IAgentRuntimeRunOptions = {
+		return {
 			context: {
 				requestId: this.generateRequestId(),
 				signal: controller.signal,
@@ -519,7 +514,22 @@ export class CalamexAcpAgent implements Agent {
 					}
 				: {}),
 		}
-		const response = await this.runtime.restoreCheckpoint(input, options)
+	}
+
+	/**
+	 * 受理检查点回滚扩展方法。回滚不是 prompt 回合，故不经会话登记表的回合管理，
+	 * 用本调用作用域的 AbortController；携带 sessionId 时，过程中可投影的输出事件
+	 * 经 session/update 即时下发(回滚遥测 rollback.* 按既有投影约定不成帧)。
+	 * 失败的回滚依 ACP 约定映射为 JSON-RPC error(由 SDK 包装)，不返回成功信封。
+	 */
+	private async handleCheckpointRestore(
+		params: Record<string, unknown>,
+	): Promise<Record<string, unknown>> {
+		const input = parseCheckpointRestoreParams(params)
+		const response = await this.runtime.restoreCheckpoint(
+			input,
+			this.buildExtRunOptions(input.sessionId),
+		)
 		if (response.errorMessage) {
 			throw new Error(response.errorMessage)
 		}
@@ -541,15 +551,10 @@ export class CalamexAcpAgent implements Agent {
 			throw RequestError.methodNotFound(MODEL_CHAT_METHOD)
 		}
 		const input = parseModelChatParams(params)
-		const controller = new AbortController()
-		const options: IAgentRuntimeRunOptions = {
-			context: {
-				requestId: this.generateRequestId(),
-				signal: controller.signal,
-				timeoutMs: this.turnTimeoutMs,
-			},
-		}
-		const response = await this.runtime.modelChat(input, options)
+		const response = await this.runtime.modelChat(
+			input,
+			this.buildExtRunOptions(),
+		)
 		if (response.errorMessage) {
 			throw new Error(response.errorMessage)
 		}
@@ -570,22 +575,10 @@ export class CalamexAcpAgent implements Agent {
 		params: Record<string, unknown>,
 	): Promise<Record<string, unknown>> {
 		const input = parseAgentChatParams(params)
-		const controller = new AbortController()
-		const { sessionId } = input
-		const options: IAgentRuntimeRunOptions = {
-			context: {
-				requestId: this.generateRequestId(),
-				signal: controller.signal,
-				timeoutMs: this.turnTimeoutMs,
-			},
-			...(sessionId !== undefined
-				? {
-						onEvent: (event: TAgentRuntimeOutputEvent) =>
-							this.emitOutputEvent(sessionId, event),
-					}
-				: {}),
-		}
-		const response = await this.runtime.chat(input, options)
+		const response = await this.runtime.chat(
+			input,
+			this.buildExtRunOptions(input.sessionId),
+		)
 		if (response.errorMessage) {
 			throw new Error(response.errorMessage)
 		}
@@ -603,22 +596,10 @@ export class CalamexAcpAgent implements Agent {
 		params: Record<string, unknown>,
 	): Promise<Record<string, unknown>> {
 		const input = parseAgentChatResolveParams(params)
-		const controller = new AbortController()
-		const { sessionId } = input
-		const options: IAgentRuntimeRunOptions = {
-			context: {
-				requestId: this.generateRequestId(),
-				signal: controller.signal,
-				timeoutMs: this.turnTimeoutMs,
-			},
-			...(sessionId !== undefined
-				? {
-						onEvent: (event: TAgentRuntimeOutputEvent) =>
-							this.emitOutputEvent(sessionId, event),
-					}
-				: {}),
-		}
-		const response = await this.runtime.resolveApproval(input, options)
+		const response = await this.runtime.resolveApproval(
+			input,
+			this.buildExtRunOptions(input.sessionId),
+		)
 		if (response.errorMessage) {
 			throw new Error(response.errorMessage)
 		}
@@ -641,22 +622,10 @@ export class CalamexAcpAgent implements Agent {
 			throw RequestError.methodNotFound(AGENT_ASK_USER_RESUME_METHOD)
 		}
 		const input = parseAgentAskUserResumeParams(params)
-		const controller = new AbortController()
-		const { sessionId } = input
-		const options: IAgentRuntimeRunOptions = {
-			context: {
-				requestId: this.generateRequestId(),
-				signal: controller.signal,
-				timeoutMs: this.turnTimeoutMs,
-			},
-			...(sessionId !== undefined
-				? {
-						onEvent: (event: TAgentRuntimeOutputEvent) =>
-							this.emitOutputEvent(sessionId, event),
-					}
-				: {}),
-		}
-		const response = await this.runtime.resolveAskUser(input, options)
+		const response = await this.runtime.resolveAskUser(
+			input,
+			this.buildExtRunOptions(input.sessionId),
+		)
 		if (response.errorMessage) {
 			throw new Error(response.errorMessage)
 		}

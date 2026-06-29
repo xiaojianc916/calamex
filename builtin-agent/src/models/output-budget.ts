@@ -47,6 +47,7 @@ interface ICompactModelOutputResolvedOptions {
 
 interface IGraphemeSegment {
   segment: string;
+  index: number;
 }
 
 interface IGraphemeSegmenter {
@@ -92,14 +93,48 @@ const getGraphemeSegmenter = (locale: string): IGraphemeSegmenter | null => {
   }
 };
 
-const segmentGraphemes = (value: string, locale: string): string[] => {
+// 惰性逐 grapheme 遍历：产出每个 grapheme 及其在原串中的起始 code-unit 下标，
+// 供计数与「按下标切片」复用同一遍，避免把整串物化成数组（大输出热路径的额外分配）。
+function* iterateGraphemes(
+  value: string,
+  locale: string,
+): Generator<IGraphemeSegment> {
   const segmenter = getGraphemeSegmenter(locale);
   if (segmenter) {
-    return Array.from(segmenter.segment(value), (segment) => segment.segment);
+    yield* segmenter.segment(value);
+    return;
   }
   // 兜底：按 Unicode codepoint 切分。能正确处理代理对，但 ZWJ 复合 emoji 会被拆成多个，
   // 仅用于预算估算可接受（会略偏多）。
-  return Array.from(value);
+  let index = 0;
+  for (const codePoint of value) {
+    yield { segment: codePoint, index };
+    index += codePoint.length;
+  }
+}
+
+interface IGraphemeMeasurement {
+  count: number;
+  // 第 clipAt 个 grapheme 的起始 code-unit 下标；未到达 clipAt 时为 -1。
+  clipIndex: number;
+}
+
+// 单遍测量：返回 grapheme 总数，并在恰好数到第 clipAt 个 grapheme 时记录其起始
+// code-unit 下标（用于按原串切片得到「前 clipAt 个 grapheme」，无需 join）。
+const measureGraphemes = (
+  value: string,
+  locale: string,
+  clipAt: number,
+): IGraphemeMeasurement => {
+  let count = 0;
+  let clipIndex = -1;
+  for (const { index } of iterateGraphemes(value, locale)) {
+    if (count === clipAt) {
+      clipIndex = index;
+    }
+    count += 1;
+  }
+  return { count, clipIndex };
 };
 
 // ---- Option resolution -------------------------------------------------
@@ -145,7 +180,7 @@ const formatCycleNotice = (locale: string): string =>
 // ---- Public helpers ----------------------------------------------------
 
 export const countModelOutputChars = (value: string, locale = DEFAULT_LOCALE): number =>
-  segmentGraphemes(value, locale).length;
+  measureGraphemes(value, locale, Number.POSITIVE_INFINITY).count;
 
 export const truncateModelOutputText = (
   value: string,
@@ -154,8 +189,12 @@ export const truncateModelOutputText = (
 ): ITruncateModelOutputTextResult => {
   const safeMaxChars = Math.max(0, Math.floor(maxChars));
   const locale = options.locale ?? DEFAULT_LOCALE;
-  const graphemes = segmentGraphemes(value, locale);
-  const originalCharCount = graphemes.length;
+  // 单遍惰性遍历：拿到总字数与截断点下标，避免物化整串 grapheme 数组再 join。
+  const { count: originalCharCount, clipIndex } = measureGraphemes(
+    value,
+    locale,
+    safeMaxChars,
+  );
   if (originalCharCount <= safeMaxChars) {
     return {
       text: value,
@@ -164,7 +203,7 @@ export const truncateModelOutputText = (
       omittedCharCount: 0,
     };
   }
-  const clippedText = graphemes.slice(0, safeMaxChars).join('');
+  const clippedText = clipIndex >= 0 ? value.slice(0, clipIndex) : '';
   const omittedCharCount = originalCharCount - safeMaxChars;
   const includeNotice = options.includeNotice ?? true;
   if (!includeNotice) {

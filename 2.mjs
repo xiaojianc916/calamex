@@ -1,120 +1,269 @@
-// fix-ai-review-batch-1-resume.mjs  (v2: 兼容 Windows CRLF)
-// 全部步骤幂等，可安全重复运行。在仓库根目录执行：
-//   node fix-ai-review-batch-1-resume.mjs
-import { readFileSync, writeFileSync, existsSync, rmSync } from "node:fs";
+// fix-ai-review-batch-2.mjs  (A3 + A6；兼容 Windows CRLF；幂等)
+// 在仓库根目录执行：node fix-ai-review-batch-2.mjs
+import { readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { execSync } from "node:child_process";
 
 const root = process.cwd();
 const read = (rel) => readFileSync(join(root, rel), "utf8");
 const write = (rel, s) => writeFileSync(join(root, rel), s);
+const eolOf = (s) => (s.includes("\r\n") ? "\r\n" : "\n");
 
-function replaceUnique(rel, oldStr, newStr, label) {
+// 替换一段连续文本（幂等：原锚点已消失但新文本已存在则跳过）。
+function replaceBlock(rel, oldLines, newLines, label) {
   const s = read(rel);
+  const eol = eolOf(s);
+  const oldStr = oldLines.join(eol);
+  const newStr = newLines.join(eol);
   const n = s.split(oldStr).length - 1;
-  if (n === 0) throw new Error(`未找到锚点: ${label} @ ${rel}`);
+  if (n === 0) {
+    if (s.includes(newStr)) {
+      console.log(`[skip] ${label}（已应用）`);
+      return;
+    }
+    throw new Error(`未找到锚点: ${label} @ ${rel}`);
+  }
   if (n > 1) throw new Error(`锚点出现 ${n} 次(应唯一): ${label} @ ${rel}`);
   write(rel, s.replace(oldStr, newStr));
   console.log(`[fix] ${label}`);
 }
 
-// ── A1：移除已提交的运行时 SQLite 工件（幂等）──────────────────
-const SIDECAR_DIR = "builtin-agent/.agent-sidecar";
-try {
-  execSync(`git rm -r --cached --ignore-unmatch "${SIDECAR_DIR}"`, {
-    cwd: root,
-    stdio: "inherit",
-  });
-  console.log("[ok] A1: git 索引已确保移除 " + SIDECAR_DIR);
-} catch (e) {
-  console.log("[warn] A1: git rm 跳过(" + (e?.message ?? e) + ")");
-}
-if (existsSync(join(root, SIDECAR_DIR))) {
-  rmSync(join(root, SIDECAR_DIR), { recursive: true, force: true });
-  console.log("[fix] A1: 已删除本地陈旧目录 " + SIDECAR_DIR);
-} else {
-  console.log("[skip] A1: 本地目录已不存在");
-}
-{
-  const gi = ".gitignore";
-  const rule = "builtin-agent/.agent-sidecar/";
-  let c = existsSync(join(root, gi)) ? read(gi) : "";
-  if (c.split(/\r?\n/).some((l) => l.trim() === rule)) {
-    console.log("[skip] A1: .gitignore 规则已存在");
-  } else {
-    if (c.length && !c.endsWith("\n")) c += "\n";
-    c += rule + "\n";
-    write(gi, c);
-    console.log("[fix] A1: 已写入 .gitignore 规则");
+// 在锚点之后插入文本（幂等：marker 已存在则跳过）。
+function insertAfter(rel, anchorLines, insertLines, marker, label) {
+  const s = read(rel);
+  const eol = eolOf(s);
+  if (s.includes(marker)) {
+    console.log(`[skip] ${label}（已应用）`);
+    return;
   }
+  const anchor = anchorLines.join(eol);
+  const n = s.split(anchor).length - 1;
+  if (n === 0) throw new Error(`未找到锚点: ${label} @ ${rel}`);
+  if (n > 1) throw new Error(`锚点出现 ${n} 次(应唯一): ${label} @ ${rel}`);
+  write(rel, s.replace(anchor, anchor + eol + eol + insertLines.join(eol)));
+  console.log(`[fix] ${label}`);
 }
 
-// ── A2：DEFAULT_MODEL_ID 去重（config.ts 导出 + agent.ts 引用）──
-{
-  const rel = "builtin-agent/src/models/config.ts";
-  const s = read(rel);
-  if (s.includes("export const DEFAULT_MODEL_ID")) {
-    console.log("[skip] A2: config.ts 已导出 DEFAULT_MODEL_ID");
-  } else {
-    replaceUnique(
-      rel,
-      "const DEFAULT_MODEL_ID = 'deepseek/deepseek-v4-pro';",
-      "export const DEFAULT_MODEL_ID = 'deepseek/deepseek-v4-pro';",
-      "A2: config.ts 导出 DEFAULT_MODEL_ID",
-    );
-  }
-}
-{
-  const rel = "builtin-agent/src/acp/agent.ts";
-  let s = read(rel);
-  const eol = s.includes("\r\n") ? "\r\n" : "\n"; // 探测换行符，兼容 CRLF
-  // (a) 插入 import（单行锚点，避免依赖换行符）
-  if (s.includes('from "../models/config.js"')) {
-    console.log("[skip] A2: agent.ts 已 import DEFAULT_MODEL_ID");
-  } else {
-    const anchorLine =
-      'import { resolveAgentModelCapabilitiesFromModelId } from "../models/capabilities.js"';
-    const n = s.split(anchorLine).length - 1;
-    if (n !== 1) throw new Error(`agent.ts import 锚点应唯一，实际 ${n} 次`);
-    s = s.replace(
-      anchorLine,
-      anchorLine + eol + 'import { DEFAULT_MODEL_ID } from "../models/config.js"',
-    );
-    write(rel, s);
-    console.log("[fix] A2: agent.ts 已插入 import DEFAULT_MODEL_ID");
-  }
-  // (b) 删除本地重复常量及其（现已过时的）注释
-  s = read(rel);
-  const constLine = 'const DEFAULT_MODEL_ID = "deepseek/deepseek-v4-pro"';
-  if (!s.includes(constLine)) {
-    console.log("[skip] A2: agent.ts 本地常量已移除");
-  } else {
-    const commentLine =
-      "/** 默认模型标识——镜像 models/config.ts 的 DEFAULT_MODEL_ID，用于解析上下文窗口。 */";
-    const block = commentLine + eol + constLine + eol + eol; // 连同其后空行一并删除
-    const n = s.split(block).length - 1;
-    if (n !== 1) throw new Error(`agent.ts 本地常量块锚点应唯一，实际 ${n} 次`);
-    s = s.replace(block, "");
-    write(rel, s);
-    console.log("[fix] A2: agent.ts 已移除本地重复常量");
-  }
+// ════════ A3：acp/agent.ts —— 抽取 buildExtRunOptions 消除 5 处重复 ════════
+const AGENT = "builtin-agent/src/acp/agent.ts";
+
+// (1) 在 extMethod 之后插入私有 helper。
+insertAfter(
+  AGENT,
+  [
+    "\t\t\tdefault:",
+    "\t\t\t\tthrow RequestError.methodNotFound(method)",
+    "\t\t}",
+    "\t}",
+  ],
+  [
+    "\t/**",
+    "\t * 构造一次带外（非 prompt 回合）运行时调用的 run options：调用作用域的",
+    "\t * AbortController + 逐次新生 requestId + advisory 超时；携带 sessionId 时附加",
+    "\t * onEvent 投影（实时预览下发），否则不投影。抽出以消除各扩展 handler 间重复（A3）。",
+    "\t */",
+    "\tprivate buildExtRunOptions(sessionId?: string): IAgentRuntimeRunOptions {",
+    "\t\tconst controller = new AbortController()",
+    "\t\treturn {",
+    "\t\t\tcontext: {",
+    "\t\t\t\trequestId: this.generateRequestId(),",
+    "\t\t\t\tsignal: controller.signal,",
+    "\t\t\t\ttimeoutMs: this.turnTimeoutMs,",
+    "\t\t\t},",
+    "\t\t\t...(sessionId !== undefined",
+    "\t\t\t\t? {",
+    "\t\t\t\t\t\tonEvent: (event: TAgentRuntimeOutputEvent) =>",
+    "\t\t\t\t\t\t\tthis.emitOutputEvent(sessionId, event),",
+    "\t\t\t\t\t}",
+    "\t\t\t\t: {}),",
+    "\t\t}",
+    "\t}",
+  ],
+  "private buildExtRunOptions(",
+  "A3: agent.ts 插入 buildExtRunOptions helper",
+);
+
+// (2) 替换 5 个 handler 中重复的 run-options 构造。
+const OPTS_SESSION = [
+  "\t\tconst controller = new AbortController()",
+  "\t\tconst { sessionId } = input",
+  "\t\tconst options: IAgentRuntimeRunOptions = {",
+  "\t\t\tcontext: {",
+  "\t\t\t\trequestId: this.generateRequestId(),",
+  "\t\t\t\tsignal: controller.signal,",
+  "\t\t\t\ttimeoutMs: this.turnTimeoutMs,",
+  "\t\t\t},",
+  "\t\t\t...(sessionId !== undefined",
+  "\t\t\t\t? {",
+  "\t\t\t\t\t\tonEvent: (event: TAgentRuntimeOutputEvent) =>",
+  "\t\t\t\t\t\t\tthis.emitOutputEvent(sessionId, event),",
+  "\t\t\t\t\t}",
+  "\t\t\t\t: {}),",
+  "\t\t}",
+];
+const OPTS_NO_SESSION = [
+  "\t\tconst controller = new AbortController()",
+  "\t\tconst options: IAgentRuntimeRunOptions = {",
+  "\t\t\tcontext: {",
+  "\t\t\t\trequestId: this.generateRequestId(),",
+  "\t\t\t\tsignal: controller.signal,",
+  "\t\t\t\ttimeoutMs: this.turnTimeoutMs,",
+  "\t\t\t},",
+  "\t\t}",
+];
+
+const handlers = [
+  { parse: "parseCheckpointRestoreParams", call: "this.runtime.restoreCheckpoint", arg: "input.sessionId", session: true },
+  { parse: "parseModelChatParams", call: "this.runtime.modelChat", arg: "", session: false },
+  { parse: "parseAgentChatParams", call: "this.runtime.chat", arg: "input.sessionId", session: true },
+  { parse: "parseAgentChatResolveParams", call: "this.runtime.resolveApproval", arg: "input.sessionId", session: true },
+  { parse: "parseAgentAskUserResumeParams", call: "this.runtime.resolveAskUser", arg: "input.sessionId", session: true },
+];
+
+for (const h of handlers) {
+  const inputLine = `\t\tconst input = ${h.parse}(params)`;
+  const oldLines = [
+    inputLine,
+    ...(h.session ? OPTS_SESSION : OPTS_NO_SESSION),
+    `\t\tconst response = await ${h.call}(input, options)`,
+  ];
+  const newLines = [
+    inputLine,
+    `\t\tconst response = await ${h.call}(`,
+    "\t\t\tinput,",
+    `\t\t\tthis.buildExtRunOptions(${h.arg}),`,
+    "\t\t)",
+  ];
+  replaceBlock(AGENT, oldLines, newLines, `A3: agent.ts ${h.call} 改用 buildExtRunOptions`);
 }
 
-// ── A4：isOpenAiReasoningModel 收紧前缀匹配（o + 数字）──────────
-{
-  const rel = "builtin-agent/src/models/capabilities.ts";
-  const s = read(rel);
-  if (s.includes("/^o\\d/u.test(id)")) {
-    console.log("[skip] A4: capabilities.ts 已收紧匹配");
-  } else {
-    replaceUnique(
-      rel,
-      "  return id.startsWith('o') || id.startsWith('gpt-5');",
-      "  return /^o\\d/u.test(id) || id.startsWith('gpt-5');",
-      "A4: capabilities.ts 收紧 OpenAI 推理模型匹配",
-    );
-  }
-}
+// ════════ A6：models/output-budget.ts —— grapheme 改惰性单遍，去掉整串物化 ════════
+const BUDGET = "builtin-agent/src/models/output-budget.ts";
+
+// (1) IGraphemeSegment 增加 index（Intl.Segmenter 原生即带 index）。
+replaceBlock(
+  BUDGET,
+  ["interface IGraphemeSegment {", "  segment: string;", "}"],
+  ["interface IGraphemeSegment {", "  segment: string;", "  index: number;", "}"],
+  "A6: IGraphemeSegment 增加 index",
+);
+
+// (2) 用惰性 iterateGraphemes + 单遍 measureGraphemes 取代 segmentGraphemes。
+replaceBlock(
+  BUDGET,
+  [
+    "const segmentGraphemes = (value: string, locale: string): string[] => {",
+    "  const segmenter = getGraphemeSegmenter(locale);",
+    "  if (segmenter) {",
+    "    return Array.from(segmenter.segment(value), (segment) => segment.segment);",
+    "  }",
+    "  // 兜底：按 Unicode codepoint 切分。能正确处理代理对，但 ZWJ 复合 emoji 会被拆成多个，",
+    "  // 仅用于预算估算可接受（会略偏多）。",
+    "  return Array.from(value);",
+    "};",
+  ],
+  [
+    "// 惰性逐 grapheme 遍历：产出每个 grapheme 及其在原串中的起始 code-unit 下标，",
+    "// 供计数与「按下标切片」复用同一遍，避免把整串物化成数组（大输出热路径的额外分配）。",
+    "function* iterateGraphemes(",
+    "  value: string,",
+    "  locale: string,",
+    "): Generator<IGraphemeSegment> {",
+    "  const segmenter = getGraphemeSegmenter(locale);",
+    "  if (segmenter) {",
+    "    yield* segmenter.segment(value);",
+    "    return;",
+    "  }",
+    "  // 兜底：按 Unicode codepoint 切分。能正确处理代理对，但 ZWJ 复合 emoji 会被拆成多个，",
+    "  // 仅用于预算估算可接受（会略偏多）。",
+    "  let index = 0;",
+    "  for (const codePoint of value) {",
+    "    yield { segment: codePoint, index };",
+    "    index += codePoint.length;",
+    "  }",
+    "}",
+    "",
+    "interface IGraphemeMeasurement {",
+    "  count: number;",
+    "  // 第 clipAt 个 grapheme 的起始 code-unit 下标；未到达 clipAt 时为 -1。",
+    "  clipIndex: number;",
+    "}",
+    "",
+    "// 单遍测量：返回 grapheme 总数，并在恰好数到第 clipAt 个 grapheme 时记录其起始",
+    "// code-unit 下标（用于按原串切片得到「前 clipAt 个 grapheme」，无需 join）。",
+    "const measureGraphemes = (",
+    "  value: string,",
+    "  locale: string,",
+    "  clipAt: number,",
+    "): IGraphemeMeasurement => {",
+    "  let count = 0;",
+    "  let clipIndex = -1;",
+    "  for (const { index } of iterateGraphemes(value, locale)) {",
+    "    if (count === clipAt) {",
+    "      clipIndex = index;",
+    "    }",
+    "    count += 1;",
+    "  }",
+    "  return { count, clipIndex };",
+    "};",
+  ],
+  "A6: 引入 iterateGraphemes + measureGraphemes",
+);
+
+// (3) countModelOutputChars 改用 measureGraphemes（不再物化数组）。
+replaceBlock(
+  BUDGET,
+  [
+    "export const countModelOutputChars = (value: string, locale = DEFAULT_LOCALE): number =>",
+    "  segmentGraphemes(value, locale).length;",
+  ],
+  [
+    "export const countModelOutputChars = (value: string, locale = DEFAULT_LOCALE): number =>",
+    "  measureGraphemes(value, locale, Number.POSITIVE_INFINITY).count;",
+  ],
+  "A6: countModelOutputChars 改用 measureGraphemes",
+);
+
+// (4) truncateModelOutputText 改为单遍：按下标切片，不再 slice+join 数组。
+replaceBlock(
+  BUDGET,
+  [
+    "  const safeMaxChars = Math.max(0, Math.floor(maxChars));",
+    "  const locale = options.locale ?? DEFAULT_LOCALE;",
+    "  const graphemes = segmentGraphemes(value, locale);",
+    "  const originalCharCount = graphemes.length;",
+    "  if (originalCharCount <= safeMaxChars) {",
+    "    return {",
+    "      text: value,",
+    "      truncated: false,",
+    "      originalCharCount,",
+    "      omittedCharCount: 0,",
+    "    };",
+    "  }",
+    "  const clippedText = graphemes.slice(0, safeMaxChars).join('');",
+    "  const omittedCharCount = originalCharCount - safeMaxChars;",
+  ],
+  [
+    "  const safeMaxChars = Math.max(0, Math.floor(maxChars));",
+    "  const locale = options.locale ?? DEFAULT_LOCALE;",
+    "  // 单遍惰性遍历：拿到总字数与截断点下标，避免物化整串 grapheme 数组再 join。",
+    "  const { count: originalCharCount, clipIndex } = measureGraphemes(",
+    "    value,",
+    "    locale,",
+    "    safeMaxChars,",
+    "  );",
+    "  if (originalCharCount <= safeMaxChars) {",
+    "    return {",
+    "      text: value,",
+    "      truncated: false,",
+    "      originalCharCount,",
+    "      omittedCharCount: 0,",
+    "    };",
+    "  }",
+    "  const clippedText = clipIndex >= 0 ? value.slice(0, clipIndex) : '';",
+    "  const omittedCharCount = originalCharCount - safeMaxChars;",
+  ],
+  "A6: truncateModelOutputText 改用单遍 measureGraphemes",
+);
 
 console.log(
   "\n全部完成。建议执行：pnpm -C builtin-agent typecheck && pnpm -C builtin-agent test",
