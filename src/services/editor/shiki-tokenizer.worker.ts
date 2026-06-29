@@ -4,22 +4,27 @@ import { bundledLanguages } from 'shiki/langs';
 import { type IShikiThemedToken, resolveShikiLanguageId, SHIKI_THEME_NAME } from './shiki-shared';
 
 /**
- * 方案B：有状态、按块语法状态接续的 tokenize Worker。
+ * 方案B 增强：会话 + 增量编辑 + 后台预热
  *
- * 设计对照 microsoft/vscode 的 TrackingTokenizationStateStore（逐行/逐块缓存“末态”，
- * 从最近已知状态续算）与 shiki @shikijs/primitive 的 codeToTokensBase({ grammarState })
- * / getLastGrammarState。GrammarState 是带链式父引用与方法的不透明对象，无法跨线程
- * postMessage，因此整篇文档与每块末态全部留在 Worker 内：主线程只发“会话 + 行范围”。
+ * 在方案B（有状态、按块语法状态接续）的基础上新增两项能力，且不保留任何旧路径/兼容层：
  *
- * 块大小 BLOCK_LINES：每个块结束处缓存一份 GrammarState，使深处视口可从最近块边界以
- * “真实语法状态”续算，而非从 INITIAL 重新开始（后者会让跨块的长字符串/heredoc/块注释
- * 着色错误）。单次成本仅与窗口大小相关：深处前缀块状态一次算出后即缓存复用。
+ * 1) 增量编辑（edit）：文档变更时主线程只发送行级 delta（起始行 / 删除行数 / 新增行），
+ *    Worker 用 splice 原地更新整篇文本，并仅作废受影响块（editedBlock 及其之后）的末态缓存，
+ *    无需每次变更都重传整篇代码。对照 microsoft/vscode 的 TextModel 增量分词：编辑只让
+ *    编辑点之后的分词状态失效，之前的行保持已算结果。
  *
- * 需要 Shiki ≥ 1.16（grammarState / getLastGrammarState API）。
+ * 2) 后台预热（background pre-warm）：会话建立 / 语言就绪 / 编辑之后，用时间分片（≤ BG_SLICE_MS）
+ *    在空闲回合里从 bgCursor 向后逐块计算并缓存块末态。这样向文件深处滚动时，前缀块状态多已就绪，
+ *    tokenizeRange 直接从最近块边界以“真实语法状态”续算，无需现场从头补算整段前缀。
+ *
+ * GrammarState 含链式父引用与方法，无法跨线程 postMessage，因此整篇文档与每块末态全部留在
+ * Worker 内：主线程只发“会话 + 行范围 / 行级 delta”。需要 Shiki ≥ 1.16
+ * （grammarState / getLastGrammarState API）。
  */
 
 const BLOCK_LINES = 512;
-const MAX_SESSIONS = 8;
+const MAX_SESSIONS = 16;
+const BG_SLICE_MS = 15;
 
 type TResetRequest = {
   type: 'reset';
@@ -28,6 +33,16 @@ type TResetRequest = {
   docVersion: number;
   language: string;
   code: string;
+};
+
+type TEditRequest = {
+  type: 'edit';
+  sessionKey: number;
+  sessionId: number;
+  docVersion: number;
+  fromLine: number;
+  deletedLineCount: number;
+  insertedLines: string[];
 };
 
 type TTokenizeRangeRequest = {
@@ -40,7 +55,16 @@ type TTokenizeRangeRequest = {
   endLine: number;
 };
 
-type TShikiWorkerRequest = TResetRequest | TTokenizeRangeRequest;
+type TDisposeRequest = {
+  type: 'dispose';
+  sessionKey: number;
+};
+
+type TShikiWorkerRequest =
+  | TResetRequest
+  | TEditRequest
+  | TTokenizeRangeRequest
+  | TDisposeRequest;
 
 type TShikiWorkerResponse = {
   id: number;
@@ -61,14 +85,18 @@ type TSession = {
   language: string;
   shikiId: string | null;
   resolved: boolean;
+  resolving: boolean;
   lines: string[];
   blockEndState: Map<number, unknown>;
+  bgCursor: number;
 };
 
 let highlighterPromise: Promise<HighlighterCore> | null = null;
+let highlighterInstance: HighlighterCore | null = null;
 const loadedLanguages = new Set<string>();
 const pendingLanguages = new Map<string, Promise<boolean>>();
 const sessions = new Map<number, TSession>();
+let backgroundScheduled = false;
 
 const ensureHighlighter = (): Promise<HighlighterCore> => {
   if (!highlighterPromise) {
@@ -76,10 +104,15 @@ const ensureHighlighter = (): Promise<HighlighterCore> => {
       themes: [import('@shikijs/themes/github-light')],
       langs: [],
       engine: createOnigurumaEngine(import('shiki/wasm')),
-    }).catch((error) => {
-      highlighterPromise = null;
-      throw error;
-    });
+    })
+      .then((instance) => {
+        highlighterInstance = instance;
+        return instance;
+      })
+      .catch((error) => {
+        highlighterPromise = null;
+        throw error;
+      });
   }
   return highlighterPromise;
 };
@@ -171,97 +204,107 @@ const ensureBlockEndState = (
   return session.blockEndState.get(blockIndex) ?? null;
 };
 
-const tokenizeRange = async (req: TTokenizeRangeRequest): Promise<IShikiThemedToken[][] | null> => {
-  const session = sessions.get(req.sessionKey);
-  if (!session || session.sessionId !== req.sessionId || session.docVersion !== req.docVersion) {
-    return null;
-  }
-  if (!session.resolved) {
-    session.shikiId = await ensureLanguage(session.language);
-    session.resolved = true;
-  }
-  const shikiId = session.shikiId;
-  if (!shikiId) {
-    return null;
-  }
-  // 语言加载是异步的，期间该会话可能已被更新的版本替换；重校验，避免用旧文档着色。
-  if (sessions.get(req.sessionKey) !== session || session.docVersion !== req.docVersion) {
-    return null;
-  }
-  const totalLines = session.lines.length;
-  if (totalLines === 0) {
-    return null;
-  }
-  const highlighter = await ensureHighlighter();
-  const startLine = Math.max(1, req.startLine);
-  const endLine = Math.min(totalLines, Math.max(startLine, req.endLine));
-  if (startLine > totalLines) {
-    return null;
-  }
-  const startBlock = Math.floor((startLine - 1) / BLOCK_LINES);
-  const blockStartLine = startBlock * BLOCK_LINES + 1;
-  const startState = ensureBlockEndState(highlighter, session, shikiId, startBlock - 1);
-  const code = session.lines.slice(blockStartLine - 1, endLine).join('\n');
-  const { tokens } = tokenizeBlockCode(highlighter, shikiId, code, startState);
-  const offset = startLine - blockStartLine;
-  const count = endLine - startLine + 1;
-  return tokens.slice(offset, offset + count);
-};
+const totalBlocks = (session: TSession): number =>
+  Math.max(1, Math.ceil(session.lines.length / BLOCK_LINES));
 
-const workerSelf = self as unknown as {
-  addEventListener(
-    type: 'message',
-    listener: (event: MessageEvent<TShikiWorkerRequest>) => void,
-  ): void;
-  postMessage(message: TShikiWorkerResponse): void;
-};
-
-workerSelf.addEventListener('message', (event) => {
-  const data = event.data;
-  if (data.type === 'reset') {
-    sessions.set(data.sessionKey, {
-      sessionId: data.sessionId,
-      docVersion: data.docVersion,
-      language: data.language,
-      shikiId: null,
-      resolved: false,
-      lines: data.code.split('\n'),
-      blockEndState: new Map(),
-    });
-    if (sessions.size > MAX_SESSIONS) {
-      for (const key of sessions.keys()) {
-        if (key !== data.sessionKey) {
-          sessions.delete(key);
-          break;
-        }
-      }
-    }
+// 异步解析会话语言；就绪后开启后台预热。语言加载经 pendingLanguages 去重。
+const resolveSession = (session: TSession): void => {
+  if (session.resolved) {
+    scheduleBackground();
     return;
   }
-
-  const req = data;
-  void tokenizeRange(req)
-    .then((tokens) => {
-      workerSelf.postMessage({
-        id: req.id,
-        sessionKey: req.sessionKey,
-        sessionId: req.sessionId,
-        docVersion: req.docVersion,
-        startLine: req.startLine,
-        endLine: req.endLine,
-        tokens,
-      });
+  if (session.resolving) {
+    return;
+  }
+  session.resolving = true;
+  void ensureLanguage(session.language)
+    .then((shikiId) => {
+      session.shikiId = shikiId;
+      session.resolved = true;
+      session.resolving = false;
+      scheduleBackground();
     })
-    .catch((error: unknown) => {
-      workerSelf.postMessage({
-        id: req.id,
-        sessionKey: req.sessionKey,
-        sessionId: req.sessionId,
-        docVersion: req.docVersion,
-        startLine: req.startLine,
-        endLine: req.endLine,
-        tokens: null,
-        error: error instanceof Error ? error.message : String(error),
-      });
+    .catch(() => {
+      session.shikiId = null;
+      session.resolved = true;
+      session.resolving = false;
     });
-});
+};
+
+// 后台预热：时间分片地从 bgCursor 向后逐块计算并缓存块末态。返回该会话是否仍有剩余工作。
+const advanceSessionBackground = (
+  highlighter: HighlighterCore,
+  session: TSession,
+  deadline: number,
+): boolean => {
+  if (!session.resolved || !session.shikiId) {
+    return false;
+  }
+  const blocks = totalBlocks(session);
+  // 最后一块之后没有内容，无需缓存其末态；填到 blocks - 1 即可。
+  while (session.bgCursor < blocks - 1) {
+    if (Date.now() >= deadline) {
+      return true;
+    }
+    ensureBlockEndState(highlighter, session, session.shikiId, session.bgCursor);
+    session.bgCursor += 1;
+  }
+  return false;
+};
+
+const runBackground = (): void => {
+  backgroundScheduled = false;
+  const highlighter = highlighterInstance;
+  if (!highlighter) {
+    return;
+  }
+  const deadline = Date.now() + BG_SLICE_MS;
+  let moreWork = false;
+  for (const [key, session] of sessions) {
+    if (key < 0) {
+      // 片段会话（静态高亮）一次性使用、随即 dispose，不做预热。
+      continue;
+    }
+    if (advanceSessionBackground(highlighter, session, deadline)) {
+      moreWork = true;
+    }
+    if (Date.now() >= deadline) {
+      moreWork = true;
+      break;
+    }
+  }
+  if (moreWork) {
+    scheduleBackground();
+  }
+};
+
+const scheduleBackground = (): void => {
+  if (backgroundScheduled) {
+    return;
+  }
+  backgroundScheduled = true;
+  setTimeout(runBackground, 0);
+};
+
+const applyEdit = (req: TEditRequest): void => {
+  const session = sessions.get(req.sessionKey);
+  if (!session || session.sessionId !== req.sessionId) {
+    return;
+  }
+  const fromIndex = Math.max(0, req.fromLine - 1);
+  session.lines.splice(fromIndex, req.deletedLineCount, ...req.insertedLines);
+  session.docVersion = req.docVersion;
+  const editedBlock = Math.floor(fromIndex / BLOCK_LINES);
+  for (const blockIndex of [...session.blockEndState.keys()]) {
+    if (blockIndex >= editedBlock) {
+      session.blockEndState.delete(blockIndex);
+    }
+  }
+  if (session.bgCursor > editedBlock) {
+    session.bgCursor = editedBlock;
+  }
+  scheduleBackground();
+};
+
+const tokenizeRange = async (req: TTokenizeRangeRequest): Promise<IShikiThemedToken[][] | null> => {
+  const session = sessions.
