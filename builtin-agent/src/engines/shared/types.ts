@@ -4,7 +4,7 @@ import type { MastraBrowser } from '@mastra/core/browser';
 import type { MastraModelConfig } from '@mastra/core/llm';
 import type { InputProcessorOrWorkflow, OutputProcessorOrWorkflow } from '@mastra/core/processors';
 import { RequestContext } from '@mastra/core/request-context';
-import type { AgentChunkType, DataChunkType, DynamicToolResultPayload, ReasoningDeltaPayload, ToolResultPayload } from '@mastra/core/stream';
+import type { AgentChunkType, DataChunkType, DynamicToolResultPayload, ToolResultPayload } from '@mastra/core/stream';
 import { WORKSPACE_TOOLS, type AnyWorkspace } from '@mastra/core/workspace';
 import type { IMastraResolvedModelConfig } from '../../models/config.js';
 import type { TAgentRuntimeEventDraft } from '../../streaming/stream-types.js';
@@ -95,14 +95,6 @@ export type TSandboxDataChunk = DataChunkType & {
         executionTimeMs?: number;
         killed?: boolean;
         pid?: string;
-    };
-};
-export type TCompatibleReasoningDeltaChunk = TMastraReasoningDeltaChunk & {
-    payload: ReasoningDeltaPayload & {
-        reasoningText?: string;
-        delta?: string;
-        reasoning_content?: string;
-        reasoningContent?: string;
     };
 };
 export type TCompatibleToolResultPayload = ToolResultPayload | DynamicToolResultPayload;

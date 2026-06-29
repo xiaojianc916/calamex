@@ -1,26 +1,16 @@
 import type { ToolCallChunk, ToolResultChunk } from '@mastra/core/stream';
 import { createRuntimePreview } from '../shared/utils.js';
-import { type TDoneTokenSnapshot, type TCompatibleReasoningDeltaChunk, type TCompatibleToolResultPayload, type TMastraErrorChunk, type TMastraFinishChunk, type TMastraStreamChunk, type TMastraTextDeltaChunk, type TMastraToolCallApprovalChunk, type TMastraToolCallSuspendedChunk, type TMastraToolErrorChunk, type TOmDataChunk, type TOmMemoryCompressedEventDraft, type TSandboxDataChunk } from '../shared/types.js';
+import { type TDoneTokenSnapshot, type TMastraReasoningDeltaChunk, type TCompatibleToolResultPayload, type TMastraErrorChunk, type TMastraFinishChunk, type TMastraStreamChunk, type TMastraTextDeltaChunk, type TMastraToolCallApprovalChunk, type TMastraToolCallSuspendedChunk, type TMastraToolErrorChunk, type TOmDataChunk, type TOmMemoryCompressedEventDraft, type TSandboxDataChunk } from '../shared/types.js';
 import { toJsonValue, toRecord } from '../shared/utils.js';
 
 export const getTextDelta = (chunk: TMastraTextDeltaChunk): string => chunk.payload.text;
 
 export const isReasoningDeltaChunk = (
     chunk: TMastraStreamChunk,
-): chunk is TCompatibleReasoningDeltaChunk => chunk.type === 'reasoning-delta';
+): chunk is TMastraReasoningDeltaChunk => chunk.type === 'reasoning-delta';
 
-export const getReasoningDelta = (chunk: TMastraStreamChunk): string | null => {
-    if (isReasoningDeltaChunk(chunk)) {
-        return chunk.payload.text
-            ?? chunk.payload.reasoningText
-            ?? chunk.payload.delta
-            ?? chunk.payload.reasoning_content
-            ?? chunk.payload.reasoningContent
-            ?? null;
-    }
-
-    return null;
-};
+export const getReasoningDelta = (chunk: TMastraStreamChunk): string | null =>
+    isReasoningDeltaChunk(chunk) ? (chunk.payload.text ?? null) : null;
 
 export const isSandboxDataChunk = (chunk: TMastraStreamChunk): chunk is TSandboxDataChunk =>
     chunk.type === 'data-sandbox-command'
