@@ -5,12 +5,7 @@ import AiAssistantPanel from '@/components/business/ai/shell/AiAssistantPanel.vu
 import { Card, CardContent } from '@/components/ui/card';
 import { useMessage } from '@/composables/useMessage';
 import { aiService } from '@/services/ipc/ai.service';
-import type {
-  IActiveRunSummary,
-  IAnalyzeScriptPayload,
-  IEditorDocument,
-  IEditorSelectionSummary,
-} from '@/types/editor';
+import type { IActiveRunSummary, IEditorDocument, IEditorSelectionSummary } from '@/types/editor';
 import type { IGitDiffPreviewPayload, IGitRepositoryStatusPayload } from '@/types/git';
 import { toErrorMessage } from '@/utils/error/error';
 import { markStartup, reportAiSurfaceStartupTimings } from '@/utils/platform/startup-profiler';
@@ -30,7 +25,6 @@ const DeferredAiWebPreviewSidebar = defineAsyncComponent({
 defineProps<{
   document: IEditorDocument;
   activeRun: IActiveRunSummary | null;
-  analysis: IAnalyzeScriptPayload;
   selection: IEditorSelectionSummary | null;
   gitStatus: IGitRepositoryStatusPayload;
   workspaceRootPath: string | null;
@@ -191,7 +185,6 @@ onBeforeUnmount(() => {
             class="flex-1"
             :document="document"
             :active-run="activeRun"
-            :analysis="analysis"
             :selection="selection"
             :git-status="gitStatus"
             :workspace-root-path="workspaceRootPath"

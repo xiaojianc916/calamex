@@ -17,12 +17,7 @@ import type {
   IAiToolConfirmationRequest,
 } from '@/types/ai';
 import type { TAgentRuntimeEvent } from '@/types/ai/sidecar';
-import type {
-  IActiveRunSummary,
-  IAnalyzeScriptPayload,
-  IEditorDocument,
-  IEditorSelectionSummary,
-} from '@/types/editor';
+import type { IActiveRunSummary, IEditorDocument, IEditorSelectionSummary } from '@/types/editor';
 import type { IGitRepositoryStatusPayload } from '@/types/git';
 
 const useAiAssistantMock = vi.hoisted(() => vi.fn());
@@ -133,13 +128,6 @@ const createDocument = (): IEditorDocument => ({
   isDirty: false,
   lineCount: 1,
   charCount: 19,
-});
-
-const createAnalysis = (): IAnalyzeScriptPayload => ({
-  available: true,
-  message: null,
-  dialect: 'typescript',
-  diagnostics: [],
 });
 
 const createGitStatus = (): IGitRepositoryStatusPayload => ({
@@ -393,7 +381,6 @@ const mountPanel = (_assistantMock: ReturnType<typeof createAssistantMock>) =>
     props: {
       document: createDocument(),
       activeRun: null as IActiveRunSummary | null,
-      analysis: createAnalysis(),
       selection: null as IEditorSelectionSummary | null,
       gitStatus: createGitStatus(),
       workspaceRootPath: 'd:/com.xiaojianc/my_desktop_app',

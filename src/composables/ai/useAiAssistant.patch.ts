@@ -5,7 +5,6 @@ import { areFileSystemPathsEqual, normalizeFileSystemPath } from '@/utils/file/p
 
 // ---------------------------------------------------------------------------
 // Patch reverse / materialize / sidecar patch parsing (extracted from useAiAssistant.ts).
-// ShellCheck analysis for applied patches lives in ./useAiAssistant.shellcheck.
 // ---------------------------------------------------------------------------
 
 const SIDECAR_PATCH_TOOL_NAMES = new Set(['apply_file_edits', 'propose_file_patch']);

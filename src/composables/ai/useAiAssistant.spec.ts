@@ -5,7 +5,7 @@ import { ref } from 'vue';
 import { useAiAssistant } from '@/composables/ai/useAiAssistant';
 import { useAiAgentStore } from '@/store/aiAgent';
 import type { TAgentUiEvent } from '@/types/ai/sidecar';
-import type { IAnalyzeScriptPayload, IEditorDocument } from '@/types/editor';
+import type { IEditorDocument } from '@/types/editor';
 import type { IGitRepositoryStatusPayload } from '@/types/git';
 
 // ---------------------------------------------------------------------------
@@ -138,12 +138,6 @@ const tauriServiceMock = vi.hoisted(() => ({
     lineCount: 1,
     charCount: 14,
   })),
-  analyzeScript: vi.fn(async () => ({
-    available: true,
-    message: null,
-    dialect: 'bash',
-    diagnostics: [],
-  })),
 }));
 
 vi.mock('@/services/tauri', () => ({
@@ -199,13 +193,6 @@ const createDocument = (): IEditorDocument => ({
   charCount: 19,
 });
 
-const createAnalysis = (): IAnalyzeScriptPayload => ({
-  available: true,
-  message: null,
-  dialect: 'typescript',
-  diagnostics: [],
-});
-
 const createGitStatus = (): IGitRepositoryStatusPayload => ({
   available: false,
   message: null,
@@ -231,7 +218,6 @@ const createAssistantHarness = (): ReturnType<typeof useAiAssistant> => {
   const assistant = useAiAssistant({
     document: ref(createDocument()),
     activeRun: ref(null),
-    analysis: ref(createAnalysis()),
     selection: ref(null),
     gitStatus: ref(createGitStatus()),
     workspaceRootPath: ref(WORKSPACE_ROOT),

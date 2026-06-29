@@ -7,7 +7,6 @@ import { useGitRepositoryStatusBootstrap } from '@/domains/git/composables/useGi
 import { useGitStore } from '@/domains/git/state/git';
 import type { TWorkbenchPrimaryMode, TWorkbenchSidebarView } from '@/types/app';
 import type {
-  IAnalyzeScriptPayload,
   ICommandTemplate,
   IEditorSelectionSummary,
   IWorkspaceDirectoryPayload,
@@ -27,7 +26,6 @@ export type TEditorExpose = {
   focusEditor: () => void;
   insertSnippet: (snippet: string) => void;
   revealPosition: (line: number, column: number) => void;
-  rerunDiagnostics: () => void;
   layoutEditor: () => void;
 };
 
@@ -92,7 +90,6 @@ export const useShellWorkbenchView = (onReady: () => void) => {
   const isTerminalVisible = ref(workbench.editorStore.sessionSnapshot.workbench.isTerminalVisible);
   const isSidebarVisible = ref(true);
   const aiPanelWidth = ref(AI_PANEL_DEFAULT_WIDTH);
-  const isDiagnosticsPanelVisible = ref(false);
   const activePrimaryMode = ref<TWorkbenchPrimaryMode>(workbench.appStore.workbenchPrimaryMode);
   const terminalHeight = ref(TERMINAL_DEFAULT_HEIGHT);
   const terminalHeightBeforeMaximize = ref(TERMINAL_DEFAULT_HEIGHT);
@@ -281,15 +278,8 @@ export const useShellWorkbenchView = (onReady: () => void) => {
     return { added, modified, deleted, total: files.length };
   });
 
-  const shouldRenderDiagnosticsPanel = computed(
-    () => workbench.editorStore.hasActiveDocument && workbench.editorStore.document.kind === 'text',
-  );
   const isEditorMode = computed(() => activePrimaryMode.value === 'editor');
   const isAiMode = computed(() => activePrimaryMode.value === 'ai');
-  const canToggleDiagnosticsPanel = computed(
-    () => isEditorMode.value && shouldRenderDiagnosticsPanel.value,
-  );
-  const diagnosticIssueCount = computed(() => workbench.editorStore.activeDiagnostics.length);
   const {
     diagnosticsTransitionsEnabled,
     diagnosticsPanelMotionClass,
@@ -336,27 +326,6 @@ export const useShellWorkbenchView = (onReady: () => void) => {
     workbench.editorStore.setActiveSelectionSummary(selection);
   };
 
-  const handleDiagnosticsChange = (documentId: string, payload: IAnalyzeScriptPayload): void => {
-    workbench.editorStore.setDocumentAnalysis(documentId, payload);
-  };
-
-  const handleSelectDiagnostic = (line: number, column: number): void => {
-    editorRef.value?.revealPosition(line, column);
-    editorRef.value?.focusEditor();
-  };
-
-  const handleRerunDiagnostics = (): void => {
-    editorRef.value?.rerunDiagnostics();
-  };
-
-  const closeDiagnosticsPanel = (): void => {
-    if (!isDiagnosticsPanelVisible.value) {
-      return;
-    }
-
-    isDiagnosticsPanelVisible.value = false;
-  };
-
   const applyPrimaryMode = (mode: TWorkbenchPrimaryMode): void => {
     if (mode === 'ai') {
       // 切换 AI/编辑模式时不要强制改写终端可见性：
@@ -365,7 +334,6 @@ export const useShellWorkbenchView = (onReady: () => void) => {
       // AI 模式下编辑器区域本来就 v-show 隐藏，因此保留终端状态是安全的。
       isSidebarVisible.value = true;
       activePrimaryMode.value = 'ai';
-      closeDiagnosticsPanel();
       return;
     }
 
@@ -385,15 +353,6 @@ export const useShellWorkbenchView = (onReady: () => void) => {
     },
     { immediate: true },
   );
-
-  const openDiagnosticsPanel = (): void => {
-    if (!canToggleDiagnosticsPanel.value || isDiagnosticsPanelVisible.value) {
-      return;
-    }
-
-    openEditorMode();
-    isDiagnosticsPanelVisible.value = true;
-  };
 
   const openTerminal = (): void => {
     if (activePrimaryMode.value !== 'editor') {
@@ -501,19 +460,6 @@ export const useShellWorkbenchView = (onReady: () => void) => {
       window.removeEventListener('keydown', handleGlobalKeydownCapture, true);
       globalKeydownCleanup = null;
     };
-  };
-
-  const toggleDiagnosticsPanel = async (): Promise<void> => {
-    if (!canToggleDiagnosticsPanel.value) {
-      return;
-    }
-
-    if (isDiagnosticsPanelVisible.value) {
-      closeDiagnosticsPanel();
-      return;
-    }
-
-    openDiagnosticsPanel();
   };
 
   const showSidebarView = (view: TWorkbenchSidebarView): void => {
@@ -632,7 +578,6 @@ export const useShellWorkbenchView = (onReady: () => void) => {
 
   const handleRunScript = async (): Promise<void> => {
     openEditorMode();
-    closeDiagnosticsPanel();
     isTerminalVisible.value = true;
     workbench.editorStore.setWorkbenchSessionState({ isTerminalVisible: true });
     await workbench.runScript();
@@ -653,16 +598,6 @@ export const useShellWorkbenchView = (onReady: () => void) => {
   };
 
   const { titlebarRef, handleOpenCommandPalette } = useShellWorkbenchAiBridge();
-
-  watch(
-    () => [workbench.editorStore.hasActiveDocument, workbench.editorStore.document.kind],
-    () => {
-      if (!shouldRenderDiagnosticsPanel.value && isDiagnosticsPanelVisible.value) {
-        closeDiagnosticsPanel();
-      }
-    },
-    { immediate: true },
-  );
 
   watch(
     () => workbench.editorStore.activeDocumentId,
@@ -782,7 +717,6 @@ export const useShellWorkbenchView = (onReady: () => void) => {
     aiPanelWidth,
     isEditorMode,
     isAiMode,
-    isDiagnosticsPanelVisible,
     terminalHeight,
     isTerminalMaximized,
     activeSidebarView,
@@ -798,25 +732,18 @@ export const useShellWorkbenchView = (onReady: () => void) => {
     navigateDocumentForward,
     gitBranchName,
     gitChangeSummary,
-    shouldRenderDiagnosticsPanel,
-    canToggleDiagnosticsPanel,
-    diagnosticIssueCount,
     diagnosticsPanelMotionClass,
     diagnosticsPanelStyle,
     handleInsertTemplate,
     handleFormatDocument,
     handleCursorPositionChange,
     handleSelectionChange,
-    handleDiagnosticsChange,
-    handleSelectDiagnostic,
-    handleRerunDiagnostics,
     handleTerminalHeightChange,
     handleAiPanelWidthChange,
     toggleTerminalMaximize,
     openEditorMode,
     openAiMode,
     handleRequestCloseApplication,
-    toggleDiagnosticsPanel,
     handleSelectSidebarView,
     handleExplorerSessionStateChange,
     hideTerminal,

@@ -6,7 +6,6 @@ import { tauriSessionStorage } from '@/store/plugins/tauriSessionStorage';
 import type { IAiDiffEditorPreview } from '@/types/ai/patch';
 import type {
   IActiveRunSummary,
-  IAnalyzeScriptPayload,
   IEditorDocument,
   IEditorSelectionSummary,
   IExecutionEnvironment,
@@ -99,13 +98,6 @@ const EMPTY_DOCUMENT: Readonly<IEditorDocument> = Object.freeze({
   isDirty: false,
   lineCount: 1,
   charCount: 0,
-});
-
-const createEmptyScriptAnalysis = (): IAnalyzeScriptPayload => ({
-  available: true,
-  message: null,
-  dialect: 'bash',
-  diagnostics: [],
 });
 
 // ---------------------------------------------------------------------------
@@ -233,7 +225,6 @@ export const useEditorStore = defineStore(
     const protectedWorkspaceRootPaths = ref<string[]>([]);
     const activeDocumentId = ref('');
     const pendingTerminalRunId = ref<string | null>(null);
-    const documentAnalysis = ref<Record<string, IAnalyzeScriptPayload>>({});
 
     // Internal helpers
 
@@ -246,15 +237,6 @@ export const useEditorStore = defineStore(
       if (targetDocument.kind === 'text' && targetDocument.bufferLoaded !== false) {
         targetDocument.bufferLoaded = true;
       }
-    };
-
-    const clearDocumentAnalysis = (documentId: string): void => {
-      if (!(documentId in documentAnalysis.value)) {
-        return;
-      }
-      const nextValue = { ...documentAnalysis.value };
-      delete nextValue[documentId];
-      documentAnalysis.value = nextValue;
     };
 
     const evictInactiveDocumentBuffers = (): void => {
@@ -282,7 +264,6 @@ export const useEditorStore = defineStore(
           charCount: 0,
           isDirty: false,
         });
-        clearDocumentAnalysis(targetDocument.id);
       });
     };
 
@@ -390,34 +371,6 @@ export const useEditorStore = defineStore(
     );
     const dirtyDocuments = computed(() => documents.value.filter((item) => item.isDirty));
     const hasDirtyDocuments = computed(() => dirtyDocuments.value.length > 0);
-
-    const activeScriptAnalysis = computed<IAnalyzeScriptPayload>(
-      () => documentAnalysis.value[document.value.id] ?? createEmptyScriptAnalysis(),
-    );
-    const activeDiagnostics = computed(() => activeScriptAnalysis.value.diagnostics);
-    /** 按严重程度分组，单次遍历代替三个独立 computed */
-    const activeDiagnosticCounts = computed(() => {
-      let errors = 0;
-      let warnings = 0;
-      let infos = 0;
-      for (const item of activeDiagnostics.value) {
-        switch (item.level) {
-          case 'error':
-            errors += 1;
-            break;
-          case 'warning':
-            warnings += 1;
-            break;
-          default:
-            infos += 1;
-            break;
-        }
-      }
-      return { errors, warnings, infos };
-    });
-    const activeDiagnosticErrors = computed(() => activeDiagnosticCounts.value.errors);
-    const activeDiagnosticWarnings = computed(() => activeDiagnosticCounts.value.warnings);
-    const activeDiagnosticInfos = computed(() => activeDiagnosticCounts.value.infos);
 
     const canOpenMoreTabs = computed(() => documents.value.length < MAX_OPEN_TABS);
     const hasRunArtifacts = computed(
@@ -799,7 +752,6 @@ export const useEditorStore = defineStore(
       targetDocument.lineCount = 1;
       targetDocument.charCount = 0;
       targetDocument.isDirty = false;
-      clearDocumentAnalysis(documentId);
       return true;
     };
 
@@ -911,10 +863,6 @@ export const useEditorStore = defineStore(
       updateDocumentEncoding(document.value.id, encoding);
     };
 
-    const setDocumentAnalysis = (documentId: string, payload: IAnalyzeScriptPayload): void => {
-      documentAnalysis.value[documentId] = payload;
-    };
-
     const closeDocument = (documentId: string): IEditorDocument | null => {
       const targetIndex = documents.value.findIndex((item) => item.id === documentId);
       if (targetIndex === -1) {
@@ -926,7 +874,6 @@ export const useEditorStore = defineStore(
       if (closingDocument.path) {
         clearDocumentDraft(closingDocument.path);
       }
-      clearDocumentAnalysis(documentId);
       documents.value.splice(targetIndex, 1);
       syncSessionOpenTabs();
       touchSessionSnapshot();
@@ -1040,7 +987,6 @@ export const useEditorStore = defineStore(
       cursorLine.value = 1;
       cursorColumn.value = 1;
       activeSelectionSummary.value = null;
-      documentAnalysis.value = {};
       touchSessionSnapshot();
     };
 
@@ -1087,7 +1033,6 @@ export const useEditorStore = defineStore(
       workspaceRootPath,
       protectedWorkspaceRootPaths,
       pendingTerminalRunId,
-      documentAnalysis,
       sessionSnapshot,
       // getters
       document,
@@ -1095,11 +1040,6 @@ export const useEditorStore = defineStore(
       hasActiveDocument,
       dirtyDocuments,
       hasDirtyDocuments,
-      activeScriptAnalysis,
-      activeDiagnostics,
-      activeDiagnosticErrors,
-      activeDiagnosticWarnings,
-      activeDiagnosticInfos,
       canOpenMoreTabs,
       hasRunArtifacts,
       currentRunId,
@@ -1138,8 +1078,6 @@ export const useEditorStore = defineStore(
       setProtectedWorkspaceRootPaths,
       setPendingTerminalRunId,
       setActiveRunSummary,
-      setDocumentAnalysis,
-      clearDocumentAnalysis,
       clearDocuments,
       clearWorkspaceSession,
       clearLogs,

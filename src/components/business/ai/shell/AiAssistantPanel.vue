@@ -42,12 +42,7 @@ import type {
 } from '@/types/ai';
 import type { TAiExecutionMode } from '@/types/ai/execution-mode';
 import type { IAskUserResult } from '@/types/ai/sidecar';
-import type {
-  IActiveRunSummary,
-  IAnalyzeScriptPayload,
-  IEditorDocument,
-  IEditorSelectionSummary,
-} from '@/types/editor';
+import type { IActiveRunSummary, IEditorDocument, IEditorSelectionSummary } from '@/types/editor';
 import type { IGitDiffPreviewPayload, IGitRepositoryStatusPayload } from '@/types/git';
 import { toErrorMessage } from '@/utils/error/error';
 import { markStartup } from '@/utils/platform/startup-profiler';
@@ -55,7 +50,6 @@ import { markStartup } from '@/utils/platform/startup-profiler';
 const props = defineProps<{
   document: IEditorDocument;
   activeRun: IActiveRunSummary | null;
-  analysis: IAnalyzeScriptPayload;
   selection: IEditorSelectionSummary | null;
   gitStatus: IGitRepositoryStatusPayload;
   workspaceRootPath: string | null;
@@ -79,14 +73,12 @@ const DeferredAiWebSourcesPanel = defineAsyncComponent({
 markStartup('ai-assistant-panel-setup-start');
 const documentRef = computed(() => props.document);
 const activeRunRef = computed(() => props.activeRun);
-const analysisRef = computed(() => props.analysis);
 const selectionRef = computed(() => props.selection);
 const gitStatusRef = computed(() => props.gitStatus);
 const workspaceRootPathRef = computed(() => props.workspaceRootPath);
 const assistant = useAiAssistant({
   document: documentRef,
   activeRun: activeRunRef,
-  analysis: analysisRef,
   selection: selectionRef,
   gitStatus: gitStatusRef,
   workspaceRootPath: workspaceRootPathRef,

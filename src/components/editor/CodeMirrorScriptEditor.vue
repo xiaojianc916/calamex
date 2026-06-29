@@ -98,11 +98,7 @@ import {
 } from '@/services/editor/lsp-bridge';
 import { useEditorStore } from '@/store/editor';
 import type { TThemeMode } from '@/types/app';
-import type {
-  IAnalyzeScriptPayload,
-  IEditorSelectionSummary,
-  TScriptDiagnosticSeverity,
-} from '@/types/editor';
+import type { IEditorSelectionSummary } from '@/types/editor';
 import type { IEditorSettings } from '@/types/settings';
 import { computeDocumentMetrics, type IDocumentMetrics } from '@/utils/editor/document-metrics';
 import { computeDocChanges } from '@/utils/editor/editor-doc-diff';
@@ -130,13 +126,6 @@ const SELECTION_SUMMARY_CONTEXT_LINES = 60;
 const SELECTION_SUMMARY_LONG_LINE_THRESHOLD = 4_000;
 const SELECTION_SUMMARY_LONG_LINE_CONTEXT_CHARS = 100;
 
-const createEmptyAnalysis = (): IAnalyzeScriptPayload => ({
-  available: true,
-  message: null,
-  dialect: 'bash',
-  diagnostics: [],
-});
-
 // ──────────────────────────────
 // Lazy / cached shell completion source
 // ──────────────────────────────
@@ -159,7 +148,6 @@ const props = withDefaults(
     documentName?: string;
     modelValue?: string;
     theme?: TThemeMode;
-    analysis?: IAnalyzeScriptPayload;
     editorSettings: IEditorSettings;
     canRun?: boolean;
   }>(),
@@ -168,7 +156,6 @@ const props = withDefaults(
     documentName: '',
     modelValue: '',
     theme: 'dark',
-    analysis: undefined,
     canRun: false,
   },
 );
@@ -184,24 +171,6 @@ const emit = defineEmits<{
 }>();
 
 const containerRef = ref<HTMLElement | null>(null);
-const analysisState = computed(() => props.analysis ?? createEmptyAnalysis());
-const analysisDiagnosticsSignature = computed(() => {
-  const analysis = analysisState.value;
-  if (!analysis.available) return 'unavailable';
-  return analysis.diagnostics
-    .map((item) =>
-      [
-        item.line,
-        item.column,
-        item.endLine,
-        item.endColumn,
-        item.level,
-        item.code,
-        item.message,
-      ].join('\u001f'),
-    )
-    .join('\u001e');
-});
 const contextMenuState = ref({ open: false, x: 0 });
 contextMenuState.value = { open: false, x: 0, y: 0 } as typeof contextMenuState.value & {
   y: number;
@@ -585,20 +554,6 @@ const replaceDocumentForPathSwitch = (): void => {
 // ──────────────────────────────
 // Diagnostics
 // ──────────────────────────────
-const toDiagnosticSeverity = (level: TScriptDiagnosticSeverity): Diagnostic['severity'] => {
-  switch (level) {
-    case 'error':
-      return 'error';
-    case 'warning':
-      return 'warning';
-    case 'style':
-      return 'hint';
-    default:
-      return 'info';
-  }
-};
-
-let shellcheckDiagnostics: Diagnostic[] = [];
 let lspDiagnostics: Diagnostic[] = [];
 
 const applyDiagnostics = (): void => {
@@ -608,7 +563,7 @@ const applyDiagnostics = (): void => {
   // 当文档变短而另一来源仍是旧缓存时，过期位置会越界，触发 CM6 lint 的
   // doc.lineAt(越界) → RangeError（Invalid position）。下发前统一做最终裁剪兜底。
   const docLength = view.state.doc.length;
-  const merged = [...shellcheckDiagnostics, ...lspDiagnostics]
+  const merged = [...lspDiagnostics]
     .map((diagnostic) => {
       const from = Math.min(Math.max(0, diagnostic.from), docLength);
       const to = Math.min(Math.max(from, diagnostic.to), docLength);
@@ -618,26 +573,6 @@ const applyDiagnostics = (): void => {
     })
     .sort((a, b) => a.from - b.from || a.to - b.to);
   view.dispatch(setDiagnostics(view.state, merged));
-};
-
-const syncDiagnostics = (): void => {
-  const view = editorView;
-  if (!view) return;
-  shellcheckDiagnostics = analysisState.value.available
-    ? analysisState.value.diagnostics.map((item): Diagnostic => {
-        const from = lineColumnToOffset(view, item.line, item.column);
-        const to = Math.max(from + 1, lineColumnToOffset(view, item.endLine, item.endColumn));
-        return {
-          from,
-          // 越界裁剪统一交给 applyDiagnostics(合并 shellcheck/lsp 后按当时文档长度兜底)，此处不再重复。
-          to,
-          severity: toDiagnosticSeverity(item.level),
-          source: item.code,
-          message: `${item.code} · ${item.message}`,
-        };
-      })
-    : [];
-  applyDiagnostics();
 };
 
 // ──────────────────────────────
@@ -1501,7 +1436,6 @@ const createEditor = (): void => {
   emitCursorPosition(editorView);
   applyLanguageExtension(language);
   currentLsp?.attach(editorView);
-  syncDiagnostics();
   restoreViewStateForPath(props.documentPath);
   requestAnimationFrame(() => scheduleEditorLayout());
 };
@@ -1614,8 +1548,6 @@ watch(
     }
   },
 );
-
-watch(analysisDiagnosticsSignature, () => syncDiagnostics());
 
 // app store 的 patchSettings/replaceSettings 每次都整体替换 settings 引用,
 // editor 子对象随之成为新引用,故浅 watch 即可捕获所有偏好改动,无需 deep 遍历。

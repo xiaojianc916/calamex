@@ -52,7 +52,6 @@
               :aria-hidden="!isAiMode"
               :document="editorStore.document"
               :active-run="editorStore.activeRunSummary"
-              :analysis="editorStore.activeScriptAnalysis"
               :selection="editorStore.activeSelectionSummary"
               :git-status="gitStore.status"
               :workspace-root-path="editorStore.workspaceRootPath"
@@ -114,7 +113,6 @@
                         :can-run="canRun"
                         @update:model-value="updateContent"
                         @cursor-position-change="handleCursorPositionChange"
-                        @diagnostics-change="handleDiagnosticsChange"
                         @selection-change="handleSelectionChange"
                         @format-request="handleFormatDocument"
                         @command-palette-request="handleOpenCommandPalette"
@@ -211,7 +209,6 @@
                     :can-run="canRun"
                     @update:model-value="updateContent"
                     @cursor-position-change="handleCursorPositionChange"
-                    @diagnostics-change="handleDiagnosticsChange"
                     @selection-change="handleSelectionChange"
                     @format-request="handleFormatDocument"
                     @command-palette-request="handleOpenCommandPalette"
@@ -347,7 +344,6 @@ const {
   handleFormatDocument,
   handleCursorPositionChange,
   handleSelectionChange,
-  handleDiagnosticsChange,
   openAiMode,
   openEditorMode,
   handleSelectSidebarView,
@@ -489,8 +485,6 @@ const isEditorExpose = (value: unknown): value is NonNullable<typeof editorRef.v
     typeof value.insertSnippet === 'function' &&
     'revealPosition' in value &&
     typeof value.revealPosition === 'function' &&
-    'rerunDiagnostics' in value &&
-    typeof value.rerunDiagnostics === 'function' &&
     'layoutEditor' in value &&
     typeof value.layoutEditor === 'function'
   );
