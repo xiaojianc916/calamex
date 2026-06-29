@@ -172,23 +172,6 @@ export const buildTerminalRunResult = ({
   };
 };
 
-const LEGACY_RUN_FLOW_LOG_TITLES = new Set([
-  TERMINAL_RUN_LOG_TITLES.start,
-  TERMINAL_RUN_LOG_TITLES.dispatched,
-  TERMINAL_RUN_LOG_TITLES.tempFile,
-  TERMINAL_RUN_LOG_TITLES.completed,
-  TERMINAL_RUN_LOG_TITLES.failed,
-  '终端执行状态异常',
-  '脚本执行失败',
-]);
-
-const LEGACY_FINAL_RUN_LOG_TITLES = new Set([
-  TERMINAL_RUN_LOG_TITLES.completed,
-  TERMINAL_RUN_LOG_TITLES.failed,
-  '终端执行状态异常',
-  '脚本执行失败',
-]);
-
 const TERMINAL_RUN_LOG_CODE_SET = new Set<string>(Object.values(TERMINAL_RUN_LOG_CODES));
 const TERMINAL_RUN_FINAL_LOG_CODE_SET = new Set<string>([
   TERMINAL_RUN_LOG_CODES.completed,
@@ -197,36 +180,29 @@ const TERMINAL_RUN_FINAL_LOG_CODE_SET = new Set<string>([
 ]);
 
 export const isTerminalRunStartLog = (item: Pick<IRunLogEntry, 'title' | 'code'>): boolean =>
-  item.code === TERMINAL_RUN_LOG_CODES.start || item.title === TERMINAL_RUN_LOG_TITLES.start;
+  item.code === TERMINAL_RUN_LOG_CODES.start;
 
 export const isTerminalRunDispatchedLog = (item: Pick<IRunLogEntry, 'title' | 'code'>): boolean =>
-  item.code === TERMINAL_RUN_LOG_CODES.dispatched ||
-  item.title === TERMINAL_RUN_LOG_TITLES.dispatched;
+  item.code === TERMINAL_RUN_LOG_CODES.dispatched;
 
 const isTerminalRunTempFileLog = (item: Pick<IRunLogEntry, 'title' | 'code'>): boolean =>
-  item.code === TERMINAL_RUN_LOG_CODES.tempFile || item.title === TERMINAL_RUN_LOG_TITLES.tempFile;
+  item.code === TERMINAL_RUN_LOG_CODES.tempFile;
 
 export const isTerminalRunCompletedLog = (item: Pick<IRunLogEntry, 'title' | 'code'>): boolean =>
-  item.code === TERMINAL_RUN_LOG_CODES.completed ||
-  item.title === TERMINAL_RUN_LOG_TITLES.completed;
+  item.code === TERMINAL_RUN_LOG_CODES.completed;
 
 export const isTerminalRunTimeoutLog = (item: Pick<IRunLogEntry, 'title' | 'code'>): boolean =>
-  item.code === TERMINAL_RUN_LOG_CODES.timeout || item.title === TERMINAL_RUN_LOG_TITLES.timeout;
+  item.code === TERMINAL_RUN_LOG_CODES.timeout;
 
 export const isTerminalRunFailedLog = (item: Pick<IRunLogEntry, 'title' | 'code'>): boolean =>
-  item.code === TERMINAL_RUN_LOG_CODES.failed ||
-  item.title === TERMINAL_RUN_LOG_TITLES.failed ||
-  item.title === '终端执行状态异常' ||
-  item.title === '脚本执行失败';
+  item.code === TERMINAL_RUN_LOG_CODES.failed;
 
 export const isTerminalRunFlowLog = (item: IRunLogEntry): boolean =>
   item.scope === 'run' ||
-  (typeof item.code === 'string' && TERMINAL_RUN_LOG_CODE_SET.has(item.code)) ||
-  LEGACY_RUN_FLOW_LOG_TITLES.has(item.title);
+  (typeof item.code === 'string' && TERMINAL_RUN_LOG_CODE_SET.has(item.code));
 
 export const isTerminalRunFinalLog = (item: IRunLogEntry): boolean =>
-  (typeof item.code === 'string' && TERMINAL_RUN_FINAL_LOG_CODE_SET.has(item.code)) ||
-  LEGACY_FINAL_RUN_LOG_TITLES.has(item.title);
+  typeof item.code === 'string' && TERMINAL_RUN_FINAL_LOG_CODE_SET.has(item.code);
 
 export const resolveTerminalRunLogKind = (
   item: Pick<IRunLogEntry, 'title' | 'code'>,
