@@ -83,21 +83,13 @@ import {
 	resolveModelConfigInput,
 } from "./model-config-options.js"
 import {
-	AGENT_ASK_USER_RESUME_METHOD,
-	AGENT_CHAT_METHOD,
-	AGENT_CHAT_RESOLVE_METHOD,
 	buildHealthExtResult,
 	CALAMEX_AGENT_CAPABILITY_META,
 	CHECKPOINT_RESTORE_METHOD,
 	HEALTH_METHOD,
 	MODEL_CHAT_METHOD,
-	parseAgentAskUserResumeParams,
-	parseAgentChatParams,
-	parseAgentChatResolveParams,
 	parseCheckpointRestoreParams,
 	parseModelChatParams,
-	toAgentAskUserResumeExtResult,
-	toAgentChatExtResult,
 	toCheckpointRestoreExtResult,
 	toModelChatExtResult,
 	toWarmupExtResult,
@@ -483,12 +475,6 @@ export class CalamexAcpAgent implements Agent {
 				return this.handleWarmup(params)
 			case HEALTH_METHOD:
 				return this.handleHealth()
-			case AGENT_CHAT_METHOD:
-				return this.handleAgentChat(params)
-			case AGENT_CHAT_RESOLVE_METHOD:
-				return this.handleAgentChatResolve(params)
-			case AGENT_ASK_USER_RESUME_METHOD:
-				return this.handleAgentAskUserResume(params)
 			default:
 				throw RequestError.methodNotFound(method)
 		}
@@ -559,77 +545,6 @@ export class CalamexAcpAgent implements Agent {
 			throw new Error(response.errorMessage)
 		}
 		return toModelChatExtResult(response)
-	}
-
-	/**
-	 * 受理 agent 模式对话回合扩展方法(agent/chat)。镜像旧 http /agent/chat 的
-	 * runChat = runtime.chat(toAgentInput(payload), options)：调用 runtime.chat(而非 execute)，
-	 * mode 随入参携带，引擎走到审批门挂起或跑到终态。run-to-gate：本 handler 不走原生
-	 * session/request_permission 反向循环(与 prompt() 的原生审批环区分)；审批请求随
-	 * approval_required 事件写进返回信封，由前端调 agent/chat/resolve 续跑。携带 sessionId 时
-	 * 过程增量经 emitOutputEvent 作实时预览下发(仅文本/思考)；权威富事件由返回信封承载。
-	 * 已知限制：本扩展不受理原生 session/cancel（registry 不跟踪该调用作用域 controller）；
-	 * run-to-gate 每到闸门即返回，可接受。失败依 ACP 约定映射为 JSON-RPC error(由 SDK 包装)。
-	 */
-	private async handleAgentChat(
-		params: Record<string, unknown>,
-	): Promise<Record<string, unknown>> {
-		const input = parseAgentChatParams(params)
-		const response = await this.runtime.chat(
-			input,
-			this.buildExtRunOptions(input.sessionId),
-		)
-		if (response.errorMessage) {
-			throw new Error(response.errorMessage)
-		}
-		return toAgentChatExtResult(response)
-	}
-
-	/**
-	 * 受理 agent 对话审批恢复扩展方法(agent/chat/resolve)。镜像旧 http /approval/resolve 的
-	 * runtime.resolveApproval(parse(body), options)：携带上一段返回信封里的 approval_required
-	 * requestId 与裁决，续跑同一回合并返回下一段响应信封（若再遇审批门则信封再携 approval_required）。
-	 * 选项/状态同 handleAgentChat：调用作用域 AbortController + 携带 sessionId 时实时预览。
-	 * 失败依 ACP 约定映射为 JSON-RPC error(由 SDK 包装)。
-	 */
-	private async handleAgentChatResolve(
-		params: Record<string, unknown>,
-	): Promise<Record<string, unknown>> {
-		const input = parseAgentChatResolveParams(params)
-		const response = await this.runtime.resolveApproval(
-			input,
-			this.buildExtRunOptions(input.sessionId),
-		)
-		if (response.errorMessage) {
-			throw new Error(response.errorMessage)
-		}
-		return toAgentChatExtResult(response)
-	}
-
-	/**
-	 * 受理 ask_user 反向提问恢复扩展方法(agent/ask-user/resume)。这是 agent/chat/resolve 的
-	 * 姊妹方法：携带上一段返回信封里 ask_user_required 事件的 requestId 与用户回填的
-	 * outcome + 结构化 answers，经 runtime.resolveAskUser 原样回灌挂起的 ask_user 工具续跑
-	 * 同一回合并返回下一段响应信封(若再遇审批门或再次 ask_user，则信封再携相应事件)。
-	 * 选项/状态同 handleAgentChatResolve：调用作用域 AbortController + 携带 sessionId 时实时
-	 * 预览。运行时未实现该可选能力时以 methodNotFound 拒绝(与 handleModelChat 同约定)；
-	 * 失败依 ACP 约定映射为 JSON-RPC error(由 SDK 包装)。
-	 */
-	private async handleAgentAskUserResume(
-		params: Record<string, unknown>,
-	): Promise<Record<string, unknown>> {
-		if (!this.runtime.resolveAskUser) {
-			throw RequestError.methodNotFound(AGENT_ASK_USER_RESUME_METHOD)
-		}
-		const input = parseAgentAskUserResumeParams(params)
-		const response = await this.runtime.resolveAskUser(
-			input,
-			this.buildExtRunOptions(input.sessionId),
-		)
-		if (response.errorMessage) {
-			throw new Error(response.errorMessage)
-		}
-		return toAgentAskUserResumeExtResult(response)
 	}
 
 	/**

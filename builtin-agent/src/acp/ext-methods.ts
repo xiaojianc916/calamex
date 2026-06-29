@@ -41,8 +41,6 @@ import {
 } from "../engines/contracts/runtime-contracts.js"
 import type {
 	IAgentMessageInput,
-	IApprovalResolutionInput,
-	IAskUserResolutionInput,
 	IAgentRuntimeInput,
 	ICheckpointRestoreInput,
 } from "../engines/contracts/runtime-input.js"
@@ -71,24 +69,6 @@ export const WARMUP_METHOD = `${CALAMEX_EXT_NAMESPACE}/warmup`
 export const HEALTH_METHOD = `${CALAMEX_EXT_NAMESPACE}/health`
 
 /**
- * agent 对话回合扩展方法名（run-to-gate：跑到审批门或终态，返回完整响应信封）。
- * 镜像旧 HTTP `/agent/chat` → `runtime.chat(toAgentInput(payload), options)`；过程增量经
- * session/update 仅作实时预览，权威富事件由返回信封承载。
- */
-export const AGENT_CHAT_METHOD = `${CALAMEX_EXT_NAMESPACE}/agent/chat`
-/**
- * agent 对话审批恢复扩展方法名（裁决后续跑同一回合，返回下一段响应信封）。
- * 镜像旧 HTTP `/approval/resolve` → `runtime.resolveApproval(parse(body), options)`。
- */
-export const AGENT_CHAT_RESOLVE_METHOD = `${CALAMEX_EXT_NAMESPACE}/agent/chat/resolve`
-/**
- * ask_user 反向提问（HITL）恢复扩展方法名。agent/chat/resolve 的姊妹方法：携上一段
- * 信封里 ask_user_required 事件的 requestId 与用户回填的 outcome + 结构化 answers，
- * 经 `runtime.resolveAskUser` 回灌挂起的 ask_user 工具续跑同一回合。
- */
-export const AGENT_ASK_USER_RESUME_METHOD = `${CALAMEX_EXT_NAMESPACE}/agent/ask-user/resume`
-
-/**
  * sidecar 构建身份版本号（从旧 http server.ts 迁入，使其在 server.ts 删除后仍成立）。
  * 这是 sidecar *实现* 的版本标记，与 ACP 协议本身的 PROTOCOL_VERSION 解耦；仅用于 health
  * 投影中填充宙主侧 AgentSidecarHealthPayload 的 protocol/implementation 字段，保持契约稳定。
@@ -110,9 +90,6 @@ export const CALAMEX_AGENT_CAPABILITY_META: Record<string, unknown> = {
 			webFetch: WEB_FETCH_METHOD,
 			warmup: WARMUP_METHOD,
 			health: HEALTH_METHOD,
-			agentChat: AGENT_CHAT_METHOD,
-			agentChatResolve: AGENT_CHAT_RESOLVE_METHOD,
-			agentAskUserResume: AGENT_ASK_USER_RESUME_METHOD,
 		},
 	},
 }
@@ -228,220 +205,6 @@ export const parseModelChatParams = (
  * 完全同构（schemaVersion + sessionId + events + result），宙主可直接复用既有解析器。
  */
 export const toModelChatExtResult = (
-	response: IAgentRuntimeResponse,
-): TAgentSidecarResponse => toAgentSidecarResponse(response)
-
-/**
- * agent 对话回合单条消息 schema。镜像旧 http 的 `agentMessageInputSchema`（role 四类 +
- * content 纯文本），与 `IAgentMessageInput` 结构兼容（其 toolCallId/name 可选字段在此省略，
- * 与旧 http /agent/chat 行为逐字一致）。
- */
-const agentChatMessageSchema = z.object({
-	role: z.enum(["user", "assistant", "system", "tool"]),
-	content: z.string(),
-})
-
-/**
- * agent 对话回合上下文引用 schema。逐字镜像旧 http 的 `agentContextReferenceSchema`，
- * 与 `IAgentContextReferenceInput` 结构兼容（kind 用宽松 string，承接未来取值）。
- */
-const agentChatContextReferenceSchema = z.object({
-	id: z.string().min(1),
-	kind: z.string().min(1),
-	label: z.string().min(1),
-	path: z.string().nullable(),
-	range: z
-		.object({
-			startLine: z.number().int().positive(),
-			endLine: z.number().int().positive(),
-		})
-		.nullable(),
-	contentPreview: z.string(),
-	redacted: z.boolean(),
-})
-
-/** 把空 / 空白 / null 归一为 undefined 的可选非空串预处理器（镜像旧 http optionalNonEmptyStringSchema）。 */
-const optionalNonEmptyAgentStringSchema = z
-	.preprocess((value) => {
-		if (value === null || value === undefined) return undefined
-		if (typeof value === "string" && value.trim().length === 0) return undefined
-		return value
-	}, z.string().trim().min(1).optional())
-	.optional()
-
-/** 可选 agent 模式预处理器（镜像旧 http optionalAgentModeSchema）。 */
-const optionalAgentChatModeSchema = z
-	.preprocess((value) => {
-		if (value === null || value === undefined) return undefined
-		if (typeof value === "string" && value.trim().length === 0) return undefined
-		return value
-	}, z.enum(["ask", "plan", "agent", "patch", "review"]).optional())
-	.optional()
-
-/** 可选工作区根路径预处理器：保留 null（镜像旧 http optionalWorkspaceRootPathSchema）。 */
-const optionalWorkspaceRootPathParamsSchema = z
-	.preprocess((value) => {
-		if (value === null || value === undefined) return value
-		if (typeof value === "string" && value.trim().length === 0) return undefined
-		return value
-	}, z.string().trim().min(1).nullable().optional())
-	.optional()
-
-/**
- * agent 对话回合扩展方法的入参 schema。自包含复刻旧 http 的 `baseAgentRequestSchema`
- * （= `agentSidecarChatRequestSchema`），以便 Batch 2 删除 server/ 后本扩展独立成立。
- */
-export const agentChatParamsSchema = z.object({
-	sessionId: optionalNonEmptyAgentStringSchema,
-	mode: optionalAgentChatModeSchema,
-	goal: optionalNonEmptyAgentStringSchema,
-	messages: z.array(agentChatMessageSchema).default([]),
-	workspaceRootPath: optionalWorkspaceRootPathParamsSchema,
-	context: z.array(agentChatContextReferenceSchema).default([]),
-	modelConfig: modelConfigParamsSchema.optional(),
-	threadId: optionalNonEmptyAgentStringSchema,
-	planId: optionalNonEmptyAgentStringSchema,
-	planVersion: z.number().int().positive().optional(),
-	planStepId: optionalNonEmptyAgentStringSchema,
-})
-
-/**
- * agent 对话审批恢复扩展方法的入参 schema。自包含复刻旧 http 的 `approvalResolutionSchema`
- * （= base + requestId + decision）。
- */
-export const agentChatResolveParamsSchema = agentChatParamsSchema.extend({
-	requestId: z.string().min(1),
-	decision: z.enum(["approve", "reject", "cancel", "modify"]),
-})
-
-/**
- * 校验并投影 agent 对话入参为运行时输入。逐字复刻旧 http `toAgentInput(payload, 'agent')`
- * 的 goal 回退（payload.goal ?? 末条 user 消息 ?? '继续当前任务'）与可选字段「仅在 truthy
- * 时写入」语义；mode 缺省回退到 'agent'（本方法专司 agent 回合，前端恒显式携带 mode）。
- * 入参非法时抛出 ZodError，由 SDK 连接层映射为 JSON-RPC error。
- */
-export const parseAgentChatParams = (
-	params: Record<string, unknown>,
-): IAgentRuntimeInput => {
-	const parsed = agentChatParamsSchema.parse(params)
-	const lastUserMessage = [...parsed.messages]
-		.reverse()
-		.find((message) => message.role === "user")
-	const input: IAgentRuntimeInput = {
-		mode: parsed.mode ?? "agent",
-		goal: parsed.goal ?? lastUserMessage?.content ?? "继续当前任务",
-		messages: parsed.messages,
-		context: parsed.context,
-	}
-	if (parsed.sessionId) input.sessionId = parsed.sessionId
-	if (parsed.workspaceRootPath) input.workspaceRootPath = parsed.workspaceRootPath
-	if (parsed.threadId) input.threadId = parsed.threadId
-	if (parsed.modelConfig) input.modelConfig = parsed.modelConfig
-	if (parsed.planId) input.planId = parsed.planId
-	if (parsed.planVersion) input.planVersion = parsed.planVersion
-	if (parsed.planStepId) input.planStepId = parsed.planStepId
-	return input
-}
-
-/**
- * 校验并投影 agent 对话审批恢复入参为审批裁决输入。逐字复刻旧 http
- * `runtime.resolveApproval(approvalResolutionSchema.parse(body), options)` 的透传语义：
- * requestId/decision 必填，messages/context 随默认值透传，其余可选字段仅在 truthy 时写入。
- * 入参非法时抛出 ZodError，由 SDK 连接层映射为 JSON-RPC error。
- */
-export const parseAgentChatResolveParams = (
-	params: Record<string, unknown>,
-): IApprovalResolutionInput => {
-	const parsed = agentChatResolveParamsSchema.parse(params)
-	const input: IApprovalResolutionInput = {
-		requestId: parsed.requestId,
-		decision: parsed.decision,
-		messages: parsed.messages,
-		context: parsed.context,
-	}
-	if (parsed.sessionId) input.sessionId = parsed.sessionId
-	if (parsed.goal) input.goal = parsed.goal
-	if (parsed.workspaceRootPath) input.workspaceRootPath = parsed.workspaceRootPath
-	if (parsed.modelConfig) input.modelConfig = parsed.modelConfig
-	if (parsed.threadId) input.threadId = parsed.threadId
-	if (parsed.planId) input.planId = parsed.planId
-	if (parsed.planVersion) input.planVersion = parsed.planVersion
-	if (parsed.planStepId) input.planStepId = parsed.planStepId
-	return input
-}
-
-/**
- * 把 agent 对话回合（含审批恢复段）的响应投影为扩展方法结果。复用 toAgentSidecarResponse，
- * 与 chat/checkpoint/modelChat 完全同构（schemaVersion + sessionId + events + result）：
- * 富事件（结构化补丁 / 检查点 / 回滚 / 富审批字段 / plan_ready 等）零损失地随返回信封下发，
- * 宙主可直接复用既有 AgentSidecarResponsePayload 解析，前端 finalizeSidecarTurn 零改动消费。
- */
-export const toAgentChatExtResult = (
-	response: IAgentRuntimeResponse,
-): TAgentSidecarResponse => toAgentSidecarResponse(response)
-
-/**
- * ask_user 单条回答 schema（自包含，承接前端 IQuestionAnswer）。answer 用工具在 surface
- * 时分配的稳定 questionId / optionId 寻址；自由文本（恒在的「其他」行，或 text 型问题）
- * 走 text。与 IAskUserAnswerInput 结构兼容，也与 ask_user 工具 resumeSchema 的 answer 同形。
- */
-const askUserAnswerParamsSchema = z.object({
-	questionId: z.string().trim().min(1),
-	optionIds: z.array(z.string().trim().min(1)).default([]),
-	text: z.string().optional(),
-})
-
-/**
- * ask_user 反向提问恢复扩展方法的入参 schema。复用 agentChatParamsSchema 的会话/计划基底
- * （sessionId/messages/context/plan 三元组等），额外携带 requestId + outcome + 可选 answers。
- * 与 agentChatResolveParamsSchema 同构（仅以 outcome+answers 替换 decision）。
- */
-export const agentAskUserResumeParamsSchema = agentChatParamsSchema.extend({
-	requestId: z.string().min(1),
-	outcome: z.enum(["selected", "cancelled"]),
-	answers: z.array(askUserAnswerParamsSchema).optional(),
-})
-
-/**
- * 校验并投影 ask_user 恢复入参为 ask_user 裁决输入。与 parseAgentChatResolveParams 同风格：
- * requestId/outcome 必填，messages/context 随默认值透传，answers 逐项规范化（text 仅在提供
- * 时写入），其余可选字段仅在 truthy 时写入。入参非法时抛出 ZodError，由 SDK 连接层映射为
- * JSON-RPC error。
- */
-export const parseAgentAskUserResumeParams = (
-	params: Record<string, unknown>,
-): IAskUserResolutionInput => {
-	const parsed = agentAskUserResumeParamsSchema.parse(params)
-	const input: IAskUserResolutionInput = {
-		requestId: parsed.requestId,
-		outcome: parsed.outcome,
-		messages: parsed.messages,
-		context: parsed.context,
-	}
-	if (parsed.answers !== undefined) {
-		input.answers = parsed.answers.map((answer) => ({
-			questionId: answer.questionId,
-			optionIds: answer.optionIds,
-			...(answer.text !== undefined ? { text: answer.text } : {}),
-		}))
-	}
-	if (parsed.sessionId) input.sessionId = parsed.sessionId
-	if (parsed.goal) input.goal = parsed.goal
-	if (parsed.workspaceRootPath) input.workspaceRootPath = parsed.workspaceRootPath
-	if (parsed.modelConfig) input.modelConfig = parsed.modelConfig
-	if (parsed.threadId) input.threadId = parsed.threadId
-	if (parsed.planId) input.planId = parsed.planId
-	if (parsed.planVersion) input.planVersion = parsed.planVersion
-	if (parsed.planStepId) input.planStepId = parsed.planStepId
-	return input
-}
-
-/**
- * 把 ask_user 恢复回合的响应投影为扩展方法结果。复用 toAgentSidecarResponse，与
- * agent/chat、agent/chat/resolve 完全同构（schemaVersion + sessionId + events + result）：
- * 续跑产生的富事件零损失随返回信封下发，宙主复用既有解析器，前端零改动消费。
- */
-export const toAgentAskUserResumeExtResult = (
 	response: IAgentRuntimeResponse,
 ): TAgentSidecarResponse => toAgentSidecarResponse(response)
 
