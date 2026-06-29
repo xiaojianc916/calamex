@@ -1,104 +1,169 @@
-// fix-ai-review-batch-10.mjs  (J1: reproject CAS 落败后有界重投影重试)
-import { readFileSync, writeFileSync } from 'node:fs';
-import { resolve } from 'node:path';
+// cleanup-rust-legacy-sidecar-contracts.mjs  （修正版）
+// 删除 contracts/builtin_agent.rs 中前 ACP 时代的 sidecar 三件套契约残渣，
+// 并改写 AgentExternalChatRequest 文档里对已删类型的悬空引用。
+// 幂等：已清理后再跑会因锚点未命中而抛错（不写入半成品）。在仓库根目录运行。
+import { readFileSync, writeFileSync, existsSync } from 'node:fs'
+import { join } from 'node:path'
 
-const ROOT = process.cwd();
-const STORE = 'builtin-agent/src/engines/plan/plan-workflow-store/store.ts';
+const ROOT = process.cwd()
+const REL = 'src-tauri/src/commands/contracts/builtin_agent.rs'
+const abs = join(ROOT, REL)
+if (!existsSync(abs)) throw new Error('找不到目标文件：' + REL + '（请在仓库根目录运行）')
 
-const eolOf = (s) => (s.includes('\r\n') ? '\r\n' : '\n');
-function load(rel) {
-  const abs = resolve(ROOT, rel);
-  const raw = readFileSync(abs, 'utf8');
-  const eol = eolOf(raw);
-  const hadTrailing = raw.endsWith(eol);
-  const lines = raw.split(eol);
-  if (hadTrailing) lines.pop();
-  return { abs, eol, lines, hadTrailing };
-}
-function save(f) {
-  writeFileSync(f.abs, f.lines.join(f.eol) + (f.hadTrailing ? f.eol : ''), 'utf8');
-}
-function findBlock(lines, block, from = 0) {
-  for (let i = from; i + block.length <= lines.length; i++) {
-    let ok = true;
-    for (let j = 0; j < block.length; j++) if (lines[i + j] !== block[j]) { ok = false; break; }
-    if (ok) return i;
-  }
-  return -1;
-}
-function replaceBlock(f, label, oldLines, newLines) {
-  const at = findBlock(f.lines, oldLines);
-  if (at === -1) {
-    if (findBlock(f.lines, newLines) !== -1) { console.log(`• 跳过(已替换): ${label}`); return; }
-    throw new Error(`未找到待替换块,已中止: ${label}`);
-  }
-  if (findBlock(f.lines, oldLines, at + 1) !== -1) throw new Error(`待替换块不唯一,已中止: ${label}`);
-  f.lines.splice(at, oldLines.length, ...newLines);
-  console.log(`✓ 替换块: ${label}`);
-}
-function insertBefore(f, label, anchor, newLines) {
-  if (findBlock(f.lines, newLines) !== -1) { console.log(`• 跳过(已插入): ${label}`); return; }
-  let idx = -1, count = 0;
-  for (let i = 0; i < f.lines.length; i++) if (f.lines[i] === anchor) { count++; if (idx === -1) idx = i; }
-  if (idx === -1) throw new Error(`未找到锚点,已中止: ${label}`);
-  if (count > 1) throw new Error(`锚点不唯一,已中止: ${label}`);
-  f.lines.splice(idx, 0, ...newLines);
-  console.log(`✓ 插入: ${label}`);
+const detectEol = (t) => (t.includes('\r\n') ? '\r\n' : '\n')
+const toLf = (s) => s.replace(/\r\n/g, '\n')
+const fromLf = (s, eol) => (eol === '\r\n' ? s.replace(/\n/g, '\r\n') : s)
+
+const rawText = readFileSync(abs, 'utf8')
+const eol = detectEol(rawText)
+let text = toLf(rawText)
+const before = text.length
+
+// 删除 [startNeedle, endNeedle) 区间，保留 endNeedle（即“从某条目头删到下一保留条目头”）。
+function cutRange(startNeedle, endNeedle) {
+	const s = text.indexOf(startNeedle)
+	if (s < 0) throw new Error('未命中起始锚点：' + startNeedle.slice(0, 70))
+	const e = text.indexOf(endNeedle, s)
+	if (e < 0) throw new Error('未命中结束锚点：' + endNeedle.slice(0, 70))
+	text = text.slice(0, s) + text.slice(e)
 }
 
-const f = load(STORE);
+// 唯一性替换。
+function replaceOnce(oldStr, newStr) {
+	const i = text.indexOf(oldStr)
+	if (i < 0) throw new Error('未命中替换锚点：' + oldStr.slice(0, 70))
+	if (text.indexOf(oldStr, i + oldStr.length) >= 0)
+		throw new Error('替换锚点不唯一：' + oldStr.slice(0, 70))
+	text = text.slice(0, i) + newStr + text.slice(i + oldStr.length)
+}
 
-// 1) 新增有界重试常量（置于 class 之前）
-insertBefore(
-  f,
-  'J1-const: REPROJECT_MAX_ATTEMPTS',
-  'export class LibsqlAgentPlanWorkflowStore implements IAgentPlanWorkflowStore {',
-  [
-    '// reproject 的 CAS 乐观锁在并发落败时的有界重投影重试上限，防止陈旧投影覆盖较新投影。',
-    'const REPROJECT_MAX_ATTEMPTS = 5;',
-    '',
-  ],
-);
+// 按花括号配对删除一个条目（可选前导锚点，如 '    #[test]\n'），并吞掉其后的空行。
+// 注意：仅用于体内字符串不含裸 { } 的条目（本处被删测试均满足）。
+function removeBraceItem(headNeedle, leadNeedle) {
+	const h = text.indexOf(headNeedle)
+	if (h < 0) throw new Error('未命中条目头：' + headNeedle)
+	let start = h
+	if (leadNeedle) {
+		const l = text.lastIndexOf(leadNeedle, h)
+		if (l < 0) throw new Error('未命中前导锚点：' + leadNeedle + ' @ ' + headNeedle)
+		start = l
+	}
+	const open = text.indexOf('{', h)
+	if (open < 0) throw new Error('未找到主体起始花括号：' + headNeedle)
+	let depth = 0
+	let i = open
+	for (; i < text.length; i++) {
+		const c = text[i]
+		if (c === '{') depth++
+		else if (c === '}') {
+			depth--
+			if (depth === 0) {
+				i++
+				break
+			}
+		}
+	}
+	if (depth !== 0) throw new Error('花括号不平衡：' + headNeedle)
+	let end = i
+	while (text[end] === '\n') end++
+	text = text.slice(0, start) + text.slice(end)
+}
 
-// 2) reproject 签名加 attempt 计数
-replaceBlock(
-  f,
-  'J1-sig: reproject 增加 attempt 参数',
-  [
-    '    private async reproject(input: IPlanWorkflowVersionInput): Promise<TAgentPlanWorkflowRecord> {',
-  ],
-  [
-    '    private async reproject(',
-    '        input: IPlanWorkflowVersionInput,',
-    '        attempt = 0,',
-    '    ): Promise<TAgentPlanWorkflowRecord> {',
-  ],
-);
+// 1) 去掉因结构删除而未用的 import。
+replaceOnce('use super::ai_chat::AiContextReferencePayload;\n', '')
 
-// 3) CAS 落败分支：重读事件流→重投影→重试（有界）
-replaceBlock(
-  f,
-  'J1-retry: CAS 落败重投影重试',
-  [
-    '        if (updateResult.rowsAffected !== 1) {',
-    '            // 另一个并发流程刚好抢先写了一版；重新读最新结果即可。事件流是单调追加，',
-    '            // 任何并发的 reproject 最终都会收敛到同一状态。',
-    '            return this.getWorkflow(input);',
-    '        }',
-    '        return this.getWorkflow(input);',
-  ],
-  [
-    '        if (updateResult.rowsAffected !== 1) {',
-    '            // CAS 落败：有并发 reproject 抢先写入。若直接返回，较旧（事件更少）的投影',
-    '            // 可能已覆盖较新的投影，导致持久化状态落后于事件流；故重读事件流后重投影重试。',
-    '            if (attempt + 1 < REPROJECT_MAX_ATTEMPTS) {',
-    '                return this.reproject(input, attempt + 1);',
-    '            }',
-    '            return this.getWorkflow(input);',
-    '        }',
-    '        return this.getWorkflow(input);',
-  ],
-);
+// 2) AgentSidecarMessagePayload（删到 ModelConfigPayload 头）。
+cutRange(
+	`#[derive(Debug, Clone, Serialize, Deserialize, Type)]
+#[serde(rename_all = "camelCase")]
+pub struct AgentSidecarMessagePayload {`,
+	`#[derive(Debug, Clone, Serialize, Deserialize, Type)]
+#[serde(rename_all = "camelCase")]
+pub struct AgentSidecarModelConfigPayload {`,
+)
 
-save(f);
-console.log('\nbatch-10 (J1) 完成。请运行 typecheck/test/lint 复核。');
+// 3) AgentSidecarWarmupRequest 兼容空壳（含 #[expect(dead_code)]，删到 is_blank 辅助函数头）。
+cutRange(
+	`#[expect(
+    dead_code,`,
+	`fn is_blank_optional_string(value: &Option<String>) -> bool {`,
+)
+
+// 4) Chat / ApprovalResolve / AskUserAnswer / AskUserResume 一整段（含文档注释，删到 RollbackStepPath 头）。
+cutRange(
+	`#[derive(Debug, Clone, Serialize, Deserialize, Type)]
+#[serde(rename_all = "camelCase")]
+pub struct AgentSidecarChatRequest {`,
+	`#[derive(Debug, Clone, Serialize, Deserialize, Type)]
+#[serde(untagged)]
+pub enum AgentSidecarRollbackStepPath {`,
+)
+
+// 4b) 改写 AgentExternalChatRequest 文档里对“已删类型”的悬空引用（散文层，非代码）。
+replaceOnce(
+	'/// 与自家 `AgentSidecarChatRequest` 不同：外部 agent 只实现标准 `prompt`、不认识',
+	'/// 与自家边车的带外 `agent_chat` 扩展回合不同：外部 agent 只实现标准 `prompt`、不认识',
+)
+
+// 5) 收敛测试模块的 use 列表（只留仍被保留测试引用的类型）。
+replaceOnce(
+	`    use super::{
+        AgentBackendKind, AgentExternalChatRequest, AgentSidecarAskUserAnswerPayload,
+        AgentSidecarAskUserResumeRequest, AgentSidecarChatRequest,
+        AgentSidecarCheckpointRestoreRequest, AgentSidecarMessagePayload,
+        AgentSidecarRollbackStepPath,
+    };`,
+	`    use super::{
+        AgentBackendKind, AgentExternalChatRequest, AgentSidecarCheckpointRestoreRequest,
+        AgentSidecarRollbackStepPath,
+    };`,
+)
+
+// 6) 删除仅服务于被删测试的辅助函数与 5 个测试。
+removeBraceItem('    fn sidecar_message(')
+removeBraceItem('    fn chat_request_omits_blank_optional_fields(', '    #[test]\n')
+removeBraceItem('    fn chat_request_keeps_non_empty_thread_id(', '    #[test]\n')
+removeBraceItem(
+	'    fn ask_user_resume_request_omits_blank_optionals_and_serializes_answers(',
+	'    #[test]\n',
+)
+removeBraceItem('    fn ask_user_resume_request_omits_answers_when_cancelled(', '    #[test]\n')
+removeBraceItem(
+	'    fn ask_user_answer_payload_emits_empty_option_ids_array_and_omits_blank_text(',
+	'    #[test]\n',
+)
+
+// 护栏（按“定义形态”校验，避免散文提及误伤）：确认目标定义已彻底清除。
+for (const gone of [
+	'pub struct AgentSidecarChatRequest',
+	'pub struct AgentSidecarApprovalResolveRequest',
+	'pub struct AgentSidecarAskUserResumeRequest',
+	'pub struct AgentSidecarAskUserAnswerPayload',
+	'pub struct AgentSidecarMessagePayload',
+	'pub struct AgentSidecarWarmupRequest',
+	'use super::ai_chat::AiContextReferencePayload',
+	'    fn sidecar_message(',
+]) {
+	if (text.includes(gone)) throw new Error('清理后仍残留定义：' + gone)
+}
+// 护栏：确认散文里对已删类型的悬空引用也已消除。
+if (text.includes('`AgentSidecarChatRequest`'))
+	throw new Error('文档注释仍引用已删除类型 AgentSidecarChatRequest')
+// 护栏：确认应保留的关键条目仍在。
+for (const keep of [
+	'pub struct AgentSidecarModelConfigPayload',
+	'fn is_blank_optional_string',
+	'pub enum AgentSidecarRollbackStepPath',
+	'pub struct AgentSidecarCheckpointRestoreRequest',
+	'pub enum AgentBackendKind',
+	'pub struct AgentExternalChatRequest',
+	'fn serialize_object',
+	'fn external_chat_request_omits_blank_session_and_serializes_present_session',
+]) {
+	if (!text.includes(keep)) throw new Error('误删了应保留条目：' + keep)
+}
+
+writeFileSync(abs, fromLf(text, eol), 'utf8')
+console.log('✓ 已清理 ' + REL)
+console.log('  字节数(LF计)：' + before + ' → ' + text.length + '（净减 ' + (before - text.length) + '）')
+console.log('  下一步：cargo clippy --features acp_client --manifest-path src-tauri/Cargo.toml 应无未用 import/类型告警')
