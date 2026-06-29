@@ -11,7 +11,6 @@ export interface IShellCompletionEntry {
   label: string;
   kind: TShellCompletionKind;
   detail: string;
-  aliases?: string[];
   documentation?: string;
   insertText?: string;
   insertAsSnippet?: boolean;
