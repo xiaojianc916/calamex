@@ -75,72 +75,13 @@ const setCachedGitGraphLayout = (cacheKey: string, layout: IGitGraphLayout): voi
   setBoundedCacheValue(gitGraphLayoutCache, cacheKey, layout, GIT_GRAPH_LAYOUT_CACHE_LIMIT);
 };
 
-// 二叉最小堆：维护「空闲泳道下标」的候选集合，支持 O(log n) 取最小。
-// 配合「惰性删除」使用：泳道被占用/越界时不立即从堆中移除，而是在取最小
-// 值时顺手丢弃这些失效条目。只要泳道变空闲时都 push 进堆，取到的堆顶（经校验后）
-// 必为当前最小的空闲下标，与原线性扫描语义完全一致。
-class MinLaneHeap {
-  private readonly heap: number[] = [];
-
-  get size(): number {
-    return this.heap.length;
-  }
-
-  push(value: number): void {
-    const heap = this.heap;
-    heap.push(value);
-    let child = heap.length - 1;
-    while (child > 0) {
-      const parent = (child - 1) >> 1;
-      if (heap[parent] <= heap[child]) {
-        break;
-      }
-      [heap[parent], heap[child]] = [heap[child], heap[parent]];
-      child = parent;
+function firstFreeLane(lanes: Array<string | null>): number {
+  // 返回最小的空闲泳道下标；没有空闲则追加到末尾。
+  // 泳道数等于并发分支数，量级很小，线性扫描既直白又足够快。
+  for (let lane = 0; lane < lanes.length; lane += 1) {
+    if (lanes[lane] === null || lanes[lane] === undefined) {
+      return lane;
     }
-  }
-
-  peek(): number | undefined {
-    return this.heap[0];
-  }
-
-  pop(): number | undefined {
-    const heap = this.heap;
-    const top = heap[0];
-    const last = heap.pop();
-    if (heap.length > 0 && last !== undefined) {
-      heap[0] = last;
-      let parent = 0;
-      const size = heap.length;
-      for (;;) {
-        const left = parent * 2 + 1;
-        const right = left + 1;
-        let smallest = parent;
-        if (left < size && heap[left] < heap[smallest]) {
-          smallest = left;
-        }
-        if (right < size && heap[right] < heap[smallest]) {
-          smallest = right;
-        }
-        if (smallest === parent) {
-          break;
-        }
-        [heap[parent], heap[smallest]] = [heap[smallest], heap[parent]];
-        parent = smallest;
-      }
-    }
-    return top;
-  }
-}
-
-function firstFreeLane(lanes: Array<string | null>, freeLaneHeap: MinLaneHeap): number {
-  // 丢弃已失效（越界或已被占用）的堆顶候选，剩下的堆顶即当前最小空闲下标。
-  while (freeLaneHeap.size > 0) {
-    const candidate = freeLaneHeap.peek() as number;
-    if (candidate < lanes.length && (lanes[candidate] === null || lanes[candidate] === undefined)) {
-      return candidate;
-    }
-    freeLaneHeap.pop();
   }
   return lanes.length;
 }
@@ -163,8 +104,6 @@ function buildGitGraphUncached(commits: IGitGraphInputCommit[]): IGitGraphLayout
   // 不变量：在本算法中，任一提交 id 在任一时刻至多占用一条泳道（父提交首次出现时
   // 占位，后续子提交命中索引后复用同一泳道），因此一个 Map<string, number> 足以表达。
   const laneByCommit = new Map<string, number>();
-  // 空闲泳道的最小堆（惰性删除），取代对 lanes 的线性扫描。
-  const freeLaneHeap = new MinLaneHeap();
   const rows: IGitGraphRow[] = [];
   let laneCount = 0;
 
@@ -175,7 +114,7 @@ function buildGitGraphUncached(commits: IGitGraphInputCommit[]): IGitGraphLayout
 
     // O(1) 查到正在等待当前提交的泳道（取代对 beforeLanes 的整体扫描）。
     const incomingLane = laneByCommit.has(commit.id) ? (laneByCommit.get(commit.id) as number) : -1;
-    const nodeLane = incomingLane >= 0 ? incomingLane : firstFreeLane(beforeLanes, freeLaneHeap);
+    const nodeLane = incomingLane >= 0 ? incomingLane : firstFreeLane(beforeLanes);
 
     const afterLanes = beforeLanes.slice();
     while (afterLanes.length <= nodeLane) {
@@ -184,10 +123,8 @@ function buildGitGraphUncached(commits: IGitGraphInputCommit[]): IGitGraphLayout
     if (incomingLane >= 0) {
       afterLanes[incomingLane] = null;
       laneByCommit.delete(commit.id);
-      freeLaneHeap.push(incomingLane);
     }
     afterLanes[nodeLane] = null;
-    freeLaneHeap.push(nodeLane);
 
     const outLanes: number[] = [];
     for (let parentIndex = 0; parentIndex < parents.length; parentIndex += 1) {
@@ -200,7 +137,7 @@ function buildGitGraphUncached(commits: IGitGraphInputCommit[]): IGitGraphLayout
         continue;
       }
 
-      const targetLane = parentIndex === 0 ? nodeLane : firstFreeLane(afterLanes, freeLaneHeap);
+      const targetLane = parentIndex === 0 ? nodeLane : firstFreeLane(afterLanes);
       while (afterLanes.length <= targetLane) {
         afterLanes.push(null);
       }

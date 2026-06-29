@@ -106,7 +106,7 @@ describe('buildGitGraph', () => {
     expect(octoRow?.edges.filter((edge) => edge.type === 'out').length).toBe(2);
   });
 
-  it('多轮 fork/merge 循环下泳道数保持最小并被复用（最小堆取最小空闲泳道）', () => {
+  it('多轮 fork/merge 循环下泳道数保持最小并被复用（释放的泳道取最小空闲下标）', () => {
     const commits: IGitGraphInputCommit[] = [
       { id: 'A', parentIds: ['B', 'C'] },
       { id: 'B', parentIds: ['D'] },
