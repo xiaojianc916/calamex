@@ -6,7 +6,7 @@ import {
   ViewPlugin,
   type ViewUpdate,
 } from '@codemirror/view';
-import { tokenizeWithShikiWorker } from '@/services/editor/shiki-highlighter';
+import { tokenizeRangeWithShikiWorker } from '@/services/editor/shiki-highlighter';
 import {
   type IShikiThemedToken,
   resolveShikiLanguageId,
@@ -72,6 +72,15 @@ const FONT_STYLE_UNDERLINE = 4;
 
 const tokenDecorationCache = new Map<string, Decoration>();
 
+// 每个高亮插件实例分配一个稳定的 sessionKey，Worker 据此分别持有各自文档的整篇文本与
+// 块级语法状态缓存（支持多个编辑器实例并存而互不串话）。
+let shikiSessionKeySeq = 0;
+
+const nextShikiSessionKey = (): number => {
+  shikiSessionKeySeq += 1;
+  return shikiSessionKeySeq;
+};
+
 // 当前语言（app 语言 id）由外部通过 effect 注入。
 const setShikiLanguageEffect = StateEffect.define<string>();
 // Worker 异步 tokenize 完成后借此 effect 应用 decorations。
@@ -113,7 +122,8 @@ type TShikiHighlightRequestIdentity = {
 
 type TQueuedShikiWorkerRequest = {
   view: EditorView;
-  code: string;
+  getFullCode: () => string;
+  sessionKey: number;
   requestId: number;
   docVersion: number;
   language: string;
@@ -408,6 +418,7 @@ const shikiHighlightPlugin = ViewPlugin.fromClass(
     private destroyed = false;
     private recomputeTimer: number | null = null;
     private recomputeFrame: number | null = null;
+    private readonly shikiSessionKey = nextShikiSessionKey();
     private nextRequestId = 1;
     private latestRequestId = 0;
     private docVersion = 0;
@@ -720,7 +731,7 @@ const shikiHighlightPlugin = ViewPlugin.fromClass(
       // 文档开头切片交给 Worker，保证跨行结构配色正确，回包后入缓存重建。
       this.renderViewportFromCache(view);
 
-      const slice = computeShikiHighlightSlice(view, { fromDocumentStart: true });
+      const slice = computeShikiHighlightSlice(view, { fromDocumentStart: false });
       if (!slice) {
         return;
       }
@@ -764,7 +775,8 @@ const shikiHighlightPlugin = ViewPlugin.fromClass(
 
       this.enqueueWorkerTokenize({
         view,
-        code: slice.code,
+        getFullCode: () => view.state.doc.toString(),
+        sessionKey: this.shikiSessionKey,
         requestId,
         docVersion,
         language,
@@ -785,7 +797,14 @@ const shikiHighlightPlugin = ViewPlugin.fromClass(
     private runWorkerTokenize(request: TQueuedShikiWorkerRequest): void {
       this.activeWorkerRequestId = request.requestId;
 
-      void tokenizeWithShikiWorker(request.code, request.language)
+      void tokenizeRangeWithShikiWorker(
+        request.sessionKey,
+        request.getFullCode,
+        request.language,
+        request.docVersion,
+        request.startLine,
+        request.endLine,
+      )
         .then((tokens) => {
           if (this.destroyed) {
             return;
