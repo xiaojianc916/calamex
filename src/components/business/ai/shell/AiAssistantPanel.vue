@@ -14,8 +14,6 @@ import AiAssistantCheckpointEntry from '@/components/business/ai/shell/AiAssista
 import AiAssistantSuggestionEmpty from '@/components/business/ai/shell/AiAssistantSuggestionEmpty.vue';
 import AiPanelFrame from '@/components/business/ai/shell/AiPanelFrame.vue';
 import { splitSuggestionsIntoRows } from '@/components/business/ai/shell/split-suggestions';
-import AiThreadRunStatusBar from '@/components/business/ai/thread/AiThreadRunStatusBar.vue';
-import { deriveThreadPlanDetails } from '@/components/business/ai/thread/projection';
 import {
   Select,
   SelectContent,
@@ -25,7 +23,6 @@ import {
 } from '@/components/ui/select';
 import { useAcpApproval } from '@/composables/ai/useAcpApproval';
 import { useAiAgentNetwork } from '@/composables/ai/useAiAgentNetwork';
-import { useAiAgentRun } from '@/composables/ai/useAiAgentRun';
 import { useAiAssistant } from '@/composables/ai/useAiAssistant';
 import { useAiConversationCheckpoints } from '@/composables/ai/useAiConversationCheckpoints';
 import { useAiConversationHistory } from '@/composables/ai/useAiConversationHistory';
@@ -37,21 +34,14 @@ import { aiService } from '@/services/ipc/ai.service';
 import { cloneAiConfigPayload, resolveDefaultAiBaseUrl } from '@/services/ipc/ai-config.service';
 import { useAiThreadStore } from '@/store/aiThread';
 import type {
-  IAiAgentRun,
-  IAiAgentStepFinalAnswer,
   IAiChatMessage,
   IAiConfigPayload,
   IAiProviderSettingsActionFeedback,
-  IAiTaskPlanStep,
-  IAiToolActivityInline,
-  IAiToolCall,
   TAiAgentNetworkPermission,
   TAiModelRole,
-  TAiToolConfirmationDecision,
 } from '@/types/ai';
 import type { TAiExecutionMode } from '@/types/ai/execution-mode';
 import type { IAskUserResult } from '@/types/ai/sidecar';
-import type { IAiThreadEntry } from '@/types/ai/thread';
 import type {
   IActiveRunSummary,
   IAnalyzeScriptPayload,
@@ -101,13 +91,14 @@ const assistant = useAiAssistant({
   gitStatus: gitStatusRef,
   workspaceRootPath: workspaceRootPathRef,
 });
-const agentRun = useAiAgentRun();
 const agentNetwork = useAiAgentNetwork();
 const webSources = useAiWebSources();
-// ACP 工具调用审批闭环（ADR-20260617 D6）：订阅宿主经 ai:sidecar-approval 抹来的反向\n// session/request_permission，在面板内渲染审批浮层并把用户决策原文回投。此前该闭环组合式\n// 从未在任意已挂载组件中实例化，导致 Kimi 等外部 Agent 申请工具权限时无 UI 呈现，\n// 申请被永久挂起、回合卡在“思考中”——正是文件修改一直卡住的根因之二。
+// ACP 工具调用审批闭环（ADR-20260617 D6）：订阅宿主经 ai:sidecar-approval 抹来的反向
+// session/request_permission，在面板内渲染审批浮层并把用户决策原文回投。
 const acpApproval = useAcpApproval();
 const acpApprovalCurrent = computed(() => acpApproval.current.value);
-// Kimi 等外部 ACP Agent 的 AskUserQuestion 同样经反向 request_permission 抵达；若识别为提问，\n// 改用项目既有的 QuestionPrompt 反向提问 UI 呈现，而非通用工具审批卡片。
+// 外部 ACP Agent 的 AskUserQuestion 经反向 request_permission 抵达；识别为提问时改用输入框
+// 内嵌的反向提问 UI 呈现，而非通用工具审批卡片。
 const acpApprovalQuestions = computed(() => acpApprovalCurrent.value?.askUserQuestions ?? null);
 const aiThreadStore = useAiThreadStore();
 const renderThreadEntries = computed(() => aiThreadStore.renderActiveEntries);
@@ -119,11 +110,9 @@ const suggestionRows = computed(() =>
 const settingsDraft = ref<IAiConfigPayload>(cloneAiConfigPayload(assistant.config.value));
 const settingsApiKey = ref('');
 const settingsTavilyApiKey = ref('');
-const isAgentRunActionPending = ref(false);
 const isPromptModelSaving = ref(false);
 
 // 当前会话使用的 Agent 后端（自研 / Kimi）。会话级单选，一个会话只用一种 Agent。
-// Kimi 等外部 Agent 经 builtin_agent_external_chat（标准 session/prompt）发送，由\n// useAiAssistant.sendMessage 据此 backend 分流到外部 ACP 发送链路。
 type TSessionAgentBackend = 'builtin' | 'kimi';
 
 interface ISessionAgentOption {
@@ -138,7 +127,7 @@ const agentOptions: ISessionAgentOption[] = [
 
 const sessionAgentBackend = ref<TSessionAgentBackend>('kimi');
 
-// kimi 会话向输入框透传 ACP 公示命令，供斜杠菜单作为内置命令列表；其它 Agent 不透传（用自研技能）。
+// kimi 会话向输入框透传 ACP 公示命令，供斜杠菜单作为内置命令列表；其它 Agent 不透传。
 const kimiSlashCommands = computed(() =>
   sessionAgentBackend.value === 'kimi' ? assistant.acpAvailableCommands.commands.value : undefined,
 );
@@ -186,185 +175,18 @@ const currentServicePlatform = computed(() =>
 );
 const aiIconPlatformId = computed(() => currentServicePlatform.value.id);
 const aiIconTitle = computed(() => currentServicePlatform.value.label);
-const planStore = computed(() => assistant.agentPlan.store);
 
-const planHasPlan = computed(() => planStore.value.hasPlan);
-const planIsClassifying = computed(() => planStore.value.isClassifying);
-const planIsPlanning = computed(() => planStore.value.isPlanning);
-const planErrorMessage = computed(() => planStore.value.errorMessage);
-const planIsApproving = computed(() => planStore.value.isApproving);
-const planApprovedAt = computed(() => planStore.value.approvedAt);
-const planSummary = computed(() => planStore.value.planSummary);
-const planStatus = computed(() => planStore.value.planStatus);
-const planId = computed(() => planStore.value.planId);
-const planCreatedAt = computed(() => planStore.value.planCreatedAt);
-const planActiveRun = computed<IAiAgentRun | null>(() => planStore.value.activeRun);
-const planActiveToolActivity = computed<IAiToolActivityInline | null>(
-  () => planStore.value.activeToolActivity,
-);
-const planPendingToolConfirmation = computed(() => planStore.value.pendingToolConfirmation);
-const planPendingSidecarSession = computed(() => planStore.value.pendingSidecarAgentSession);
-const visibleDirectToolConfirmation = computed(() => {
-  const confirmation = planPendingToolConfirmation.value;
-
-  if (!confirmation) {
-    return null;
-  }
-
-  const session = planPendingSidecarSession.value;
-
-  if (session?.threadId && session.threadId !== assistant.activeConversationId.value) {
-    return null;
-  }
-
-  return confirmation;
-});
-const planPendingUserQuestion = computed(() => planStore.value.pendingUserQuestion);
-const visibleUserQuestion = computed(() => {
-  const question = planPendingUserQuestion.value;
-
-  if (!question) {
-    return null;
-  }
-
-  const session = planPendingSidecarSession.value;
-
-  if (session?.threadId && session.threadId !== assistant.activeConversationId.value) {
-    return null;
-  }
-
-  return question;
-});
-const isResolvingUserQuestion = ref(false);
-// 组合器内联提问：AiPromptInput 内嵌提问框的答案 / 取消，路由到既有 ACP / plan 提问处理器。
-const handleComposerQuestionSubmit = (answers: NonNullable<IAskUserResult['answers']>): void => {
-  const result: IAskUserResult = { outcome: 'selected', answers };
-  if (acpApprovalQuestions.value) {
-    void handleResolveAcpUserQuestion(result);
-    return;
-  }
-  if (visibleUserQuestion.value) {
-    void handleResolveUserQuestion(result);
-  }
-};
-const handleComposerQuestionCancel = (): void => {
-  if (acpApprovalQuestions.value) {
-    void handleCancelAcpUserQuestion();
-    return;
-  }
-  if (visibleUserQuestion.value) {
-    void handleCancelUserQuestion();
-  }
-};
-// ACP 计划就绪时以 session/update plan 投影为唯一来源；否则回退旧 store(过渡期)。
-const planSteps = computed<IAiTaskPlanStep[]>(() =>
-  assistant.acpPlan.hasPlan.value ? assistant.acpPlan.steps.value : planStore.value.steps,
-);
-const planActiveGoal = computed(() => planStore.value.activeGoal);
-const planActiveRunId = computed<string | null>(() => planStore.value.activeRunId);
+// 网络权限 / 执行模式：legacy planStore 删除后，统一从 agentNetwork 暴露的 aiAgent store 取。
 const networkPermission = computed(() => agentNetwork.store.networkPermission);
-const executionMode = computed(() => planStore.value.executionMode);
-const setPlanErrorMessage = (message: string): void => {
-  planStore.value.errorMessage = message;
+const executionMode = computed(() => agentNetwork.store.executionMode);
+
+const reportError = (error: unknown, fallback: string): void => {
+  assistant.error.value = toErrorMessage(error, fallback);
 };
-const hasPlannedAgentState = computed(
-  () =>
-    planHasPlan.value ||
-    planIsClassifying.value ||
-    planIsPlanning.value ||
-    Boolean(planErrorMessage.value) ||
-    Boolean(planId.value) ||
-    Boolean(planStatus.value) ||
-    Boolean(planActiveRun.value),
-);
-const isPlanConfirmationStatus = computed(
-  () =>
-    planStatus.value === 'pending_approval' ||
-    planStatus.value === 'draft' ||
-    planStatus.value === 'rejected' ||
-    !planStatus.value,
-);
-const planConfirmationVisible = computed(() => {
-  if (assistant.activeMode.value !== 'plan') {
-    return false;
-  }
 
-  return (
-    planSteps.value.length > 0 &&
-    !planActiveRun.value &&
-    !planApprovedAt.value &&
-    isPlanConfirmationStatus.value
-  );
-});
-// Plan 审批作为平铺时间线里的一条 plan-control 条目：等待批准时合成一条数据模型
-// plan_control entry，追加进喂给 AiChatThread 的 thread-entries，由 threadEntriesToTimeline
-// 投影为 plan-control 渲染条目。审批态是 planStore 派生的临时态，故只在渲染期 overlay，
-// 不落 reduce 持久化：批准/拒绝后它随 planConfirmationVisible 自然消失，不残留幽灵卡。
-const planControlEntry = computed<IAiThreadEntry | null>(() => {
-  if (!planConfirmationVisible.value) {
-    return null;
-  }
-
-  const goal = planActiveGoal.value.trim();
-
-  if (goal.length === 0) {
-    return null;
-  }
-
-  return {
-    type: 'plan_control',
-    id: 'thread-plan-control',
-    createdAt: planCreatedAt.value ?? new Date().toISOString(),
-    goal,
-    references: [],
-    phase: 'awaiting-approval',
-  };
-});
-const threadPlanDetails = computed(() =>
-  deriveThreadPlanDetails({
-    summary: planSummary.value,
-    status: planStatus.value,
-    steps: planSteps.value,
-    isPlanning: planIsPlanning.value,
-    isApproving: planIsApproving.value,
-    isClassifying: planIsClassifying.value,
-    approvedAt: planApprovedAt.value,
-    hasActiveRun: Boolean(planActiveRun.value),
-  }),
-);
-// 运行进度/工具确认收敛到输入框上方的 Codex 风格细条；只在计划真正执行（有 run）或
-// 出现工具确认时显示，用于抑制 Web 来源面板里重复的活动指示。
-const planProgressVisible = computed(() => {
-  if (assistant.activeMode.value !== 'plan') {
-    return false;
-  }
-
-  return (
-    Boolean(planActiveRun.value) ||
-    Boolean(planActiveToolActivity.value) ||
-    Boolean(planPendingToolConfirmation.value && planActiveRun.value) ||
-    Boolean(planApprovedAt.value) ||
-    planStatus.value === 'approved' ||
-    planStatus.value === 'executing' ||
-    planStatus.value === 'completed' ||
-    planStatus.value === 'failed'
-  );
-});
 const composerDisabled = computed(
-  () =>
-    assistant.isSending.value ||
-    Boolean(visibleDirectToolConfirmation.value) ||
-    (acpApproval.hasPending.value && !acpApprovalQuestions.value),
+  () => assistant.isSending.value || (acpApproval.hasPending.value && !acpApprovalQuestions.value),
 );
-const activePlanStep = computed(() => {
-  const currentStepId = planActiveRun.value?.currentStepId;
-
-  if (currentStepId) {
-    return planSteps.value.find((step) => step.id === currentStepId) ?? null;
-  }
-
-  return planSteps.value.find((step) => step.isActive) ?? null;
-});
 const webSourcesVisible = computed(() => {
   if (assistant.activeMode.value === 'chat') {
     return false;
@@ -377,286 +199,35 @@ const webSourcesVisible = computed(() => {
   );
 });
 
-const mapActivityToToolCallStatus = (
-  state: IAiToolActivityInline['state'],
-): IAiToolCall['status'] => {
-  switch (state) {
-    case 'starting':
-    case 'running':
-    case 'waiting-confirmation':
-      return 'running';
-    case 'succeeded':
-      return 'succeeded';
-    case 'failed':
-      return 'failed';
-    case 'cancelled':
-      return 'denied';
-    default:
-      return 'running';
-  }
-};
-
-const isLiveToolActivity = (activity: IAiToolActivityInline): boolean =>
-  activity.state === 'starting' ||
-  activity.state === 'running' ||
-  activity.state === 'waiting-confirmation';
-
-const normalizeToolActivitySummary = (activity: IAiToolActivityInline): string => {
-  const source = activity.targetPreview?.trim() || activity.label.trim();
-  const withoutEllipsis = source.replace(/…+$/u, '').trim();
-  const withoutPrefix = withoutEllipsis
-    .replace(/^正在(?:读取|搜索|加载|使用|应用|生成|验证|执行)\s*[：:：]?\s*/u, '')
-    .replace(/^已(?:读取|搜索|加载|使用|应用|生成|验证|执行)\s*[：:：]?\s*/u, '')
-    .trim();
-
-  return withoutPrefix || withoutEllipsis || activity.toolName;
-};
-
-const buildAgentFlowToolCalls = (run: IAiAgentRun | null): IAiToolCall[] => {
-  if (!run) {
-    return [];
-  }
-
-  return planStore.value
-    .getToolActivities(run.id)
-    .filter(
-      (activity: IAiToolActivityInline) => run.status !== 'paused' || !isLiveToolActivity(activity),
-    )
-    .map((activity: IAiToolActivityInline) => ({
-      id: activity.id,
-      name: activity.toolName,
-      status: mapActivityToToolCallStatus(activity.state),
-      summary: activity.label,
-      targetPreview: normalizeToolActivitySummary(activity),
-    }));
-};
-
-const buildPlanRunFinalAnswer = (
-  run: IAiAgentRun,
-  stepFinalAnswers: IAiAgentStepFinalAnswer[],
-): string => {
-  if (run.status === 'failed') {
-    return `计划执行失败：${run.errorMessage ?? '执行过程中出现错误。'}`;
-  }
-
-  if (run.status === 'cancelled') {
-    return '计划执行已取消。';
-  }
-
-  const answerByStepId = new Map(
-    stepFinalAnswers.map((answer) => [answer.stepId, answer.content.trim()]),
-  );
-  const resultLines = run.steps
-    .filter((step) => step.status === 'done')
-    .map((step) => {
-      const answer = answerByStepId.get(step.id);
-      return answer ? `- ${step.title}：${answer}` : `- ${step.title}：已完成。`;
-    });
-
-  return [
-    '已完成这轮计划执行。',
-    ...(resultLines.length ? ['', '执行结果：', ...resultLines] : []),
-  ].join('\n');
-};
-
 const isAgentTokenMessage = (message: IAiChatMessage): boolean =>
   message.role !== 'assistant' ||
   Boolean(message.toolCalls?.length) ||
   Boolean(message.stream?.runtimeEvents?.length);
 
-const resolvePlanTokenStep = (run: IAiAgentRun | null): IAiTaskPlanStep | null => {
-  if (!run) {
-    return null;
-  }
-
-  if (run.currentStepId) {
-    return run.steps.find((step) => step.id === run.currentStepId) ?? null;
-  }
-
-  return (
-    run.steps.find((step) => step.status === 'running') ??
-    run.steps.find((step) => step.status === 'pending') ??
-    null
-  );
-};
-
-const buildPlanTokenEstimationMessages = (
-  goal: string,
-  step: IAiTaskPlanStep,
-  createdAt: string,
-): IAiChatMessage[] => {
-  const toolList = step.tools.length ? step.tools.join(', ') : '未限定，按任务需要选择可用工具';
-
-  return [
-    {
-      id: `plan-token-system:${step.id}`,
-      role: 'system',
-      content: [
-        '你正在执行 IDE Agent Plan 的单个步骤。',
-        '必须围绕当前步骤目标调用可用工具；不要执行与当前步骤无关的操作。',
-        '如果需要高风险工具，请通过 sidecar approval 事件等待用户确认。',
-        '写盘、删除、命令、安装依赖和 Git 操作都必须保留可回滚语义。',
-      ].join('\n'),
-      createdAt,
-      references: [],
-    },
-    {
-      id: `plan-token-user:${step.id}`,
-      role: 'user',
-      content: [
-        `任务目标：${goal}`,
-        `当前步骤：${step.title}`,
-        `步骤目标：${step.goal}`,
-        `预期产物：${step.expectedOutput}`,
-        `建议工具：${toolList}`,
-        '请执行这个步骤，并在完成后给出简短结论。',
-      ].join('\n'),
-      createdAt,
-      references: [],
-    },
-  ];
-};
-
-const activeAgentFlowMessage = computed<IAiChatMessage | null>(() => {
-  if (assistant.activeMode.value !== 'plan') {
-    return null;
-  }
-
-  const run = planActiveRun.value;
-  const toolCalls = buildAgentFlowToolCalls(run);
-
-  if (!run && toolCalls.length === 0) {
-    return null;
-  }
-
-  const latestToolCall = toolCalls.at(-1);
-  const stepFinalAnswers = run ? planStore.value.getStepFinalAnswers(run.id) : [];
-  const latestAnswer = stepFinalAnswers.at(-1) ?? null;
-  const createdAt = latestAnswer?.createdAt ?? run?.updatedAt ?? new Date().toISOString();
-  const isTerminalRun = run
-    ? run.status === 'completed' || run.status === 'failed' || run.status === 'cancelled'
-    : false;
-  let content = 'Agent 正在执行计划。';
-
-  if (run?.status === 'paused') {
-    content = '计划已暂停，点击继续后会从未完成步骤恢复执行。';
-  } else if (run && isTerminalRun) {
-    content = buildPlanRunFinalAnswer(run, stepFinalAnswers);
-  } else if (latestToolCall) {
-    content = `AI 正在自动使用工具：${latestToolCall.summary}`;
-  }
-
-  return {
-    id: run ? `agent-flow:${run.id}` : `agent-flow:${latestToolCall?.id ?? 'activity'}`,
-    role: 'assistant',
-    content,
-    createdAt,
-    references: [],
-    toolCalls,
-  };
-});
-
-// 旧的 agent-flow synthetic message 仅用于 token usage 估算，不再进入可见时间线；
-// AiChatThread 会按 `agent-flow:` 前缀将其过滤掉。
-const threadMessages = computed<IAiChatMessage[]>(() => {
-  const flowMessage = activeAgentFlowMessage.value;
-
-  if (!flowMessage) {
-    return assistant.messages.value;
-  }
-
-  return [
-    ...assistant.messages.value.filter((message) => message.id !== flowMessage.id),
-    flowMessage,
-  ];
-});
-// 真正喂给平铺时间线的 entries：reduce 真源 entries + 可选的 plan-control 审批条目（渲染期 overlay）。
-const visibleThreadEntries = computed<readonly IAiThreadEntry[]>(() => {
-  const controlEntry = planControlEntry.value;
-
-  if (!controlEntry) {
-    return renderThreadEntries.value;
-  }
-
-  return [...renderThreadEntries.value, controlEntry];
-});
+const threadMessages = computed<IAiChatMessage[]>(() => assistant.messages.value);
 const tokenUsageMessages = computed<IAiChatMessage[]>(() => {
-  if (assistant.activeMode.value === 'plan') {
-    return activeAgentFlowMessage.value ? [activeAgentFlowMessage.value] : [];
+  if (assistant.activeMode.value === 'chat') {
+    return threadMessages.value;
   }
 
-  if (assistant.activeMode.value === 'agent') {
-    return assistant.messages.value.filter(isAgentTokenMessage);
-  }
-
-  return threadMessages.value;
+  return assistant.messages.value.filter(isAgentTokenMessage);
 });
 const tokenEstimationMessages = computed<IAiChatMessage[]>(() => {
   if (assistant.activeMode.value === 'chat') {
     return threadMessages.value;
   }
 
-  if (assistant.activeMode.value !== 'plan') {
-    return [];
-  }
-
-  const hasManualInput =
-    assistant.draft.value.trim().length > 0 || assistant.attachedFiles.value.length > 0;
-
-  if (hasManualInput) {
-    return [];
-  }
-
-  const step = resolvePlanTokenStep(planActiveRun.value);
-
-  if (!step) {
-    return [];
-  }
-
-  return buildPlanTokenEstimationMessages(
-    planActiveGoal.value,
-    step,
-    planActiveRun.value?.updatedAt ?? new Date().toISOString(),
-  );
+  return [];
 });
-const tokenContextReferences = computed(() => {
-  const attachmentReferences = assistant.attachedFiles.value.map((file) => file.reference);
-
-  if (assistant.activeMode.value === 'chat') {
-    return attachmentReferences;
-  }
-
-  const hasManualInput = assistant.draft.value.trim().length > 0 || attachmentReferences.length > 0;
-  const hasPlanExecutionEstimate =
-    assistant.activeMode.value === 'plan' && tokenEstimationMessages.value.length > 0;
-
-  if (!hasManualInput && !hasPlanExecutionEstimate) {
-    return [];
-  }
-
-  return assistant.buildSidecarContextReferences(attachmentReferences);
-});
-const hasPendingTokenRequest = computed(
-  () =>
-    assistant.draft.value.trim().length > 0 ||
-    assistant.attachedFiles.value.length > 0 ||
-    (assistant.activeMode.value === 'plan' && tokenEstimationMessages.value.length > 0),
+const tokenContextReferences = computed(() =>
+  assistant.attachedFiles.value.map((file) => file.reference),
 );
-const tokenOfficialUsage = computed(() => {
-  // 接收侧 ACP usage_update 闭环（ADR-20260617 · D7-⑦）：宿主已把 usage_update 投影为
-  // 共享 IAiLanguageModelUsage VM。任一模式只要本回合有 ACP 用量就优先采用（chat / agent
-  // 经 ACP host 上报）；其形状与外部 LanguageModelUsage 赋值兼容，可直接作为官方用量来源。
-  const acpTurnUsage = assistant.acpUsage.usage.value;
-  if (acpTurnUsage) {
-    return acpTurnUsage;
-  }
-
-  if (assistant.activeMode.value !== 'plan') {
-    return null;
-  }
-
-  return planStore.value.totalOfficialUsageResolved ? planStore.value.totalOfficialUsage : null;
-});
+const hasPendingTokenRequest = computed(
+  () => assistant.draft.value.trim().length > 0 || assistant.attachedFiles.value.length > 0,
+);
+// 接收侧 ACP usage_update 闭环（ADR-20260617 · D7-⑦）：宿主已把 usage_update 投影为共享
+// IAiLanguageModelUsage VM；本回合有 ACP 用量即采用，无则置空（plan 旧用量来源已随 store 删除）。
+const tokenOfficialUsage = computed(() => assistant.acpUsage.usage.value ?? null);
 const { contextProps: tokenContextProps } = useAiTokenContext({
   mode: computed(() => assistant.activeMode.value),
   modelId: computed(() => assistant.config.value.selectedModel),
@@ -679,17 +250,7 @@ const submitLabel = computed(() => {
 
   return assistant.sendButtonLabel.value;
 });
-const assistantTypingLabel = computed(() => {
-  if (assistant.activeMode.value === 'plan' && (planIsPlanning.value || planIsClassifying.value)) {
-    return '正在生成计划';
-  }
-
-  return '正在准备回复';
-});
-
-if (planStore.value.mode === 'plan' || planId.value || planActiveRun.value) {
-  assistant.activeMode.value = 'plan';
-}
+const assistantTypingLabel = '正在准备回复';
 
 const fileRollbackPrompt = computed(() => assistant.fileRollbackPrompt.value);
 const fileRollbackLabel = computed(() => {
@@ -766,13 +327,7 @@ const handleConversationScrollStateChange = (state: {
   });
 };
 
-const setPlanError = (error: unknown, fallback: string): void => {
-  setPlanErrorMessage(toErrorMessage(error, fallback));
-};
-
 const handleSearchWebSources = async (query: string): Promise<void> => {
-  const step = activePlanStep.value;
-
   try {
     await webSources.search(
       {
@@ -781,17 +336,17 @@ const handleSearchWebSources = async (query: string): Promise<void> => {
         maxResults: 5,
         recency: 'any',
       },
-      step ? { stepId: step.id, stepTitle: step.title } : {},
+      {},
     );
   } catch (error) {
-    setPlanError(error, '网络搜索失败。');
+    reportError(error, '网络搜索失败。');
   }
 };
 const handleFetchWebSource = async (sourceId: string): Promise<void> => {
   try {
     await webSources.fetchSource(sourceId);
   } catch (error) {
-    setPlanError(error, '网页读取失败。');
+    reportError(error, '网页读取失败。');
   }
 };
 
@@ -830,7 +385,7 @@ const handlePromptNetworkPermissionChange = async (
   try {
     await agentNetwork.setNetworkPermission(permission);
   } catch (error) {
-    setPlanError(error, '设置网络访问权限失败。');
+    reportError(error, '设置网络访问权限失败。');
   }
 };
 
@@ -843,7 +398,7 @@ const openPromptPersonalization = (): void => {
 };
 
 const handlePromptExecutionModeChange = (mode: TAiExecutionMode): void => {
-  planStore.value.setExecutionMode(mode);
+  agentNetwork.store.setExecutionMode(mode);
 };
 
 // kimi(ACP) 会话配置项变更：把输入框选择的 optionId/value 路由到当前会话的 ACP 配置项切换。
@@ -873,178 +428,6 @@ const handlePromptPrewarm = (): void => {
       }),
     );
   });
-};
-
-const getActiveAgentRunId = (): string | null =>
-  planActiveRunId.value ?? planActiveRun.value?.id ?? null;
-
-const withAgentRunAction = async <T>(
-  action: (runId: string) => Promise<T>,
-  fallback: string,
-): Promise<T | null> => {
-  const runId = getActiveAgentRunId();
-
-  if (!runId) {
-    setPlanErrorMessage('当前没有可执行的 Agent run。');
-    return null;
-  }
-
-  isAgentRunActionPending.value = true;
-  setPlanErrorMessage('');
-
-  try {
-    return await action(runId);
-  } catch (error) {
-    setPlanError(error, fallback);
-    return null;
-  } finally {
-    isAgentRunActionPending.value = false;
-  }
-};
-const handleUpdatePlanStepTitle = (stepId: string, title: string): void => {
-  assistant.agentPlan.updateStep(stepId, { title });
-};
-
-const handleRemovePlanStep = (stepId: string): void => {
-  try {
-    assistant.agentPlan.removeStep(stepId);
-  } catch (error) {
-    setPlanError(error, '删除计划步骤失败。');
-  }
-};
-
-const handleRegeneratePlan = async (): Promise<void> => {
-  try {
-    await assistant.agentPlan.regeneratePlan();
-  } catch (error) {
-    setPlanError(error, '重生成计划失败。');
-  }
-};
-
-const handleApprovePlan = async (): Promise<void> => {
-  try {
-    await assistant.agentPlan.approvePlan();
-    await agentRun.runPlanToCompletion(planActiveGoal.value, planSteps.value, {
-      context: assistant.buildSidecarContextReferences(),
-      workspaceRootPath: props.workspaceRootPath,
-    });
-  } catch (error) {
-    setPlanError(error, '批准或启动计划失败。');
-  }
-};
-
-const handleRejectPlan = async (): Promise<void> => {
-  try {
-    await assistant.agentPlan.rejectPlan('用户拒绝当前计划。');
-  } catch (error) {
-    setPlanError(error, '拒绝计划失败。');
-  }
-};
-
-const handlePauseRun = async (): Promise<void> => {
-  await withAgentRunAction((runId) => agentRun.pauseRun(runId), '暂停 Agent run 失败。');
-};
-
-const handleResumeRun = async (): Promise<void> => {
-  const resumedRun = await withAgentRunAction(
-    (runId) => agentRun.resumeRun(runId),
-    '继续 Agent run 失败。',
-  );
-
-  if (!resumedRun) {
-    return;
-  }
-
-  try {
-    await agentRun.continueRunToCompletion(resumedRun.id, {
-      goal: planActiveGoal.value,
-      context: assistant.buildSidecarContextReferences(),
-      workspaceRootPath: props.workspaceRootPath,
-    });
-  } catch (error) {
-    setPlanError(error, '继续执行计划失败。');
-  }
-};
-
-const handleCancelRun = async (): Promise<void> => {
-  await withAgentRunAction((runId) => agentRun.cancelRun(runId), '取消 Agent run 失败。');
-};
-
-const handleResolveToolConfirmation = async (
-  decision: TAiToolConfirmationDecision,
-): Promise<void> => {
-  const confirmation = planPendingToolConfirmation.value;
-
-  if (!confirmation) {
-    setPlanErrorMessage('当前没有待处理的工具确认。');
-    return;
-  }
-
-  if (!planActiveRun.value) {
-    isAgentRunActionPending.value = true;
-    setPlanErrorMessage('');
-
-    try {
-      await assistant.resolveSidecarToolConfirmation(decision);
-    } catch (error) {
-      setPlanError(error, '处理 Provider 工具确认失败。');
-    } finally {
-      isAgentRunActionPending.value = false;
-    }
-
-    return;
-  }
-
-  if (agentRun.hasSidecarStepToolConfirmation(confirmation.id)) {
-    isAgentRunActionPending.value = true;
-    setPlanErrorMessage('');
-    let resolvedRun: IAiAgentRun | null = null;
-
-    try {
-      resolvedRun = await agentRun.resolveSidecarStepToolConfirmation(confirmation.id, decision);
-    } catch (error) {
-      setPlanError(error, '处理 Sidecar step 工具确认失败。');
-    } finally {
-      isAgentRunActionPending.value = false;
-    }
-
-    if (resolvedRun?.status === 'running-plan') {
-      try {
-        await agentRun.continueRunToCompletion(resolvedRun.id, {
-          goal: planActiveGoal.value,
-          context: assistant.buildSidecarContextReferences(),
-          workspaceRootPath: props.workspaceRootPath,
-        });
-      } catch (error) {
-        setPlanError(error, '继续执行计划失败。');
-      }
-    }
-
-    return;
-  }
-
-  setPlanErrorMessage('Legacy Agent 工具确认链已移除，请使用官方 sidecar 审批链。');
-};
-
-const handleResolveUserQuestion = async (result: IAskUserResult): Promise<void> => {
-  if (!visibleUserQuestion.value) {
-    return;
-  }
-
-  isResolvingUserQuestion.value = true;
-  setPlanErrorMessage('');
-
-  try {
-    await assistant.resolveSidecarUserQuestion(result);
-  } catch (error) {
-    setPlanError(error, '处理反向提问失败。');
-  } finally {
-    isResolvingUserQuestion.value = false;
-  }
-};
-
-const handleCancelUserQuestion = async (): Promise<void> => {
-  await handleResolveUserQuestion({ outcome: 'cancelled' });
 };
 
 const handleResolveAcpApproval = async (optionId: string): Promise<void> => {
@@ -1102,6 +485,22 @@ const handleCancelAcpUserQuestion = (): void => {
   void handleResolveAcpUserQuestion({ outcome: 'cancelled' });
 };
 
+// 组合器内联提问：AiPromptInput 内嵌提问框的答案 / 取消，路由到 ACP 反向提问处理器。
+const handleComposerQuestionSubmit = (answers: NonNullable<IAskUserResult['answers']>): void => {
+  if (!acpApprovalQuestions.value) {
+    return;
+  }
+
+  void handleResolveAcpUserQuestion({ outcome: 'selected', answers });
+};
+const handleComposerQuestionCancel = (): void => {
+  if (!acpApprovalQuestions.value) {
+    return;
+  }
+
+  void handleCancelAcpUserQuestion();
+};
+
 const saveSettings = async (
   config: IAiConfigPayload,
   apiKey: string,
@@ -1144,24 +543,12 @@ const saveTavilyKey = async (
   }
 };
 
-const restorePersistedPlanUiState = async (): Promise<void> => {
-  if (!hasPlannedAgentState.value && planStore.value.mode !== 'plan') {
-    return;
-  }
-
-  assistant.activeMode.value = 'plan';
-  await assistant.agentPlan.restorePersistedPlanState();
-};
-
 // 启动打点（阶段0·量化）：同步 setup（含派生计算）全部完成。
 markStartup('ai-assistant-panel-setup-done');
 
 onMounted(() => {
   // 启动打点（阶段0·量化）：子组件渲染挂载完成（首帧）。
   markStartup('ai-assistant-panel-mounted');
-  restorePersistedPlanUiState().catch((error) => {
-    setPlanError(error, '恢复计划状态失败。');
-  });
   assistant
     .loadConfig()
     .then(() => {
@@ -1274,19 +661,16 @@ onMounted(() => {
 
     <template #body>
       <AiChatThread :is-typing="assistant.isSending.value"
-        :thread-entries="visibleThreadEntries"
+        :thread-entries="renderThreadEntries"
         :streaming-message-id="assistant.activeAgentMessageId.value"
         :platform-id="aiIconPlatformId" :provider-label="aiIconTitle"
         :conversation-id="assistant.activeConversationId.value" :workspace-root-path="workspaceRootPath"
         :scroll-state="assistant.activeConversationScrollState.value" :typing-label="assistantTypingLabel"
-        :plan-details="threadPlanDetails"
         :reverting-changed-files-summary-id="assistant.revertingChangedFilesSummaryId.value"
         :pinning-changed-files-summary-id="assistant.pinningChangedFilesSummaryId.value"
         @scroll-state-change="handleConversationScrollStateChange"
         @changed-files-rollback="assistant.rollbackChangedFilesSummary"
-        @changed-files-pin="assistant.setChangedFilesSummaryPin" @plan-approve="handleApprovePlan"
-        @plan-reject="handleRejectPlan" @plan-regenerate="handleRegeneratePlan"
-        @plan-update-step-title="handleUpdatePlanStepTitle" @plan-remove-step="handleRemovePlanStep">
+        @changed-files-pin="assistant.setChangedFilesSummaryPin">
         <template #empty>
           <AiAssistantSuggestionEmpty :suggestion-rows="suggestionRows" :disabled="composerDisabled"
             @select="handleSuggestionSelect" />
@@ -1317,13 +701,10 @@ onMounted(() => {
         <span class="ai-file-rollback-entry__line" aria-hidden="true"></span>
       </div>
       <DeferredAiWebSourcesPanel v-if="webSourcesVisible" :sources="webSources.sources.value"
-        :activity="planProgressVisible ? null : webSources.activity.value" :error-message="webSources.errorMessage.value"
+        :activity="webSources.activity.value" :error-message="webSources.errorMessage.value"
         :is-searching="webSources.isSearching.value" :network-permission="networkPermission"
         @search="handleSearchWebSources" @fetch-source="handleFetchWebSource" @clear="webSources.clear" />
       <div class="ai-composer-shell">
-        <AiThreadRunStatusBar :run="planActiveRun" :confirmation="visibleDirectToolConfirmation"
-          :busy="isAgentRunActionPending" @pause="handlePauseRun" @resume="handleResumeRun" @cancel="handleCancelRun"
-          @resolve="handleResolveToolConfirmation" />
         <ApprovalPrompt
           v-if="acpApprovalCurrent && !acpApprovalQuestions"
           autofocus
@@ -1352,7 +733,7 @@ onMounted(() => {
           @execution-mode-change="handlePromptExecutionModeChange"
           @information-sources-open="openPromptInformationSources" @personalization-open="openPromptPersonalization"
           @prewarm="handlePromptPrewarm"
-          :user-questions="acpApprovalQuestions ?? visibleUserQuestion?.questions ?? null"
+          :user-questions="acpApprovalQuestions ?? null"
           @question-submit="handleComposerQuestionSubmit"
           @question-cancel="handleComposerQuestionCancel" />
       </div>
