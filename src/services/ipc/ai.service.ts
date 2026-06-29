@@ -43,9 +43,6 @@ import type { IAiEditGetDiffPayload, IAiEditGetDiffRequest } from '@/types/ai/ed
 import type {
   IAgentExternalChatRequest,
   IAgentExternalChatResultPayload,
-  IAgentSidecarApprovalResolveRequest,
-  IAgentSidecarAskUserResumeRequest,
-  IAgentSidecarChatRequest,
   IAgentSidecarCheckpointRestoreRequest,
   IAgentSidecarHealthPayload,
   IAgentSidecarResponsePayload,
@@ -77,23 +74,10 @@ export const aiService = {
   saveTavilyApiKey(apiKey: string): Promise<void> {
     return tauriService.setTavilyApiKey({ apiKey });
   },
-  sidecarChat(payload: IAgentSidecarChatRequest): Promise<IAgentSidecarResponsePayload> {
-    return tauriService.agentSidecarChat(payload);
-  },
   sidecarExternalChat(
     payload: IAgentExternalChatRequest,
   ): Promise<IAgentExternalChatResultPayload> {
     return tauriService.agentSidecarExternalChat(payload);
-  },
-  sidecarResolveApproval(
-    payload: IAgentSidecarApprovalResolveRequest,
-  ): Promise<IAgentSidecarResponsePayload> {
-    return tauriService.agentSidecarResolveApproval(payload);
-  },
-  sidecarResolveAskUser(
-    payload: IAgentSidecarAskUserResumeRequest,
-  ): Promise<IAgentSidecarResponsePayload> {
-    return tauriService.agentSidecarResolveAskUser(payload);
   },
   sidecarRestoreCheckpoint(
     payload: IAgentSidecarCheckpointRestoreRequest,
