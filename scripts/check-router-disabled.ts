@@ -6,7 +6,7 @@
  */
 import fs from 'node:fs';
 import path from 'node:path';
-import { CheckResult, ROOT, printResult, summarize } from './guard-utils.js';
+import { CheckResult, printResult, ROOT, summarize } from './guard-utils.js';
 
 const MAIN_TS = path.join(ROOT, 'src/main.ts');
 const ROUTER_INDEX = path.join(ROOT, 'src/router/index.ts');
@@ -32,7 +32,8 @@ if (!fs.existsSync(MAIN_TS)) {
   const activeAdrContent = readFileIfExists(ADR_ROUTER_ACTIVE);
   const hasAcceptedActiveAdr =
     activeAdrContent !== null &&
-    (/Status.*accepted/i.test(activeAdrContent) || /\u72b6\u6001.*accepted/i.test(activeAdrContent));
+    (/Status.*accepted/i.test(activeAdrContent) ||
+      /\u72b6\u6001.*accepted/i.test(activeAdrContent));
 
   if (hasRouterUse) {
     if (isRouterActive && hasAcceptedActiveAdr) {

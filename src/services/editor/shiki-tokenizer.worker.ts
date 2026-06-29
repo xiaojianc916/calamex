@@ -55,11 +55,7 @@ type TDisposeRequest = {
   sessionKey: number;
 };
 
-type TShikiWorkerRequest =
-  | TResetRequest
-  | TEditRequest
-  | TTokenizeRangeRequest
-  | TDisposeRequest;
+type TShikiWorkerRequest = TResetRequest | TEditRequest | TTokenizeRangeRequest | TDisposeRequest;
 
 type TShikiWorkerResponse = {
   id: number;
@@ -293,9 +289,7 @@ const applyEdit = (req: TEditRequest): void => {
   scheduleBackground();
 };
 
-const tokenizeRange = async (
-  req: TTokenizeRangeRequest,
-): Promise<IShikiThemedToken[][] | null> => {
+const tokenizeRange = async (req: TTokenizeRangeRequest): Promise<IShikiThemedToken[][] | null> => {
   const session = sessions.get(req.sessionKey);
   if (!session || session.sessionId !== req.sessionId || session.docVersion !== req.docVersion) {
     return null;

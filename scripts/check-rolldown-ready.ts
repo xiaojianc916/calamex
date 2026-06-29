@@ -27,7 +27,7 @@ if (usesRolldownViteAlias || usesVite8) {
 }
 
 console.error(
-  `[check-rolldown-ready] FAIL vite=${viteSpec || '<missing>'}. `
-  + '请升级到 Vite 8+，或临时 alias 为 npm:rolldown-vite@固定版本。',
+  `[check-rolldown-ready] FAIL vite=${viteSpec || '<missing>'}. ` +
+    '请升级到 Vite 8+，或临时 alias 为 npm:rolldown-vite@固定版本。',
 );
 process.exit(1);

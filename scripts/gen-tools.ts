@@ -59,7 +59,10 @@ for (const tool of manifest.tools) {
   }
 }
 
-const toolKindUnion = manifest.toolKinds.map((item) => `'${item.kind}'`).concat(`'system'`).join(' | ');
+const toolKindUnion = manifest.toolKinds
+  .map((item) => `'${item.kind}'`)
+  .concat(`'system'`)
+  .join(' | ');
 const toolKindsLiteral = JSON.stringify(manifest.toolKinds, null, 2)
   .replace(/"kind":/g, 'kind:')
   .replace(/"patterns":/g, 'patterns:');
@@ -132,13 +135,15 @@ export const AI_RUNTIME_TOOLS_MANIFEST = ${toolsLiteral} as readonly IAiRuntimeT
 `;
 
 const rustTools = manifest.tools
-  .map((tool) => `    AiRuntimeToolManifestEntry {
+  .map(
+    (tool) => `    AiRuntimeToolManifestEntry {
         id: ${JSON.stringify(tool.id)},
         title: ${JSON.stringify(tool.title)},
         layer: ${JSON.stringify(tool.layer)},
         capability: ${JSON.stringify(tool.capability)},
         approval: ${JSON.stringify(tool.approval)},
-    }`)
+    }`,
+  )
   .join(',\n');
 
 const rustOutput = `${rustHeader}
