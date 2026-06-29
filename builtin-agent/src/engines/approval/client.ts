@@ -64,22 +64,6 @@ export class MastraRuntimeApproval extends MastraRuntimeExecution {
         let shouldDisconnectBundle = true;
         let streamCleanup: (() => void) | undefined;
         const continueSuspendedStream = resumeContinueStream;
-        if (
-            pending.kind === 'approval' &&
-            typeof resumeContinueStream !== 'function' &&
-            typeof approvalContinueStream !== 'function'
-        ) {
-            await pending.bundle.disconnectAll();
-            await destroyMastraWorkspace(pending.workspace);
-            await destroyMastraBrowser(pending.browser);
-            return this.createFallbackApprovalResponse(input, sessionId, options);
-        }
-        if (pending.kind === 'suspended' && typeof continueSuspendedStream !== 'function') {
-            await pending.bundle.disconnectAll();
-            await destroyMastraWorkspace(pending.workspace);
-            await destroyMastraBrowser(pending.browser);
-            return this.createFallbackApprovalResponse(input, sessionId, options);
-        }
         const resumeSuspendedTool = continueSuspendedStream;
         const resumeApprovalRun = resumeContinueStream;
         const resumeApprovalTool = approvalContinueStream;
