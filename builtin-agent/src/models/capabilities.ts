@@ -172,7 +172,7 @@ const normalizeToken = (value: string): string => value.trim().toLowerCase();
 
 const isOpenAiReasoningModel = (modelId: string): boolean => {
   const id = normalizeToken(modelId);
-  return id.startsWith('o') || id.startsWith('gpt-5');
+  return /^o\d/u.test(id) || id.startsWith('gpt-5');
 };
 
 const isAnthropicThinkingModel = (modelId: string): boolean => {

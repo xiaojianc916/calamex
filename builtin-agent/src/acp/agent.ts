@@ -59,6 +59,7 @@ import type {
 	TAgentRuntimeOutputEvent,
 } from "../engines/runtime/runtime.js"
 import { resolveAgentModelCapabilitiesFromModelId } from "../models/capabilities.js"
+import { DEFAULT_MODEL_ID } from "../models/config.js"
 import { logWarmupResult, warmupLlmConnection } from "../models/llm-warmup.js"
 import { getMcpRuntimeStatus } from "../tools/mcp/client.js"
 import { fetchWeb, searchWeb } from "../web/service.js"
@@ -140,9 +141,6 @@ export interface ICalamexAcpAgentOptions {
 	/** 运行时 requestId 生成器(仅用于日志关联)；默认 randomUUID。 */
 	generateRequestId?: () => string
 }
-
-/** 默认模型标识——镜像 models/config.ts 的 DEFAULT_MODEL_ID，用于解析上下文窗口。 */
-const DEFAULT_MODEL_ID = "deepseek/deepseek-v4-pro"
 
 /** 缺省回合超时：30 分钟，与旧 http 层 DEFAULT_RUNTIME_TIMEOUT_MS 一致。 */
 const DEFAULT_TURN_TIMEOUT_MS = 30 * 60 * 1000
