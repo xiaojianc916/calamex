@@ -122,6 +122,16 @@ export class MastraRuntimeValidation extends MastraRuntimePlan {
             options,
             'mastra-plan-validator-run',
             '计划验证需要 planId 和 planVersion。',
+        ).catch(
+            (error): { ok: false; response: IAgentRuntimeResponse } => ({
+                ok: false,
+                response: createErrorResponse(
+                    sessionId,
+                    `计划验证准备失败：${normalizeMastraError(error)}`,
+                    events,
+                    options,
+                ),
+            }),
         );
 
         if (!prepared.ok) {
@@ -306,6 +316,16 @@ export class MastraRuntimeValidation extends MastraRuntimePlan {
             options,
             'mastra-plan-replanner-run',
             '重新规划需要 planId 和 planVersion。',
+        ).catch(
+            (error): { ok: false; response: IAgentRuntimeResponse } => ({
+                ok: false,
+                response: createErrorResponse(
+                    sessionId,
+                    `重新规划准备失败：${normalizeMastraError(error)}`,
+                    events,
+                    options,
+                ),
+            }),
         );
 
         if (!prepared.ok) {

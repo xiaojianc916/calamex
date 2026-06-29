@@ -103,6 +103,7 @@ export class MastraRuntimeChat extends MastraRuntimeBase {
             : undefined;
         const systemPrompt = buildSystemPrompt(normalizedInput, modelConfig.modelId);
         let shouldDisconnectBundle = true;
+        let streamCleanup: (() => void) | undefined;
 
         try {
             const resumableAgentHandle = hasAgentTools && this.shouldUseRegisteredAgentForTools
@@ -150,20 +151,7 @@ export class MastraRuntimeChat extends MastraRuntimeBase {
             const stream = await agent.stream(mastraMessages, {
                 ...streamOptions,
             });
-            // [diag] 临时诊断（只读、可回滚）：透传包装 fullStream，逐块打印 chunk 类型，
-            // 用于定位“空气泡”根因——确认 sidecar 究竟产出了哪些 chunk、是否累积出正文。
-            let diagChunkCount = 0;
-            const diagFullStream = (async function* () {
-                for await (const rawChunk of stream.fullStream) {
-                    diagChunkCount += 1;
-                    const chunkType = (rawChunk as { type?: unknown }).type;
-                    process.stderr.write(
-                        `[diag] chunk #${diagChunkCount} type=${typeof chunkType === 'string' ? chunkType : typeof chunkType}\n`,
-                    );
-                    yield rawChunk;
-                }
-            })();
-            const diagStream = { ...stream, fullStream: diagFullStream };
+            streamCleanup = stream.cleanup;
             const createRuntimeEvent = createRuntimeEventFactory({
                 runId: stream.runId ?? requestedRunId,
                 sessionId,
@@ -188,7 +176,7 @@ export class MastraRuntimeChat extends MastraRuntimeBase {
                 agent,
                 mcpBundle,
                 sessionId,
-                diagStream,
+                stream,
                 events,
                 options,
                 createRuntimeEvent,
@@ -196,18 +184,6 @@ export class MastraRuntimeChat extends MastraRuntimeBase {
                 browser,
             );
             shouldDisconnectBundle = streamSummary.releaseResources;
-
-            // [diag] 临时诊断（只读、可回滚）：打印本回合汇总——总 chunk 数、正文长度/预览、
-            // 是否挂起、是否有流错误。配合上面的逐块类型，足以判定空气泡来自 sidecar 还是下游投影。
-            process.stderr.write(
-                `[diag] streamSummary ${JSON.stringify({
-                    chunkCount: diagChunkCount,
-                    visibleTextLength: streamSummary.visibleText.length,
-                    visiblePreview: streamSummary.visibleText.slice(0, 120),
-                    pendingApproval: streamSummary.pendingApproval,
-                    streamErrorMessage: streamSummary.streamErrorMessage,
-                })}\n`,
-            );
 
             if (streamSummary.streamErrorMessage) {
                 return createErrorResponse(
@@ -230,12 +206,6 @@ export class MastraRuntimeChat extends MastraRuntimeBase {
                 ? streamSummary.visibleText
                 : 'Agent 已完成。';
 
-            // [diag] 临时诊断（只读、可回滚）：打印本回合最终 result——若此处非空但前端气泡为空，
-            // 则根因在 sidecar→Rust 信封解析 / done 帧字段，而非文本累积。
-            process.stderr.write(
-                `[diag] result length=${result.length} preview=${JSON.stringify(result.slice(0, 120))}\n`,
-            );
-
             return {
                 sessionId,
                 events,
@@ -251,6 +221,7 @@ export class MastraRuntimeChat extends MastraRuntimeBase {
             );
         } finally {
             if (shouldDisconnectBundle) {
+                streamCleanup?.();
                 await mcpBundle.disconnectAll();
                 await destroyMastraWorkspace(workspace);
                 await destroyMastraBrowser(browser);
