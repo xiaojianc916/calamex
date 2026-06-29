@@ -2,7 +2,6 @@ import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref } from 'v
 import {
   fetchGithubCommitAuthorSnapshot,
   type IGitHubCommitAuthorSnapshot,
-  readCachedGithubCommitAuthor,
 } from '@/domains/git/services/github-author';
 import type { useGitStore } from '@/domains/git/state/git';
 import type { IGitCommitDetailPayload, IGitCommitSummaryPayload } from '@/types/git';
@@ -133,11 +132,6 @@ export function useGitHistoryHoverCard(options: IUseGitHistoryHoverCardOptions) 
       }
     }
     if (!repoUrl) return;
-    const cached = readCachedGithubCommitAuthor(repoUrl, commit);
-    if (cached) {
-      if (hover.commitId === commit.id) hoverAuthorSnapshot.value = cached;
-      return;
-    }
     const snapshot = await fetchGithubCommitAuthorSnapshot(repoUrl, commit);
     if (snapshot && hover.commitId === commit.id) {
       hoverAuthorSnapshot.value = snapshot;

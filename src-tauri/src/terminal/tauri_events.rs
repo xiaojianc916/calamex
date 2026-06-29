@@ -7,9 +7,6 @@ use super::types::TerminalState;
 #[serde(rename_all = "snake_case")]
 pub(crate) enum TerminalDataSource {
     Interactive,
-    Run,
-    InjectedReset,
-    InjectedSeparator,
 }
 
 #[derive(Debug, Serialize, Clone)]

@@ -1,7 +1,8 @@
+import { queryClient } from '@/lib/query-client';
 import type { IGitCommitSummaryPayload } from '@/types/git';
 
-const GITHUB_AUTHOR_CACHE_PREFIX = 'calamex.githubAuthor.';
-const GITHUB_AUTHOR_CACHE_TTL_MS = 30 * 24 * 60 * 60 * 1000;
+// 头像快照的新鲜窗口 / 落盘保留窗口，对齐原手写 TTL（30 天）。
+const GITHUB_AUTHOR_STALE_TIME_MS = 30 * 24 * 60 * 60 * 1000;
 
 export interface IGitHubCommitAuthorSnapshot {
   login: string | null;
@@ -10,13 +11,6 @@ export interface IGitHubCommitAuthorSnapshot {
   htmlUrl: string | null;
   updatedAt: number;
 }
-
-const pendingGithubAuthorRequests = new Map<string, Promise<IGitHubCommitAuthorSnapshot | null>>();
-
-const resolveLocalStorage = (): Storage | null => {
-  if (typeof localStorage === 'undefined') return null;
-  return localStorage;
-};
 
 /**
  * 统一解析 repo URL 的 host / owner / repo，供所有 GitHub API 构造共用。
@@ -33,58 +27,12 @@ const parseRepoUrl = (repoUrl: string): { host: string; owner: string; repo: str
   }
 };
 
-const resolveGithubHost = (repoUrl: string): string | null => parseRepoUrl(repoUrl)?.host ?? null;
-
 const resolveGithubAuthorIdentity = (commit: IGitCommitSummaryPayload): string | null => {
   const email = commit.authorEmail?.trim().toLowerCase();
   if (email) return `email:${email}`;
 
   const name = commit.authorName?.trim().toLowerCase();
   return name ? `name:${name}` : null;
-};
-
-const resolveGithubAuthorCacheKey = (
-  repoUrl: string,
-  commit: IGitCommitSummaryPayload,
-): string | null => {
-  const host = resolveGithubHost(repoUrl);
-  const identity = resolveGithubAuthorIdentity(commit);
-  if (!host || !identity) return null;
-  return `${GITHUB_AUTHOR_CACHE_PREFIX}${encodeURIComponent(host)}:${encodeURIComponent(identity)}`;
-};
-
-export const readCachedGithubCommitAuthor = (
-  repoUrl: string,
-  commit: IGitCommitSummaryPayload,
-): IGitHubCommitAuthorSnapshot | null => {
-  const storage = resolveLocalStorage();
-  const cacheKey = resolveGithubAuthorCacheKey(repoUrl, commit);
-  if (!storage || !cacheKey) return null;
-  try {
-    const raw = storage.getItem(cacheKey);
-    if (!raw) return null;
-    const cached = JSON.parse(raw) as IGitHubCommitAuthorSnapshot;
-    if (!cached || typeof cached.updatedAt !== 'number') return null;
-    if (Date.now() - cached.updatedAt > GITHUB_AUTHOR_CACHE_TTL_MS) return null;
-    return cached;
-  } catch {
-    return null;
-  }
-};
-
-const writeCachedGithubCommitAuthor = (
-  repoUrl: string,
-  commit: IGitCommitSummaryPayload,
-  snapshot: IGitHubCommitAuthorSnapshot,
-): void => {
-  const storage = resolveLocalStorage();
-  const cacheKey = resolveGithubAuthorCacheKey(repoUrl, commit);
-  if (!storage || !cacheKey) return;
-  try {
-    storage.setItem(cacheKey, JSON.stringify(snapshot));
-  } catch {
-    // Avatar cache is best-effort only.
-  }
 };
 
 const resolveGithubCommitApiUrl = (repoUrl: string, commitId: string): string | null => {
@@ -96,47 +44,70 @@ const resolveGithubCommitApiUrl = (repoUrl: string, commitId: string): string | 
   return `${apiBase}/repos/${encodeURIComponent(parsed.owner)}/${encodeURIComponent(parsed.repo)}/commits/${commitId}`;
 };
 
-export const fetchGithubCommitAuthorSnapshot = async (
+/**
+ * 纯网络请求：失败时抛错（交给 QueryClient 处理，错误不会被当成数据缓存）。
+ */
+const requestGithubCommitAuthorSnapshot = async (
   repoUrl: string,
   commit: IGitCommitSummaryPayload,
-): Promise<IGitHubCommitAuthorSnapshot | null> => {
+): Promise<IGitHubCommitAuthorSnapshot> => {
   const apiUrl = resolveGithubCommitApiUrl(repoUrl, commit.id);
-  const cacheKey = resolveGithubAuthorCacheKey(repoUrl, commit);
-  if (!apiUrl || !cacheKey) return null;
+  if (!apiUrl) {
+    throw new Error('无法解析 GitHub commit API 地址');
+  }
 
-  const pending = pendingGithubAuthorRequests.get(cacheKey);
-  if (pending) return pending;
-
-  const request = fetch(apiUrl, {
+  const response = await fetch(apiUrl, {
     headers: {
       Accept: 'application/vnd.github+json',
     },
-  })
-    .then(async (response) => {
-      if (!response.ok) return null;
-      const value = (await response.json()) as {
-        author?: {
-          login?: string | null;
-          avatar_url?: string | null;
-          html_url?: string | null;
-        } | null;
-        commit?: { author?: { name?: string | null } | null } | null;
-      };
-      const snapshot: IGitHubCommitAuthorSnapshot = {
-        login: value.author?.login ?? null,
-        name: value.commit?.author?.name ?? commit.authorName,
-        avatarUrl: value.author?.avatar_url ?? null,
-        htmlUrl: value.author?.html_url ?? null,
-        updatedAt: Date.now(),
-      };
-      writeCachedGithubCommitAuthor(repoUrl, commit, snapshot);
-      return snapshot;
-    })
-    .catch(() => null)
-    .finally(() => {
-      pendingGithubAuthorRequests.delete(cacheKey);
-    });
+  });
+  if (!response.ok) {
+    throw new Error(`GitHub commit API 请求失败：${response.status}`);
+  }
 
-  pendingGithubAuthorRequests.set(cacheKey, request);
-  return request;
+  const value = (await response.json()) as {
+    author?: {
+      login?: string | null;
+      avatar_url?: string | null;
+      html_url?: string | null;
+    } | null;
+    commit?: { author?: { name?: string | null } | null } | null;
+  };
+
+  return {
+    login: value.author?.login ?? null,
+    name: value.commit?.author?.name ?? commit.authorName,
+    avatarUrl: value.author?.avatar_url ?? null,
+    htmlUrl: value.author?.html_url ?? null,
+    updatedAt: Date.now(),
+  };
+};
+
+/**
+ * 提交作者头像快照。
+ *
+ * 缓存 / 去重 / 落盘统一交给全局 TanStack QueryClient（与 PR 列表、commit stats 等
+ * server-state 同一套管线），不再手写 Map 去重 + TTL + 本地存储缓存：
+ * - 相同 host + 作者身份的并发/重复请求按 queryKey 自动去重；命中新鲜缓存直接返回、不发网络；
+ * - staleTime/gcTime 复用原 30 天窗口；
+ * - meta.persist 让成功结果落盘到 IndexedDB（取代原同步本地存储写盘方案）；
+ * - 请求失败不写入缓存，调用方拿到 null（与原 .catch(() => null) 语义一致）。
+ */
+export const fetchGithubCommitAuthorSnapshot = (
+  repoUrl: string,
+  commit: IGitCommitSummaryPayload,
+): Promise<IGitHubCommitAuthorSnapshot | null> => {
+  const parsed = parseRepoUrl(repoUrl);
+  const identity = resolveGithubAuthorIdentity(commit);
+  if (!parsed || !identity) return Promise.resolve(null);
+
+  return queryClient
+    .fetchQuery({
+      queryKey: ['github-commit-author', parsed.host, identity],
+      queryFn: () => requestGithubCommitAuthorSnapshot(repoUrl, commit),
+      staleTime: GITHUB_AUTHOR_STALE_TIME_MS,
+      gcTime: GITHUB_AUTHOR_STALE_TIME_MS,
+      meta: { persist: true },
+    })
+    .catch(() => null);
 };

@@ -272,15 +272,6 @@ pub(super) fn set_session_geometry(
     geometry.rows = rows.max(1);
 }
 
-/// 取指定会话的 geometry；该会话尚无记录时回退到默认尺寸。每会话 geometry 已是唯一真相源，
-/// 不再回退到全局 `registry().geometry`（全局几何已于 BE-1 删除）。
-pub(super) fn get_session_geometry(state: &TerminalSessionState, session_id: &str) -> Geometry {
-    if let Ok(per_session) = state.per_session.lock() && let Some(entry) = per_session.get(session_id) && let Some(geometry) = entry.geometry {
-        return geometry;
-    }
-    Geometry::default()
-}
-
 pub(super) fn remove_session_geometry(state: &TerminalSessionState, session_id: &str) {
     let Ok(mut per_session) = state.per_session.lock() else {
         return;
@@ -367,24 +358,6 @@ pub(super) fn get_session_state(state: &TerminalSessionState, session_id: &str) 
         return current;
     }
     TerminalState::Booting
-}
-
-pub(super) fn remove_session_state(state: &TerminalSessionState, session_id: &str) {
-    let Ok(mut per_session) = state.per_session.lock() else {
-        return;
-    };
-    let removed = if let Some(entry) = per_session.get_mut(session_id) {
-        let had = entry.state.is_some();
-        entry.state = None;
-        had
-    } else {
-        false
-    };
-    prune_session_entry_if_empty(&mut per_session, session_id);
-    if removed {
-        // P1：会话 FSM 生命终结，记一条 debug 以便日志中能完整追踪一个会话的起灭。
-        log::debug!("[session-fsm] 会话状态机回收（session_id={session_id}）。");
-    }
 }
 
 /// 会话创建时重置该会话的输出流控器为全新实例（覆盖任何陈旧 / 已取消的旧控制器），返回其克隆。

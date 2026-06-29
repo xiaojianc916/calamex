@@ -156,7 +156,7 @@ export const resolveMemoryLastMessages = (
     const configured = toNonEmptyString(env[MEMORY_LAST_MESSAGES_ENV]);
     if (!configured) return DEFAULT_MEMORY_LAST_MESSAGES;
 
-    const parsed = Number.parseFloat(configured);
+    const parsed = Number(configured);
     if (!Number.isFinite(parsed) || !Number.isInteger(parsed)) {
         console.warn(
             `[builtin-agent] ${MEMORY_LAST_MESSAGES_ENV}="${configured}" is not a valid integer; falling back to ${DEFAULT_MEMORY_LAST_MESSAGES}.`,
