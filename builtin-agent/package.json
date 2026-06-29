@@ -15,7 +15,7 @@
     "test:tap": "node --import tsx --test --test-reporter=tap \"src/**/*.spec.ts\"",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "lint:ox": "pnpm --dir .. lint:ox",
-    "fix": "pnpm format && pnpm fix:ox"
+    "fix": "pnpm --dir .. fix"
   },
   "dependencies": {
     "@agentclientprotocol/sdk": "^1.0.0",

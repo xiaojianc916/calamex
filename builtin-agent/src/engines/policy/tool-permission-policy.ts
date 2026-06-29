@@ -59,12 +59,23 @@ const decision = (
     ...(reason ? { reason } : {}),
 });
 
+const compiledRuleCache = new Map<string, RegExp | null>();
+
 const compileRule = (rule: IToolPermissionPatternRule): RegExp | null => {
-    try {
-        return new RegExp(rule.pattern, rule.caseSensitive ? 'u' : 'iu');
-    } catch {
-        return null;
+    const flags = rule.caseSensitive ? 'u' : 'iu';
+    const cacheKey = `${flags}:${rule.pattern}`;
+    const cached = compiledRuleCache.get(cacheKey);
+    if (cached !== undefined) {
+        return cached;
     }
+    let compiled: RegExp | null;
+    try {
+        compiled = new RegExp(rule.pattern, flags);
+    } catch {
+        compiled = null;
+    }
+    compiledRuleCache.set(cacheKey, compiled);
+    return compiled;
 };
 
 const hasInvalidRules = (rules: IToolPermissionRules | undefined): boolean => {

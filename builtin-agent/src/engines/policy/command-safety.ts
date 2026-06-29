@@ -9,7 +9,6 @@ export interface ITerminalCommandSafetyResult {
 const SHELL_INTERPOLATION_PATTERNS: readonly RegExp[] = [
     /`[^`]*`/u,
     /\$\(/u,
-    /\$\(\(/u,
     /<\(/u,
     />\(/u,
     /\$\{[^}]+\}/u,
