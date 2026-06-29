@@ -24,6 +24,7 @@ const CREATE_NO_WINDOW_FLAG: u32 = 0x0800_0000;
 
 pub use contracts::{
     AnalyzeScriptPayload, AnalyzeScriptRequest, DocumentEncoding, ExecutionEnvironment,
+    ScriptDiagnosticPayload, ScriptDiagnosticSeverity,
     ExecutionOption, ExecutorKind, FormatDocumentPayload, FormatDocumentRequest,
     FormatScriptPayload, FormatScriptRequest, ImageAssetPayload, SaveScriptRequest,
     ScriptFilePayload, SshConfigHostPayload, SshConnectionTestPayload, SshConnectionTestRequest,
