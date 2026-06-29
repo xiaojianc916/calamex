@@ -1,6 +1,5 @@
 import '@/assets/fonts/inter/inter.css';
 import { VueQueryPlugin } from '@tanstack/vue-query';
-import { initGitHubAuthHeaderEnhancement } from '@/domains/git/utils/github-auth-header';
 import { queryClient, setupQueryPersistence } from '@/lib/query-client';
 import { applyWindowStage } from '@/services/ipc/window.service';
 import { pinia } from '@/store';
@@ -207,7 +206,6 @@ const bootstrap = async (): Promise<void> => {
     app.mount('#app');
     markStartup('vue-mounted');
 
-    initGitHubAuthHeaderEnhancement();
     initEditorScrollbarActivity();
 
     prefetchShellCatalogAfterBootstrap();

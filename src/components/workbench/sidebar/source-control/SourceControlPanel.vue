@@ -93,6 +93,7 @@
           <span v-if="status.behind > 0">↓  status.behind </span>
           <span v-if="status.ahead > 0">↑  status.ahead </span>
           <span v-if="status.ahead === 0 && status.behind === 0" v-text="workspaceStateLabel" />
+          <GitHubAuthPill :repository-root-path="status.repositoryRootPath" />
         </div>
       </div>
 
@@ -166,6 +167,7 @@
 
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue';
+import GitHubAuthPill from '@/components/workbench/GitHubAuthPill.vue';
 import { useDialog } from '@/composables/useDialog';
 import { useMessage } from '@/composables/useMessage';
 import { useSourceControlActions } from '@/domains/git/composables/useSourceControlActions';
