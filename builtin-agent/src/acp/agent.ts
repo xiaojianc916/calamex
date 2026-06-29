@@ -39,6 +39,8 @@ import {
 	type RequestPermissionRequest,
 	type RequestPermissionResponse,
 	type SessionNotification,
+	type SetSessionConfigOptionRequest,
+	type SetSessionConfigOptionResponse,
 	type SetSessionModeRequest,
 	type SetSessionModeResponse,
 } from "@agentclientprotocol/sdk"
@@ -70,6 +72,15 @@ import {
 	toAskUserResolutionInput,
 	toCreateElicitationRequest,
 } from "./ask-user-bridge.js"
+
+import {
+	buildModelConfigOptions,
+	type IAcpModelCatalog,
+	MODEL_CONFIG_OPTION_ID,
+	parseModelCatalogFromMeta,
+	resolveCurrentModelId,
+	resolveModelConfigInput,
+} from "./model-config-options.js"
 import {
 	AGENT_ASK_USER_RESUME_METHOD,
 	AGENT_CHAT_METHOD,
@@ -238,12 +249,25 @@ export class CalamexAcpAgent implements Agent {
 	async newSession(
 		params: NewSessionRequest,
 	): Promise<NewSessionResponse> {
+		// 模型目录由宿主经 NewSessionRequest._meta 注入（calamex.dev/modelCatalog，含凭据）：
+		// builtin 凭据在宿主侧、launch 不注入子进程，故经会话级 _meta 一次性下发，据此公示官方
+		// 模型选择器（session config option）并预置当前回合模型配置。缺省时回退环境兜底（行为不变）。
+		const modelCatalog = parseModelCatalogFromMeta(params._meta)
+		const modelConfig = modelCatalog
+			? resolveModelConfigInput(modelCatalog, resolveCurrentModelId(modelCatalog))
+			: undefined
 		const state = this.registry.create({
 			workspaceRootPath: params.cwd,
 			mcpServers: params.mcpServers ?? [],
 			mode: this.defaultMode,
+			...(modelCatalog ? { modelCatalog } : {}),
+			...(modelConfig ? { modelConfig } : {}),
 		})
-		return { sessionId: state.sessionId }
+		const configOptions = buildModelConfigOptions(modelCatalog)
+		return {
+			sessionId: state.sessionId,
+			...(configOptions.length > 0 ? { configOptions } : {}),
+		}
 	}
 
 	async authenticate(
@@ -267,6 +291,51 @@ export class CalamexAcpAgent implements Agent {
 			throw sessionNotFound(params.sessionId)
 		}
 		return {}
+	}
+
+	/**
+	 * 设置会话级配置项（官方 session/set_config_option）。当前仅公示模型选择器
+	 * （configId = "model"）：据所选 value（modelId）从会话登记的模型目录解析完整模型配置
+	 * （含凭据）回写会话，下一回合 prompt 即生效。响应回传刷新后的全量 configOptions（含更新后
+	 * 的 currentValue），与 ACP 约定一致（前端整体替换选择器状态）。非法 configId / 值映射为
+	 * invalidParams（由 SDK 包装为 JSON-RPC error）。
+	 */
+	async setSessionConfigOption(
+		params: SetSessionConfigOptionRequest,
+	): Promise<SetSessionConfigOptionResponse> {
+		const state = this.registry.get(params.sessionId)
+		if (!state) {
+			throw sessionNotFound(params.sessionId)
+		}
+		if (params.configId !== MODEL_CONFIG_OPTION_ID) {
+			throw RequestError.invalidParams(
+				{ configId: params.configId, allowed: [MODEL_CONFIG_OPTION_ID] },
+				"未知会话配置项：" + params.configId,
+			)
+		}
+		const catalog = state.modelCatalog
+		if (!catalog) {
+			throw RequestError.invalidParams(
+				{ sessionId: params.sessionId },
+				"本会话未公示模型选择器（无模型目录）。",
+			)
+		}
+		// 模型选择器恒为单选 select，value 为 modelId 字符串；boolean 变体在此不适用。
+		const modelId = typeof params.value === "string" ? params.value : undefined
+		const modelConfig =
+			modelId !== undefined ? resolveModelConfigInput(catalog, modelId) : undefined
+		if (modelConfig === undefined) {
+			throw RequestError.invalidParams(
+				{ configId: params.configId, value: params.value },
+				"非法的模型选择值（不在模型目录中）。",
+			)
+		}
+		this.registry.setModelConfig(params.sessionId, modelConfig)
+		const nextCatalog: IAcpModelCatalog = {
+			models: catalog.models,
+			currentModelId: modelConfig.modelId,
+		}
+		return { configOptions: buildModelConfigOptions(nextCatalog) }
 	}
 
 	async prompt(params: PromptRequest): Promise<PromptResponse> {

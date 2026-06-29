@@ -19,6 +19,8 @@ import type {
 } from "../engines/contracts/runtime-input.js"
 import type { McpServer } from "@agentclientprotocol/sdk"
 
+import type { IAcpModelCatalog } from "./model-config-options.js"
+
 /**
  * 单个会话的可变状态。
  * workspaceRootPath / mcpServers 建立后不变；mode / modelConfig 可更新；
@@ -30,6 +32,8 @@ export interface IAcpSessionState {
 	readonly mcpServers: readonly McpServer[]
 	mode: TAgentMode
 	modelConfig?: IAgentRuntimeModelConfigInput
+	/** 宿主经 newSession._meta 注入的模型目录；驱动模型选择器与 set 时的凭据解析。 */
+	modelCatalog?: IAcpModelCatalog
 	abortController: AbortController | null
 }
 
@@ -39,6 +43,7 @@ export interface IAcpSessionCreateParams {
 	mcpServers: readonly McpServer[]
 	mode: TAgentMode
 	modelConfig?: IAgentRuntimeModelConfigInput
+	modelCatalog?: IAcpModelCatalog
 }
 
 /** 注入项：仅 sessionId 生成器，便于测试确定化。默认 randomUUID。 */
@@ -64,6 +69,7 @@ export class AcpSessionRegistry {
 			mode: params.mode,
 			abortController: null,
 			...(params.modelConfig ? { modelConfig: params.modelConfig } : {}),
+			...(params.modelCatalog ? { modelCatalog: params.modelCatalog } : {}),
 		}
 		this.sessions.set(sessionId, state)
 		return state
@@ -89,6 +95,24 @@ export class AcpSessionRegistry {
 		const state = this.sessions.get(sessionId)
 		if (!state) return undefined
 		state.mode = mode
+		return state
+	}
+
+	/**
+	 * 切换已登记会话的当前模型配置（来自模型选择器 set_config_option）。
+	 * 返回更新后的状态，会话不存在返回 undefined；modelConfig 为 undefined 时清空（回退环境兜底）。
+	 */
+	setModelConfig(
+		sessionId: string,
+		modelConfig: IAgentRuntimeModelConfigInput | undefined,
+	): IAcpSessionState | undefined {
+		const state = this.sessions.get(sessionId)
+		if (!state) return undefined
+		if (modelConfig === undefined) {
+			delete state.modelConfig
+		} else {
+			state.modelConfig = modelConfig
+		}
 		return state
 	}
 
