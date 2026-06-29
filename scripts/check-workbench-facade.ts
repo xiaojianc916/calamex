@@ -1,6 +1,6 @@
 /**
  * check-workbench-facade.ts
- * 扫描 views/** 与 layouts/** 中对业务 store 的直接 import。
+ * 扫描 app/**、views/** 与 layouts/**（不含 composables/ 聚合层）中对业务 store 的直接 import。
  * ≥ 2 个业务 store import 即 fail（R-18.11.1 / R-20.1.5）。
  *
  * 业务 store 定义：src/store/ 下的模块（app / editor / git 等）。
@@ -39,6 +39,8 @@ function scanDir(dir: string): Map<string, string[]> {
         for (const entry of fs.readdirSync(d)) {
             const full = path.join(d, entry);
             if (fs.statSync(full).isDirectory()) {
+                // composables/ 是 façade 聚合层（非视图层），按 R-18.11.1 豁免多 store 规则
+                if (entry === 'composables') continue;
                 walk(full);
             } else if (entry.endsWith('.vue') || entry.endsWith('.ts')) {
                 const rel = path.relative(ROOT, full).replace(/\\/g, '/');
@@ -54,7 +56,7 @@ function scanDir(dir: string): Map<string, string[]> {
 const exemptions = loadBaseline('workbench-facade');
 const results: CheckResult[] = [];
 
-const SCAN_DIRS = ['src/views', 'src/layouts'];
+const SCAN_DIRS = ['src/app', 'src/views', 'src/layouts'];
 
 for (const dir of SCAN_DIRS) {
     const found = scanDir(dir);

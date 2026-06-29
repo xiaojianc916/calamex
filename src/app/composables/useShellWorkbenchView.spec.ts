@@ -82,7 +82,7 @@ const {
   },
 }));
 
-vi.mock('@/composables/useWorkbench', () => ({
+vi.mock('@/app/composables/useWorkbench', () => ({
   useWorkbench: () => ({
     appStore: {
       theme: 'dark',
@@ -186,7 +186,7 @@ vi.mock('@/utils/platform/desktop-runtime', () => ({
   waitForDesktopRuntime: waitForDesktopRuntimeMock,
 }));
 
-import { useShellWorkbenchView } from '@/composables/useShellWorkbenchView';
+import { useShellWorkbenchView } from '@/app/composables/useShellWorkbenchView';
 
 const createDeferred = () => {
   let resolve!: () => void;

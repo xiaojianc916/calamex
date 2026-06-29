@@ -251,12 +251,12 @@
 
 <script setup lang="ts">
 import { computed, defineAsyncComponent, nextTick, onMounted, ref } from 'vue';
+import { useShellWorkbenchView } from '@/app/composables/useShellWorkbenchView';
 import EmptyEditorState from '@/components/editor/EmptyEditorState.vue';
 import { Card, CardContent } from '@/components/ui/card';
 import { ResizableHandle, ResizablePanel, ResizablePanelGroup } from '@/components/ui/resizable';
 import WorkbenchDashboardSidebar from '@/components/workbench/sidebar/WorkbenchDashboardSidebar.vue';
 import { useLsp } from '@/composables/useLsp';
-import { useShellWorkbenchView } from '@/composables/useShellWorkbenchView';
 import AppShellLayout from '@/layouts/AppShellLayout.vue';
 import { useAiAgentStore } from '@/store/aiAgent';
 import type { TWorkbenchOpenFilePayload } from '@/types/editor';
@@ -288,7 +288,7 @@ const DeferredSmartScriptEditor = defineAsyncComponent({
 });
 
 const DeferredRunPanel = defineAsyncComponent({
-  loader: () => import('@/components/workbench/RunPanel.vue'),
+  loader: () => import('@/domains/terminal/ui/RunPanel.vue'),
   suspensible: false,
 });
 

@@ -1,5 +1,5 @@
 import { createRouter, createWebHashHistory } from 'vue-router';
-import ShellWorkbenchView from '@/views/ShellWorkbenchView.vue';
+import ShellWorkbenchView from '@/app/ShellWorkbenchView.vue';
 
 const router = createRouter({
   history: createWebHashHistory(),

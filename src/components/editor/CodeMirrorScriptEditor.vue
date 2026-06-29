@@ -72,9 +72,9 @@ import {
 } from '@codemirror/view';
 import { useEventListener, useResizeObserver } from '@vueuse/core';
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue';
+import { useShellResizeFrameScheduler } from '@/app/composables/useShellResizeFrameScheduler';
 import EditorContextMenu from '@/components/editor/EditorContextMenu.vue';
 import type { IEditorContextMenuItem } from '@/components/editor/editor-context-menu.types';
-import { useShellResizeFrameScheduler } from '@/composables/useShellResizeFrameScheduler';
 import { buildCodeMirrorSettingsExtensions } from '@/services/editor/codemirror-config';
 import { createCodeMirrorInlineCompletionController } from '@/services/editor/codemirror-inline-completion';
 import {

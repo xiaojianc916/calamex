@@ -3,7 +3,7 @@
     "description": "文件行数守卫豁免清单（全量扫描；R-20.1.3 / R-20.1.4 / R-20.5.1 / R-20.6.3）。check-file-size.ts 已改为递归扫描 src/ 与 src-tauri/src/；新增超限文件如确需暂缓拆分，运行 `pnpm exec tsx scripts/check-file-size.ts --update-baseline` 登记，并在 docs/tech-debt.md 留痕。",
     "exemptions": [
         {
-            "path": "src/composables/useWorkbench.ts",
+            "path": "src/app/composables/useWorkbench.ts",
             "rule": "max-lines-400",
             "reason": "存量违规：超 R-20.1.3(≤400)，计划按域拆分 workbench 组合式",
             "owner": "@xiaojianc",
@@ -19,7 +19,7 @@
             "expiresAt": "2026-06-30"
         },
         {
-            "path": "src/views/ShellWorkbenchView.vue",
+            "path": "src/app/ShellWorkbenchView.vue",
             "rule": "max-script-setup-120",
             "reason": "存量违规：<script setup> 超 R-20.1.4(≤120)，逻辑待下沉到组合式",
             "owner": "@xiaojianc",
@@ -299,7 +299,7 @@
             "expiresAt": "2026-12-31"
         },
         {
-            "path": "src/composables/useShellWorkbenchView.ts",
+            "path": "src/app/composables/useShellWorkbenchView.ts",
             "rule": "max-lines-400",
             "reason": "存量超限：登记时 789 行 > 400，待按 R-20.x 拆分还债",
             "owner": "@xiaojianc",

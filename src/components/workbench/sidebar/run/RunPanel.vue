@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import LegacyRunPanel from '@/components/workbench/RunPanel.vue';
+import LegacyRunPanel from '@/domains/terminal/ui/RunPanel.vue';
 import type { TThemeMode } from '@/types/app';
 import type { ITerminalSettings } from '@/types/settings';
 import type { ITerminalRunCompletedPayload } from '@/types/terminal';

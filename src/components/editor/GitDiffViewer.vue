@@ -14,7 +14,7 @@ import { Compartment, type Extension } from '@codemirror/state';
 import { EditorView, highlightSpecialChars } from '@codemirror/view';
 import { useResizeObserver } from '@vueuse/core';
 import { onBeforeUnmount, onMounted, ref, watch } from 'vue';
-import { useShellResizeFrameScheduler } from '@/composables/useShellResizeFrameScheduler';
+import { useShellResizeFrameScheduler } from '@/app/composables/useShellResizeFrameScheduler';
 import { buildCodeMirrorSettingsExtensions } from '@/services/editor/codemirror-config';
 import {
   loadCodeMirrorLanguageSupport,

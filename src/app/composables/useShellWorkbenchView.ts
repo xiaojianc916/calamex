@@ -1,9 +1,9 @@
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue';
+import { useShellWorkbenchAiBridge } from '@/app/composables/useShellWorkbenchAiBridge';
+import { useShellWorkbenchViewportState } from '@/app/composables/useShellWorkbenchViewportState';
+import { useWorkbench } from '@/app/composables/useWorkbench';
 import { useDocumentNavigationHistory } from '@/composables/useDocumentNavigationHistory';
 import { useGitRepositoryStatusBootstrap } from '@/composables/useGitRepositoryStatusBootstrap';
-import { useShellWorkbenchAiBridge } from '@/composables/useShellWorkbenchAiBridge';
-import { useShellWorkbenchViewportState } from '@/composables/useShellWorkbenchViewportState';
-import { useWorkbench } from '@/composables/useWorkbench';
 import { useGitStore } from '@/store/git';
 import type { TWorkbenchPrimaryMode, TWorkbenchSidebarView } from '@/types/app';
 import type {

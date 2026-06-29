@@ -13,7 +13,7 @@ import { __resetTerminalEventBusForTesting } from '@/domains/terminal/services/e
 import { __resetTerminalRunOrchestratorForTesting } from '@/domains/terminal/services/runOrchestrator';
 import { useAppStore } from '@/store/app';
 import { useEditorStore } from '@/store/editor';
-import { useWorkbench } from '../useWorkbench';
+import { useWorkbench } from '../../app/composables/useWorkbench';
 
 // ─────────────────────────────────────────────
 // Mock 变量（vi.hoisted 保证提升前可访问）
