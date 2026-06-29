@@ -160,7 +160,7 @@ pub fn get_git_commit_file_diff(
     }
 
     let is_empty = hunks.is_empty();
-    let short = &commit_id[..commit_id.len().min(7)];
+    let short = short_commit_oid(&repository, commit_oid);
     Ok(GitCommitFileDiffPayload {
         relative_path: relative_path_str,
         file_name: file_name.clone(),
@@ -211,7 +211,7 @@ pub fn get_git_commit_file_diff_preview(
     let modified_content = new_content_opt.unwrap_or_default();
     let is_empty = are_text_contents_equal_ignoring_cr(&original_content, &modified_content);
 
-    let short = &commit_id[..commit_id.len().min(7)];
+    let short = short_commit_oid(&repository, commit_oid);
 
     Ok(GitDiffPreviewPayload {
         id: format!(

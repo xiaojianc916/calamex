@@ -78,7 +78,7 @@ pub fn save_git_stash(payload: GitStashSaveRequest) -> Result<GitRepositoryStatu
         .head_short_name
         .clone()
         .unwrap_or_else(|| "(no branch)".to_string());
-    let base_short = short_commit_id(base_commit_id);
+    let base_short = short_commit_oid(&repository, base_commit_id);
     let raw_message = head_commit.message_raw_sloppy().to_str_lossy().into_owned();
     let base_subject = raw_message
         .lines()
@@ -355,7 +355,7 @@ fn build_git_stash_entry_payload(
         stash_id: ["stash@{", &index.to_string(), "}"].concat(),
         summary: summary.to_string(),
         branch_name,
-        commit_short_id: commit_short_id.or_else(|| Some(short_commit_id(oid))),
+        commit_short_id: commit_short_id.or_else(|| Some(short_commit_oid(repository, oid))),
         created_at,
     })
 }

@@ -162,15 +162,12 @@ pub fn unstage_git_paths(
         match head_entry {
             Some(entry) => {
                 let mode = entry.mode();
+                // 树条目模式 → 索引条目模式统一复用 worktree_io::index_mode_from_tree_mode；
+                // 目录 / 子模块项不对应单个索引 blob，跳过。
                 let index_mode = if mode.is_tree() || mode.is_commit() {
-                    // 目录或子模块项不对应单个索引 blob，跳过。
                     None
-                } else if mode.is_link() {
-                    Some(gix::index::entry::Mode::SYMLINK)
-                } else if mode.is_executable() {
-                    Some(gix::index::entry::Mode::FILE_EXECUTABLE)
                 } else {
-                    Some(gix::index::entry::Mode::FILE)
+                    Some(index_mode_from_tree_mode(mode))
                 };
 
                 if let Some(index_mode) = index_mode {
@@ -316,14 +313,13 @@ pub(super) fn build_git_repository_status_payload(
         git_dir_path: Some(repository.git_dir().to_string_lossy().to_string()),
         head_branch_name: status.head_branch,
         head_short_name: status.head_short_name,
-        head_short_oid: status
-            .head_oid
-            .as_deref()
-            .map(|oid| oid.chars().take(7).collect::<String>()),
+        // 与 last_commit / 历史视图同源的消歧义短哈希，避免 HEAD 短哈希口径分裂。
+        head_short_oid: last_commit.as_ref().map(|commit| commit.short_id.clone()),
         is_detached: status.detached,
         is_clean: status.staged_count == 0
             && status.unstaged_count == 0
-            && status.untracked_count == 0,
+            && status.untracked_count == 0
+            && status.conflicted_count == 0,
         ahead: status.ahead,
         behind: status.behind,
         staged_count: status.staged_count,
@@ -388,7 +384,7 @@ fn build_git_status_via_gix(repository: &Repository) -> Result<StatusAccum, Stri
 
     // 领先/落后：复用 branches 中基于 gix 的修订遍历实现。
     if let Some(branch) = accum.head_short_name.as_deref() {
-        let (ahead, behind) = super::branches::resolve_ahead_behind_cli(repository, branch)?;
+        let (ahead, behind) = super::branches::resolve_ahead_behind(repository, branch)?;
         accum.ahead = ahead;
         accum.behind = behind;
     }

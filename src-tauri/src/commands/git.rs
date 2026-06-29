@@ -413,7 +413,10 @@ fn build_git_commit_summary(commit: &gix::Commit<'_>) -> GitCommitSummaryPayload
 
     GitCommitSummaryPayload {
         id: commit.id().to_string(),
-        short_id: short_commit_id(commit.id().detach()),
+        short_id: commit
+            .short_id()
+            .map(|prefix| prefix.to_string())
+            .unwrap_or_else(|_| commit.id().to_string().chars().take(7).collect()),
         summary,
         author_name,
         author_email,
@@ -426,12 +429,15 @@ fn build_git_commit_summary(commit: &gix::Commit<'_>) -> GitCommitSummaryPayload
     }
 }
 
-/// 截断 OID 到 7 字符短格式。
-/// 注意：固定 7 字符在超大仓库（>100 万对象）可能碰撞。
-/// 如需仓库唯一的短 OID，可改用 repo.rev_parse_short(&id)（需传入 &Repository）。
-/// 当前目标用户为中小仓库，7 字符足够。
-fn short_commit_id(id: gix::ObjectId) -> String {
-    id.to_string().chars().take(7).collect()
+/// 仓库内消歧义的短提交 OID：等价 git core.abbrev 行为（默认 7 位、遇歧义自动加长），
+/// 与提交历史 (commit.short_id()) 同源，统一全工程短哈希口径；解析失败回退固定 7 字符。
+fn short_commit_oid(repository: &Repository, id: gix::ObjectId) -> String {
+    repository
+        .find_commit(id)
+        .ok()
+        .and_then(|commit| commit.short_id().ok())
+        .map(|prefix| prefix.to_string())
+        .unwrap_or_else(|| id.to_string().chars().take(7).collect())
 }
 
 fn resolve_relative_path(repository_root: &Path, path: &Path) -> Result<PathBuf, String> {

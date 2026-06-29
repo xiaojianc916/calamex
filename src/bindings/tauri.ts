@@ -133,7 +133,6 @@ export const commands = {
 	builtinAgentHealth: () => __TAURI_INVOKE<AgentSidecarHealthPayload>("builtin_agent_health"),
 	builtinAgentRestart: () => __TAURI_INVOKE<AgentSidecarHealthPayload>("builtin_agent_restart"),
 	builtinAgentWarmup: () => __TAURI_INVOKE<AgentSidecarWarmupPayload>("builtin_agent_warmup"),
-	builtinAgentChat: (payload: AgentSidecarChatRequest_Deserialize) => __TAURI_INVOKE<AgentSidecarResponsePayload_Serialize>("builtin_agent_chat", { payload }),
 	/**
 	 *  外部 ACP 编码 agent（Kimi Code / Codex 等，ADR-0015）的标准回合命令（`session/prompt`）。
 	 * 
@@ -144,8 +143,6 @@ export const commands = {
 	 *  （投影见 acp/ui_event.rs），本命令仅返回终态：会话标识 + 回合终止原因。
 	 */
 	builtinAgentExternalChat: (payload: AgentExternalChatRequest_Deserialize) => __TAURI_INVOKE<AgentExternalChatResultPayload>("builtin_agent_external_chat", { payload }),
-	builtinAgentResolveApproval: (payload: AgentSidecarApprovalResolveRequest_Deserialize) => __TAURI_INVOKE<AgentSidecarResponsePayload_Serialize>("builtin_agent_resolve_approval", { payload }),
-	builtinAgentResolveAskUser: (payload: AgentSidecarAskUserResumeRequest_Deserialize) => __TAURI_INVOKE<AgentSidecarResponsePayload_Serialize>("builtin_agent_resolve_ask_user", { payload }),
 	builtinAgentRestoreCheckpoint: (payload: AgentSidecarCheckpointRestoreRequest_Deserialize) => __TAURI_INVOKE<AgentSidecarResponsePayload_Serialize>("builtin_agent_restore_checkpoint", { payload }),
 	/**  Create (or reuse) the child webview and start the CDP control plane. Idempotent. */
 	agentWebviewCreate: (input: AgentWebviewCreateInput, traceId: string | null) => __TAURI_INVOKE<null>("agent_webview_create", { input, traceId }),
@@ -195,7 +192,6 @@ export const commands = {
 	generatedAt: string,
 } | null>("ai_get_suggestion_pool_cache"),
 	aiGenerateSuggestionPool: (payload: AiSuggestionPoolRequest) => __TAURI_INVOKE<AiSuggestionPoolPayload>("ai_generate_suggestion_pool", { payload }),
-	aiChatStream: (payload: AiChatRequest) => __TAURI_INVOKE<AiChatStreamPayload>("ai_chat_stream", { payload }),
 	aiCancel: (payload: AiCancelRequest) => __TAURI_INVOKE<null>("ai_cancel", { payload }),
 	/**
 	 *  投递 ACP 反向权限请求（`session/request_permission`）的审批决策，唤醒回合内挂起的工具调用。
@@ -300,7 +296,7 @@ export type AgentBackendKind = "builtin" | "kimi" | "codex";
 /**
  *  外部 ACP 编码 agent 的标准回合（`session/prompt`）请求（契约层）。
  * 
- *  与自家 `AgentSidecarChatRequest` 不同：外部 agent 只实现标准 `prompt`、不认识
+ *  与自家边车的带外 `agent_chat` 扩展回合不同：外部 agent 只实现标准 `prompt`、不认识
  *  `calamex.dev/*` 扩展方法，也不接收逐请求 `model_config`（凭据由其自身 CLI 自管，见
  *  ADR-0015 / `acp/launch.rs`），故仅携带后端类型、纯文本提示与会话定位字段。
  */
@@ -309,7 +305,7 @@ export type AgentExternalChatRequest = AgentExternalChatRequest_Serialize | Agen
 /**
  *  外部 ACP 编码 agent 的标准回合（`session/prompt`）请求（契约层）。
  * 
- *  与自家 `AgentSidecarChatRequest` 不同：外部 agent 只实现标准 `prompt`、不认识
+ *  与自家边车的带外 `agent_chat` 扩展回合不同：外部 agent 只实现标准 `prompt`、不认识
  *  `calamex.dev/*` 扩展方法，也不接收逐请求 `model_config`（凭据由其自身 CLI 自管，见
  *  ADR-0015 / `acp/launch.rs`），故仅携带后端类型、纯文本提示与会话定位字段。
  */
@@ -331,7 +327,7 @@ export type AgentExternalChatRequest_Deserialize = {
 /**
  *  外部 ACP 编码 agent 的标准回合（`session/prompt`）请求（契约层）。
  * 
- *  与自家 `AgentSidecarChatRequest` 不同：外部 agent 只实现标准 `prompt`、不认识
+ *  与自家边车的带外 `agent_chat` 扩展回合不同：外部 agent 只实现标准 `prompt`、不认识
  *  `calamex.dev/*` 扩展方法，也不接收逐请求 `model_config`（凭据由其自身 CLI 自管，见
  *  ADR-0015 / `acp/launch.rs`），故仅携带后端类型、纯文本提示与会话定位字段。
  */
@@ -359,155 +355,6 @@ export type AgentExternalChatRequest_Serialize = {
 export type AgentExternalChatResultPayload = {
 	sessionId: string,
 	stopReason: string,
-};
-
-export type AgentSidecarApprovalResolveRequest = AgentSidecarApprovalResolveRequest_Serialize | AgentSidecarApprovalResolveRequest_Deserialize;
-
-export type AgentSidecarApprovalResolveRequest_Deserialize = {
-	sessionId: string | null,
-	requestId: string,
-	decision: string,
-	goal: string | null,
-	messages?: AgentSidecarMessagePayload[],
-	workspaceRootPath: string | null,
-	context?: AiContextReferencePayload[],
-	modelConfig: AgentSidecarModelConfigPayload_Deserialize | null,
-	threadId: string | null,
-	planId: string | null,
-	planVersion: number | null,
-	planStepId: string | null,
-};
-
-export type AgentSidecarApprovalResolveRequest_Serialize = {
-	sessionId?: string | null,
-	requestId: string,
-	decision: string,
-	goal?: string | null,
-	messages: AgentSidecarMessagePayload[],
-	workspaceRootPath?: string | null,
-	context: AiContextReferencePayload[],
-	modelConfig?: AgentSidecarModelConfigPayload_Serialize | null,
-	threadId?: string | null,
-	planId?: string | null,
-	planVersion?: number | null,
-	planStepId?: string | null,
-};
-
-/**
- *  `calamex.dev/agent/ask-user/resume` 单题作答（契约层）。
- *  镜像 sidecar `askUserAnswerParamsSchema`：questionId、optionIds（缺省 []）、text（可选）。
- *  optionIds 恒序列化为数组（空则 []）；text 空白修剪由接线层负责，契约层仅在 None 时省略键。
- */
-export type AgentSidecarAskUserAnswerPayload = AgentSidecarAskUserAnswerPayload_Serialize | AgentSidecarAskUserAnswerPayload_Deserialize;
-
-/**
- *  `calamex.dev/agent/ask-user/resume` 单题作答（契约层）。
- *  镜像 sidecar `askUserAnswerParamsSchema`：questionId、optionIds（缺省 []）、text（可选）。
- *  optionIds 恒序列化为数组（空则 []）；text 空白修剪由接线层负责，契约层仅在 None 时省略键。
- */
-export type AgentSidecarAskUserAnswerPayload_Deserialize = {
-	questionId: string,
-	optionIds?: string[],
-	text: string | null,
-};
-
-/**
- *  `calamex.dev/agent/ask-user/resume` 单题作答（契约层）。
- *  镜像 sidecar `askUserAnswerParamsSchema`：questionId、optionIds（缺省 []）、text（可选）。
- *  optionIds 恒序列化为数组（空则 []）；text 空白修剪由接线层负责，契约层仅在 None 时省略键。
- */
-export type AgentSidecarAskUserAnswerPayload_Serialize = {
-	questionId: string,
-	optionIds: string[],
-	text?: string | null,
-};
-
-/**
- *  `calamex.dev/agent/ask-user/resume` 恢复请求（契约层）。
- * 
- *  结构镜像 `AgentSidecarApprovalResolveRequest` 的「agentChat 基底 + requestId」，但以
- *  `outcome` + 结构化 `answers` 取代 `decision`：
- *    * outcome 取值（selected/cancelled）由 sidecar zod 校验，原样透传；
- *    * answers 为每题作答，outcome=cancelled 时通常缺省（serde 整字段省略，对齐 zod `.optional()`）。
- * 
- *  与 approval 恢复一致地携带 plan_*（plan 续跑定位），不含 `mode`（恢复不切换模式）。
- */
-export type AgentSidecarAskUserResumeRequest = AgentSidecarAskUserResumeRequest_Serialize | AgentSidecarAskUserResumeRequest_Deserialize;
-
-/**
- *  `calamex.dev/agent/ask-user/resume` 恢复请求（契约层）。
- * 
- *  结构镜像 `AgentSidecarApprovalResolveRequest` 的「agentChat 基底 + requestId」，但以
- *  `outcome` + 结构化 `answers` 取代 `decision`：
- *    * outcome 取值（selected/cancelled）由 sidecar zod 校验，原样透传；
- *    * answers 为每题作答，outcome=cancelled 时通常缺省（serde 整字段省略，对齐 zod `.optional()`）。
- * 
- *  与 approval 恢复一致地携带 plan_*（plan 续跑定位），不含 `mode`（恢复不切换模式）。
- */
-export type AgentSidecarAskUserResumeRequest_Deserialize = {
-	sessionId: string | null,
-	requestId: string,
-	outcome: string,
-	answers: AgentSidecarAskUserAnswerPayload_Deserialize[] | null,
-	goal: string | null,
-	messages?: AgentSidecarMessagePayload[],
-	workspaceRootPath: string | null,
-	context?: AiContextReferencePayload[],
-	modelConfig: AgentSidecarModelConfigPayload_Deserialize | null,
-	threadId: string | null,
-	planId: string | null,
-	planVersion: number | null,
-	planStepId: string | null,
-};
-
-/**
- *  `calamex.dev/agent/ask-user/resume` 恢复请求（契约层）。
- * 
- *  结构镜像 `AgentSidecarApprovalResolveRequest` 的「agentChat 基底 + requestId」，但以
- *  `outcome` + 结构化 `answers` 取代 `decision`：
- *    * outcome 取值（selected/cancelled）由 sidecar zod 校验，原样透传；
- *    * answers 为每题作答，outcome=cancelled 时通常缺省（serde 整字段省略，对齐 zod `.optional()`）。
- * 
- *  与 approval 恢复一致地携带 plan_*（plan 续跑定位），不含 `mode`（恢复不切换模式）。
- */
-export type AgentSidecarAskUserResumeRequest_Serialize = {
-	sessionId?: string | null,
-	requestId: string,
-	outcome: string,
-	answers?: AgentSidecarAskUserAnswerPayload_Serialize[] | null,
-	goal?: string | null,
-	messages: AgentSidecarMessagePayload[],
-	workspaceRootPath?: string | null,
-	context: AiContextReferencePayload[],
-	modelConfig?: AgentSidecarModelConfigPayload_Serialize | null,
-	threadId?: string | null,
-	planId?: string | null,
-	planVersion?: number | null,
-	planStepId?: string | null,
-};
-
-export type AgentSidecarChatRequest = AgentSidecarChatRequest_Serialize | AgentSidecarChatRequest_Deserialize;
-
-export type AgentSidecarChatRequest_Deserialize = {
-	sessionId: string | null,
-	mode: string | null,
-	goal: string | null,
-	messages: AgentSidecarMessagePayload[],
-	workspaceRootPath: string | null,
-	context?: AiContextReferencePayload[],
-	modelConfig: AgentSidecarModelConfigPayload_Deserialize | null,
-	threadId: string | null,
-};
-
-export type AgentSidecarChatRequest_Serialize = {
-	sessionId?: string | null,
-	mode?: string | null,
-	goal?: string | null,
-	messages: AgentSidecarMessagePayload[],
-	workspaceRootPath?: string | null,
-	context: AiContextReferencePayload[],
-	modelConfig?: AgentSidecarModelConfigPayload_Serialize | null,
-	threadId?: string | null,
 };
 
 export type AgentSidecarCheckpointRestoreRequest = AgentSidecarCheckpointRestoreRequest_Serialize | AgentSidecarCheckpointRestoreRequest_Deserialize;
@@ -542,11 +389,6 @@ export type AgentSidecarMcpHealthPayload = {
 	configuredServers: number,
 	serverNames: string[],
 	errors: string[],
-};
-
-export type AgentSidecarMessagePayload = {
-	role: string,
-	content: string,
 };
 
 export type AgentSidecarModelConfigPayload = AgentSidecarModelConfigPayload_Serialize | AgentSidecarModelConfigPayload_Deserialize;
@@ -706,35 +548,6 @@ export type AiApplyPatchRequest = {
 export type AiCancelRequest = {
 	streamId: string,
 	threadId: string | null,
-};
-
-export type AiChatMessagePayload = {
-	/**  已知值："user" | "assistant" | "system" | "tool"。 */
-	role: string,
-	content: string,
-	id: string,
-	createdAt: string,
-	references: AiContextReferencePayload[],
-};
-
-export type AiChatRequest = {
-	threadId: string | null,
-	messages: AiChatMessagePayload[],
-	references: AiContextReferencePayload[],
-	/**
-	 *  前端预生成的流式关联键（sidecar:assistantMessageId）。chat 模式发起回合前据此
-	 *  订阅 ai:sidecar-stream；后端把本回合 session/update 帧的 session_id 重写为该键，
-	 *  实现逐 token 实时渲染。与 thread_id 同为可选可空（前端总会携带，缺省回退会话 id）。
-	 */
-	streamSessionId: string | null,
-};
-
-export type AiChatStreamPayload = {
-	streamId: string,
-	assistantMessageId: string,
-	providerType: string,
-	model: string,
-	sessionId: string,
 };
 
 export type AiConfigPayload = {

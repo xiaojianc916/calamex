@@ -120,19 +120,25 @@ pub(super) fn blob_bytes(repository: &Repository, object_id: gix::ObjectId) -> O
         .map(|object| object.data.clone())
 }
 
-/// 逐行统计两份内容的增删；任一侧含 NUL 字节则视为二进制（返回 0,0,true）。
+/// 逐行统计两份内容的增删。文本判定与解码统一走 Diff 视图同一管线
+/// （decode_script_bytes，编码感知）：任一侧存在但无法解码为文本即视为二进制
+/// （返回 0,0,true），消除「变更列表标二进制、Diff 视图却显示文本」的口径分裂。
+/// None 侧（新增 / 删除的缺失端）按空文本处理。
 fn count_blob_line_changes(old: Option<&[u8]>, new: Option<&[u8]>) -> (u32, u32, bool) {
-    let is_binary =
-        old.is_some_and(|bytes| bytes.contains(&0)) || new.is_some_and(|bytes| bytes.contains(&0));
-    if is_binary {
-        return (0, 0, true);
-    }
-    let old_text = old
-        .map(|bytes| String::from_utf8_lossy(bytes).into_owned())
-        .unwrap_or_default();
-    let new_text = new
-        .map(|bytes| String::from_utf8_lossy(bytes).into_owned())
-        .unwrap_or_default();
+    let old_text = match old {
+        Some(bytes) => match decode_script_bytes(bytes) {
+            Ok((text, _)) => text,
+            Err(_) => return (0, 0, true),
+        },
+        None => String::new(),
+    };
+    let new_text = match new {
+        Some(bytes) => match decode_script_bytes(bytes) {
+            Ok((text, _)) => text,
+            Err(_) => return (0, 0, true),
+        },
+        None => String::new(),
+    };
     let diff = similar::TextDiff::from_lines(&old_text, &new_text);
     let mut additions = 0u32;
     let mut deletions = 0u32;
@@ -151,11 +157,28 @@ pub(super) fn path_exists_in_worktree(absolute_path: &Path) -> bool {
     fs::symlink_metadata(absolute_path).is_ok()
 }
 
-/// 删除工作区中的文件（含损坏的符号链接）。
+/// 删除工作区中的文件（含损坏的符号链接），并清理因此变空的父目录
+/// （上溯至仓库根目录但不含根目录），避免「目录 → 同名文件」回滚时残留空目录。
 pub(super) fn remove_worktree_path(repository_root: &Path, relative_path: &str) {
     let target_path = repository_root.join(Path::new(relative_path));
     if fs::symlink_metadata(&target_path).is_ok() {
         let _ = fs::remove_file(&target_path);
+    }
+    prune_empty_parent_dirs(repository_root, &target_path);
+}
+
+/// 自 start_path 的父目录起向上删除空目录，遇非空目录 / 出错 / 到达仓库根目录即停
+/// （绝不删除仓库根目录本身）。fs::remove_dir 仅对空目录成功，天然安全。
+fn prune_empty_parent_dirs(repository_root: &Path, start_path: &Path) {
+    let mut current = start_path.parent();
+    while let Some(dir) = current {
+        if dir == repository_root || !dir.starts_with(repository_root) {
+            break;
+        }
+        if fs::remove_dir(dir).is_err() {
+            break;
+        }
+        current = dir.parent();
     }
 }
 
@@ -267,9 +290,14 @@ pub(super) fn restore_worktree_from_index_blob(
         let link_target = String::from_utf8_lossy(bytes).into_owned();
         recreate_symlink(&target_path, &link_target)?;
     } else {
-        if fs::symlink_metadata(&target_path).is_ok() {
-            // 先移除既有文件 / 链接，避免写入时跟随旧符号链接。
-            let _ = fs::remove_file(&target_path);
+        if let Ok(existing) = fs::symlink_metadata(&target_path) {
+            // 先移除既有文件 / 链接 / 目录：避免跟随旧符号链接，也避免
+            // 「目录 → 同名文件」回滚时目标仍是目录导致 fs::write 失败。
+            if existing.file_type().is_dir() {
+                let _ = fs::remove_dir_all(&target_path);
+            } else {
+                let _ = fs::remove_file(&target_path);
+            }
         }
         fs::write(&target_path, bytes).map_err(|error| format!("写入工作区文件失败：{error}"))?;
 

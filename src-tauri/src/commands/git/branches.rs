@@ -206,7 +206,7 @@ fn build_git_branch_payload_from_ref(
     let (ahead, behind, upstream_name) = if kind == "local" {
         let upstream_name = resolve_branch_upstream(repository, shorthand);
         let (ahead, behind) = if is_current && upstream_name.is_some() {
-            resolve_ahead_behind_cli(repository, shorthand)?
+            resolve_ahead_behind(repository, shorthand)?
         } else {
             (0, 0)
         };
@@ -263,7 +263,7 @@ fn resolve_branch_upstream(repository: &Repository, branch_name: &str) -> Option
     Some(format!("{remote}/{merge_branch}"))
 }
 
-pub(super) fn resolve_ahead_behind_cli(
+pub(super) fn resolve_ahead_behind(
     repository: &Repository,
     branch_name: &str,
 ) -> Result<(usize, usize), String> {
@@ -328,9 +328,9 @@ pub(super) fn assert_repository_is_clean_for_switch(
 // 「HEAD 树 → 目标树」的差异应用到工作区与索引，再移动 HEAD 即可，既快又不会
 // 破坏未跟踪文件（干净前提下不存在未跟踪文件）。
 //
-// 下列 checkout_restore_worktree_blob / checkout_upsert_index_entry /
-// checkout_remove_index_path / checkout_recreate_symlink 与 status.rs 中的同名
-// 实现保持一致；因 Rust 模块私有可见性此处保留一份本地副本，修改时应同步两处。
+// 工作区 / 索引 / 树的实际读写已统一收敛到 super::worktree_io（restore_worktree_from_index_blob /
+// upsert_index_entry / remove_worktree_path / remove_index_path 等）；apply_checkout_change
+// 只做「树差异 → worktree_io 调用」的映射，不再保留任何本地副本。
 // ---------------------------------------------------------------------------
 
 fn checkout_to_target(
