@@ -16,7 +16,7 @@ const WORKSPACE_ROOT = 'd:/com.xiaojianc/my_desktop_app';
 
 // ---------------------------------------------------------------------------
 // ai.service mock：仅保留 ACP-native 单一管线触达的方法（hoisted 供 vi.mock 工厂引用）。
-// 唯一发送链路 = subscribeSidecarSessionStream -> (builtin) ensureAcpSession + setSessionMode
+// 唯一发送链路 = subscribeSidecarSessionStream -> (builtin) ensureAcpSession + setSessionConfigOption
 // -> sidecarExternalChat。流式经 onSidecarStream 回放。
 // ---------------------------------------------------------------------------
 
@@ -32,7 +32,7 @@ const aiServiceMock = vi.hoisted(() => {
     });
   });
   const ensureAcpSession = vi.fn(async () => {});
-  const setSessionMode = vi.fn(async () => true);
+  const setSessionConfigOption = vi.fn(async () => null);
   const sidecarExternalChat = vi.fn(async (payload: { sessionId?: string }) => ({
     sessionId: payload.sessionId ?? 'sidecar-external-session',
     stopReason: 'EndTurn',
@@ -53,7 +53,7 @@ const aiServiceMock = vi.hoisted(() => {
   return {
     onSidecarStream,
     ensureAcpSession,
-    setSessionMode,
+    setSessionConfigOption,
     sidecarExternalChat,
     sidecarRestoreCheckpoint,
     generateConversationTitle,
@@ -69,7 +69,7 @@ const aiServiceMock = vi.hoisted(() => {
       seq = 0;
       onSidecarStream.mockClear();
       ensureAcpSession.mockClear();
-      setSessionMode.mockClear();
+      setSessionConfigOption.mockClear();
       sidecarExternalChat.mockClear();
       sidecarRestoreCheckpoint.mockClear();
       generateConversationTitle.mockClear();
@@ -88,7 +88,7 @@ vi.mock('@/services/ipc/ai.service', () => ({
   aiService: {
     onSidecarStream: aiServiceMock.onSidecarStream,
     ensureAcpSession: aiServiceMock.ensureAcpSession,
-    setSessionMode: aiServiceMock.setSessionMode,
+    setSessionConfigOption: aiServiceMock.setSessionConfigOption,
     sidecarExternalChat: aiServiceMock.sidecarExternalChat,
     sidecarRestoreCheckpoint: aiServiceMock.sidecarRestoreCheckpoint,
     generateConversationTitle: aiServiceMock.generateConversationTitle,
@@ -278,10 +278,10 @@ describe('useAiAssistant · ACP-native 单一发送管线', () => {
   });
 
   // -------------------------------------------------------------------------
-  // builtin 三模式经官方 set_session_mode 切换后再发起标准 session/prompt
+  // builtin 三模式经官方 set_config_option（configId=mode）切换后再发起标准 session/prompt
   // -------------------------------------------------------------------------
 
-  it('chat 模式先 set_session_mode 到 ask，再走 builtin session/prompt', async () => {
+  it('chat 模式先 set_config_option 到 ask，再走 builtin session/prompt', async () => {
     const assistant = createAssistantHarness();
 
     assistant.activeMode.value = 'chat';
@@ -291,8 +291,8 @@ describe('useAiAssistant · ACP-native 单一发送管线', () => {
     expect(aiServiceMock.ensureAcpSession).toHaveBeenCalledWith(
       expect.objectContaining({ backend: 'builtin', workspaceRootPath: WORKSPACE_ROOT }),
     );
-    expect(aiServiceMock.setSessionMode).toHaveBeenCalledWith(
-      expect.objectContaining({ modeId: 'ask' }),
+    expect(aiServiceMock.setSessionConfigOption).toHaveBeenCalledWith(
+      expect.objectContaining({ configId: 'mode', valueId: 'ask' }),
     );
     expect(aiServiceMock.sidecarExternalChat).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -303,38 +303,38 @@ describe('useAiAssistant · ACP-native 单一发送管线', () => {
     );
   });
 
-  it('agent 模式 set_session_mode 到 agent', async () => {
+  it('agent 模式 set_config_option 到 agent', async () => {
     const assistant = createAssistantHarness();
 
     assistant.activeMode.value = 'agent';
     assistant.draft.value = '执行一次最小修改';
     await assistant.sendMessage();
 
-    expect(aiServiceMock.setSessionMode).toHaveBeenCalledWith(
-      expect.objectContaining({ modeId: 'agent' }),
+    expect(aiServiceMock.setSessionConfigOption).toHaveBeenCalledWith(
+      expect.objectContaining({ configId: 'mode', valueId: 'agent' }),
     );
     expect(aiServiceMock.sidecarExternalChat).toHaveBeenCalledWith(
       expect.objectContaining({ backend: 'builtin' }),
     );
   });
 
-  it('plan 模式 set_session_mode 到 plan', async () => {
+  it('plan 模式 set_config_option 到 plan', async () => {
     const assistant = createAssistantHarness();
 
     assistant.activeMode.value = 'plan';
     assistant.draft.value = '先做个计划';
     await assistant.sendMessage();
 
-    expect(aiServiceMock.setSessionMode).toHaveBeenCalledWith(
-      expect.objectContaining({ modeId: 'plan' }),
+    expect(aiServiceMock.setSessionConfigOption).toHaveBeenCalledWith(
+      expect.objectContaining({ configId: 'mode', valueId: 'plan' }),
     );
   });
 
   // -------------------------------------------------------------------------
-  // 外部后端自管会话模式：不下发 sessionMode
+  // 外部后端自管会话模式：不下发模式取值
   // -------------------------------------------------------------------------
 
-  it('外部 Kimi 后端不下发 sessionMode，直接 session/prompt', async () => {
+  it('外部 Kimi 后端不下发模式取值，直接 session/prompt', async () => {
     const assistant = createAssistantHarness();
 
     assistant.activeMode.value = 'chat';
@@ -342,7 +342,7 @@ describe('useAiAssistant · ACP-native 单一发送管线', () => {
     await assistant.sendMessage({ agentBackend: 'kimi' });
 
     expect(aiServiceMock.ensureAcpSession).not.toHaveBeenCalled();
-    expect(aiServiceMock.setSessionMode).not.toHaveBeenCalled();
+    expect(aiServiceMock.setSessionConfigOption).not.toHaveBeenCalled();
     expect(aiServiceMock.sidecarExternalChat).toHaveBeenCalledWith(
       expect.objectContaining({ backend: 'kimi', text: '用 Kimi 跑一轮' }),
     );

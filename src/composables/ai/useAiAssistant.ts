@@ -96,11 +96,14 @@ type TAiQuickActionId = 'explain' | 'fix' | 'review';
 
 type TAiFileRollbackStatus = 'ready' | 'reverting' | 'reverted';
 
-// builtin 是标准 ACP 后端：前端三模式（chat/agent/plan）→ Agent 公示的 ACP 会话模式 id
-// （ask/plan/agent，见 builtin-agent AGENT_MODES / RUNTIME_METHOD_BY_MODE）。经官方
-// set_session_mode 一次性切换会话模式，绝不随 session/prompt 负载携带（IAgentExternalChatRequest
-// 无 mode 字段）。
-const BUILTIN_ACP_MODE_BY_ASSISTANT_MODE: Record<TAiAssistantMode, string> = {
+// builtin 是标准 ACP 后端：前端三模式（chat/agent/plan）→ Agent 经官方 session config option
+// 「mode」公示的会话模式取值（ask/plan/agent，见 builtin-agent AGENT_MODES /
+// RUNTIME_METHOD_BY_MODE 与 acp/mode-config-options.ts）。经官方 set_config_option
+// （configId=mode）一次性切换会话模式，绝不随 session/prompt 负载携带（IAgentExternalChatRequest
+// 无 mode 字段）。已淘汰的 session/set_mode 通道不再使用。
+const MODE_CONFIG_OPTION_ID = 'mode';
+
+const BUILTIN_MODE_CONFIG_VALUE_BY_ASSISTANT_MODE: Record<TAiAssistantMode, string> = {
   chat: 'ask',
   agent: 'agent',
   plan: 'plan',
@@ -907,8 +910,8 @@ export const useAiAssistant = (options: IUseAiAssistantOptions) => {
 
   // 唯一标准发送链路（ADR-20260617）：所有 ACP 后端（builtin / Kimi / Codex）一律经
   // builtin_agent_external_chat 驱动一轮标准 session/prompt。builtin 的 chat/plan/agent 三模式经
-  // 官方 set_session_mode 在发起回合前一次性切换（见下方 sessionMode 分支，映射 ask/plan/agent），
-  // 不再走自研边车的 mode 分流；Kimi / Codex 自管会话模式，不下发 sessionMode。过程增量经
+  // 官方 set_config_option（configId=mode）在发起回合前一次性切换（见下方 modeConfigValue 分支，
+  // 映射 ask/plan/agent），不再走自研边车的 mode 分流；Kimi / Codex 自管会话模式，不下发模式取值。过程增量经
   // session/update 帧走既有 sidecar 流（subscribeSidecarSessionStream +
   // applySidecarLiveEventsToAgentMessage）；工具审批 / 反向提问经 session/request_permission 由
   // 面板级 useAcpApproval 闭环呈现，均不在本链路内联处理。
@@ -919,7 +922,7 @@ export const useAiAssistant = (options: IUseAiAssistantOptions) => {
     backend: TAgentBackendKind,
     messageContent: string,
     threadId: string | null,
-    sessionMode?: string,
+    modeConfigValue?: string,
   ): Promise<void> => {
     errorMessage.value = '';
     isSending.value = true;
@@ -981,17 +984,21 @@ export const useAiAssistant = (options: IUseAiAssistantOptions) => {
         liveEventBuffer.push(event);
       });
 
-      if (backend === 'builtin' && sessionMode !== undefined) {
+      if (backend === 'builtin' && modeConfigValue !== undefined) {
         // builtin 也是标准 ACP 后端：先确保会话建立（与本回合 prompt 同一 thread 键，故被 prompt
-        // 复用），再经官方 set_session_mode 把会话一次性切到目标模式；随后标准 session/prompt 即按
-        // 会话模式分流到 chat/plan/execute（见 builtin-agent CalamexAcpAgent.prompt）。
+        // 复用），再经官方 set_config_option（configId=mode）把会话一次性切到目标模式取值；随后标准
+        // session/prompt 即按会话模式分流到 chat/plan/execute（见 builtin-agent CalamexAcpAgent.prompt）。
         const sessionThreadId = targetThreadId ?? '';
         await aiService.ensureAcpSession({
           threadId: sessionThreadId,
           backend,
           workspaceRootPath: options.workspaceRootPath.value,
         });
-        await aiService.setSessionMode({ threadId: sessionThreadId, modeId: sessionMode });
+        await aiService.setSessionConfigOption({
+          threadId: sessionThreadId,
+          configId: MODE_CONFIG_OPTION_ID,
+          valueId: modeConfigValue,
+        });
       }
 
       await aiService.sidecarExternalChat({
@@ -1151,15 +1158,17 @@ export const useAiAssistant = (options: IUseAiAssistantOptions) => {
     clearAttachedFiles({ revokePreviews: false });
 
     // 唯一标准管线（ADR-20260617）：所有后端（builtin / Kimi / Codex）一律经标准 ACP
-    // session/prompt 发送。builtin 的 chat/agent/plan 三模式经官方 set_session_mode 一次性切换
-    // （见 executeExternalAgentRequest 的 sessionMode 分支，映射 ask/plan/agent）；Kimi / Codex
-    // 自管会话模式，故不下发 sessionMode。legacy 分流（executeSidecarAgentRequest /
+    // session/prompt 发送。builtin 的 chat/agent/plan 三模式经官方 set_config_option（configId=mode）
+    // 一次性切换（见 executeExternalAgentRequest 的 modeConfigValue 分支，映射 ask/plan/agent）；
+    // Kimi / Codex 自管会话模式，故不下发模式取值。legacy 分流（executeSidecarAgentRequest /
     // agentPlan.createPlan / executeAiRequest）已停用，随 D1 删除（先建后删，过渡期保留以防回退）。
     const backend: TAgentBackendKind = sendOptions?.agentBackend ?? 'builtin';
-    const sessionMode =
-      backend === 'builtin' ? BUILTIN_ACP_MODE_BY_ASSISTANT_MODE[activeMode.value] : undefined;
+    const modeConfigValue =
+      backend === 'builtin'
+        ? BUILTIN_MODE_CONFIG_VALUE_BY_ASSISTANT_MODE[activeMode.value]
+        : undefined;
 
-    await executeExternalAgentRequest(backend, messageContent, titleThreadId, sessionMode);
+    await executeExternalAgentRequest(backend, messageContent, titleThreadId, modeConfigValue);
 
     if (!errorMessage.value) {
       void maybeGenerateConversationTitle(titleThreadId);

@@ -9,7 +9,6 @@ export const commands = {
 	applyWorkspaceReplacement: (payload: WorkspaceReplacementApplyRequest) => __TAURI_INVOKE<WorkspaceReplacementApplyPayload>("apply_workspace_replacement", { payload }),
 	previewWorkspaceReplacement: (payload: WorkspaceReplacementRequest) => __TAURI_INVOKE<WorkspaceReplacementPreviewPayload>("preview_workspace_replacement", { payload }),
 	searchWorkspace: (payload: WorkspaceSearchRequest) => __TAURI_INVOKE<WorkspaceSearchPayload>("search_workspace", { payload }),
-	analyzeScript: (payload: AnalyzeScriptRequest) => __TAURI_INVOKE<AnalyzeScriptPayload>("analyze_script", { payload }),
 	formatScript: (payload: FormatScriptRequest) => __TAURI_INVOKE<FormatScriptPayload>("format_script", { payload }),
 	formatDocument: (payload: FormatDocumentRequest) => __TAURI_INVOKE<FormatDocumentPayload>("format_document", { payload }),
 	listSkills: () => __TAURI_INVOKE<SkillListPayload>("list_skills"),
@@ -1057,19 +1056,6 @@ export type AiWebSearchResultPayload = {
 	fetchedAt: string,
 };
 
-export type AnalyzeScriptPayload = {
-	available: boolean,
-	message: string | null,
-	dialect: string,
-	diagnostics: ScriptDiagnosticPayload[],
-};
-
-export type AnalyzeScriptRequest = {
-	path: string | null,
-	name: string | null,
-	content: string,
-};
-
 export type CancelTerminalRunRequest = {
 	runId: string,
 };
@@ -1595,18 +1581,6 @@ export type SaveSkillRequest = {
 	description: string,
 	content: string,
 };
-
-export type ScriptDiagnosticPayload = {
-	line: number,
-	endLine: number,
-	column: number,
-	endColumn: number,
-	level: ScriptDiagnosticSeverity,
-	code: string,
-	message: string,
-};
-
-export type ScriptDiagnosticSeverity = "error" | "warning" | "info" | "style";
 
 export type ScriptFilePayload = {
 	path: string,
