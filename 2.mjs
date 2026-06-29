@@ -1,9 +1,9 @@
-// fix-ai-review-batch-9.mjs  (I1 完整版：删死分支 + 折叠 resumeStream/approve 别名链)
+// fix-ai-review-batch-10.mjs  (J1: reproject CAS 落败后有界重投影重试)
 import { readFileSync, writeFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 
 const ROOT = process.cwd();
-const CLIENT = 'builtin-agent/src/engines/approval/client.ts';
+const STORE = 'builtin-agent/src/engines/plan/plan-workflow-store/store.ts';
 
 const eolOf = (s) => (s.includes('\r\n') ? '\r\n' : '\n');
 function load(rel) {
@@ -18,11 +18,6 @@ function load(rel) {
 function save(f) {
   writeFileSync(f.abs, f.lines.join(f.eol) + (f.hadTrailing ? f.eol : ''), 'utf8');
 }
-function findUnique(lines, target) {
-  let idx = -1, count = 0;
-  for (let i = 0; i < lines.length; i++) if (lines[i] === target) { count++; if (idx === -1) idx = i; }
-  return { idx, count };
-}
 function findBlock(lines, block, from = 0) {
   for (let i = from; i + block.length <= lines.length; i++) {
     let ok = true;
@@ -31,103 +26,79 @@ function findBlock(lines, block, from = 0) {
   }
   return -1;
 }
-function removeExactBlock(f, label, oldLines, signatureLine) {
+function replaceBlock(f, label, oldLines, newLines) {
   const at = findBlock(f.lines, oldLines);
-  if (at !== -1) {
-    if (findBlock(f.lines, oldLines, at + 1) !== -1) throw new Error(`待删除块不唯一,已中止: ${label}`);
-    f.lines.splice(at, oldLines.length);
-    console.log(`✓ 删除块: ${label}`);
-    return;
+  if (at === -1) {
+    if (findBlock(f.lines, newLines) !== -1) { console.log(`• 跳过(已替换): ${label}`); return; }
+    throw new Error(`未找到待替换块,已中止: ${label}`);
   }
-  if (signatureLine && findUnique(f.lines, signatureLine).count === 0) {
-    console.log(`• 跳过(已删除): ${label}`);
-    return;
-  }
-  throw new Error(`未找到待删除块(形状可能已变),已中止: ${label}\n签名行: ${JSON.stringify(signatureLine)}`);
+  if (findBlock(f.lines, oldLines, at + 1) !== -1) throw new Error(`待替换块不唯一,已中止: ${label}`);
+  f.lines.splice(at, oldLines.length, ...newLines);
+  console.log(`✓ 替换块: ${label}`);
 }
-function replaceLine(f, label, oldLine, newLine) {
-  const { idx, count } = findUnique(f.lines, oldLine);
-  if (idx !== -1) {
-    if (count > 1) throw new Error(`待替换行不唯一,已中止: ${label}`);
-    f.lines[idx] = newLine;
-    console.log(`✓ 替换行: ${label}`);
-    return;
-  }
-  if (findUnique(f.lines, newLine).count >= 1) {
-    console.log(`• 跳过(已替换): ${label}`);
-    return;
-  }
-  throw new Error(`未找到待替换行,已中止: ${label}\n期望: ${JSON.stringify(oldLine)}`);
+function insertBefore(f, label, anchor, newLines) {
+  if (findBlock(f.lines, newLines) !== -1) { console.log(`• 跳过(已插入): ${label}`); return; }
+  let idx = -1, count = 0;
+  for (let i = 0; i < f.lines.length; i++) if (f.lines[i] === anchor) { count++; if (idx === -1) idx = i; }
+  if (idx === -1) throw new Error(`未找到锚点,已中止: ${label}`);
+  if (count > 1) throw new Error(`锚点不唯一,已中止: ${label}`);
+  f.lines.splice(idx, 0, ...newLines);
+  console.log(`✓ 插入: ${label}`);
 }
 
-const f = load(CLIENT);
+const f = load(STORE);
 
-// —— 1) 删除 kind==='approval' 不可达防御块（被 canContinue 完全覆盖）——
-removeExactBlock(
+// 1) 新增有界重试常量（置于 class 之前）
+insertBefore(
   f,
-  "I1-A: kind==='approval' 死分支",
+  'J1-const: REPROJECT_MAX_ATTEMPTS',
+  'export class LibsqlAgentPlanWorkflowStore implements IAgentPlanWorkflowStore {',
   [
-    "        if (",
-    "            pending.kind === 'approval' &&",
-    "            typeof resumeContinueStream !== 'function' &&",
-    "            typeof approvalContinueStream !== 'function'",
-    "        ) {",
-    "            await pending.bundle.disconnectAll();",
-    "            await destroyMastraWorkspace(pending.workspace);",
-    "            await destroyMastraBrowser(pending.browser);",
-    "            return this.createFallbackApprovalResponse(input, sessionId, options);",
-    "        }",
+    '// reproject 的 CAS 乐观锁在并发落败时的有界重投影重试上限，防止陈旧投影覆盖较新投影。',
+    'const REPROJECT_MAX_ATTEMPTS = 5;',
+    '',
   ],
-  "            pending.kind === 'approval' &&",
 );
 
-// —— 2) 删除 kind==='suspended' 不可达防御块 ——
-removeExactBlock(
+// 2) reproject 签名加 attempt 计数
+replaceBlock(
   f,
-  "I1-B: kind==='suspended' 死分支",
+  'J1-sig: reproject 增加 attempt 参数',
   [
-    "        if (pending.kind === 'suspended' && typeof continueSuspendedStream !== 'function') {",
-    "            await pending.bundle.disconnectAll();",
-    "            await destroyMastraWorkspace(pending.workspace);",
-    "            await destroyMastraBrowser(pending.browser);",
-    "            return this.createFallbackApprovalResponse(input, sessionId, options);",
-    "        }",
+    '    private async reproject(input: IPlanWorkflowVersionInput): Promise<TAgentPlanWorkflowRecord> {',
   ],
-  "        if (pending.kind === 'suspended' && typeof continueSuspendedStream !== 'function') {",
+  [
+    '    private async reproject(',
+    '        input: IPlanWorkflowVersionInput,',
+    '        attempt = 0,',
+    '    ): Promise<TAgentPlanWorkflowRecord> {',
+  ],
 );
 
-// —— 3) 删除 4 行冗余别名（删完死分支后它们已相邻）——
-removeExactBlock(
+// 3) CAS 落败分支：重读事件流→重投影→重试（有界）
+replaceBlock(
   f,
-  "I1-C: resumeStream/approve 冗余别名链",
+  'J1-retry: CAS 落败重投影重试',
   [
-    "        const continueSuspendedStream = resumeContinueStream;",
-    "        const resumeSuspendedTool = continueSuspendedStream;",
-    "        const resumeApprovalRun = resumeContinueStream;",
-    "        const resumeApprovalTool = approvalContinueStream;",
+    '        if (updateResult.rowsAffected !== 1) {',
+    '            // 另一个并发流程刚好抢先写了一版；重新读最新结果即可。事件流是单调追加，',
+    '            // 任何并发的 reproject 最终都会收敛到同一状态。',
+    '            return this.getWorkflow(input);',
+    '        }',
+    '        return this.getWorkflow(input);',
   ],
-  "        const continueSuspendedStream = resumeContinueStream;",
+  [
+    '        if (updateResult.rowsAffected !== 1) {',
+    '            // CAS 落败：有并发 reproject 抢先写入。若直接返回，较旧（事件更少）的投影',
+    '            // 可能已覆盖较新的投影，导致持久化状态落后于事件流；故重读事件流后重投影重试。',
+    '            if (attempt + 1 < REPROJECT_MAX_ATTEMPTS) {',
+    '                return this.reproject(input, attempt + 1);',
+    '            }',
+    '            return this.getWorkflow(input);',
+    '        }',
+    '        return this.getWorkflow(input);',
+  ],
 );
-
-// —— 4) 调用点改用语义名（每条原文本唯一，逐条替换）——
-replaceLine(f, "I1-D1: suspended 守卫改名",
-  "                if (typeof resumeSuspendedTool !== 'function') {",
-  "                if (typeof resumeContinueStream !== 'function') {");
-replaceLine(f, "I1-D2: suspended 调用改名",
-  "                stream = await resumeSuspendedTool({",
-  "                stream = await resumeContinueStream({");
-replaceLine(f, "I1-D3: approval-resume 分支改名",
-  "            } else if (typeof resumeApprovalRun === 'function') {",
-  "            } else if (typeof resumeContinueStream === 'function') {");
-replaceLine(f, "I1-D4: approval-resume 调用改名",
-  "                stream = await resumeApprovalRun({",
-  "                stream = await resumeContinueStream({");
-replaceLine(f, "I1-D5: approve/decline 守卫改名",
-  "                if (typeof resumeApprovalTool !== 'function') {",
-  "                if (typeof approvalContinueStream !== 'function') {");
-replaceLine(f, "I1-D6: approve/decline 调用改名",
-  "                stream = await resumeApprovalTool(resumeOptions);",
-  "                stream = await approvalContinueStream(resumeOptions);");
 
 save(f);
-console.log('\nbatch-9 (I1 完整) 完成。请运行 typecheck/test/lint 复核。');
+console.log('\nbatch-10 (J1) 完成。请运行 typecheck/test/lint 复核。');

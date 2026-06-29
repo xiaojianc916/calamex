@@ -52,6 +52,9 @@ import { projectWorkflow } from './projection.js';
 // Store implementation
 // -----------------------------------------------------------------------------
 
+// reproject 的 CAS 乐观锁在并发落败时的有界重投影重试上限，防止陈旧投影覆盖较新投影。
+const REPROJECT_MAX_ATTEMPTS = 5;
+
 export class LibsqlAgentPlanWorkflowStore implements IAgentPlanWorkflowStore {
     private readonly client: Client;
     private readonly ownsClient: boolean;
@@ -584,7 +587,10 @@ export class LibsqlAgentPlanWorkflowStore implements IAgentPlanWorkflowStore {
      * Recompute projection from events and persist it. Uses a `revision` CAS column
      * so concurrent reprojections don't silently overwrite each other.
      */
-    private async reproject(input: IPlanWorkflowVersionInput): Promise<TAgentPlanWorkflowRecord> {
+    private async reproject(
+        input: IPlanWorkflowVersionInput,
+        attempt = 0,
+    ): Promise<TAgentPlanWorkflowRecord> {
         const workflow = await this.getWorkflow(input);
         const events = await this.listEvents(input);
         const projection = projectWorkflow(workflow.state, events);
@@ -639,8 +645,11 @@ export class LibsqlAgentPlanWorkflowStore implements IAgentPlanWorkflowStore {
         });
 
         if (updateResult.rowsAffected !== 1) {
-            // 另一个并发流程刚好抢先写了一版；重新读最新结果即可。事件流是单调追加，
-            // 任何并发的 reproject 最终都会收敛到同一状态。
+            // CAS 落败：有并发 reproject 抢先写入。若直接返回，较旧（事件更少）的投影
+            // 可能已覆盖较新的投影，导致持久化状态落后于事件流；故重读事件流后重投影重试。
+            if (attempt + 1 < REPROJECT_MAX_ATTEMPTS) {
+                return this.reproject(input, attempt + 1);
+            }
             return this.getWorkflow(input);
         }
         return this.getWorkflow(input);
