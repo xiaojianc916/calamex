@@ -1,169 +1,214 @@
-// cleanup-rust-legacy-sidecar-contracts.mjs  （修正版）
-// 删除 contracts/builtin_agent.rs 中前 ACP 时代的 sidecar 三件套契约残渣，
-// 并改写 AgentExternalChatRequest 文档里对已删类型的悬空引用。
-// 幂等：已清理后再跑会因锚点未命中而抛错（不写入半成品）。在仓库根目录运行。
-import { readFileSync, writeFileSync, existsSync } from 'node:fs'
-import { join } from 'node:path'
+// fix-ai-review-batch-12.mjs
+// 批次 12（J5）：把 errorCode / retryable 接到既有 provider 错误分类器
+//   - shared/errors.ts：新增 isRetryableProviderError（2 空格缩进）
+//   - modes/execution.ts：两处失败点接 classifyProviderErrorCode + isRetryableProviderError（4 空格缩进）
+// 幂等：可重复运行；锚点不唯一/不匹配则中止，绝不写坏文件。
+import { readFileSync, writeFileSync } from 'node:fs';
+import { resolve } from 'node:path';
 
-const ROOT = process.cwd()
-const REL = 'src-tauri/src/commands/contracts/builtin_agent.rs'
-const abs = join(ROOT, REL)
-if (!existsSync(abs)) throw new Error('找不到目标文件：' + REL + '（请在仓库根目录运行）')
+const ERRORS_REL = 'builtin-agent/src/engines/shared/errors.ts';
+const EXEC_REL = 'builtin-agent/src/engines/modes/execution.ts';
 
-const detectEol = (t) => (t.includes('\r\n') ? '\r\n' : '\n')
-const toLf = (s) => s.replace(/\r\n/g, '\n')
-const fromLf = (s, eol) => (eol === '\r\n' ? s.replace(/\n/g, '\r\n') : s)
-
-const rawText = readFileSync(abs, 'utf8')
-const eol = detectEol(rawText)
-let text = toLf(rawText)
-const before = text.length
-
-// 删除 [startNeedle, endNeedle) 区间，保留 endNeedle（即“从某条目头删到下一保留条目头”）。
-function cutRange(startNeedle, endNeedle) {
-	const s = text.indexOf(startNeedle)
-	if (s < 0) throw new Error('未命中起始锚点：' + startNeedle.slice(0, 70))
-	const e = text.indexOf(endNeedle, s)
-	if (e < 0) throw new Error('未命中结束锚点：' + endNeedle.slice(0, 70))
-	text = text.slice(0, s) + text.slice(e)
+// ---------- 基础设施 ----------
+function eolOf(text) {
+    const crlf = (text.match(/\r\n/g) || []).length;
+    const lf = (text.match(/(?<!\r)\n/g) || []).length;
+    return crlf > lf ? '\r\n' : '\n';
+}
+function load(file) {
+    const raw = readFileSync(file, 'utf8');
+    const eol = eolOf(raw);
+    const hadFinalNewline = /\n$/.test(raw);
+    const lines = raw.replace(/\r\n/g, '\n').replace(/\n$/, '').split('\n');
+    return { lines, eol, hadFinalNewline };
+}
+function save(file, doc) {
+    let out = doc.lines.join(doc.eol);
+    if (doc.hadFinalNewline) out += doc.eol;
+    writeFileSync(file, out, 'utf8');
+}
+function countLine(lines, target) {
+    let n = 0;
+    for (const l of lines) if (l === target) n++;
+    return n;
+}
+function indexOfUnique(lines, target, label) {
+    const n = countLine(lines, target);
+    if (n > 1) throw new Error(`锚点不唯一(${n}处)，已中止: ${label} -> ${JSON.stringify(target)}`);
+    return lines.indexOf(target);
+}
+// 在 lines 中查找连续块 seq，返回 { index, count }
+function findSeq(lines, seq) {
+    let index = -1;
+    let count = 0;
+    for (let i = 0; i + seq.length <= lines.length; i++) {
+        let ok = true;
+        for (let j = 0; j < seq.length; j++) {
+            if (lines[i + j] !== seq[j]) { ok = false; break; }
+        }
+        if (ok) { if (index < 0) index = i; count++; }
+    }
+    return { index, count };
 }
 
-// 唯一性替换。
-function replaceOnce(oldStr, newStr) {
-	const i = text.indexOf(oldStr)
-	if (i < 0) throw new Error('未命中替换锚点：' + oldStr.slice(0, 70))
-	if (text.indexOf(oldStr, i + oldStr.length) >= 0)
-		throw new Error('替换锚点不唯一：' + oldStr.slice(0, 70))
-	text = text.slice(0, i) + newStr + text.slice(i + oldStr.length)
+function replaceLine(doc, label, oldLine, newLine) {
+    if (countLine(doc.lines, newLine) >= 1) { console.log(`= 跳过(已替换): ${label}`); return; }
+    const idx = indexOfUnique(doc.lines, oldLine, label);
+    if (idx < 0) throw new Error(`未找到待替换行，已中止: ${label} -> ${JSON.stringify(oldLine)}`);
+    doc.lines[idx] = newLine;
+    console.log(`✓ 替换行: ${label}`);
 }
 
-// 按花括号配对删除一个条目（可选前导锚点，如 '    #[test]\n'），并吞掉其后的空行。
-// 注意：仅用于体内字符串不含裸 { } 的条目（本处被删测试均满足）。
-function removeBraceItem(headNeedle, leadNeedle) {
-	const h = text.indexOf(headNeedle)
-	if (h < 0) throw new Error('未命中条目头：' + headNeedle)
-	let start = h
-	if (leadNeedle) {
-		const l = text.lastIndexOf(leadNeedle, h)
-		if (l < 0) throw new Error('未命中前导锚点：' + leadNeedle + ' @ ' + headNeedle)
-		start = l
-	}
-	const open = text.indexOf('{', h)
-	if (open < 0) throw new Error('未找到主体起始花括号：' + headNeedle)
-	let depth = 0
-	let i = open
-	for (; i < text.length; i++) {
-		const c = text[i]
-		if (c === '{') depth++
-		else if (c === '}') {
-			depth--
-			if (depth === 0) {
-				i++
-				break
-			}
-		}
-	}
-	if (depth !== 0) throw new Error('花括号不平衡：' + headNeedle)
-	let end = i
-	while (text[end] === '\n') end++
-	text = text.slice(0, start) + text.slice(end)
+// 用 newLines 替换唯一出现的 oldLines 块；若 newLines 已存在则跳过（幂等）
+function replaceBlock(doc, label, oldLines, newLines) {
+    const newFound = findSeq(doc.lines, newLines);
+    if (newFound.count >= 1 && findSeq(doc.lines, oldLines).count === 0) {
+        console.log(`= 跳过(已替换): ${label}`); return;
+    }
+    const { index, count } = findSeq(doc.lines, oldLines);
+    if (count === 0) throw new Error(`未找到待替换块，已中止: ${label}`);
+    if (count > 1) throw new Error(`待替换块不唯一(${count}处)，已中止: ${label}`);
+    doc.lines.splice(index, oldLines.length, ...newLines);
+    console.log(`✓ 替换块: ${label}（${oldLines.length} → ${newLines.length} 行）`);
 }
 
-// 1) 去掉因结构删除而未用的 import。
-replaceOnce('use super::ai_chat::AiContextReferencePayload;\n', '')
-
-// 2) AgentSidecarMessagePayload（删到 ModelConfigPayload 头）。
-cutRange(
-	`#[derive(Debug, Clone, Serialize, Deserialize, Type)]
-#[serde(rename_all = "camelCase")]
-pub struct AgentSidecarMessagePayload {`,
-	`#[derive(Debug, Clone, Serialize, Deserialize, Type)]
-#[serde(rename_all = "camelCase")]
-pub struct AgentSidecarModelConfigPayload {`,
-)
-
-// 3) AgentSidecarWarmupRequest 兼容空壳（含 #[expect(dead_code)]，删到 is_blank 辅助函数头）。
-cutRange(
-	`#[expect(
-    dead_code,`,
-	`fn is_blank_optional_string(value: &Option<String>) -> bool {`,
-)
-
-// 4) Chat / ApprovalResolve / AskUserAnswer / AskUserResume 一整段（含文档注释，删到 RollbackStepPath 头）。
-cutRange(
-	`#[derive(Debug, Clone, Serialize, Deserialize, Type)]
-#[serde(rename_all = "camelCase")]
-pub struct AgentSidecarChatRequest {`,
-	`#[derive(Debug, Clone, Serialize, Deserialize, Type)]
-#[serde(untagged)]
-pub enum AgentSidecarRollbackStepPath {`,
-)
-
-// 4b) 改写 AgentExternalChatRequest 文档里对“已删类型”的悬空引用（散文层，非代码）。
-replaceOnce(
-	'/// 与自家 `AgentSidecarChatRequest` 不同：外部 agent 只实现标准 `prompt`、不认识',
-	'/// 与自家边车的带外 `agent_chat` 扩展回合不同：外部 agent 只实现标准 `prompt`、不认识',
-)
-
-// 5) 收敛测试模块的 use 列表（只留仍被保留测试引用的类型）。
-replaceOnce(
-	`    use super::{
-        AgentBackendKind, AgentExternalChatRequest, AgentSidecarAskUserAnswerPayload,
-        AgentSidecarAskUserResumeRequest, AgentSidecarChatRequest,
-        AgentSidecarCheckpointRestoreRequest, AgentSidecarMessagePayload,
-        AgentSidecarRollbackStepPath,
-    };`,
-	`    use super::{
-        AgentBackendKind, AgentExternalChatRequest, AgentSidecarCheckpointRestoreRequest,
-        AgentSidecarRollbackStepPath,
-    };`,
-)
-
-// 6) 删除仅服务于被删测试的辅助函数与 5 个测试。
-removeBraceItem('    fn sidecar_message(')
-removeBraceItem('    fn chat_request_omits_blank_optional_fields(', '    #[test]\n')
-removeBraceItem('    fn chat_request_keeps_non_empty_thread_id(', '    #[test]\n')
-removeBraceItem(
-	'    fn ask_user_resume_request_omits_blank_optionals_and_serializes_answers(',
-	'    #[test]\n',
-)
-removeBraceItem('    fn ask_user_resume_request_omits_answers_when_cancelled(', '    #[test]\n')
-removeBraceItem(
-	'    fn ask_user_answer_payload_emits_empty_option_ids_array_and_omits_blank_text(',
-	'    #[test]\n',
-)
-
-// 护栏（按“定义形态”校验，避免散文提及误伤）：确认目标定义已彻底清除。
-for (const gone of [
-	'pub struct AgentSidecarChatRequest',
-	'pub struct AgentSidecarApprovalResolveRequest',
-	'pub struct AgentSidecarAskUserResumeRequest',
-	'pub struct AgentSidecarAskUserAnswerPayload',
-	'pub struct AgentSidecarMessagePayload',
-	'pub struct AgentSidecarWarmupRequest',
-	'use super::ai_chat::AiContextReferencePayload',
-	'    fn sidecar_message(',
-]) {
-	if (text.includes(gone)) throw new Error('清理后仍残留定义：' + gone)
-}
-// 护栏：确认散文里对已删类型的悬空引用也已消除。
-if (text.includes('`AgentSidecarChatRequest`'))
-	throw new Error('文档注释仍引用已删除类型 AgentSidecarChatRequest')
-// 护栏：确认应保留的关键条目仍在。
-for (const keep of [
-	'pub struct AgentSidecarModelConfigPayload',
-	'fn is_blank_optional_string',
-	'pub enum AgentSidecarRollbackStepPath',
-	'pub struct AgentSidecarCheckpointRestoreRequest',
-	'pub enum AgentBackendKind',
-	'pub struct AgentExternalChatRequest',
-	'fn serialize_object',
-	'fn external_chat_request_omits_blank_session_and_serializes_present_session',
-]) {
-	if (!text.includes(keep)) throw new Error('误删了应保留条目：' + keep)
+// 在文件末尾追加块（幂等：signatureLine 已存在则跳过）
+function appendBlock(doc, label, blockLines, signatureLine) {
+    if (countLine(doc.lines, signatureLine) >= 1) { console.log(`= 跳过(已追加): ${label}`); return; }
+    doc.lines.push(...blockLines);
+    console.log(`✓ 追加块: ${label}（${blockLines.length} 行）`);
 }
 
-writeFileSync(abs, fromLf(text, eol), 'utf8')
-console.log('✓ 已清理 ' + REL)
-console.log('  字节数(LF计)：' + before + ' → ' + text.length + '（净减 ' + (before - text.length) + '）')
-console.log('  下一步：cargo clippy --features acp_client --manifest-path src-tauri/Cargo.toml 应无未用 import/类型告警')
+// ---------- 1) shared/errors.ts（2 空格缩进）----------
+{
+    const file = resolve(process.cwd(), ERRORS_REL);
+    const doc = load(file);
+    console.log(`处理: ${ERRORS_REL}（EOL=${doc.eol === '\r\n' ? 'CRLF' : 'LF'}）`);
+
+    appendBlock(
+        doc,
+        'J5-a 新增 isRetryableProviderError',
+        [
+            '',
+            '/**',
+            ' * 由 provider 错误分类码推导步骤失败是否值得重试。',
+            ' * - 鉴权失败 / 未配置属确定性错误，重试无意义 → false。',
+            ' * - 限流与未知错误按瞬时处理 → true（与既有“一律可重试”兼容，宁可多试一次）。',
+            ' */',
+            'export const isRetryableProviderError = (errorCode: string | undefined): boolean =>',
+            "  errorCode !== 'AI_PROVIDER_AUTH_FAILED' && errorCode !== 'AI_PROVIDER_NOT_CONFIGURED';",
+        ],
+        'export const isRetryableProviderError = (errorCode: string | undefined): boolean =>',
+    );
+
+    save(file, doc);
+}
+
+// ---------- 2) modes/execution.ts（4 空格缩进）----------
+{
+    const file = resolve(process.cwd(), EXEC_REL);
+    const doc = load(file);
+    console.log(`处理: ${EXEC_REL}（EOL=${doc.eol === '\r\n' ? 'CRLF' : 'LF'}）`);
+
+    // J5-b 扩展 errors.js 导入
+    replaceLine(
+        doc,
+        'J5-b 导入分类器',
+        "import { normalizeMastraError } from '../shared/errors.js';",
+        "import { classifyProviderErrorCode, isRetryableProviderError, normalizeMastraError } from '../shared/errors.js';",
+    );
+
+    // J5-c stream 错误分支：接 errorCode + retryable
+    replaceBlock(
+        doc,
+        'J5-c stream 失败点接线',
+        [
+            '                await this.planWorkflowStore.failStep({',
+            '                    planId,',
+            '                    version: Number(planVersion),',
+            '                    stepId: planStepId,',
+            '                    error: streamSummary.streamErrorMessage,',
+            '                    retryable: true,',
+            '                });',
+            '                return createErrorResponse(',
+            '                    sessionId,',
+            '                    `Mastra Agent 执行失败：${streamSummary.streamErrorMessage}`,',
+            '                    events,',
+            '                    options,',
+            '                );',
+        ],
+        [
+            '                const streamErrorCode = classifyProviderErrorCode(streamSummary.streamErrorMessage);',
+            '                await this.planWorkflowStore.failStep({',
+            '                    planId,',
+            '                    version: Number(planVersion),',
+            '                    stepId: planStepId,',
+            '                    error: streamSummary.streamErrorMessage,',
+            '                    retryable: isRetryableProviderError(streamErrorCode),',
+            '                });',
+            '                return createErrorResponse(',
+            '                    sessionId,',
+            '                    `Mastra Agent 执行失败：${streamSummary.streamErrorMessage}`,',
+            '                    events,',
+            '                    options,',
+            '                    streamErrorCode,',
+            '                );',
+        ],
+    );
+
+    // J5-d catch 分支：声明 errorCode + retryable 接线
+    replaceBlock(
+        doc,
+        'J5-d catch 失败点接线',
+        [
+            '            const errorMessage = normalizeMastraError(error);',
+            '            executionSession.failTurn(executionTurn.id, { errorMessage });',
+            '            await this.planWorkflowStore.failStep({',
+            '                planId,',
+            '                version: Number(planVersion),',
+            '                stepId: planStepId,',
+            '                error: errorMessage,',
+            '                retryable: true,',
+            '            }).catch(() => undefined);',
+        ],
+        [
+            '            const errorMessage = normalizeMastraError(error);',
+            '            const errorCode = classifyProviderErrorCode(error);',
+            '            executionSession.failTurn(executionTurn.id, { errorMessage });',
+            '            await this.planWorkflowStore.failStep({',
+            '                planId,',
+            '                version: Number(planVersion),',
+            '                stepId: planStepId,',
+            '                error: errorMessage,',
+            '                retryable: isRetryableProviderError(errorCode),',
+            '            }).catch(() => undefined);',
+        ],
+    );
+
+    // J5-e catch 分支 createErrorResponse 回传 errorCode
+    replaceBlock(
+        doc,
+        'J5-e catch createErrorResponse 回传 errorCode',
+        [
+            '            return createErrorResponse(',
+            '                sessionId,',
+            '                `Mastra Agent 执行失败：${errorMessage}`,',
+            '                events,',
+            '                options,',
+            '            );',
+        ],
+        [
+            '            return createErrorResponse(',
+            '                sessionId,',
+            '                `Mastra Agent 执行失败：${errorMessage}`,',
+            '                events,',
+            '                options,',
+            '                errorCode,',
+            '            );',
+        ],
+    );
+
+    save(file, doc);
+}
+
+console.log('完成：fix-ai-review-batch-12.mjs');

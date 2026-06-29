@@ -4,7 +4,7 @@ import { createMastraMemoryReference, createMastraMemoryScope, resolveObservatio
 import { createMastraMemoryForModel, createMastraModelConfig, resolveMastraModelConfig } from '../agent/factory.js';
 import { createAcontextTokenEventDraft } from '../budget/budget.js';
 import { createExecutionRequestContext } from '../context/context.js';
-import { normalizeMastraError } from '../shared/errors.js';
+import { classifyProviderErrorCode, isRetryableProviderError, normalizeMastraError } from '../shared/errors.js';
 import { resolveAgentExecutionPolicy } from '../policy/execution-policy.js';
 import { createApprovedPlanExecutionContext, createErrorResponse } from '../responses/responses.js';
 import { createAgentExecutionSession } from '../session/agent-session.js';
@@ -233,18 +233,20 @@ export class MastraRuntimeExecution extends MastraRuntimeValidation {
 
             if (streamSummary.streamErrorMessage) {
                 executionSession.failTurn(executionTurn.id, { errorMessage: streamSummary.streamErrorMessage });
+                const streamErrorCode = classifyProviderErrorCode(streamSummary.streamErrorMessage);
                 await this.planWorkflowStore.failStep({
                     planId,
                     version: Number(planVersion),
                     stepId: planStepId,
                     error: streamSummary.streamErrorMessage,
-                    retryable: true,
+                    retryable: isRetryableProviderError(streamErrorCode),
                 });
                 return createErrorResponse(
                     sessionId,
                     `Mastra Agent 执行失败：${streamSummary.streamErrorMessage}`,
                     events,
                     options,
+                    streamErrorCode,
                 );
             }
 
@@ -288,13 +290,14 @@ export class MastraRuntimeExecution extends MastraRuntimeValidation {
             };
         } catch (error) {
             const errorMessage = normalizeMastraError(error);
+            const errorCode = classifyProviderErrorCode(error);
             executionSession.failTurn(executionTurn.id, { errorMessage });
             await this.planWorkflowStore.failStep({
                 planId,
                 version: Number(planVersion),
                 stepId: planStepId,
                 error: errorMessage,
-                retryable: true,
+                retryable: isRetryableProviderError(errorCode),
             }).catch(() => undefined);
             executionSession.push(createRequestedRunEvent({
                 type: 'rollback.checkpoint.failed',
@@ -309,6 +312,7 @@ export class MastraRuntimeExecution extends MastraRuntimeValidation {
                 `Mastra Agent 执行失败：${errorMessage}`,
                 events,
                 options,
+                errorCode,
             );
         } finally {
             if (shouldReleaseTurnResources) {

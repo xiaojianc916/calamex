@@ -3,6 +3,7 @@ import { createHash, randomUUID } from 'node:crypto';
 import type { Row } from '@libsql/client';
 
 import {
+    AGENT_PLAN_WORKFLOW_EVENT_SCHEMA_VERSION,
     agentPlanWorkflowEventRecordSchema,
     agentPlanWorkflowEventSchema,
     agentPlanWorkflowRecordSchema,
@@ -24,27 +25,14 @@ import {
     rowInteger,
     rowNullableString,
     rowString,
-    toRecord,
 } from './row-helpers.js';
 
 // -----------------------------------------------------------------------------
 // Serialization / hashing / record mapping helpers
 // -----------------------------------------------------------------------------
 
-const normalizeWorkflowStateInput = (value: unknown): unknown => {
-    const record = toRecord(value);
-    const validator = toRecord(record?.validator);
-    if (!record || !validator || 'needsReplan' in validator) {
-        return value;
-    }
-    return {
-        ...record,
-        validator: { ...validator, needsReplan: false },
-    };
-};
-
 export const parseWorkflowState = (value: string): TAgentPlanWorkflowState =>
-    agentPlanWorkflowStateSchema.parse(normalizeWorkflowStateInput(parseJsonValue(value)));
+    agentPlanWorkflowStateSchema.parse(parseJsonValue(value));
 
 export const serializeWorkflowState = (state: TAgentPlanWorkflowState): string =>
     JSON.stringify(agentPlanWorkflowStateSchema.parse(state));
@@ -94,6 +82,7 @@ export const toWorkflowRecord = (row: Row): TAgentPlanWorkflowRecord =>
 export const toWorkflowEventRecord = (row: Row): TAgentPlanWorkflowEventRecord =>
     agentPlanWorkflowEventRecordSchema.parse({
         eventId: rowString(row, 'event_id'),
+        eventSchemaVersion: AGENT_PLAN_WORKFLOW_EVENT_SCHEMA_VERSION,
         workflowRunId: rowString(row, 'workflow_run_id'),
         planId: rowString(row, 'plan_id'),
         planVersion: rowInteger(row, 'plan_version', { min: 1 }),

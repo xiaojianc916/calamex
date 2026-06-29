@@ -56,3 +56,11 @@ export const classifyProviderErrorCode = (error: unknown): string | undefined =>
 
   return undefined;
 };
+
+/**
+ * 由 provider 错误分类码推导步骤失败是否值得重试。
+ * - 鉴权失败 / 未配置属确定性错误，重试无意义 → false。
+ * - 限流与未知错误按瞬时处理 → true（与既有“一律可重试”兼容，宁可多试一次）。
+ */
+export const isRetryableProviderError = (errorCode: string | undefined): boolean =>
+  errorCode !== 'AI_PROVIDER_AUTH_FAILED' && errorCode !== 'AI_PROVIDER_NOT_CONFIGURED';
