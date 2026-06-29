@@ -8,8 +8,7 @@
 //! 不自创协议语义：
 //!   * `client`   —— 常驻 stdio 连接 + 命令句柄（new_session / prompt /
 //!     set_session_mode / restore_checkpoint / model_chat / web_search / web_fetch /
-//!     warmup / health / agent_chat /
-//!     agent_chat_resolve / agent_ask_user_resume / cancel / shutdown）；
+//!     warmup / health / cancel / shutdown）；
 //!   * `approval` —— 回合内反向 `session/request_permission` 的挂起登记表。
 //!
 //! 设计要点（均据一手源码核对，不臆造）：
@@ -21,15 +20,7 @@
 //!     挂起，`resolve_approval` 经登记表唤醒同一回合续跑。
 //!   * **流式即转发**：单一 `EventSink` 把每条 `session/update` 帧原样转发给接线层的
 //!     emit（`runtime::stream_emitter`）；帧 → 前端 `TAgentUiEvent` 的投影由该 emit
-//!     单点负责（见 `ui_event`），本层不投影。权威结果由各扩展方法（agent_chat
-//!     等）的返回信封承载。
-//!   * **对话即带外**：`agent_chat` /
-//!     `agent_chat_resolve` 是标准会话回合（`prompt`）之外的「带外」能力，经
-//!     sidecar 公示的扩展方法通道下发（标准客户端不识别会安全忽略）。agent_chat
-//!     承载 agent 模式富对话回合：原生 `session/prompt` 的 `session/update` 投影有损
-//!     （仅文本/思考增量，丢结构化补丁/检查点/回滚/富审批/plan_ready 等 agent UI
-//!     词表），故 agent_chat 跑到审批门或终态，过程增量经 `session/update` 仅作实时
-//!     预览，真正权威的富事件由返回信封承载（与旧 http /agent/chat 同构，前端无感）。
+//!     单点负责（见 `ui_event`），本层不投影。权威结果由各扩展方法的返回信封承载。
 //!
 //! 外部 ACP 编码 agent（Kimi Code / Codex 等，见 ADR-0015）走的是标准回合 `prompt`
 //! 而非上述带外扩展方法：它们不认识 `calamex.dev/*`，只实现标准 session/prompt；
@@ -55,10 +46,9 @@ use crate::commands::contracts::{
 
 use super::approval::{ApprovalError, ApprovalRegistry, ApprovalRequestInfo};
 use super::client::{
-    AcpClientConfig, AcpClientError, AcpClientHandle, AcpStreamFrame, AgentAskUserResumeExtRequest,
-    AgentChatExtRequest, AgentChatResolveExtRequest, CheckpointRestoreRequest, EventSink,
-    HealthExtRequest, ModelChatExtRequest,
-    WarmupExtRequest, WebFetchExtRequest, WebSearchExtRequest, spawn_acp_client,
+    AcpClientConfig, AcpClientError, AcpClientHandle, AcpStreamFrame, CheckpointRestoreRequest,
+    EventSink, HealthExtRequest, ModelChatExtRequest, WarmupExtRequest, WebFetchExtRequest,
+    WebSearchExtRequest, spawn_acp_client,
 };
 
 /// 流式帧下沉口：把每条 `session/update` 帧转发给 webview（对齐 `ai:sidecar-stream`
@@ -517,108 +507,6 @@ impl AcpHost {
         let value = self.handle.health(HealthExtRequest {}).await?;
         serde_json::from_value(value).map_err(|error| {
             AcpClientError::Protocol(format!("invalid health response payload: {error}"))
-        })
-    }
-
-    /// 发起一轮 agent 模式对话（扩展方法 `calamex.dev/agent/chat`）。
-    ///
-    /// 标准会话回合（`prompt`）之外的「带外」能力，承载 agent 模式富对话回合：
-    /// run-to-gate（跑到审批门或终态），过程增量经 `session/update` 仅作实时预览，权威
-    /// 的富事件（结构化补丁/检查点/回滚/富审批/plan_ready 等）由返回信封承载。本方法
-    /// 不在此累积回合，帧仅经 `EventSink` 转发 webview。入参为已构造的
-    /// 扩展请求（与 contract 的转换、及 `ensure_session(thread_id)` 的会话连续性由接线层
-    /// 负责，同 restore_checkpoint / model_chat 的薄宿主方法 + 命令层组装划分）。sidecar 把
-    /// 响应投影为与 chat 同构的信封（`toAgentChatExtResult = toAgentSidecarResponse`，
-    /// schemaVersion + sessionId + events + result），故此处直接复用既有
-    /// `AgentSidecarResponsePayload` 解析（同 restore_checkpoint，多余 `schemaVersion` 字段
-    /// 按 serde 默认忽略），与旧 HTTP `/agent/chat` 的返回同形（前端无感）。
-    pub async fn agent_chat(
-        &self,
-        request: AgentChatExtRequest,
-    ) -> Result<AgentSidecarResponsePayload, AcpClientError> {
-        let value = self.handle.agent_chat(request).await?;
-        serde_json::from_value(value).map_err(|error| {
-            AcpClientError::Protocol(format!("invalid agent chat response envelope: {error}"))
-        })
-    }
-
-    /// 同 agent_chat，但额外接受前端预生成的「流式关联键」用于帧重写（内置 chat 回合专用）。
-    ///
-    /// 背景与 prompt_with_stream_key 同构：agent_chat 回合的过程增量经 session/update 帧由
-    /// EventSink 转发，帧以 ACP 会话 UUID 标记，而前端在回合发起前只知道自造的
-    /// sidecar:assistantMessageId 键并据此订阅过滤。若不重写，整轮 live 帧会被前端丢弃、退化
-    /// 为末尾一次性渲染。
-    ///
-    /// 实现：调用方传入本回合的 ACP 会话 id 与前端预生成的 stream_key，若 stream_key 非空且
-    /// 不等于 ACP id，就在重写表登记「acp_session_id → stream_key」（sink 据此重写帧的
-    /// session_id），跑完 agent_chat 后立即移除（无论成败），把重写作用域严格限定在本回合。
-    /// stream_key 为 None / 空白 / 恰等于 ACP id 时不登记，sink 原样透传（行为同旧 agent_chat）。
-    pub async fn agent_chat_with_stream_key(
-        &self,
-        request: AgentChatExtRequest,
-        acp_session_id: &str,
-        stream_key: Option<&str>,
-    ) -> Result<AgentSidecarResponsePayload, AcpClientError> {
-        let override_key = stream_key
-            .map(str::trim)
-            .filter(|key| !key.is_empty() && *key != acp_session_id);
-        let registered = if let Some(key) = override_key {
-            self.stream_key_overrides
-                .lock()
-                .insert(acp_session_id.to_string(), key.to_string());
-            // 同 prompt_with_stream_key：登记重写后立即以前端键重放缓存的可用命令与可配置项。
-            self.replay_available_commands(acp_session_id, key);
-            self.replay_config_options(acp_session_id, key);
-            true
-        } else {
-            false
-        };
-
-        let outcome = self.agent_chat(request).await;
-
-        if registered {
-            self.stream_key_overrides.lock().remove(acp_session_id);
-        }
-
-        outcome
-    }
-
-    /// 恢复一轮挂起在审批门的 agent 对话（扩展方法 `calamex.dev/agent/chat/resolve`）。
-    ///
-    /// 镜像旧 http `/approval/resolve` → `runtime.resolveApproval(...)`：携带上一段返回信封里
-    /// approval_required 的 `request_id` 与 `decision`，裁决后续跑同一回合并返回下一段
-    /// 响应信封（若再遇审批门则信封再携 approval_required）。入参为已构造的扩展请求
-    /// （同 agent_chat 由接线层负责 contract 转换与会话解析）。响应同 agent_chat：整封
-    /// sidecar 信封解析为既有 `AgentSidecarResponsePayload`，与旧 HTTP `/approval/resolve` 返回同形。
-    pub async fn agent_chat_resolve(
-        &self,
-        request: AgentChatResolveExtRequest,
-    ) -> Result<AgentSidecarResponsePayload, AcpClientError> {
-        let value = self.handle.agent_chat_resolve(request).await?;
-        serde_json::from_value(value).map_err(|error| {
-            AcpClientError::Protocol(format!(
-                "invalid agent chat resolve response envelope: {error}"
-            ))
-        })
-    }
-
-    /// 恢复一轮挂起在 ask_user 反向提问的 agent 对话（扩展方法 `calamex.dev/agent/ask-user/resume`）。
-    ///
-    /// 与 agent_chat_resolve 同构，但以 ask_user 套件的 outcome + 结构化 answers 取代审批 decision：
-    /// 携带上一段返回信封里 ask_user_required 的 `request_id`、用户选择的 `outcome`（selected/
-    /// cancelled）与逐题 `answers`，回灌给 sidecar 工具的 resumeSchema 后续跑同一回合并返回
-    /// 下一段响应信封（若再遇提问门或审批门则信封再携对应事件）。入参为已构造的扩展请求
-    /// （同 agent_chat_resolve 由接线层负责 contract 转换与会话解析）。响应同 agent_chat_resolve：
-    /// 整封 sidecar 信封解析为既有 `AgentSidecarResponsePayload`，与旧 HTTP 对话恢复返回同形（前端无感）。
-    pub async fn agent_ask_user_resume(
-        &self,
-        request: AgentAskUserResumeExtRequest,
-    ) -> Result<AgentSidecarResponsePayload, AcpClientError> {
-        let value = self.handle.agent_ask_user_resume(request).await?;
-        serde_json::from_value(value).map_err(|error| {
-            AcpClientError::Protocol(format!(
-                "invalid agent ask-user resume response envelope: {error}"
-            ))
         })
     }
 

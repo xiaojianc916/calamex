@@ -39,12 +39,8 @@ pub use provisioner::{
     provisioner_for,
 };
 
-// 接线层：把 Tauri 契约请求投影为客户端层 ACP 扩展请求。四条投影（agent/chat、
-// agent/chat/resolve、agent/ask-user/resume、一次性 model/chat）均已由命令层 / 网关 live 调用。
-pub use bridge::{
-    approval_resolve_to_agent_chat_resolve_ext, ask_user_resume_to_agent_ask_user_resume_ext,
-    chat_request_to_agent_chat_ext, chat_request_to_model_chat_ext,
-};
+// 接线层：把 Tauri 契约请求投影为客户端层 ACP 扩展请求（一次性 model/chat），已由网关 live 调用。
+pub use bridge::chat_request_to_model_chat_ext;
 
 #[allow(unused_imports)]
 pub use host::{

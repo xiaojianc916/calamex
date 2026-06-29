@@ -1,6 +1,5 @@
 use crate::commands::contracts::{
     AgentBackendKind, AgentExternalChatRequest, AgentExternalChatResultPayload,
-    AgentSidecarApprovalResolveRequest, AgentSidecarAskUserResumeRequest, AgentSidecarChatRequest,
     AgentSidecarCheckpointRestoreRequest, AgentSidecarHealthPayload,
     AgentSidecarModelConfigPayload, AgentSidecarResponsePayload,
     AgentSidecarRollbackStepPath, AgentSidecarWarmupPayload,
@@ -155,55 +154,6 @@ pub async fn builtin_agent_warmup(app: AppHandle) -> Result<AgentSidecarWarmupPa
         .map_err(|error| error.to_string())
 }
 
-#[tauri::command]
-#[specta::specta]
-pub async fn builtin_agent_chat(
-    app: AppHandle,
-    mut payload: AgentSidecarChatRequest,
-) -> Result<AgentSidecarResponsePayload, String> {
-    // 会话连续性对齐 Zed session_id = thread.id()：先以 thread_id（缺省回退空串→host 内
-    // 按工作区新建）解析稳定 ACP SessionId，维持 thread 级别的会话连续性。
-    let host = acp_host(&app)?;
-
-    // 补齐模型配置（单点，见 ensure_model_config）：payload 未携带时从已保存配置补齐，
-    // 否则 sidecar 退回未注入的环境兜底并报“AI 模型未配置”，导致整轮空白、回合秒结束。
-    ensure_model_config(&mut payload.model_config)?;
-
-    let acp_session_id = host
-        .ensure_session(
-            payload.thread_id.as_deref().unwrap_or_default(),
-            payload.workspace_root_path.as_deref(),
-            // 旧带外 agent_chat 通路：模型配置走 extMethod 的 model_config 字段（见
-            // ensure_model_config），session/new 不下发 _meta 目录。D1 删除该通路后随之消失。
-            None,
-        )
-        .await
-        .map_err(|error| error.to_string())?;
-
-    // 流式帧关联键：使用前端提供的 session_id（= `sidecar:${assistantMessageId}`）
-    // 而非 ACP ensure_session UUID。
-    //
-    // 根因：sidecar handleAgentChat 以 input.sessionId 标记发出的 session/update 帧；
-    // 若此字段为 ACP UUID，前端 subscribeSidecarSessionStream 按前端自造的
-    // `sidecar:${assistantMessageId}` 过滤时永远不匹配，整轮 live 帧全被丢弃，
-    // 导致整轮空白、末尾一次性渲染。
-    //
-    // handleAgentChat 不依赖 session_id 做 ACP 路由（extMethod 不经标准 session/prompt），
-    // 该字段仅用于标记下发的帧，可安全替换为前端已知的关联键。
-    // 回退到 ACP session_id 以兼容 payload.session_id 未传的场景。
-    let stream_session_id = payload
-        .session_id
-        .as_deref()
-        .filter(|s| !s.trim().is_empty())
-        .map(str::to_owned)
-        .unwrap_or_else(|| acp_session_id.to_string());
-
-    let request = crate::acp::chat_request_to_agent_chat_ext(payload, stream_session_id);
-    host.agent_chat(request)
-        .await
-        .map_err(|error| error.to_string())
-}
-
 /// 外部 ACP 编码 agent（Kimi Code / Codex 等，ADR-0015）的标准回合命令（`session/prompt`）。
 ///
 /// 与 `builtin_agent_chat`（走自家边车的带外 `agent_chat` 扩展回合）不同：按后端类型经
@@ -310,69 +260,6 @@ fn external_backend_label(backend: crate::acp::AcpBackendId) -> &'static str {
         crate::acp::AcpBackendId::Kimi => "Kimi",
         crate::acp::AcpBackendId::Codex => "Codex",
     }
-}
-
-#[tauri::command]
-#[specta::specta]
-pub async fn builtin_agent_resolve_approval(
-    app: AppHandle,
-    mut payload: AgentSidecarApprovalResolveRequest,
-) -> Result<AgentSidecarResponsePayload, String> {
-    // 同 chat：先解析稳定会话，再投影为 agent/chat/resolve 扩展请求；裁决在同一回合
-    // 内唤醒挂起审批并续跑，返回下一段响应信封（与旧 HTTP /approval/resolve 返回同形）。
-    // 注：resolve 路径前端以上一轮信封里的 ACP session_id 订阅，ensure_session 对同
-    // thread_id 返回同一 ACP id，两者已对齐，无需额外处理。
-    let host = acp_host(&app)?;
-
-    // 与 chat 同源：续跑同一回合仍需主模型，payload 缺省 model_config 时从已保存配置补齐，
-    // 避免 sidecar 退回未注入的环境而报“AI 模型未配置”。
-    ensure_model_config(&mut payload.model_config)?;
-
-    let session_id = host
-        .ensure_session(
-            payload.thread_id.as_deref().unwrap_or_default(),
-            payload.workspace_root_path.as_deref(),
-            // 旧带外 agent_chat 通路：模型配置走 extMethod 的 model_config 字段（见
-            // ensure_model_config），session/new 不下发 _meta 目录。D1 删除该通路后随之消失。
-            None,
-        )
-        .await
-        .map_err(|error| error.to_string())?;
-    let request =
-        crate::acp::approval_resolve_to_agent_chat_resolve_ext(payload, session_id.to_string());
-    host.agent_chat_resolve(request)
-        .await
-        .map_err(|error| error.to_string())
-}
-
-#[tauri::command]
-#[specta::specta]
-pub async fn builtin_agent_resolve_ask_user(
-    app: AppHandle,
-    mut payload: AgentSidecarAskUserResumeRequest,
-) -> Result<AgentSidecarResponsePayload, String> {
-    // 同 resolve_approval：先解析稳定会话，再投影为 agent/ask-user/resume 扩展请求；
-    // 回灌 outcome + 结构化 answers 在同一回合内唤醒挂起的反向提问并续跑，返回下一段响应信封。
-    let host = acp_host(&app)?;
-
-    // 与 chat / resolve_approval 同源：续跑仍需主模型，缺省时从已保存配置补齐。
-    ensure_model_config(&mut payload.model_config)?;
-
-    let session_id = host
-        .ensure_session(
-            payload.thread_id.as_deref().unwrap_or_default(),
-            payload.workspace_root_path.as_deref(),
-            // 旧带外 agent_chat 通路：模型配置走 extMethod 的 model_config 字段（见
-            // ensure_model_config），session/new 不下发 _meta 目录。D1 删除该通路后随之消失。
-            None,
-        )
-        .await
-        .map_err(|error| error.to_string())?;
-    let request =
-        crate::acp::ask_user_resume_to_agent_ask_user_resume_ext(payload, session_id.to_string());
-    host.agent_ask_user_resume(request)
-        .await
-        .map_err(|error| error.to_string())
 }
 
 #[tauri::command]
