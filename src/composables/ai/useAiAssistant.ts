@@ -9,10 +9,7 @@ import {
   watch,
 } from 'vue';
 import { parseAiAedPatchRef } from '@/components/business/ai/edit/patch-summary';
-import {
-  extractVisibleAgentRuntimeEvents,
-  projectSidecarEventsToToolState,
-} from '@/composables/ai/sidecar-events';
+import { extractVisibleAgentRuntimeEvents } from '@/composables/ai/sidecar-events';
 import { subscribeSidecarSessionStream } from '@/composables/ai/sidecar-stream-listener';
 import { useAcpAvailableCommands } from '@/composables/ai/useAcpAvailableCommands';
 import { useAcpPlan } from '@/composables/ai/useAcpPlan';
@@ -38,7 +35,12 @@ import type {
 import type { TAiAssistantMode } from '@/types/ai/assistant-mode';
 import type { IAiConversationScrollState } from '@/types/ai/conversation.schema';
 import type { TAgentBackendKind, TAgentRuntimeEvent, TAgentUiEvent } from '@/types/ai/sidecar';
-import type { IAiThread, IAiThreadAssistantMessageEntry, IAiThreadEntry } from '@/types/ai/thread';
+import type {
+  IAiThread,
+  IAiThreadAssistantMessageEntry,
+  IAiThreadEntry,
+  IAiThreadToolCall,
+} from '@/types/ai/thread';
 import type {
   IActiveRunSummary,
   IAnalyzeScriptPayload,
@@ -316,6 +318,7 @@ export const useAiAssistant = (options: IUseAiAssistantOptions) => {
   const updateLiveThreadFromSidecarEvents = (
     assistantMessageId: string,
     threadId: string | null,
+    fallbackActivityText: string,
     events: readonly TAgentUiEvent[],
     liveRenderState: ISidecarLiveRenderState,
   ): void => {
@@ -341,6 +344,21 @@ export const useAiAssistant = (options: IUseAiAssistantOptions) => {
       assistantMessageId,
       now: new Date().toISOString(),
     });
+    // 统一管线：工具步骤侧栏与活动文案均由 reduce 出的顶层 tool_call entries 派生(单一真源)，
+    // 不再并行跑 legacy 工具投影(已退役)。
+    const toolCallEntries = liveThread.entries.filter(
+      (entry): entry is IAiThreadToolCall => entry.type === 'tool_call',
+    );
+    agentSteps.value = toolCallEntries.map((toolCall) => ({
+      id: toolCall.id,
+      title: toolCall.title,
+      status: mapThreadToolCallStatusToStepStatus(toolCall.status),
+    }));
+    const liveActivityText = deriveAgentActivityText(toolCallEntries, fallbackActivityText);
+    const stream =
+      liveActivityText.length > 0
+        ? { ...liveRenderState.stream, activityText: liveActivityText }
+        : liveRenderState.stream;
     // reduce 回放出的 assistant entry 不带 stream（runtimeEvents/token/活动文案）。
     // 用本回合实时算出的 stream/patches 富集该 entry——不再回读 legacy displayMessages（已退役）。
     const hasPatches = Boolean(liveRenderState.patches && liveRenderState.patches.length > 0);
@@ -376,7 +394,7 @@ export const useAiAssistant = (options: IUseAiAssistantOptions) => {
       return {
         ...entry,
         chunks: nextChunks,
-        stream: liveRenderState.stream,
+        stream,
         ...(hasPatches ? { patches: [...(liveRenderState.patches ?? [])] } : {}),
       };
     });
@@ -391,7 +409,7 @@ export const useAiAssistant = (options: IUseAiAssistantOptions) => {
         createdAt: new Date().toISOString(),
         chunks:
           finalText !== null ? [{ type: 'message', block: { type: 'text', text: finalText } }] : [],
-        stream: liveRenderState.stream,
+        stream,
         ...(hasPatches ? { patches: [...(liveRenderState.patches ?? [])] } : {}),
       };
       entries.push(appendedEntry);
@@ -476,42 +494,6 @@ export const useAiAssistant = (options: IUseAiAssistantOptions) => {
       )
       .join('');
 
-  const updateAgentStep = (
-    stepId: string,
-    title: string,
-    status: TAgentExecutionStepStatus,
-  ): void => {
-    const currentSteps = agentSteps.value;
-    const stepIndex = currentSteps.findIndex((step) => step.id === stepId);
-
-    if (stepIndex >= 0) {
-      const currentStep = currentSteps[stepIndex]!;
-
-      if (currentStep.title === title && currentStep.status === status) {
-        return;
-      }
-
-      const nextSteps = currentSteps.slice();
-      nextSteps[stepIndex] = {
-        ...currentStep,
-        title,
-        status,
-      };
-
-      agentSteps.value = nextSteps;
-      return;
-    }
-
-    agentSteps.value = [
-      ...currentSteps,
-      {
-        id: stepId,
-        title,
-        status,
-      },
-    ];
-  };
-
   const refreshChangedDocumentsAfterSidecarRun = async (
     changedFilePaths: readonly string[],
     hasFileMutations: boolean,
@@ -533,15 +515,16 @@ export const useAiAssistant = (options: IUseAiAssistantOptions) => {
     }
   };
 
-  const mapSidecarToolCallStatusToStepStatus = (
-    status: NonNullable<IAiChatMessage['toolCalls']>[number]['status'],
+  // 统一真源映射：ACP 协议 VM 的 tool_call 状态 → 执行步骤状态。
+  const mapThreadToolCallStatusToStepStatus = (
+    status: IAiThreadToolCall['status'],
   ): TAgentExecutionStepStatus => {
     switch (status) {
-      case 'succeeded':
+      case 'completed':
         return 'done';
       case 'failed':
         return 'failed';
-      case 'denied':
+      case 'canceled':
         return 'cancelled';
       case 'pending':
         return 'pending';
@@ -550,12 +533,34 @@ export const useAiAssistant = (options: IUseAiAssistantOptions) => {
     }
   };
 
+  // 活动文案 = 当前进行中/待定工具的标题，否则取最近一个已结束工具的标题；标题已由
+  // from-sidecar-events 经同源 presenter(describeToolAction)语义化，故此处不再重复启发式。
+  const deriveAgentActivityText = (
+    toolCalls: readonly IAiThreadToolCall[],
+    fallback: string,
+  ): string => {
+    const active = [...toolCalls]
+      .reverse()
+      .find((toolCall) => toolCall.status === 'in_progress' || toolCall.status === 'pending');
+    const target =
+      active ??
+      [...toolCalls]
+        .reverse()
+        .find(
+          (toolCall) =>
+            toolCall.status === 'completed' ||
+            toolCall.status === 'failed' ||
+            toolCall.status === 'canceled',
+        );
+    return target?.title.trim() || fallback || '';
+  };
+
   const applyAcpReceiveSideEvents = (events: readonly TAgentUiEvent[]): void => {
     // 接收侧宿主接线（ADR-20260617 · D7 接收侧）：把宿主唯一 onSidecarStream 路由到的
     // ACP session/update UI 事件分发到各 ACP composable VM。终端走客户端方法、审批走
     // finalizeSidecarTurn 的 pendingConfirmation，均不经本事件流，故不在此路由。
-    // 累计事件每 tick 整份重扫，与既有 reduceAcpUiEventsToToolCalls / projectSidecarEventsToToolState
-    // 同构；各 applier 均「整份替换、后者胜」，故重扫幂等。非穷尽 switch（default 兜底），
+    // 累计事件每 tick 整份重扫，与统一 reduce 出 tool_call entries 的投影同构；各 applier 均
+    // 「整份替换、后者胜」，故重扫幂等。非穷尽 switch（default 兜底），
     // 新增 TAgentUiEvent 成员不会在此触发编译错误。
     for (const event of events) {
       switch (event.type) {
@@ -578,40 +583,20 @@ export const useAiAssistant = (options: IUseAiAssistantOptions) => {
   };
 
   const applySidecarLiveEventsToAgentMessage = (
-    assistantMessageId: string,
-    threadId: string | null,
-    fallbackContent: string,
     events: readonly TAgentUiEvent[],
   ): ISidecarLiveRenderState => {
     applyAcpReceiveSideEvents(events);
-    // 仅做副作用 + 算出本帧 stream/patches；不再写 legacy displayMessages（reduce 为唯一写者）。
-    void assistantMessageId;
-    void threadId;
+    // 仅做副作用 + 算出本帧 stream/patches；工具步骤与活动文案改由统一 reduce 出的 tool_call
+    // entries 派生(见 updateLiveThreadFromSidecarEvents)，不再并行投影。
     const { errorEvent, doneEvent } = getLatestSidecarLiveEvents(events);
     const streamStatus: NonNullable<IAiChatMessage['stream']>['status'] =
       errorEvent || doneEvent ? 'completed' : 'streaming';
-    const toolProjection = projectSidecarEventsToToolState({
-      events,
-      fallbackActivityText: fallbackContent,
-      streamStatus,
-    });
     const runtimeEvents = compactRuntimeEvents(extractVisibleAgentRuntimeEvents(events));
     const livePatchState = buildLiveAppliedPatchState(extractSidecarPatchEntries(events));
-
-    for (const toolCall of toolProjection.toolCalls) {
-      updateAgentStep(
-        toolCall.id,
-        toolCall.summary,
-        mapSidecarToolCallStatusToStepStatus(toolCall.status),
-      );
-    }
 
     const tokenSnapshot = resolveSidecarDoneStreamTokenSnapshot(doneEvent);
     const stream: NonNullable<IAiChatMessage['stream']> = {
       status: streamStatus,
-      ...(toolProjection.activityText !== undefined
-        ? { activityText: toolProjection.activityText }
-        : {}),
       ...(runtimeEvents.length ? { runtimeEvents } : {}),
       // token 用量：usage VM 之外同时补齐顶层扁平字段，供消费侧两种读法都命中（与收尾 finalStream 对齐）。
       ...(tokenSnapshot
@@ -978,15 +963,11 @@ export const useAiAssistant = (options: IUseAiAssistantOptions) => {
         return;
       }
       appendVisibleRuntimeTimelineEvents(extractVisibleAgentRuntimeEvents(freshEvents));
-      const liveRenderState = applySidecarLiveEventsToAgentMessage(
-        assistantMessageId,
-        targetThreadId,
-        initialActivityText,
-        events,
-      );
+      const liveRenderState = applySidecarLiveEventsToAgentMessage(events);
       updateLiveThreadFromSidecarEvents(
         assistantMessageId,
         targetThreadId,
+        initialActivityText,
         events,
         liveRenderState,
       );
