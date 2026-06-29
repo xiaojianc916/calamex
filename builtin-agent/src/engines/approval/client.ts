@@ -63,10 +63,6 @@ export class MastraRuntimeApproval extends MastraRuntimeExecution {
         const events: TAgentRuntimeOutputEvent[] = [];
         let shouldDisconnectBundle = true;
         let streamCleanup: (() => void) | undefined;
-        const continueSuspendedStream = resumeContinueStream;
-        const resumeSuspendedTool = continueSuspendedStream;
-        const resumeApprovalRun = resumeContinueStream;
-        const resumeApprovalTool = approvalContinueStream;
 
         try {
             let stream: IMastraAgentStreamLike;
@@ -100,23 +96,23 @@ export class MastraRuntimeApproval extends MastraRuntimeExecution {
             }
 
             if (pending.kind === 'suspended') {
-                if (typeof resumeSuspendedTool !== 'function') {
+                if (typeof resumeContinueStream !== 'function') {
                     throw new Error('Mastra suspended tool resumeStream 不可用。');
                 }
 
-                stream = await resumeSuspendedTool({
+                stream = await resumeContinueStream({
                     approved: isApprovedDecision(input.decision),
                 }, resumeOptions);
-            } else if (typeof resumeApprovalRun === 'function') {
-                stream = await resumeApprovalRun({
+            } else if (typeof resumeContinueStream === 'function') {
+                stream = await resumeContinueStream({
                     approved: isApprovedDecision(input.decision),
                 }, resumeOptions);
             } else {
-                if (typeof resumeApprovalTool !== 'function') {
+                if (typeof approvalContinueStream !== 'function') {
                     throw new Error('Mastra approval resume 不可用。');
                 }
 
-                stream = await resumeApprovalTool(resumeOptions);
+                stream = await approvalContinueStream(resumeOptions);
             }
             streamCleanup = stream.cleanup;
             const resumedRunId = stream.runId ?? decodedRequest.runId;
