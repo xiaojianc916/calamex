@@ -3,7 +3,7 @@ import { agentPlanDeltaSchema, agentPlanValidationReportSchema } from '../../sch
 import { createMastraMemoryReference, createMastraMemoryScope } from '../context/memory.js';
 import { createMastraMemoryForModel, createMastraModelConfig, resolveMastraModelConfig } from '../agent/factory.js';
 import { createAcontextTokenEventDraft } from '../budget/budget.js';
-import { normalizeMastraError } from '../shared/errors.js';
+import { classifyProviderErrorCode, normalizeMastraError } from '../shared/errors.js';
 import { applyAgentPlanDelta, parsePlanDelta, parseValidationReport } from '../plan/plan-utils.js';
 import { createErrorResponse, createPlanResponse } from '../responses/responses.js';
 import { loadMastraMcpTools } from '../../tools/index.js';
@@ -240,6 +240,7 @@ export class MastraRuntimeValidation extends MastraRuntimePlan {
                     `Validator 执行失败：${streamed.message}`,
                     events,
                     options,
+                    streamed.errorCode ?? classifyProviderErrorCode(streamed.message),
                 );
             }
             if (streamed.status === 'pending') {
@@ -297,6 +298,7 @@ export class MastraRuntimeValidation extends MastraRuntimePlan {
                 `Validator 执行失败：${normalizeMastraError(error)}`,
                 events,
                 options,
+                classifyProviderErrorCode(error),
             );
         } finally {
             await this.finalizePlanAgentRun(sessionId, requestedRunId, toolBundle);
@@ -434,6 +436,7 @@ export class MastraRuntimeValidation extends MastraRuntimePlan {
                     `Replanner 执行失败：${streamed.message}`,
                     events,
                     options,
+                    streamed.errorCode ?? classifyProviderErrorCode(streamed.message),
                 );
             }
             if (streamed.status === 'pending') {
@@ -505,6 +508,7 @@ export class MastraRuntimeValidation extends MastraRuntimePlan {
                 `Replanner 执行失败：${normalizeMastraError(error)}`,
                 events,
                 options,
+                classifyProviderErrorCode(error),
             );
         } finally {
             await this.finalizePlanAgentRun(sessionId, requestedRunId, toolBundle);

@@ -1,13 +1,14 @@
-// fix-ai-review-batch-13.mjs
-// 批次 13：J6（stream 结构化错误码透传，落实 J5 闭环）+ J7（ask_user 注释去重）
-// 依赖：J6 的 execution.ts 改动建立在 fix-ai-review-batch-12.mjs 之上 —— 必须先运行 batch-12。
-// 独立提交，运行后：pnpm -C builtin-agent typecheck && pnpm -C builtin-agent test && pnpm lint:all
+// fix-ai-review-batch-14.mjs
+// 批次 14：plan 族错误码一致性收尾 —— plan.ts / validation.ts / replanPlan 的
+//   provider 错误点统一回传 errorCode（对齐 batch-12 在 execution.ts 的做法）。
+// 依赖：建立在 fix-ai-review-batch-13.mjs 之上（需要 summary.streamErrorCode）。
+// 运行顺序：…→ batch-13 → batch-14。
+// 运行后：pnpm -C builtin-agent typecheck && pnpm -C builtin-agent test && pnpm lint:all
 import { readFileSync, writeFileSync } from 'node:fs';
 
-const ROOT = 'builtin-agent/src/engines';
-const F_TYPES = `${ROOT}/shared/types.ts`;
-const F_BASE = `${ROOT}/runtime/base.ts`;
-const F_EXEC = `${ROOT}/modes/execution.ts`;
+const ROOT = 'builtin-agent/src/engines/modes';
+const F_PLAN = `${ROOT}/plan.ts`;
+const F_VALIDATION = `${ROOT}/validation.ts`;
 
 const eolOf = (t) => (t.includes('\r\n') ? '\r\n' : '\n');
 const load = (file) => {
@@ -31,13 +32,6 @@ const findSeq = (lines, seq) => {
     }
     return hits;
 };
-const insertAfter = (doc, anchor, newLines, label) => {
-    const a = findSeq(doc.lines, [anchor]);
-    if (a.length !== 1) throw new Error(`${label}: 锚点应唯一(1)，实际 ${a.length}: ${JSON.stringify(anchor)}`);
-    if (doc.lines[a[0] + 1] === newLines[0]) { console.log(`  · ${label}: 已插入，跳过`); return; }
-    doc.lines.splice(a[0] + 1, 0, ...newLines);
-    console.log(`  ✓ ${label}`);
-};
 const replaceLine = (doc, oldLine, newLine, label) => {
     if (doc.lines.includes(newLine) && !doc.lines.includes(oldLine)) { console.log(`  · ${label}: 已是目标态，跳过`); return; }
     const a = findSeq(doc.lines, [oldLine]);
@@ -54,90 +48,151 @@ const replaceBlock = (doc, oldLines, newLines, label) => {
     doc.lines.splice(oldAt[0], oldLines.length, ...newLines);
     console.log(`  ✓ ${label}`);
 };
-// execution.ts J6-d：把 batch-12 那行 streamErrorCode 声明升级为"优先结构化码、回退消息子串"。
-const upgradeStreamErrorCode = (doc, label) => {
-    if (doc.lines.some((l) => l.includes('streamSummary.streamErrorCode ??'))) { console.log(`  · ${label}: 已升级，跳过`); return; }
-    const src = 'const streamErrorCode = classifyProviderErrorCode(streamSummary.streamErrorMessage);';
-    const idxs = [];
-    doc.lines.forEach((l, i) => { if (l.trimStart() === src) idxs.push(i); });
-    if (idxs.length === 0) throw new Error(`${label}: 未找到 batch-12 生成的 streamErrorCode 声明——请先运行 fix-ai-review-batch-12.mjs`);
-    if (idxs.length > 1) throw new Error(`${label}: streamErrorCode 声明不唯一(${idxs.length})`);
-    const i = idxs[0];
-    const indent = doc.lines[i].slice(0, doc.lines[i].length - doc.lines[i].trimStart().length);
-    doc.lines.splice(i, 1,
-        `${indent}const streamErrorCode = streamSummary.streamErrorCode`,
-        `${indent}    ?? classifyProviderErrorCode(streamSummary.streamErrorMessage);`,
-    );
-    console.log(`  ✓ ${label}`);
-};
 
-// ---- File 1: shared/types.ts (CRLF / 4-space) — J6-a：summary 增加可选 streamErrorCode ----
-console.log(F_TYPES);
+// ---- plan.ts ----
+console.log(F_PLAN);
 {
-    const doc = load(F_TYPES);
-    insertAfter(doc, '    streamErrorMessage: string | null;', ['    streamErrorCode?: string;'], 'J6-a IMastraTextStreamSummary.streamErrorCode');
-    save(doc);
-}
-
-// ---- File 2: runtime/base.ts (LF / 4-space) — J6-b/c + J7 ----
-console.log(F_BASE);
-{
-    const doc = load(F_BASE);
-    // J6-b 导入 classifyProviderErrorCode
+    const doc = load(F_PLAN);
+    // 1) 导入 classifyProviderErrorCode
     replaceLine(doc,
         "import { normalizeMastraError } from '../shared/errors.js';",
         "import { classifyProviderErrorCode, normalizeMastraError } from '../shared/errors.js';",
-        'J6-b import classifyProviderErrorCode');
-    // J6-c1 局部声明
-    insertAfter(doc, '        let streamErrorMessage: string | null = null;',
-        ['        let streamErrorCode: string | undefined;'],
-        'J6-c1 streamErrorCode 局部变量');
-    // J6-c2 error chunk 分支：用原始 error 对象出精确码
+        'plan import classifyProviderErrorCode');
+    // 2) TStreamStructuredPlanResult error 变体增加可选 errorCode
+    replaceLine(doc,
+        "    | { status: 'error'; message: string; releaseResources: boolean };",
+        "    | { status: 'error'; message: string; errorCode?: string; releaseResources: boolean };",
+        'plan TStreamStructuredPlanResult.errorCode');
+    // 3) streamStructuredPlanObject error 返回透传 errorCode
     replaceBlock(doc, [
-        '            if (isErrorChunk(chunk)) {',
-        '                streamErrorMessage = normalizeMastraError(chunk.payload.error);',
-        '                continue;',
-        '            }',
+        '        if (summary.streamErrorMessage) {',
+        '            return { status: \'error\', message: summary.streamErrorMessage, releaseResources: summary.releaseResources };',
+        '        }',
     ], [
-        '            if (isErrorChunk(chunk)) {',
-        '                streamErrorMessage = normalizeMastraError(chunk.payload.error);',
-        '                streamErrorCode = classifyProviderErrorCode(chunk.payload.error);',
-        '                continue;',
-        '            }',
-    ], 'J6-c2 isErrorChunk 分类');
-    // J6-c3 return summary 透传
-    insertAfter(doc, '            streamErrorMessage,',
-        ['            ...(streamErrorCode ? { streamErrorCode } : {}),'],
-        'J6-c3 summary 回传 streamErrorCode');
-    // J7 合并重复的 ask_user 注释（16 空格缩进）
+        '        if (summary.streamErrorMessage) {',
+        '            return {',
+        "                status: 'error',",
+        '                message: summary.streamErrorMessage,',
+        '                ...(summary.streamErrorCode ? { errorCode: summary.streamErrorCode } : {}),',
+        '                releaseResources: summary.releaseResources,',
+        '            };',
+        '        }',
+    ], 'plan streamStructuredPlanObject 透传 errorCode');
+    // 4) plan() stream-error 分支回传 errorCode（缩进 20/24）
     replaceBlock(doc, [
-        '                // ask_user：反向提问工具挂起时，surface 为结构化 ask_user_required（带外承载，',
-        '                // 镜像 approval_required），而非降级成单一 approve/reject 气泡；恢复经专用 ext',
-        '                // 方法回传富答案续跑（见 acp/ext-methods 的 ask-user resume，2c 落地）。其余挂起',
-        '                // 工具仍走下方通用 approval_required 兜底。',
-        '                // ask_user：反向提问工具挂起 —— 始终 surface 结构化 ask_user_required，绝不降级到旧的',
-        '                // approve/reject 审批气泡（杜绝新旧杂糅）。挂起负载由本工具按 suspendSchema 自构造；权威的跨进程',
-        '                // 校验在 sidecar→renderer 边界（前端 extractPendingAskUser 再行 zod 解析），此处 safeParse 仅作',
-        '                // 进程内类型收窄。万一（按契约不可达）失败：既不回灌审批链、也不终结回合，仅跳过本次 surface，',
-        '                // 挂起句柄交由 TTL 回收。',
+        '                    return createErrorResponse(',
+        '                        sessionId,',
+        '                        `Mastra Plan 执行失败：${streamed.message}`,',
+        '                        events,',
+        '                        options,',
+        '                    );',
     ], [
-        '                // ask_user：反向提问工具挂起 —— 始终 surface 结构化 ask_user_required（带外承载，镜像',
-        '                // approval_required），绝不降级到旧的 approve/reject 审批气泡（杜绝新旧杂糅）；恢复经专用',
-        '                // ext 方法回传富答案续跑（见 acp/ext-methods 的 ask-user resume，2c 落地）。其余挂起工具',
-        '                // 仍走下方通用 approval_required 兜底。挂起负载由本工具按 suspendSchema 自构造；权威的跨',
-        '                // 进程校验在 sidecar→renderer 边界（前端 extractPendingAskUser 再行 zod 解析），此处',
-        '                // safeParse 仅作进程内类型收窄。万一（按契约不可达）失败：既不回灌审批链、也不终结回合，',
-        '                // 仅跳过本次 surface，挂起句柄交由 TTL 回收。',
-    ], 'J7 合并重复 ask_user 注释');
+        '                    return createErrorResponse(',
+        '                        sessionId,',
+        '                        `Mastra Plan 执行失败：${streamed.message}`,',
+        '                        events,',
+        '                        options,',
+        '                        streamed.errorCode ?? classifyProviderErrorCode(streamed.message),',
+        '                    );',
+    ], 'plan stream-error errorCode');
+    // 5) plan() catch 回传 errorCode（缩进 12/16）
+    replaceBlock(doc, [
+        '            return createErrorResponse(',
+        '                sessionId,',
+        '                `Mastra Plan 执行失败：${normalizeMastraError(error)}`,',
+        '                events,',
+        '                options,',
+        '            );',
+    ], [
+        '            return createErrorResponse(',
+        '                sessionId,',
+        '                `Mastra Plan 执行失败：${normalizeMastraError(error)}`,',
+        '                events,',
+        '                options,',
+        '                classifyProviderErrorCode(error),',
+        '            );',
+    ], 'plan catch errorCode');
     save(doc);
 }
 
-// ---- File 3: modes/execution.ts (LF / 4-space) — J6-d：消费结构化码（依赖 batch-12）----
-console.log(F_EXEC);
+// ---- validation.ts ----
+console.log(F_VALIDATION);
 {
-    const doc = load(F_EXEC);
-    upgradeStreamErrorCode(doc, 'J6-d execution.ts 优先结构化码');
+    const doc = load(F_VALIDATION);
+    // 1) 导入 classifyProviderErrorCode
+    replaceLine(doc,
+        "import { normalizeMastraError } from '../shared/errors.js';",
+        "import { classifyProviderErrorCode, normalizeMastraError } from '../shared/errors.js';",
+        'validation import classifyProviderErrorCode');
+    // 2) validatePlan stream-error（缩进 16/20）
+    replaceBlock(doc, [
+        '                return createErrorResponse(',
+        '                    sessionId,',
+        '                    `Validator 执行失败：${streamed.message}`,',
+        '                    events,',
+        '                    options,',
+        '                );',
+    ], [
+        '                return createErrorResponse(',
+        '                    sessionId,',
+        '                    `Validator 执行失败：${streamed.message}`,',
+        '                    events,',
+        '                    options,',
+        '                    streamed.errorCode ?? classifyProviderErrorCode(streamed.message),',
+        '                );',
+    ], 'validatePlan stream-error errorCode');
+    // 3) validatePlan catch（缩进 12/16）
+    replaceBlock(doc, [
+        '            return createErrorResponse(',
+        '                sessionId,',
+        '                `Validator 执行失败：${normalizeMastraError(error)}`,',
+        '                events,',
+        '                options,',
+        '            );',
+    ], [
+        '            return createErrorResponse(',
+        '                sessionId,',
+        '                `Validator 执行失败：${normalizeMastraError(error)}`,',
+        '                events,',
+        '                options,',
+        '                classifyProviderErrorCode(error),',
+        '            );',
+    ], 'validatePlan catch errorCode');
+    // 4) replanPlan stream-error（缩进 16/20）
+    replaceBlock(doc, [
+        '                return createErrorResponse(',
+        '                    sessionId,',
+        '                    `Replanner 执行失败：${streamed.message}`,',
+        '                    events,',
+        '                    options,',
+        '                );',
+    ], [
+        '                return createErrorResponse(',
+        '                    sessionId,',
+        '                    `Replanner 执行失败：${streamed.message}`,',
+        '                    events,',
+        '                    options,',
+        '                    streamed.errorCode ?? classifyProviderErrorCode(streamed.message),',
+        '                );',
+    ], 'replanPlan stream-error errorCode');
+    // 5) replanPlan catch（缩进 12/16）
+    replaceBlock(doc, [
+        '            return createErrorResponse(',
+        '                sessionId,',
+        '                `Replanner 执行失败：${normalizeMastraError(error)}`,',
+        '                events,',
+        '                options,',
+        '            );',
+    ], [
+        '            return createErrorResponse(',
+        '                sessionId,',
+        '                `Replanner 执行失败：${normalizeMastraError(error)}`,',
+        '                events,',
+        '                options,',
+        '                classifyProviderErrorCode(error),',
+        '            );',
+    ], 'replanPlan catch errorCode');
     save(doc);
 }
 
-console.log('batch-13 完成。');
+console.log('batch-14 完成。');

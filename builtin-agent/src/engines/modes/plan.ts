@@ -6,7 +6,7 @@ import { createMastraMemoryReference, createMastraMemoryScope, resolveObservatio
 import { createExecutionRequestContext } from '../context/context.js';
 import { createMastraMemoryForModel, createMastraModelConfig, resolveMastraModelConfig } from '../agent/factory.js';
 import { createAcontextTokenEventDraft } from '../budget/budget.js';
-import { normalizeMastraError } from '../shared/errors.js';
+import { classifyProviderErrorCode, normalizeMastraError } from '../shared/errors.js';
 import { buildMastraMessages } from '../session/session-messages.js';
 import { buildAgentPlanFromPlanSteps } from '../plan/plan-utils.js';
 import { createErrorResponse, createPlanRecordResponse, createPlanResponse } from '../responses/responses.js';
@@ -33,7 +33,7 @@ import type { MastraBrowser } from '@mastra/core/browser';
 type TStreamStructuredPlanResult =
     | { status: 'object'; object: unknown; releaseResources: boolean }
     | { status: 'pending'; releaseResources: boolean }
-    | { status: 'error'; message: string; releaseResources: boolean };
+    | { status: 'error'; message: string; errorCode?: string; releaseResources: boolean };
 
 /**
  * Plan 模式 agent 循环的最大步数：需覆盖「只读调研 → 多次 update_plan 迭代 →
@@ -75,7 +75,12 @@ export class MastraRuntimePlan extends MastraRuntimeChat {
         );
 
         if (summary.streamErrorMessage) {
-            return { status: 'error', message: summary.streamErrorMessage, releaseResources: summary.releaseResources };
+            return {
+                status: 'error',
+                message: summary.streamErrorMessage,
+                ...(summary.streamErrorCode ? { errorCode: summary.streamErrorCode } : {}),
+                releaseResources: summary.releaseResources,
+            };
         }
         if (summary.pendingApproval) {
             return { status: 'pending', releaseResources: summary.releaseResources };
@@ -240,6 +245,7 @@ export class MastraRuntimePlan extends MastraRuntimeChat {
                         `Mastra Plan 执行失败：${streamed.message}`,
                         events,
                         options,
+                        streamed.errorCode ?? classifyProviderErrorCode(streamed.message),
                     );
                 }
 
@@ -302,6 +308,7 @@ export class MastraRuntimePlan extends MastraRuntimeChat {
                 `Mastra Plan 执行失败：${normalizeMastraError(error)}`,
                 events,
                 options,
+                classifyProviderErrorCode(error),
             );
         } finally {
             
