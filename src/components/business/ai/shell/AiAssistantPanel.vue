@@ -256,7 +256,10 @@ const handleComposerQuestionCancel = (): void => {
     void handleCancelUserQuestion();
   }
 };
-const planSteps = computed<IAiTaskPlanStep[]>(() => planStore.value.steps);
+// ACP 计划就绪时以 session/update plan 投影为唯一来源；否则回退旧 store(过渡期)。
+const planSteps = computed<IAiTaskPlanStep[]>(() =>
+  assistant.acpPlan.hasPlan.value ? assistant.acpPlan.steps.value : planStore.value.steps,
+);
 const planActiveGoal = computed(() => planStore.value.activeGoal);
 const planActiveRunId = computed<string | null>(() => planStore.value.activeRunId);
 const networkPermission = computed(() => agentNetwork.store.networkPermission);

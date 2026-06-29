@@ -28,6 +28,8 @@ import {
 	type AuthenticateRequest,
 	type AuthenticateResponse,
 	type CancelNotification,
+	type CreateElicitationRequest,
+	type CreateElicitationResponse,
 	type InitializeRequest,
 	type InitializeResponse,
 	type NewSessionRequest,
@@ -63,6 +65,11 @@ import {
 	toApprovalDecision,
 	toRequestPermissionRequest,
 } from "./approval-bridge.js"
+import {
+	findPendingAskUser,
+	toAskUserResolutionInput,
+	toCreateElicitationRequest,
+} from "./ask-user-bridge.js"
 import {
 	AGENT_ASK_USER_RESUME_METHOD,
 	AGENT_CHAT_METHOD,
@@ -102,6 +109,13 @@ export interface IAcpAgentConnection {
 	requestPermission(
 		params: RequestPermissionRequest,
 	): Promise<RequestPermissionResponse>
+	/**
+	 * 在回合内发起反向 elicitation/create 表单请求，向用户征集 ask_user 提问的回填。
+	 * SDK 的 AgentSideConnection.unstable_createElicitation 结构上满足本签名。
+	 */
+	unstable_createElicitation(
+		params: CreateElicitationRequest,
+	): Promise<CreateElicitationResponse>
 }
 
 /** 构造参数(均可选，便于测试确定化)。 */
@@ -296,32 +310,63 @@ export class CalamexAcpAgent implements Agent {
 				if (response.errorMessage) {
 					throw new Error(response.errorMessage)
 				}
-				const pending = findPendingApproval(response.events)
-				if (!pending) {
-					break
+				// 审批门：本次运行以待裁决审批收尾 → 反向 session/request_permission 取裁决回灌续跑。
+				const pendingApproval = findPendingApproval(response.events)
+				if (pendingApproval) {
+					const permission = await this.connection.requestPermission(
+						toRequestPermissionRequest(params.sessionId, pendingApproval),
+					)
+					if (controller.signal.aborted) {
+						return promptResponse("cancelled")
+					}
+					const decision = toApprovalDecision(permission)
+					if (decision === "cancel") {
+						// 客户端在权限请求挂起期间取消了本回合：以 cancelled 收场；
+						// 引擎侧挂起的运行由其 TTL 驱逐自动回收。
+						return promptResponse("cancelled")
+					}
+					response = await this.runtime.resolveApproval(
+						{
+							requestId: pendingApproval.id,
+							decision,
+							sessionId: params.sessionId,
+							workspaceRootPath: state.workspaceRootPath,
+							...(state.modelConfig ? { modelConfig: state.modelConfig } : {}),
+						},
+						runOptions(),
+					)
+					continue
 				}
-				const permission = await this.connection.requestPermission(
-					toRequestPermissionRequest(params.sessionId, pending),
-				)
-				if (controller.signal.aborted) {
-					return promptResponse("cancelled")
+				// ask_user 反向提问门：本次运行以待回填提问收尾 → 反向 elicitation/create 取用户回填回灌续跑。
+				const pendingAskUser = findPendingAskUser(response.events)
+				if (pendingAskUser) {
+					if (!this.runtime.resolveAskUser) {
+						throw new Error(
+							"运行时不支持 ask_user 反向提问恢复(缺少 resolveAskUser)。",
+						)
+					}
+					const elicitation = await this.connection.unstable_createElicitation(
+						toCreateElicitationRequest(params.sessionId, pendingAskUser),
+					)
+					if (controller.signal.aborted) {
+						return promptResponse("cancelled")
+					}
+					const resolution = toAskUserResolutionInput(elicitation, pendingAskUser)
+					response = await this.runtime.resolveAskUser(
+						{
+							requestId: pendingAskUser.requestId,
+							outcome: resolution.outcome,
+							...(resolution.answers ? { answers: resolution.answers } : {}),
+							sessionId: params.sessionId,
+							workspaceRootPath: state.workspaceRootPath,
+							...(state.modelConfig ? { modelConfig: state.modelConfig } : {}),
+						},
+						runOptions(),
+					)
+					continue
 				}
-				const decision = toApprovalDecision(permission)
-				if (decision === "cancel") {
-					// 客户端在权限请求挂起期间取消了本回合：以 cancelled 收场；
-					// 引擎侧挂起的运行由其 TTL 驱逐自动回收。
-					return promptResponse("cancelled")
-				}
-				response = await this.runtime.resolveApproval(
-					{
-						requestId: pending.id,
-						decision,
-						sessionId: params.sessionId,
-						workspaceRootPath: state.workspaceRootPath,
-						...(state.modelConfig ? { modelConfig: state.modelConfig } : {}),
-					},
-					runOptions(),
-				)
+				// 无待裁决审批、无待回填提问 → 回合自然收尾。
+				break
 			}
 			const trailer = buildTurnTrailer({
 				sessionId: params.sessionId,
