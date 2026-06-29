@@ -10,7 +10,7 @@
 import { AgentSideConnection, ndJsonStream } from "@agentclientprotocol/sdk"
 import { Readable, Writable } from "node:stream"
 
-import { createConfiguredRuntime } from "../engines/runtime/runtime.js"
+import { MastraRuntime } from "../engines/runtime/composition.js"
 import { createMastraModelConfigFromEnv } from "../models/config.js"
 import {
 	disposeWarmupScheduler,
@@ -31,7 +31,7 @@ const logError = (event: string, error: unknown): void => {
 	)
 }
 
-const runtime = createConfiguredRuntime()
+const runtime = new MastraRuntime()
 
 // ACP stdio：input（我们写出去的可写端）=stdout；output（我们读进来的可读端）=stdin。
 const input = Writable.toWeb(process.stdout)

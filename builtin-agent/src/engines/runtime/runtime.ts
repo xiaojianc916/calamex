@@ -1,5 +1,4 @@
 import { createRequire } from 'node:module';
-import { MastraRuntime } from './composition.js';
 import type {
     IAgentRuntimeResponse,
     IAgentRuntimeRunOptions,
@@ -25,12 +24,6 @@ export type {
 // -----------------------------------------------------------------------------
 // Constants
 // -----------------------------------------------------------------------------
-
-export const SUPPORTED_AGENT_RUNTIMES = ['mastra'] as const;
-
-export type TAgentRuntimeName = (typeof SUPPORTED_AGENT_RUNTIMES)[number];
-
-export const DEFAULT_AGENT_RUNTIME: TAgentRuntimeName = 'mastra';
 
 /**
  * Sidecar 版本号。优先从 package.json 读取，保证与发布版本一致；
@@ -61,7 +54,11 @@ export type TRuntimeMethod<TInput> = (
 ) => Promise<IAgentRuntimeResponse>;
 
 /**
- * Surface implemented by every concrete agent runtime (Mastra today, others later).
+ * 内置边车（builtin-agent）唯一的进程内引擎契约：当前仅由 Mastra 实现。
+ *
+ * Kimi / Codex 等对等编码 agent 是宿主侧独立的 ACP 子进程，经 src-tauri 的
+ * AcpBackendId + provisioner 注册表对等挂载，不实现本进程内契约；多 agent 的统一
+ * 面在 ACP 协议层与宿主注册表，而非此接口。
  *
  * Notes on semantics:
  * - `chat` / `plan` / `execute` all accept the same `IAgentRuntimeInput`. The
@@ -73,7 +70,7 @@ export type TRuntimeMethod<TInput> = (
  *   meaningful. Implementations should ignore unrelated fields.
  */
 export interface IAgentSidecarRuntime {
-    readonly name: TAgentRuntimeName;
+    readonly name: string;
     readonly version: string;
 
     chat: TRuntimeMethod<IAgentRuntimeInput>;
@@ -116,58 +113,3 @@ export interface IAgentSidecarRuntime {
      */
     dispose?: () => Promise<void>;
 }
-
-// -----------------------------------------------------------------------------
-// Configuration & factory
-// -----------------------------------------------------------------------------
-
-type TRuntimeEnv = Record<string, string | undefined>;
-
-const isSupportedRuntimeName = (value: string): value is TAgentRuntimeName =>
-    (SUPPORTED_AGENT_RUNTIMES as readonly string[]).includes(value);
-
-export const resolveConfiguredRuntimeName = (
-    env: TRuntimeEnv = process.env,
-): TAgentRuntimeName => {
-    const configured = env.AGENT_RUNTIME?.trim().toLowerCase();
-    if (!configured) {
-        return DEFAULT_AGENT_RUNTIME;
-    }
-    if (isSupportedRuntimeName(configured)) {
-        return configured;
-    }
-    throw new Error(
-        `Unsupported AGENT_RUNTIME: "${configured}". Expected one of: ${SUPPORTED_AGENT_RUNTIMES.join(', ')}.`,
-    );
-};
-
-export interface ICreateRuntimeOptions {
-    /** Override the runtime name; defaults to env-derived value. */
-    runtime?: TAgentRuntimeName;
-    /** Environment map; defaults to `process.env`. */
-    env?: TRuntimeEnv;
-    /**
-     * Forwarded to the concrete runtime constructor. Shape depends on the
-     * runtime; pass-through is left untyped here so adding a new runtime
-     * doesn't churn this file.
-     */
-    runtimeOptions?: unknown;
-}
-
-export const createConfiguredRuntime = (
-    options: ICreateRuntimeOptions = {},
-): IAgentSidecarRuntime => {
-    const runtime =
-        options.runtime ?? resolveConfiguredRuntimeName(options.env ?? process.env);
-
-    switch (runtime) {
-        case 'mastra':
-            return new MastraRuntime(/* options.runtimeOptions */);
-        default: {
-            // Exhaustive check: adding a new entry to SUPPORTED_AGENT_RUNTIMES
-            // without a matching case here will fail the compile.
-            const exhaustive: never = runtime;
-            throw new Error(`Unhandled runtime: ${String(exhaustive)}`);
-        }
-    }
-};
