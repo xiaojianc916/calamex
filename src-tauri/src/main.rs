@@ -6,6 +6,7 @@ mod ai;
 mod assets;
 #[macro_use]
 mod commands;
+mod process_guard;
 mod storage_paths;
 mod tauri_bindings;
 mod terminal;
@@ -255,6 +256,12 @@ fn main() {
     }
 
     init_tracing();
+
+    // 进程树崩溃兜底（Windows）：把当前进程加入 KILL_ON_JOB_CLOSE 的 Job Object，使本进程
+    // 一旦非优雅消失（崩溃 / 被强杀）时，OS 连带终结其后派生的全部子孙进程（node 边车 /
+    // wsl.exe / LSP / ssh），作为既有 run_exit_cleanup 优雅清理之外的兜底。须在任何子进程
+    // 派生前安装；本工程子进程均为懒派生，故此处足够早。失败仅降级记日志，不中断启动。
+    process_guard::install_kill_on_close_job();
 
     let app_started_at = Instant::now();
     emit_startup_event("tauri.main.start", app_started_at);
