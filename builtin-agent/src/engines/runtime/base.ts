@@ -10,7 +10,7 @@ import { buildSystemPrompt } from '../prompts/system-prompt.js';
 import { createMastraMemoryReference, createMastraMemoryScope } from '../context/memory.js';
 import { createMastraMemoryForModel, createMastraModelConfig, defaultCreateAgent, defaultCreateExecutionHandle, defaultCreateResumableAgentHandle, defaultCreateStorage, resolveMastraModelConfig } from '../agent/factory.js';
 import { decodeApprovalRequestId, encodeApprovalRequestId, extractApprovalToolPath, getChunkRunId } from '../approval/utils.js';
-import { normalizeMastraError } from '../shared/errors.js';
+import { classifyProviderErrorCode, normalizeMastraError } from '../shared/errors.js';
 import { createApprovalRequest, createApprovedPlanExecutionContext, deriveApprovalRisk } from '../responses/responses.js';
 import { aggregateDoneTokenSnapshot, createOmMemoryCompressedEventDraft, createSandboxToolProgressPreview, extractFinishTokenSnapshot, getReasoningDelta, getTextDelta, isErrorChunk, isSandboxDataChunk, isTextDeltaChunk, isToolCallChunk, isToolCallSuspendedChunk, isToolErrorChunk, isToolResultChunk } from '../stream/stream-utils.js';
 import { loadMastraMcpTools } from '../../tools/index.js';
@@ -334,6 +334,7 @@ export class MastraRuntimeBase {
     ): Promise<IMastraTextStreamSummary> {
         const visibleTextParts: string[] = [];
         let streamErrorMessage: string | null = null;
+        let streamErrorCode: string | undefined;
         let pendingApproval = false;
         let releaseResources = true;
         let doneTokenSnapshot: TDoneTokenSnapshot | undefined;
@@ -508,15 +509,13 @@ export class MastraRuntimeBase {
                     releaseResources = false;
                 }
 
-                // ask_user：反向提问工具挂起时，surface 为结构化 ask_user_required（带外承载，
-                // 镜像 approval_required），而非降级成单一 approve/reject 气泡；恢复经专用 ext
-                // 方法回传富答案续跑（见 acp/ext-methods 的 ask-user resume，2c 落地）。其余挂起
-                // 工具仍走下方通用 approval_required 兜底。
-                // ask_user：反向提问工具挂起 —— 始终 surface 结构化 ask_user_required，绝不降级到旧的
-                // approve/reject 审批气泡（杜绝新旧杂糅）。挂起负载由本工具按 suspendSchema 自构造；权威的跨进程
-                // 校验在 sidecar→renderer 边界（前端 extractPendingAskUser 再行 zod 解析），此处 safeParse 仅作
-                // 进程内类型收窄。万一（按契约不可达）失败：既不回灌审批链、也不终结回合，仅跳过本次 surface，
-                // 挂起句柄交由 TTL 回收。
+                // ask_user：反向提问工具挂起 —— 始终 surface 结构化 ask_user_required（带外承载，镜像
+                // approval_required），绝不降级到旧的 approve/reject 审批气泡（杜绝新旧杂糅）；恢复经专用
+                // ext 方法回传富答案续跑（见 acp/ext-methods 的 ask-user resume，2c 落地）。其余挂起工具
+                // 仍走下方通用 approval_required 兜底。挂起负载由本工具按 suspendSchema 自构造；权威的跨
+                // 进程校验在 sidecar→renderer 边界（前端 extractPendingAskUser 再行 zod 解析），此处
+                // safeParse 仅作进程内类型收窄。万一（按契约不可达）失败：既不回灌审批链、也不终结回合，
+                // 仅跳过本次 surface，挂起句柄交由 TTL 回收。
                 if (chunk.payload.toolName === ASK_USER_TOOL_NAME) {
                     const surfacedRequest = askUserRequestSchema.safeParse(chunk.payload.suspendPayload);
                     if (surfacedRequest.success) {
@@ -563,6 +562,7 @@ export class MastraRuntimeBase {
 
             if (isErrorChunk(chunk)) {
                 streamErrorMessage = normalizeMastraError(chunk.payload.error);
+                streamErrorCode = classifyProviderErrorCode(chunk.payload.error);
                 continue;
             }
 
@@ -575,6 +575,7 @@ export class MastraRuntimeBase {
             pendingApproval,
             releaseResources,
             streamErrorMessage,
+            ...(streamErrorCode ? { streamErrorCode } : {}),
             visibleText: visibleTextParts.join(''),
             ...(doneTokenSnapshot ? { doneTokenSnapshot } : {}),
         };

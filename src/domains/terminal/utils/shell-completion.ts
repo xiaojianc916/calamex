@@ -1,7 +1,7 @@
 import type { Completion, CompletionContext, CompletionResult } from '@codemirror/autocomplete';
 import { snippet } from '@codemirror/autocomplete';
 import bashLanguageWasmUrl from 'tree-sitter-bash/tree-sitter-bash.wasm?url';
-import { Language, type Node, Parser, type Point, type Tree } from 'web-tree-sitter';
+import { Edit, Language, type Node, Parser, type Point, type Tree } from 'web-tree-sitter';
 import treeSitterWasmUrl from 'web-tree-sitter/web-tree-sitter.wasm?url';
 import { listShellCommandLabels, loadShellCommandSpec } from '@/services/shell/command-catalog';
 import type {
@@ -33,15 +33,6 @@ interface IShellParseCacheEntry {
 interface IParsedShellDocument {
   language: Language;
   entry: IShellParseCacheEntry;
-}
-
-interface IShellSourceEdit {
-  startIndex: number;
-  oldEndIndex: number;
-  newEndIndex: number;
-  startPosition: Point;
-  oldEndPosition: Point;
-  newEndPosition: Point;
 }
 
 interface IVariableContext {
@@ -372,7 +363,7 @@ const toBytePoint = (source: string, charIndex: number): Point => {
 
 // 通过最小公共前后缀计算单段替换编辑；该编辑精确描述 oldSource -> newSource 的差异，
 // 故 tree-sitter 增量重解析结果始终正确（即便两段文本不相关，最多退化为全量解析）。
-const computeShellSourceEdit = (oldSource: string, newSource: string): IShellSourceEdit => {
+const computeShellSourceEdit = (oldSource: string, newSource: string): Edit => {
   const oldLength = oldSource.length;
   const newLength = newSource.length;
   const prefixLimit = Math.min(oldLength, newLength);
@@ -393,14 +384,14 @@ const computeShellSourceEdit = (oldSource: string, newSource: string): IShellSou
     oldEndChar -= 1;
     newEndChar -= 1;
   }
-  return {
+  return new Edit({
     startIndex: utf8ByteLengthOfRange(newSource, 0, startChar),
     oldEndIndex: utf8ByteLengthOfRange(oldSource, 0, oldEndChar),
     newEndIndex: utf8ByteLengthOfRange(newSource, 0, newEndChar),
     startPosition: toBytePoint(newSource, startChar),
     oldEndPosition: toBytePoint(oldSource, oldEndChar),
     newEndPosition: toBytePoint(newSource, newEndChar),
-  };
+  });
 };
 
 const acquireParseEntry = (entry: IShellParseCacheEntry): IShellParseCacheEntry => {

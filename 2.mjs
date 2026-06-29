@@ -1,338 +1,143 @@
-// fix-restore-livechat-and-demolish-chat_stream.mjs
-// 作用域(唯一标准管线 / 不留新旧杂糅):
-//  A. 恢复被误删的 LIVE 一次性 model/chat 契约:AgentSidecarChatRequest + AgentSidecarMessagePayload
-//     (+ AiContextReferencePayload import + 两个契约序列化测试) —— 修 E0432 x4
-//  B. 彻底拆除死链 chat_stream 全管线(conversation/mod/prompt) —— 修 E0425/E0599/E0061
-//  C. 移除 ai_chat_stream 命令 + 绑定注册 + 前端 service 方法
-//  D. 修 ai_ensure_acp_session 的 ensure_session 2->3 参(补 None)
-//  E. 删失活契约类型 AiChatRequest / AiChatStreamPayload / AiChatMessagePayload
-//  F. 清理既有未用 import:gateway::ProviderConnectionOutcome 重导出、terminal AtomicU32
-import { readFileSync, writeFileSync, existsSync } from 'node:fs';
-import { join } from 'node:path';
+// fix-ai-review-batch-13.mjs
+// 批次 13：J6（stream 结构化错误码透传，落实 J5 闭环）+ J7（ask_user 注释去重）
+// 依赖：J6 的 execution.ts 改动建立在 fix-ai-review-batch-12.mjs 之上 —— 必须先运行 batch-12。
+// 独立提交，运行后：pnpm -C builtin-agent typecheck && pnpm -C builtin-agent test && pnpm lint:all
+import { readFileSync, writeFileSync } from 'node:fs';
 
-const ROOT = process.cwd();
-const detectEol = (s) => (s.includes('\r\n') ? '\r\n' : '\n');
-const toLf = (s) => s.replace(/\r\n/g, '\n');
-const fromLf = (s, eol) => (eol === '\r\n' ? s.replace(/\n/g, '\r\n') : s);
+const ROOT = 'builtin-agent/src/engines';
+const F_TYPES = `${ROOT}/shared/types.ts`;
+const F_BASE = `${ROOT}/runtime/base.ts`;
+const F_EXEC = `${ROOT}/modes/execution.ts`;
 
-function replaceOnce(src, oldStr, newStr) {
-  const i = src.indexOf(oldStr);
-  if (i < 0) throw new Error('replaceOnce 未命中: ' + JSON.stringify(oldStr.slice(0, 70)));
-  if (src.indexOf(oldStr, i + oldStr.length) >= 0)
-    throw new Error('replaceOnce 歧义(多处命中): ' + JSON.stringify(oldStr.slice(0, 70)));
-  return src.slice(0, i) + newStr + src.slice(i + oldStr.length);
-}
-function cutRange(src, startNeedle, endNeedle) {
-  const s = src.indexOf(startNeedle);
-  if (s < 0) throw new Error('cutRange 起点未命中: ' + JSON.stringify(startNeedle.slice(0, 60)));
-  const e = src.indexOf(endNeedle, s + startNeedle.length);
-  if (e < 0) throw new Error('cutRange 终点未命中: ' + JSON.stringify(endNeedle.slice(0, 60)));
-  return src.slice(0, s) + src.slice(e);
-}
-
-const edits = {
-  // ───────────────────────── A) 恢复 live 契约 ─────────────────────────
-  'src-tauri/src/commands/contracts/builtin_agent.rs': (src) => {
-    // A1 恢复 AiContextReferencePayload import(AgentSidecarChatRequest.context 需要)
-    src = replaceOnce(
-      src,
-      'use super::secret::SecretString;',
-      'use super::ai_chat::AiContextReferencePayload;\nuse super::secret::SecretString;',
+const eolOf = (t) => (t.includes('\r\n') ? '\r\n' : '\n');
+const load = (file) => {
+    const raw = readFileSync(file, 'utf8');
+    const eol = eolOf(raw);
+    const hadFinal = raw.endsWith(eol);
+    const body = hadFinal ? raw.slice(0, -eol.length) : raw;
+    return { file, lines: body.split(eol), eol, hadFinal };
+};
+const save = (doc) => {
+    let out = doc.lines.join(doc.eol);
+    if (doc.hadFinal) out += doc.eol;
+    writeFileSync(doc.file, out, 'utf8');
+};
+const findSeq = (lines, seq) => {
+    const hits = [];
+    for (let i = 0; i + seq.length <= lines.length; i++) {
+        let ok = true;
+        for (let j = 0; j < seq.length; j++) if (lines[i + j] !== seq[j]) { ok = false; break; }
+        if (ok) hits.push(i);
+    }
+    return hits;
+};
+const insertAfter = (doc, anchor, newLines, label) => {
+    const a = findSeq(doc.lines, [anchor]);
+    if (a.length !== 1) throw new Error(`${label}: 锚点应唯一(1)，实际 ${a.length}: ${JSON.stringify(anchor)}`);
+    if (doc.lines[a[0] + 1] === newLines[0]) { console.log(`  · ${label}: 已插入，跳过`); return; }
+    doc.lines.splice(a[0] + 1, 0, ...newLines);
+    console.log(`  ✓ ${label}`);
+};
+const replaceLine = (doc, oldLine, newLine, label) => {
+    if (doc.lines.includes(newLine) && !doc.lines.includes(oldLine)) { console.log(`  · ${label}: 已是目标态，跳过`); return; }
+    const a = findSeq(doc.lines, [oldLine]);
+    if (a.length !== 1) throw new Error(`${label}: 原始行应唯一(1)，实际 ${a.length}`);
+    doc.lines[a[0]] = newLine;
+    console.log(`  ✓ ${label}`);
+};
+const replaceBlock = (doc, oldLines, newLines, label) => {
+    const newAt = findSeq(doc.lines, newLines);
+    const oldAt = findSeq(doc.lines, oldLines);
+    if (newAt.length >= 1 && oldAt.length === 0) { console.log(`  · ${label}: 已是目标态，跳过`); return; }
+    if (oldAt.length === 0) throw new Error(`${label}: 未找到原始块`);
+    if (oldAt.length > 1) throw new Error(`${label}: 原始块不唯一(${oldAt.length})`);
+    doc.lines.splice(oldAt[0], oldLines.length, ...newLines);
+    console.log(`  ✓ ${label}`);
+};
+// execution.ts J6-d：把 batch-12 那行 streamErrorCode 声明升级为"优先结构化码、回退消息子串"。
+const upgradeStreamErrorCode = (doc, label) => {
+    if (doc.lines.some((l) => l.includes('streamSummary.streamErrorCode ??'))) { console.log(`  · ${label}: 已升级，跳过`); return; }
+    const src = 'const streamErrorCode = classifyProviderErrorCode(streamSummary.streamErrorMessage);';
+    const idxs = [];
+    doc.lines.forEach((l, i) => { if (l.trimStart() === src) idxs.push(i); });
+    if (idxs.length === 0) throw new Error(`${label}: 未找到 batch-12 生成的 streamErrorCode 声明——请先运行 fix-ai-review-batch-12.mjs`);
+    if (idxs.length > 1) throw new Error(`${label}: streamErrorCode 声明不唯一(${idxs.length})`);
+    const i = idxs[0];
+    const indent = doc.lines[i].slice(0, doc.lines[i].length - doc.lines[i].trimStart().length);
+    doc.lines.splice(i, 1,
+        `${indent}const streamErrorCode = streamSummary.streamErrorCode`,
+        `${indent}    ?? classifyProviderErrorCode(streamSummary.streamErrorMessage);`,
     );
-    // A2 在 ModelConfigPayload 之前插回 MessagePayload
-    const modelCfgAnchor =
-      '#[derive(Debug, Clone, Serialize, Deserialize, Type)]\n#[serde(rename_all = "camelCase")]\npub struct AgentSidecarModelConfigPayload {';
-    const msgStruct =
-      '#[derive(Debug, Clone, Serialize, Deserialize, Type)]\n' +
-      '#[serde(rename_all = "camelCase")]\n' +
-      'pub struct AgentSidecarMessagePayload {\n' +
-      '    pub(crate) role: String,\n' +
-      '    pub(crate) content: String,\n' +
-      '}';
-    src = replaceOnce(src, modelCfgAnchor, msgStruct + '\n\n' + modelCfgAnchor);
-    // A3 在 RollbackStepPath 之前插回 ChatRequest
-    const rollbackAnchor =
-      '#[derive(Debug, Clone, Serialize, Deserialize, Type)]\n#[serde(untagged)]\npub enum AgentSidecarRollbackStepPath {';
-    const chatStruct =
-      '#[derive(Debug, Clone, Serialize, Deserialize, Type)]\n' +
-      '#[serde(rename_all = "camelCase")]\n' +
-      'pub struct AgentSidecarChatRequest {\n' +
-      '    #[serde(skip_serializing_if = "is_blank_optional_string")]\n' +
-      '    pub(crate) session_id: Option<String>,\n' +
-      '    #[serde(skip_serializing_if = "is_blank_optional_string")]\n' +
-      '    pub(crate) mode: Option<String>,\n' +
-      '    #[serde(skip_serializing_if = "is_blank_optional_string")]\n' +
-      '    pub(crate) goal: Option<String>,\n' +
-      '    pub(crate) messages: Vec<AgentSidecarMessagePayload>,\n' +
-      '    #[serde(skip_serializing_if = "is_blank_optional_string")]\n' +
-      '    pub(crate) workspace_root_path: Option<String>,\n' +
-      '    #[serde(default)]\n' +
-      '    pub(crate) context: Vec<AiContextReferencePayload>,\n' +
-      '    #[serde(skip_serializing_if = "Option::is_none")]\n' +
-      '    pub(crate) model_config: Option<AgentSidecarModelConfigPayload>,\n' +
-      '    #[serde(skip_serializing_if = "is_blank_optional_string")]\n' +
-      '    pub(crate) thread_id: Option<String>,\n' +
-      '}';
-    src = replaceOnce(src, rollbackAnchor, chatStruct + '\n\n' + rollbackAnchor);
-    // A4 测试 use 列表补回两个类型
-    src = replaceOnce(
-      src,
-      '    use super::{\n' +
-        '        AgentBackendKind, AgentExternalChatRequest, AgentSidecarCheckpointRestoreRequest,\n' +
-        '        AgentSidecarRollbackStepPath,\n' +
-        '    };',
-      '    use super::{\n' +
-        '        AgentBackendKind, AgentExternalChatRequest, AgentSidecarChatRequest,\n' +
-        '        AgentSidecarCheckpointRestoreRequest, AgentSidecarMessagePayload,\n' +
-        '        AgentSidecarRollbackStepPath,\n' +
-        '    };',
-    );
-    // A5 测试辅助 sidecar_message()
-    const serObjAnchor = '    fn serialize_object<T: Serialize>(value: &T) -> Map<String, Value> {';
-    const msgHelper =
-      '    fn sidecar_message() -> AgentSidecarMessagePayload {\n' +
-      '        AgentSidecarMessagePayload {\n' +
-      '            role: "user".to_string(),\n' +
-      '            content: "run".to_string(),\n' +
-      '        }\n' +
-      '    }';
-    src = replaceOnce(src, serObjAnchor, msgHelper + '\n\n' + serObjAnchor);
-    // A6 恢复两个 chat_request 序列化测试
-    const restoreTestAnchor =
-      '    #[test]\n    fn restore_checkpoint_request_omits_absent_optional_fields() {';
-    const chatTests =
-      '    #[test]\n' +
-      '    fn chat_request_omits_blank_optional_fields() {\n' +
-      '        let request = AgentSidecarChatRequest {\n' +
-      '            session_id: None,\n' +
-      '            mode: Some(" ".to_string()),\n' +
-      '            goal: Some("".to_string()),\n' +
-      '            messages: vec![sidecar_message()],\n' +
-      '            workspace_root_path: None,\n' +
-      '            context: Vec::new(),\n' +
-      '            model_config: None,\n' +
-      '            thread_id: Some(" ".to_string()),\n' +
-      '        };\n\n' +
-      '        let object = serialize_object(&request);\n\n' +
-      '        assert!(!object.contains_key("sessionId"));\n' +
-      '        assert!(!object.contains_key("mode"));\n' +
-      '        assert!(!object.contains_key("goal"));\n' +
-      '        assert!(!object.contains_key("workspaceRootPath"));\n' +
-      '        assert!(!object.contains_key("threadId"));\n' +
-      '        assert!(object.contains_key("messages"));\n' +
-      '        assert!(object.contains_key("context"));\n' +
-      '    }\n\n' +
-      '    #[test]\n' +
-      '    fn chat_request_keeps_non_empty_thread_id() {\n' +
-      '        let request = AgentSidecarChatRequest {\n' +
-      '            session_id: Some("sidecar-chat-1".to_string()),\n' +
-      '            mode: Some("ask".to_string()),\n' +
-      '            goal: Some("继续".to_string()),\n' +
-      '            messages: vec![sidecar_message()],\n' +
-      '            workspace_root_path: None,\n' +
-      '            context: Vec::new(),\n' +
-      '            model_config: None,\n' +
-      '            thread_id: Some("thread-chat-1".to_string()),\n' +
-      '        };\n\n' +
-      '        let object = serialize_object(&request);\n\n' +
-      '        assert_eq!(\n' +
-      '            object.get("threadId"),\n' +
-      '            Some(&Value::String("thread-chat-1".to_string()))\n' +
-      '        );\n' +
-      '    }';
-    src = replaceOnce(src, restoreTestAnchor, chatTests + '\n\n' + restoreTestAnchor);
-    return src;
-  },
-
-  // ───────────────────── E) 删失活契约类型 ─────────────────────
-  'src-tauri/src/commands/contracts/ai_chat.rs': (src) => {
-    src = cutRange(
-      src,
-      '#[derive(Debug, Clone, Deserialize, Serialize, Type)]\n#[serde(rename_all = "camelCase")]\npub struct AiChatMessagePayload {',
-      '#[derive(Debug, Clone, Deserialize, Serialize, Type)]\n#[serde(rename_all = "camelCase")]\npub struct AiContextRangePayload {',
-    );
-    src = cutRange(
-      src,
-      '#[derive(Debug, Clone, Deserialize, Type)]\n#[serde(rename_all = "camelCase")]\npub struct AiChatRequest {',
-      '#[derive(Debug, Clone, Deserialize, Type)]\n#[serde(rename_all = "camelCase")]\npub struct AiConversationTitleRequest {',
-    );
-    src = cutRange(
-      src,
-      '#[derive(Debug, Clone, Serialize, Type)]\n#[serde(rename_all = "camelCase")]\npub struct AiChatStreamPayload {',
-      '#[derive(Debug, Clone, Deserialize, Type)]\n#[serde(rename_all = "camelCase")]\npub struct AiCancelRequest {',
-    );
-    return src;
-  },
-
-  // ───────────────────── B) 拆 chat_stream(conversation) ─────────────────────
-  'src-tauri/src/ai/gateway/conversation.rs': (src) => {
-    src = replaceOnce(
-      src,
-      'use super::prompt::{\n    build_context_block, build_conversation_title_prompt, build_inline_prompt, clip_title_source,\n};',
-      'use super::prompt::{\n    build_conversation_title_prompt, build_inline_prompt, clip_title_source,\n};',
-    );
-    src = replaceOnce(src, 'use tauri::{Emitter as _, Manager as _};', 'use tauri::Manager as _;');
-    // 删 chat_stream + chat_stream_via_acp + emit_acp_stream_{frame,done,error}
-    src = cutRange(src, 'pub async fn chat_stream(', 'pub async fn inline_complete(');
-    // 删 collect_messages
-    src = cutRange(
-      src,
-      'fn collect_messages(',
-      '#[cfg(test)]\npub(super) fn with_identity_system_message(',
-    );
-    return src;
-  },
-
-  // ───────────────────── B) 拆 build_context_block(prompt) ─────────────────────
-  'src-tauri/src/ai/gateway/prompt.rs': (src) => {
-    const anchor = 'pub(super) fn build_context_block(references: &[AiContextReferencePayload]) -> String {';
-    const i = src.indexOf(anchor);
-    if (i < 0) throw new Error('prompt.rs build_context_block 锚点未命中');
-    return src.slice(0, i).replace(/\n+$/, '\n');
-  },
-
-  // ───────────────────── B+F) mod.rs 级联清理 ─────────────────────
-  'src-tauri/src/ai/gateway/mod.rs': (src) => {
-    // 收紧契约 import:删 AiChatRequest / AiContextReferencePayload
-    src = replaceOnce(
-      src,
-      'use crate::commands::contracts::{\n' +
-        '    AiAgentClassifyTaskPayload, AiAgentClassifyTaskRequest, AiChatRequest, AiConfigPayload,\n' +
-        '    AiContextReferencePayload, AiConversationTitlePayload, AiConversationTitleRequest,\n' +
-        '    AiCredentialStatusPayload, AiInlineCompletionRangePayload, AiInlineCompletionRequest,\n' +
-        '    AiInlineCompletionResult, AiModelEndpointConfigPayload, AiSuggestionPoolPayload,\n' +
-        '    AiSuggestionPoolRequest,\n' +
-        '};',
-      'use crate::commands::contracts::{\n' +
-        '    AiAgentClassifyTaskPayload, AiAgentClassifyTaskRequest, AiConfigPayload,\n' +
-        '    AiConversationTitlePayload, AiConversationTitleRequest, AiCredentialStatusPayload,\n' +
-        '    AiInlineCompletionRangePayload, AiInlineCompletionRequest, AiInlineCompletionResult,\n' +
-        '    AiModelEndpointConfigPayload, AiSuggestionPoolPayload, AiSuggestionPoolRequest,\n' +
-        '};',
-    );
-    // redact_text 仅 collect_messages 用,删 import
-    src = replaceOnce(src, 'use super::security::redaction::redact_text;\n', '');
-    // 原子序列仅 next_runtime_id 用,收紧 std::sync import
-    src = replaceOnce(
-      src,
-      'use std::sync::{\n    Mutex, OnceLock,\n    atomic::{AtomicU64, Ordering},\n};',
-      'use std::sync::{Mutex, OnceLock};',
-    );
-    // 重导出去掉 chat_stream
-    src = replaceOnce(
-      src,
-      'pub use conversation::{chat_stream, classify_task, generate_conversation_title, inline_complete};',
-      'pub use conversation::{classify_task, generate_conversation_title, inline_complete};',
-    );
-    // 重导出去掉未用的 ProviderConnectionOutcome
-    src = replaceOnce(
-      src,
-      'pub use connection::{\n    ProviderConnectionOutcome, connect_provider, test_provider, test_provider_config,\n};',
-      'pub use connection::{connect_provider, test_provider, test_provider_config};',
-    );
-    // 删仅 chat_stream/collect_messages/build_context_block 用的 5 个常量
-    src = replaceOnce(
-      src,
-      'const MAX_AI_MESSAGES: usize = 32;\n' +
-        'const MAX_MESSAGE_CHARS: usize = 16_000;\n' +
-        'const MAX_CONTEXT_REFERENCES: usize = 8;\n' +
-        'const MAX_CONTEXT_BLOCK_CHARS: usize = 12_000;\n' +
-        'const MAX_REFERENCE_PREVIEW_CHARS: usize = 4_000;\n' +
-        'const MAX_TITLE_SOURCE_CHARS: usize = 1_200;',
-      'const MAX_TITLE_SOURCE_CHARS: usize = 1_200;',
-    );
-    // 删 STREAM_SEQUENCE 静态
-    src = replaceOnce(src, 'static STREAM_SEQUENCE: AtomicU64 = AtomicU64::new(1);\n', '');
-    // 删 AiChatStreamStart 结构体
-    src = cutRange(src, 'pub struct AiChatStreamStart {', 'fn config_state()');
-    // 删 next_runtime_id
-    src = cutRange(src, 'fn next_runtime_id(prefix: &str) -> String {', 'fn sanitize_fenced_text(');
-    return src;
-  },
-
-  // ───────────────── C+D) 命令层:删 ai_chat_stream + 修 ensure_session 三参 ─────────────────
-  'src-tauri/src/commands/ai/gateway.rs': (src) => {
-    src = replaceOnce(
-      src,
-      '    AiCancelRequest, AiChatRequest, AiChatStreamPayload, AiConfigPayload,',
-      '    AiCancelRequest, AiConfigPayload,',
-    );
-    src = cutRange(
-      src,
-      '#[tauri::command]\n#[specta::specta]\npub async fn ai_chat_stream(',
-      '#[tauri::command]\n#[specta::specta]\npub fn ai_cancel(',
-    );
-    src = replaceOnce(
-      src,
-      'host.ensure_session(thread_id, workspace_root_path)\n        .await',
-      'host.ensure_session(thread_id, workspace_root_path, None)\n        .await',
-    );
-    return src;
-  },
-
-  // ───────────────── C) 绑定注册去掉 ai_chat_stream ─────────────────
-  'src-tauri/src/tauri_bindings.rs': (src) =>
-    replaceOnce(src, '            ai::gateway::ai_chat_stream,\n', ''),
-
-  // ───────────────── F) terminal 未用 AtomicU32 ─────────────────
-  'src-tauri/src/commands/terminal/commands.rs': (src) =>
-    replaceOnce(
-      src,
-      'use std::{\n    sync::{\n        Arc,\n        atomic::AtomicU32,\n    },\n    time::{Duration, Instant},\n};',
-      'use std::{\n    sync::Arc,\n    time::{Duration, Instant},\n};',
-    ),
-
-  // ───────────────── C) 前端 service 去掉 chatStream ─────────────────
-  'src/services/ipc/ai.service.ts': (src) => {
-    src = replaceOnce(src, '  AiChatStreamPayload,\n', '');
-    src = replaceOnce(src, '  IAiChatRequest,\n', '');
-    src = replaceOnce(
-      src,
-      '  chatStream(payload: IAiChatRequest): Promise<AiChatStreamPayload> {\n' +
-        '    return tauriService.aiChatStream(payload);\n' +
-        '  },\n',
-      '',
-    );
-    return src;
-  },
+    console.log(`  ✓ ${label}`);
 };
 
-// ── 应用 + 写回(保留 EOL) ──
-const applied = [];
-for (const [rel, fn] of Object.entries(edits)) {
-  const abs = join(ROOT, rel);
-  if (!existsSync(abs)) throw new Error('文件不存在: ' + rel);
-  const raw = readFileSync(abs, 'utf8');
-  const eol = detectEol(raw);
-  const next = fn(toLf(raw));
-  writeFileSync(abs, fromLf(next, eol), 'utf8');
-  applied.push(rel);
+// ---- File 1: shared/types.ts (CRLF / 4-space) — J6-a：summary 增加可选 streamErrorCode ----
+console.log(F_TYPES);
+{
+    const doc = load(F_TYPES);
+    insertAfter(doc, '    streamErrorMessage: string | null;', ['    streamErrorCode?: string;'], 'J6-a IMastraTextStreamSummary.streamErrorCode');
+    save(doc);
 }
 
-// ── 定义形式守卫(预防回归/误删) ──
-const must = (rel, has, missing) => {
-  const s = toLf(readFileSync(join(ROOT, rel), 'utf8'));
-  for (const m of has) if (!s.includes(m)) throw new Error(`[守卫] ${rel} 应包含但缺失: ${m}`);
-  for (const m of missing) if (s.includes(m)) throw new Error(`[守卫] ${rel} 应已删除但残留: ${m}`);
-};
-must('src-tauri/src/commands/contracts/builtin_agent.rs',
-  ['pub struct AgentSidecarChatRequest {', 'pub struct AgentSidecarMessagePayload {',
-   'use super::ai_chat::AiContextReferencePayload;'], []);
-must('src-tauri/src/commands/contracts/ai_chat.rs',
-  ['pub struct AiContextReferencePayload {', 'pub struct AiContextRangePayload {'],
-  ['pub struct AiChatRequest {', 'pub struct AiChatStreamPayload {', 'pub struct AiChatMessagePayload {']);
-must('src-tauri/src/ai/gateway/conversation.rs', [],
-  ['fn chat_stream(', 'fn chat_stream_via_acp(', 'fn collect_messages(', 'Emitter as _']);
-must('src-tauri/src/ai/gateway/prompt.rs', [], ['build_context_block']);
-must('src-tauri/src/ai/gateway/mod.rs', ['pub use conversation::{classify_task,'],
-  ['chat_stream', 'AiChatStreamStart', 'next_runtime_id', 'STREAM_SEQUENCE', 'ProviderConnectionOutcome']);
-must('src-tauri/src/commands/ai/gateway.rs',
-  ['host.ensure_session(thread_id, workspace_root_path, None)'], ['pub async fn ai_chat_stream(']);
-must('src-tauri/src/tauri_bindings.rs', [], ['ai_chat_stream']);
-must('src-tauri/src/commands/terminal/commands.rs', [], ['atomic::AtomicU32']);
-must('src/services/ipc/ai.service.ts', [], ['chatStream(', 'aiChatStream']);
+// ---- File 2: runtime/base.ts (LF / 4-space) — J6-b/c + J7 ----
+console.log(F_BASE);
+{
+    const doc = load(F_BASE);
+    // J6-b 导入 classifyProviderErrorCode
+    replaceLine(doc,
+        "import { normalizeMastraError } from '../shared/errors.js';",
+        "import { classifyProviderErrorCode, normalizeMastraError } from '../shared/errors.js';",
+        'J6-b import classifyProviderErrorCode');
+    // J6-c1 局部声明
+    insertAfter(doc, '        let streamErrorMessage: string | null = null;',
+        ['        let streamErrorCode: string | undefined;'],
+        'J6-c1 streamErrorCode 局部变量');
+    // J6-c2 error chunk 分支：用原始 error 对象出精确码
+    replaceBlock(doc, [
+        '            if (isErrorChunk(chunk)) {',
+        '                streamErrorMessage = normalizeMastraError(chunk.payload.error);',
+        '                continue;',
+        '            }',
+    ], [
+        '            if (isErrorChunk(chunk)) {',
+        '                streamErrorMessage = normalizeMastraError(chunk.payload.error);',
+        '                streamErrorCode = classifyProviderErrorCode(chunk.payload.error);',
+        '                continue;',
+        '            }',
+    ], 'J6-c2 isErrorChunk 分类');
+    // J6-c3 return summary 透传
+    insertAfter(doc, '            streamErrorMessage,',
+        ['            ...(streamErrorCode ? { streamErrorCode } : {}),'],
+        'J6-c3 summary 回传 streamErrorCode');
+    // J7 合并重复的 ask_user 注释（16 空格缩进）
+    replaceBlock(doc, [
+        '                // ask_user：反向提问工具挂起时，surface 为结构化 ask_user_required（带外承载，',
+        '                // 镜像 approval_required），而非降级成单一 approve/reject 气泡；恢复经专用 ext',
+        '                // 方法回传富答案续跑（见 acp/ext-methods 的 ask-user resume，2c 落地）。其余挂起',
+        '                // 工具仍走下方通用 approval_required 兜底。',
+        '                // ask_user：反向提问工具挂起 —— 始终 surface 结构化 ask_user_required，绝不降级到旧的',
+        '                // approve/reject 审批气泡（杜绝新旧杂糅）。挂起负载由本工具按 suspendSchema 自构造；权威的跨进程',
+        '                // 校验在 sidecar→renderer 边界（前端 extractPendingAskUser 再行 zod 解析），此处 safeParse 仅作',
+        '                // 进程内类型收窄。万一（按契约不可达）失败：既不回灌审批链、也不终结回合，仅跳过本次 surface，',
+        '                // 挂起句柄交由 TTL 回收。',
+    ], [
+        '                // ask_user：反向提问工具挂起 —— 始终 surface 结构化 ask_user_required（带外承载，镜像',
+        '                // approval_required），绝不降级到旧的 approve/reject 审批气泡（杜绝新旧杂糅）；恢复经专用',
+        '                // ext 方法回传富答案续跑（见 acp/ext-methods 的 ask-user resume，2c 落地）。其余挂起工具',
+        '                // 仍走下方通用 approval_required 兜底。挂起负载由本工具按 suspendSchema 自构造；权威的跨',
+        '                // 进程校验在 sidecar→renderer 边界（前端 extractPendingAskUser 再行 zod 解析），此处',
+        '                // safeParse 仅作进程内类型收窄。万一（按契约不可达）失败：既不回灌审批链、也不终结回合，',
+        '                // 仅跳过本次 surface，挂起句柄交由 TTL 回收。',
+    ], 'J7 合并重复 ask_user 注释');
+    save(doc);
+}
 
-console.log('✅ 完成,已改写 ' + applied.length + ' 个文件:\n  - ' + applied.join('\n  - '));
-console.log('\n下一步(建议先不带 -D warnings,让残留 dead_code 以告警呈现):');
-console.log('  cargo clippy --features acp_client --manifest-path src-tauri/Cargo.toml --all-targets');
-console.log('  cargo test --features acp_client --manifest-path src-tauri/Cargo.toml');
+// ---- File 3: modes/execution.ts (LF / 4-space) — J6-d：消费结构化码（依赖 batch-12）----
+console.log(F_EXEC);
+{
+    const doc = load(F_EXEC);
+    upgradeStreamErrorCode(doc, 'J6-d execution.ts 优先结构化码');
+    save(doc);
+}
+
+console.log('batch-13 完成。');

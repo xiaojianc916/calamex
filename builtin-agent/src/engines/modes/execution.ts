@@ -233,7 +233,8 @@ export class MastraRuntimeExecution extends MastraRuntimeValidation {
 
             if (streamSummary.streamErrorMessage) {
                 executionSession.failTurn(executionTurn.id, { errorMessage: streamSummary.streamErrorMessage });
-                const streamErrorCode = classifyProviderErrorCode(streamSummary.streamErrorMessage);
+                const streamErrorCode = streamSummary.streamErrorCode
+                    ?? classifyProviderErrorCode(streamSummary.streamErrorMessage);
                 await this.planWorkflowStore.failStep({
                     planId,
                     version: Number(planVersion),

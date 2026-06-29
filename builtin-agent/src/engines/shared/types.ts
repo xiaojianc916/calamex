@@ -289,6 +289,7 @@ export interface IMastraTextStreamSummary {
     pendingApproval: boolean;
     releaseResources: boolean;
     streamErrorMessage: string | null;
+    streamErrorCode?: string;
     visibleText: string;
     doneTokenSnapshot?: TDoneTokenSnapshot;
 }
