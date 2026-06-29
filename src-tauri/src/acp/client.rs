@@ -316,6 +316,10 @@ pub struct NewSessionOutcome {
 enum Command {
     NewSession {
         cwd: PathBuf,
+        /// 仅 builtin 后端注入的 session/new _meta（模型目录 + 凭据 + 当前选中项，由命令层
+        /// 组装）；外部 agent 为 None。经官方 builder 注入 NewSessionRequest（Meta =
+        /// serde_json::Map<String, Value>，序列化为线上键 _meta）。
+        meta: Option<serde_json::Map<String, Value>>,
         reply: oneshot::Sender<Result<NewSessionOutcome, String>>,
     },
     Prompt {
@@ -382,10 +386,14 @@ pub struct AcpClientHandle {
 }
 
 impl AcpClientHandle {
-    pub async fn new_session(&self, cwd: PathBuf) -> Result<NewSessionOutcome, AcpClientError> {
+    pub async fn new_session(
+        &self,
+        cwd: PathBuf,
+        meta: Option<serde_json::Map<String, Value>>,
+    ) -> Result<NewSessionOutcome, AcpClientError> {
         let (reply, rx) = oneshot::channel();
         self.cmd_tx
-            .send(Command::NewSession { cwd, reply })
+            .send(Command::NewSession { cwd, meta, reply })
             .map_err(|_| AcpClientError::NotRunning)?;
         rx.await
             .map_err(|_| AcpClientError::NotRunning)?
@@ -672,9 +680,18 @@ pub fn spawn_acp_client(
 
                 while let Some(command) = cmd_rx.recv().await {
                     match command {
-                        Command::NewSession { cwd, reply } => {
+                        Command::NewSession { cwd, meta, reply } => {
+                            // 仅 builtin 携带 _meta（模型目录 + 凭据，命令层组装）；外部 agent
+                            // meta 为 None，构造与旧行为一致的请求。NewSessionRequest 为
+                            // #[non_exhaustive]，不能用结构体字面量补字段，故经官方 builder
+                            // .meta(map)（接受 impl IntoOption<Meta>，Meta = Map<String, Value>）注入。
+                            let request = NewSessionRequest::new(cwd);
+                            let request = match meta {
+                                Some(meta) => request.meta(meta),
+                                None => request,
+                            };
                             let res = cx
-                                .send_request(NewSessionRequest::new(cwd))
+                                .send_request(request)
                                 .block_task()
                                 .await;
                             // 最小透传：把 NewSessionResponse.modes（可用模式清单）原样序列化为
@@ -783,6 +800,36 @@ pub fn spawn_acp_client(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // ---- NewSession _meta 模型目录注入测试 ----
+
+    #[test]
+    fn new_session_request_carries_model_catalog_meta() {
+        // 仅 builtin 后端在 session/new 经官方 _meta 通道下发模型目录（含凭据 + 当前选中项），供其
+        // 边车公示官方 config_options 模型选择器、并在 set_config_option 切换时按 modelId 命中凭据。
+        // 验证官方 builder .meta(map) 把目录序列化到线上键 _meta（serde rename），且形状与边车
+        // model-config-options.ts 的 parseModelCatalogFromMeta 期望一致：
+        // calamex.dev/modelCatalog -> { models:[{modelId,apiKey,baseUrl?}], currentModelId? }。
+        let mut catalog = serde_json::Map::new();
+        catalog.insert(
+            "calamex.dev/modelCatalog".to_string(),
+            serde_json::json!({
+                "models": [
+                    { "modelId": "deepseek/deepseek-v4-pro", "apiKey": "sk-x" }
+                ],
+                "currentModelId": "deepseek/deepseek-v4-pro",
+            }),
+        );
+
+        let request = NewSessionRequest::new(PathBuf::from("/repo")).meta(catalog);
+        let value = serde_json::to_value(&request).unwrap();
+
+        let entry = &value["_meta"]["calamex.dev/modelCatalog"];
+        assert_eq!(entry["models"][0]["modelId"], "deepseek/deepseek-v4-pro");
+        assert_eq!(entry["models"][0]["apiKey"], "sk-x");
+        assert!(entry["models"][0].get("baseUrl").is_none());
+        assert_eq!(entry["currentModelId"], "deepseek/deepseek-v4-pro");
+    }
 
     // ---- 履历测试 ----
 

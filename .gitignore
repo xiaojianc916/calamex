@@ -36,3 +36,6 @@ src-tauri/gen/schemas/
 
 # Compiled JS artifacts that shadow .ts sources (never used at runtime)
 builtin-agent/src/**/*.js
+
+# 运行时 SQLite 产物（绝不提交）
+builtin-agent/.agent-sidecar/

@@ -188,6 +188,7 @@ impl AcpHost {
         &self,
         thread_id: &str,
         workspace_root_path: Option<&str>,
+        meta: Option<serde_json::Map<String, serde_json::Value>>,
     ) -> Result<SessionId, AcpClientError> {
         let thread_key = thread_id.trim();
         if !thread_key.is_empty()
@@ -197,7 +198,9 @@ impl AcpHost {
         }
 
         let cwd = workspace_cwd(workspace_root_path);
-        let outcome = self.handle.new_session(cwd).await?;
+        // meta 仅在「新建会话」分支被消费（命中复用分支已提前返回）：仅 builtin 命令层会携带
+        // session/new 的 _meta 模型目录（含凭据 + 当前选中项），外部 agent 与内部复用回合传 None。
+        let outcome = self.handle.new_session(cwd, meta).await?;
         let session_id = outcome.session_id;
         // 诊断：打印 agent 在 session/new 公示的可切换项（含模型 / 模式 / 配置项），用于确认外部 agent
         // （如 Kimi）是否通过 ACP modes / config_options 暴露模型切换——决定走哪条通道还是兑底。
@@ -262,7 +265,11 @@ impl AcpHost {
         blocks: Vec<ContentBlock>,
         stream_key: Option<&str>,
     ) -> Result<StopReason, AcpClientError> {
-        let session_id = self.ensure_session(thread_id, workspace_root_path).await?;
+        // 标准回合复用命令层首次建立的会话（含 builtin 经 _meta 下发的模型目录），此处不再下发
+        // 目录：meta 传 None（外部 agent 凭据自管；builtin 目录在 ensure_session 首建时已注入）。
+        let session_id = self
+            .ensure_session(thread_id, workspace_root_path, None)
+            .await?;
         let acp_session_id = session_id.to_string();
 
         let override_key = stream_key

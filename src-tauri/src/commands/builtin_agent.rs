@@ -43,6 +43,60 @@ fn model_config_to_ext(config: AgentSidecarModelConfigPayload) -> crate::acp::Ex
     }
 }
 
+/// 组装 builtin 后端 session/new 的 _meta 模型目录（仅 builtin 用）的纯函数：把「全量可用模型
+/// + 当前选中项」投影为边车可解析的目录对象。抽出可注入版便于单测，不触碰全局 AI 配置状态。
+///
+/// 为何经 _meta 下发：官方 session/set_config_option 仅携带被选中的 modelId、不含凭据，而 launch
+/// 层有意不向 ACP 子进程注入模型 env（见 acp/launch.rs）。故 builtin 边车需在建会话时一次性拿到
+/// 「用户全部可用模型 + 凭据 + 当前选中项」，据此公示官方 config_options 模型选择器（与 Kimi 同构），
+/// 并在后续 set_config_option 切换时按 modelId 命中已下发的凭据。
+///
+/// 目录形状对齐边车 model-config-options.ts 的 IAcpModelCatalog：
+/// { models: [{ modelId, apiKey, baseUrl? }], currentModelId? }——models 经 ExtModelConfig 的
+/// camelCase 序列化逐条投影（与逐请求模型配置同形）；currentModelId 缺省时整字段省略（不下发
+/// null）。models 为空且无当前项时返回 None（不附 _meta，回退既有行为）。
+fn builtin_model_catalog_meta_from(
+    seeded: Vec<AgentSidecarModelConfigPayload>,
+    current_model_id: Option<String>,
+) -> Option<serde_json::Map<String, serde_json::Value>> {
+    let models: Vec<crate::acp::ExtModelConfig> =
+        seeded.into_iter().map(model_config_to_ext).collect();
+    if models.is_empty() && current_model_id.is_none() {
+        return None;
+    }
+
+    let mut catalog = serde_json::Map::new();
+    catalog.insert(
+        "models".to_string(),
+        serde_json::to_value(&models).unwrap_or_else(|_| serde_json::Value::Array(Vec::new())),
+    );
+    if let Some(current_model_id) = current_model_id {
+        catalog.insert(
+            "currentModelId".to_string(),
+            serde_json::Value::String(current_model_id),
+        );
+    }
+
+    let mut meta = serde_json::Map::new();
+    meta.insert(
+        "calamex.dev/modelCatalog".to_string(),
+        serde_json::Value::Object(catalog),
+    );
+    Some(meta)
+}
+
+/// 生产入口：从已保存 AI 配置组装 builtin session/new 的 _meta 模型目录。
+/// models 取「用户真正可用（有 Key）」的全量 seeded 清单（seeded_sidecar_model_configs 已逐条
+/// best-effort 跳过无凭据者）；currentModelId 取当前主模型（解析失败则省略）。
+fn builtin_model_catalog_meta() -> Option<serde_json::Map<String, serde_json::Value>> {
+    builtin_model_catalog_meta_from(
+        crate::ai::gateway::seeded_sidecar_model_configs(),
+        crate::ai::gateway::current_sidecar_model_config()
+            .ok()
+            .map(|config| config.model_id),
+    )
+}
+
 /// 逐请求模型配置补齐（可注入 fetch 版，供测试）：`cfg` 为 `None` 时调 `fetch`
 /// 组装并填入；已携带时原样保留且不调 `fetch`。`fetch` 出错时错误原样上抛，
 /// 不写入半成品配置。
@@ -119,6 +173,9 @@ pub async fn builtin_agent_chat(
         .ensure_session(
             payload.thread_id.as_deref().unwrap_or_default(),
             payload.workspace_root_path.as_deref(),
+            // 旧带外 agent_chat 通路：模型配置走 extMethod 的 model_config 字段（见
+            // ensure_model_config），session/new 不下发 _meta 目录。D1 删除该通路后随之消失。
+            None,
         )
         .await
         .map_err(|error| error.to_string())?;
@@ -180,7 +237,16 @@ pub async fn builtin_agent_external_chat(
     // 同一条 ACP 连接，任一步失败都按同一策略（驱逐失效宿主 + 翻译提示）处理。
     let outcome: Result<AgentExternalChatResultPayload, crate::acp::AcpClientError> = async {
         // 先解析稳定 ACP 会话（thread_id ↔ SessionId，跨回合复用），作为回退用的会话 id。
-        let acp_session_id = host.ensure_session(thread_id, workspace_root_path).await?;
+        // 仅 builtin 后端经 session/new 的 _meta 下发模型目录（含凭据 + 当前选中项），供其边车
+        // 公示官方 config_options 模型选择器、并在 set_config_option 切换时按 modelId 命中已下发
+        // 凭据；外部 agent（Kimi/Codex）凭据自管，不下发（None）。详见 builtin_model_catalog_meta。
+        let session_meta = match backend {
+            crate::acp::AcpBackendId::Builtin => builtin_model_catalog_meta(),
+            crate::acp::AcpBackendId::Kimi | crate::acp::AcpBackendId::Codex => None,
+        };
+        let acp_session_id = host
+            .ensure_session(thread_id, workspace_root_path, session_meta)
+            .await?;
 
         // 流式关联键：优先用前端预生成的 session_id（= sidecar:assistantMessageId），它在发起
         // 回合前就已知、可被 subscribeSidecarSessionStream 即时订阅；外部 agent 发出的
@@ -266,6 +332,9 @@ pub async fn builtin_agent_resolve_approval(
         .ensure_session(
             payload.thread_id.as_deref().unwrap_or_default(),
             payload.workspace_root_path.as_deref(),
+            // 旧带外 agent_chat 通路：模型配置走 extMethod 的 model_config 字段（见
+            // ensure_model_config），session/new 不下发 _meta 目录。D1 删除该通路后随之消失。
+            None,
         )
         .await
         .map_err(|error| error.to_string())?;
@@ -293,6 +362,9 @@ pub async fn builtin_agent_resolve_ask_user(
         .ensure_session(
             payload.thread_id.as_deref().unwrap_or_default(),
             payload.workspace_root_path.as_deref(),
+            // 旧带外 agent_chat 通路：模型配置走 extMethod 的 model_config 字段（见
+            // ensure_model_config），session/new 不下发 _meta 目录。D1 删除该通路后随之消失。
+            None,
         )
         .await
         .map_err(|error| error.to_string())?;
@@ -338,6 +410,42 @@ mod tests {
             api_key: "secret-key".into(),
             base_url: None,
         }
+    }
+
+    #[test]
+    fn builtin_model_catalog_meta_assembles_models_and_current() {
+        let meta = builtin_model_catalog_meta_from(
+            vec![
+                sample_config("deepseek/deepseek-v4-pro"),
+                sample_config("zhipuai/glm-4.7-flash"),
+            ],
+            Some("deepseek/deepseek-v4-pro".to_string()),
+        )
+        .expect("有模型时应组装出目录");
+        let catalog = &meta["calamex.dev/modelCatalog"];
+        assert_eq!(catalog["models"].as_array().unwrap().len(), 2);
+        assert_eq!(catalog["models"][0]["modelId"], "deepseek/deepseek-v4-pro");
+        // ExtModelConfig 的 api_key（SecretString）序列化为明文，与逐请求模型配置同形。
+        assert_eq!(catalog["models"][0]["apiKey"], "secret-key");
+        assert!(catalog["models"][0].get("baseUrl").is_none());
+        assert_eq!(catalog["currentModelId"], "deepseek/deepseek-v4-pro");
+    }
+
+    #[test]
+    fn builtin_model_catalog_meta_omits_current_when_absent() {
+        let meta =
+            builtin_model_catalog_meta_from(vec![sample_config("deepseek/deepseek-v4-pro")], None)
+                .expect("仅有模型清单时也应组装出目录");
+        let catalog = &meta["calamex.dev/modelCatalog"];
+        assert_eq!(catalog["models"].as_array().unwrap().len(), 1);
+        // 当前选中项缺省时不下发 currentModelId（整字段省略，不发 null）。
+        assert!(catalog.get("currentModelId").is_none());
+    }
+
+    #[test]
+    fn builtin_model_catalog_meta_none_when_empty() {
+        // 无任何可用模型且无当前项时不附 _meta（回退既有行为）。
+        assert!(builtin_model_catalog_meta_from(Vec::new(), None).is_none());
     }
 
     #[test]

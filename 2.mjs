@@ -1,309 +1,395 @@
-// scripts/migrate-git-domain.mjs
-// 领域化 Phase 2：git 域。把 git 的 状态/工具/组合式/领域服务 迁入 src/domains/git/{state,utils,composables,services}。
-// UI 与 裸 tauri IPC、types/git 按 terminal 惯例保留中央。
-// 默认 dry-run；--apply 落盘；--root=<path> 指定仓库根。
-// 引擎与 Phase 1a/1b 一致：真 resolver/emitter，保留 alias-vs-relative 风格与扩展名存在性。
-import fs from 'node:fs';
-import path from 'node:path';
+#!/usr/bin/env node
+/**
+ * b4-s2-host-model-catalog-meta.mjs
+ *
+ * B4 / S2 —— 宿主侧 session/new 的 _meta 模型目录注入（仅 builtin 后端）。
+ *
+ * 背景：官方 session/set_config_option 仅携带被选中的 modelId、不含凭据；而 launch 层有意
+ * 不向 ACP 子进程注入模型 env。故 builtin 边车需在「建会话」时一次性拿到「用户全部可用模型
+ * + 凭据 + 当前选中项」，据此公示官方 config_options 模型选择器（与 Kimi 同构），并在后续
+ * set_config_option 切换时按 modelId 命中已下发的凭据。该目录经 ACP 标准 NewSessionRequest._meta
+ * 通道下发（与 S1 边车侧 parseModelCatalogFromMeta 对接）。
+ *
+ * 改动（唯一标准管线，注入在目标 prompt 通路 builtin_agent_external_chat，仅 backend==Builtin）：
+ *   1) acp/client.rs   —— Command::NewSession / new_session / 连接循环 arm 新增 meta 形参，
+ *                          经官方 builder NewSessionRequest::new(cwd).meta(map) 注入（+集成测试）。
+ *   2) acp/host.rs     —— ensure_session 新增 meta 形参并透传给 new_session；prompt 复用回合传 None。
+ *   3) commands/builtin_agent.rs —— 新增 builtin_model_catalog_meta(_from) 组装目录；external_chat
+ *                          按 backend 注入；旧带外三命令的 ensure_session 补 None（D1 删除前的过渡）。
+ *
+ * 不提交。请从仓库根目录运行：node scripts/refactor/b4-s2-host-model-catalog-meta.mjs
+ */
+import { readFileSync, writeFileSync } from "node:fs";
+import { resolve } from "node:path";
 
-// ---------- CLI ----------
-const args = process.argv.slice(2);
-const APPLY = args.includes('--apply');
-const rootArg = args.find((a) => a.startsWith('--root='));
+const ROOT = process.cwd();
 
-// ---------- 根目录探测 ----------
-function detectRoot() {
-  if (rootArg) return path.resolve(rootArg.slice('--root='.length));
-  let dir = process.cwd();
-  for (let i = 0; i < 6; i++) {
-    if (
-      fs.existsSync(path.join(dir, 'package.json')) &&
-      fs.existsSync(path.join(dir, 'src'))
-    ) {
-      return dir;
+function read(rel) {
+  const abs = resolve(ROOT, rel);
+  const raw = readFileSync(abs, "utf8");
+  const eol = raw.includes("\r\n") ? "\r\n" : "\n";
+  const text = eol === "\r\n" ? raw.split("\r\n").join("\n") : raw;
+  return { rel, abs, text, eol };
+}
+
+function write(file, text) {
+  const out = file.eol === "\r\n" ? text.split("\n").join("\r\n") : text;
+  writeFileSync(file.abs, out, "utf8");
+}
+
+function replaceOnce(text, oldStr, newStr, label) {
+  const first = text.indexOf(oldStr);
+  if (first === -1) throw new Error("[" + label + "] 锚点未找到");
+  if (text.indexOf(oldStr, first + oldStr.length) !== -1)
+    throw new Error("[" + label + "] 锚点命中多于一次（需唯一）");
+  return text.slice(0, first) + newStr + text.slice(first + oldStr.length);
+}
+
+function replaceExactly(text, oldStr, newStr, count, label) {
+  const parts = text.split(oldStr);
+  const found = parts.length - 1;
+  if (found !== count)
+    throw new Error("[" + label + "] 期望命中 " + count + " 次，实际 " + found + " 次");
+  return parts.join(newStr);
+}
+
+// ----------------------------------------------------------------------------
+// 1) src-tauri/src/acp/client.rs
+// ----------------------------------------------------------------------------
+const client = read("src-tauri/src/acp/client.rs");
+
+// C1: Command::NewSession 变体新增 meta 字段
+client.text = replaceOnce(
+  client.text,
+`    NewSession {
+        cwd: PathBuf,
+        reply: oneshot::Sender<Result<NewSessionOutcome, String>>,
+    },`,
+`    NewSession {
+        cwd: PathBuf,
+        /// 仅 builtin 后端注入的 session/new _meta（模型目录 + 凭据 + 当前选中项，由命令层
+        /// 组装）；外部 agent 为 None。经官方 builder 注入 NewSessionRequest（Meta =
+        /// serde_json::Map<String, Value>，序列化为线上键 _meta）。
+        meta: Option<serde_json::Map<String, Value>>,
+        reply: oneshot::Sender<Result<NewSessionOutcome, String>>,
+    },`,
+  "client.rs Command::NewSession",
+);
+
+// C2: AcpClientHandle::new_session 新增 meta 形参
+client.text = replaceOnce(
+  client.text,
+`    pub async fn new_session(&self, cwd: PathBuf) -> Result<NewSessionOutcome, AcpClientError> {
+        let (reply, rx) = oneshot::channel();
+        self.cmd_tx
+            .send(Command::NewSession { cwd, reply })
+            .map_err(|_| AcpClientError::NotRunning)?;`,
+`    pub async fn new_session(
+        &self,
+        cwd: PathBuf,
+        meta: Option<serde_json::Map<String, Value>>,
+    ) -> Result<NewSessionOutcome, AcpClientError> {
+        let (reply, rx) = oneshot::channel();
+        self.cmd_tx
+            .send(Command::NewSession { cwd, meta, reply })
+            .map_err(|_| AcpClientError::NotRunning)?;`,
+  "client.rs new_session",
+);
+
+// C3: 连接循环 arm 经官方 builder 注入 meta
+client.text = replaceOnce(
+  client.text,
+`                        Command::NewSession { cwd, reply } => {
+                            let res = cx
+                                .send_request(NewSessionRequest::new(cwd))
+                                .block_task()
+                                .await;`,
+`                        Command::NewSession { cwd, meta, reply } => {
+                            // 仅 builtin 携带 _meta（模型目录 + 凭据，命令层组装）；外部 agent
+                            // meta 为 None，构造与旧行为一致的请求。NewSessionRequest 为
+                            // #[non_exhaustive]，不能用结构体字面量补字段，故经官方 builder
+                            // .meta(map)（接受 impl IntoOption<Meta>，Meta = Map<String, Value>）注入。
+                            let request = NewSessionRequest::new(cwd);
+                            let request = match meta {
+                                Some(meta) => request.meta(meta),
+                                None => request,
+                            };
+                            let res = cx
+                                .send_request(request)
+                                .block_task()
+                                .await;`,
+  "client.rs NewSession arm",
+);
+
+// C4: 集成测试（_meta 线上键 + 目录形状）
+client.text = replaceOnce(
+  client.text,
+`mod tests {
+    use super::*;
+
+    // ---- 履历测试 ----`,
+`mod tests {
+    use super::*;
+
+    // ---- NewSession _meta 模型目录注入测试 ----
+
+    #[test]
+    fn new_session_request_carries_model_catalog_meta() {
+        // 仅 builtin 后端在 session/new 经官方 _meta 通道下发模型目录（含凭据 + 当前选中项），供其
+        // 边车公示官方 config_options 模型选择器、并在 set_config_option 切换时按 modelId 命中凭据。
+        // 验证官方 builder .meta(map) 把目录序列化到线上键 _meta（serde rename），且形状与边车
+        // model-config-options.ts 的 parseModelCatalogFromMeta 期望一致：
+        // calamex.dev/modelCatalog -> { models:[{modelId,apiKey,baseUrl?}], currentModelId? }。
+        let mut catalog = serde_json::Map::new();
+        catalog.insert(
+            "calamex.dev/modelCatalog".to_string(),
+            serde_json::json!({
+                "models": [
+                    { "modelId": "deepseek/deepseek-v4-pro", "apiKey": "sk-x" }
+                ],
+                "currentModelId": "deepseek/deepseek-v4-pro",
+            }),
+        );
+
+        let request = NewSessionRequest::new(PathBuf::from("/repo")).meta(catalog);
+        let value = serde_json::to_value(&request).unwrap();
+
+        let entry = &value["_meta"]["calamex.dev/modelCatalog"];
+        assert_eq!(entry["models"][0]["modelId"], "deepseek/deepseek-v4-pro");
+        assert_eq!(entry["models"][0]["apiKey"], "sk-x");
+        assert!(entry["models"][0].get("baseUrl").is_none());
+        assert_eq!(entry["currentModelId"], "deepseek/deepseek-v4-pro");
     }
-    const parent = path.dirname(dir);
-    if (parent === dir) break;
-    dir = parent;
-  }
-  console.error('请在仓库根目录运行（缺少 package.json / src）。');
-  process.exit(1);
-}
-const ROOT = detectRoot();
-const SRC = path.join(ROOT, 'src');
 
-// ---------- 常量 ----------
-const EXTS = ['', '.ts', '.tsx', '.mts', '.cts', '.js', '.mjs', '.jsx', '.cjs', '.vue', '.css', '.json'];
-const CODE_EXTS = ['.ts', '.tsx', '.mts', '.cts', '.js', '.mjs', '.jsx', '.cjs'];
-const TEXT_EXT = new Set([...CODE_EXTS, '.vue', '.json', '.md', '.html', '.css']);
-const KEEP_EXT = new Set(['.vue', '.css', '.json']); // 这些扩展名必须显式保留
-const SKIP = new Set(['node_modules', 'dist', 'target', '.git', '.idea', '.vscode']);
+    // ---- 履历测试 ----`,
+  "client.rs tests",
+);
 
-const toAbs = (rel) => path.join(ROOT, rel);
-const toRel = (abs) => path.relative(ROOT, abs).split(path.sep).join('/');
+write(client, client.text);
 
-// ---------- 移动规格 ----------
-const DOMAIN = 'src/domains/git';
-const MOVE_DIRS = [
-  { from: 'src/utils/git', to: `${DOMAIN}/utils` }, // 扁平：git-graph(.spec) / github-auth-header
-  { from: 'src/store/git', to: `${DOMAIN}/state` }, // 扁平：use-background-queue(.spec)
-];
-const MOVE_FILES = [
-  ['src/store/git.ts', `${DOMAIN}/state/git.ts`],
-  ['src/store/git.store.spec.ts', `${DOMAIN}/state/git.store.spec.ts`],
-  ['src/store/git-pull-request-helpers.ts', `${DOMAIN}/state/git-pull-request-helpers.ts`],
-  ['src/store/github-auth.ts', `${DOMAIN}/state/github-auth.ts`],
-  ['src/store/github-auth.store.spec.ts', `${DOMAIN}/state/github-auth.store.spec.ts`],
-  ['src/composables/useGitRepositoryStatusBootstrap.ts', `${DOMAIN}/composables/useGitRepositoryStatusBootstrap.ts`],
-  ['src/composables/useGitRepositoryStatusBootstrap.spec.ts', `${DOMAIN}/composables/useGitRepositoryStatusBootstrap.spec.ts`],
-  ['src/composables/useSourceControlActions.ts', `${DOMAIN}/composables/useSourceControlActions.ts`],
-  ['src/composables/useSourceControlContextMenu.ts', `${DOMAIN}/composables/useSourceControlContextMenu.ts`],
-  ['src/services/github-author.ts', `${DOMAIN}/services/github-author.ts`],
-  ['src/services/github-author.spec.ts', `${DOMAIN}/services/github-author.spec.ts`],
-];
+// ----------------------------------------------------------------------------
+// 2) src-tauri/src/acp/host.rs
+// ----------------------------------------------------------------------------
+const host = read("src-tauri/src/acp/host.rs");
 
-// ---------- 全仓文件索引 ----------
-function walk(dir, out) {
-  for (const name of fs.readdirSync(dir)) {
-    if (SKIP.has(name)) continue;
-    const full = path.join(dir, name);
-    const st = fs.statSync(full);
-    if (st.isDirectory()) walk(full, out);
-    else out.push(full);
-  }
-}
-const allFiles = [];
-walk(ROOT, allFiles);
-const origFiles = new Set(allFiles.map((f) => path.resolve(f)));
+// H1: ensure_session 新增 meta 形参
+host.text = replaceOnce(
+  host.text,
+`    pub async fn ensure_session(
+        &self,
+        thread_id: &str,
+        workspace_root_path: Option<&str>,
+    ) -> Result<SessionId, AcpClientError> {`,
+`    pub async fn ensure_session(
+        &self,
+        thread_id: &str,
+        workspace_root_path: Option<&str>,
+        meta: Option<serde_json::Map<String, serde_json::Value>>,
+    ) -> Result<SessionId, AcpClientError> {`,
+  "host.rs ensure_session sig",
+);
 
-// ---------- 构造 moveMap（原始 abs -> 新 abs）----------
-const moveMap = new Map();
-function addMove(fromRel, toRel_) {
-  const fromAbs = path.resolve(toAbs(fromRel));
-  if (!origFiles.has(fromAbs)) return false; // 不存在则跳过（spec 可能没有）
-  moveMap.set(fromAbs, path.resolve(toAbs(toRel_)));
-  return true;
-}
-// 目录整体搬（仅一层，禁止嵌套子目录以防遗漏）
-for (const { from, to } of MOVE_DIRS) {
-  const fromAbs = toAbs(from);
-  if (!fs.existsSync(fromAbs)) continue;
-  for (const name of fs.readdirSync(fromAbs)) {
-    const full = path.join(fromAbs, name);
-    if (fs.statSync(full).isDirectory()) {
-      console.error(`✗ 意外的嵌套子目录：${toRel(full)}（请人工确认后再跑）`);
-      process.exit(1);
+// H2: 透传 meta 给 new_session（仅新建分支消费）
+host.text = replaceOnce(
+  host.text,
+`        let cwd = workspace_cwd(workspace_root_path);
+        let outcome = self.handle.new_session(cwd).await?;`,
+`        let cwd = workspace_cwd(workspace_root_path);
+        // meta 仅在「新建会话」分支被消费（命中复用分支已提前返回）：仅 builtin 命令层会携带
+        // session/new 的 _meta 模型目录（含凭据 + 当前选中项），外部 agent 与内部复用回合传 None。
+        let outcome = self.handle.new_session(cwd, meta).await?;`,
+  "host.rs new_session call",
+);
+
+// H3: prompt_with_stream_key 复用回合不再下发目录（meta=None）
+host.text = replaceOnce(
+  host.text,
+`        let session_id = self.ensure_session(thread_id, workspace_root_path).await?;`,
+`        // 标准回合复用命令层首次建立的会话（含 builtin 经 _meta 下发的模型目录），此处不再下发
+        // 目录：meta 传 None（外部 agent 凭据自管；builtin 目录在 ensure_session 首建时已注入）。
+        let session_id = self
+            .ensure_session(thread_id, workspace_root_path, None)
+            .await?;`,
+  "host.rs prompt_with_stream_key",
+);
+
+write(host, host.text);
+
+// ----------------------------------------------------------------------------
+// 3) src-tauri/src/commands/builtin_agent.rs
+// ----------------------------------------------------------------------------
+const cmd = read("src-tauri/src/commands/builtin_agent.rs");
+
+// B1: 新增 builtin_model_catalog_meta(_from) 组装目录（紧随 model_config_to_ext）
+cmd.text = replaceOnce(
+  cmd.text,
+`fn model_config_to_ext(config: AgentSidecarModelConfigPayload) -> crate::acp::ExtModelConfig {
+    crate::acp::ExtModelConfig {
+        model_id: config.model_id,
+        api_key: config.api_key,
+        base_url: trimmed_non_empty(config.base_url),
     }
-    addMove(`${from}/${name}`, `${to}/${name}`);
-  }
-}
-// 显式文件搬
-for (const [f, t] of MOVE_FILES) addMove(f, t);
-
-if (moveMap.size === 0) {
-  console.error('没有匹配到任何待搬迁文件，可能已迁移或路径变化。');
-  process.exit(1);
-}
-
-// ---------- specifier 解析 / 改写 ----------
-function resolveOriginal(baseAbs) {
-  for (const ext of EXTS) {
-    const cand = baseAbs + ext;
-    if (origFiles.has(path.resolve(cand))) return path.resolve(cand);
-  }
-  for (const ext of CODE_EXTS) {
-    const cand = path.join(baseAbs, 'index' + ext);
-    if (origFiles.has(path.resolve(cand))) return path.resolve(cand);
-  }
-  return null;
-}
-
-function rewriteSpec(spec, fromFileAbs) {
-  const isAlias = spec.startsWith('@/');
-  const isRel = spec.startsWith('./') || spec.startsWith('../');
-  if (!isAlias && !isRel) return null; // 外部包
-
-  const baseAbs = isAlias
-    ? path.join(SRC, spec.slice(2))
-    : path.resolve(path.dirname(fromFileAbs), spec);
-
-  const origTarget = resolveOriginal(baseAbs);
-  if (!origTarget) return null; // 解析不到具体文件，保守不动
-
-  const newTarget = moveMap.get(origTarget) ?? origTarget;
-  const newFrom = moveMap.get(fromFileAbs) ?? fromFileAbs;
-  if (newTarget === origTarget && newFrom === fromFileAbs) return null; // 双方都没动
-
-  // 原 spec 是否带扩展名 / 是否指向目录 index
-  const lastSeg = spec.split('/').pop();
-  const extMatch = lastSeg.match(/\.(ts|tsx|mts|cts|js|mjs|jsx|cjs|vue|css|json)$/);
-  const hadExt = !!extMatch;
-  const origBase = path.basename(origTarget);
-  const isIndexFile = /^index\.(ts|tsx|mts|cts|js|mjs|jsx|cjs)$/.test(origBase);
-  const specNoExt = spec.replace(/\.(ts|tsx|mts|cts|js|mjs|jsx|cjs|vue|css|json)$/, '');
-  const specEndsWithIndex = /(^|\/)index$/.test(specNoExt);
-  const pointedAtDir = isIndexFile && !specEndsWithIndex && !hadExt;
-
-  let targetForEmit = pointedAtDir ? path.dirname(newTarget) : newTarget;
-
-  // 组路径（保留 alias / relative 风格）
-  let out;
-  if (isAlias) {
-    out = '@/' + path.relative(SRC, targetForEmit).split(path.sep).join('/');
-  } else {
-    let rel = path.relative(path.dirname(newFrom), targetForEmit).split(path.sep).join('/');
-    if (!rel.startsWith('.')) rel = './' + rel;
-    out = rel;
-  }
-
-  // 扩展名存在性：保留原样；目录 index 引用不带文件名
-  if (!pointedAtDir) {
-    const realExt = path.extname(targetForEmit); // 实际文件扩展名
-    const outExt = path.extname(out);
-    if (hadExt || KEEP_EXT.has(realExt)) {
-      if (!outExt) out += realExt; // 需要带扩展名但 out 没有
-    } else if (outExt) {
-      out = out.slice(0, -outExt.length); // 原本不带扩展名 -> 去掉
+}`,
+`fn model_config_to_ext(config: AgentSidecarModelConfigPayload) -> crate::acp::ExtModelConfig {
+    crate::acp::ExtModelConfig {
+        model_id: config.model_id,
+        api_key: config.api_key,
+        base_url: trimmed_non_empty(config.base_url),
     }
-  } else {
-    const outExt = path.extname(out);
-    if (outExt) out = out.slice(0, -outExt.length);
-  }
-  return out === spec ? null : out;
 }
 
-// import/require/动态import/new URL/vi.mock 五类 specifier
-const PATTERNS = [
-  /(\bfrom\s*['"])([^'"]+)(['"])/g,
-  /(\bimport\s*\(\s*['"])([^'"]+)(['"]\s*\))/g,
-  /(\bimport\s+['"])([^'"]+)(['"])/g,
-  /(\brequire\s*\(\s*['"])([^'"]+)(['"]\s*\))/g,
-  /(\bnew\s+URL\s*\(\s*['"])([^'"]+)(['"]\s*,\s*import\.meta\.url)/g,
-  /(\bvi\.(?:mock|doMock|unmock|importActual|importMock)\s*\(\s*['"])([^'"]+)(['"])/g,
-];
-
-function rewriteContent(content, fromFileAbs) {
-  let count = 0;
-  let next = content;
-  for (const re of PATTERNS) {
-    next = next.replace(re, (m, p1, spec, p3) => {
-      const r = rewriteSpec(spec, fromFileAbs);
-      if (r == null) return m;
-      count++;
-      return p1 + r + p3;
-    });
-  }
-  return { next, count };
-}
-
-// ---------- 计算 writes / deletes ----------
-const writes = new Map(); // 新 abs -> 内容
-const deletes = []; // 旧 abs
-let rewriteFiles = 0;
-let rewriteHits = 0;
-
-for (const abs of origFiles) {
-  const ext = path.extname(abs);
-  const moved = moveMap.has(abs);
-  if (!TEXT_EXT.has(ext) && !moved) continue;
-
-  const raw = fs.readFileSync(abs, 'utf-8');
-  let content = raw;
-  if (TEXT_EXT.has(ext)) {
-    const { next, count } = rewriteContent(raw, abs);
-    content = next;
-    if (count > 0) {
-      rewriteFiles++;
-      rewriteHits += count;
+/// 组装 builtin 后端 session/new 的 _meta 模型目录（仅 builtin 用）的纯函数：把「全量可用模型
+/// + 当前选中项」投影为边车可解析的目录对象。抽出可注入版便于单测，不触碰全局 AI 配置状态。
+///
+/// 为何经 _meta 下发：官方 session/set_config_option 仅携带被选中的 modelId、不含凭据，而 launch
+/// 层有意不向 ACP 子进程注入模型 env（见 acp/launch.rs）。故 builtin 边车需在建会话时一次性拿到
+/// 「用户全部可用模型 + 凭据 + 当前选中项」，据此公示官方 config_options 模型选择器（与 Kimi 同构），
+/// 并在后续 set_config_option 切换时按 modelId 命中已下发的凭据。
+///
+/// 目录形状对齐边车 model-config-options.ts 的 IAcpModelCatalog：
+/// { models: [{ modelId, apiKey, baseUrl? }], currentModelId? }——models 经 ExtModelConfig 的
+/// camelCase 序列化逐条投影（与逐请求模型配置同形）；currentModelId 缺省时整字段省略（不下发
+/// null）。models 为空且无当前项时返回 None（不附 _meta，回退既有行为）。
+fn builtin_model_catalog_meta_from(
+    seeded: Vec<AgentSidecarModelConfigPayload>,
+    current_model_id: Option<String>,
+) -> Option<serde_json::Map<String, serde_json::Value>> {
+    let models: Vec<crate::acp::ExtModelConfig> =
+        seeded.into_iter().map(model_config_to_ext).collect();
+    if models.is_empty() && current_model_id.is_none() {
+        return None;
     }
-  }
-  const dest = moveMap.get(abs) ?? abs;
-  if (moved) {
-    writes.set(dest, content);
-    deletes.push(abs);
-  } else if (content !== raw) {
-    writes.set(dest, content);
-  }
-}
 
-// ---------- 基线补丁：file-size.json ----------
-const baselineRel = 'scripts/baselines/file-size.json';
-const baselineAbs = toAbs(baselineRel);
-let baselinePatched = false;
-if (fs.existsSync(baselineAbs)) {
-  const cur = writes.get(path.resolve(baselineAbs)) ?? fs.readFileSync(baselineAbs, 'utf-8');
-  const patched = cur.replace('"src/store/git.ts"', '"src/domains/git/state/git.ts"');
-  if (patched !== cur) {
-    writes.set(path.resolve(baselineAbs), patched);
-    baselinePatched = true;
-  }
-}
-
-// ---------- 域入口 index.ts ----------
-const indexRel = `${DOMAIN}/index.ts`;
-const indexAbs = path.resolve(toAbs(indexRel));
-const indexContent = `export * from './state/git';\n`;
-const createIndex = !origFiles.has(indexAbs);
-if (createIndex) writes.set(indexAbs, indexContent);
-
-// ---------- 残留扫描（基于内存最终态）----------
-const RESIDUAL = [
-  /['"]@\/store\/git(['"/]|-pull-request-helpers)/,
-  /['"]@\/store\/github-auth['"]/,
-  /['"]@\/utils\/git\//,
-  /['"]@\/composables\/useSourceControl/,
-  /['"]@\/composables\/useGitRepositoryStatusBootstrap/,
-  /['"]@\/services\/github-author['"]/,
-];
-const finalByPath = new Map();
-for (const abs of origFiles) {
-  if (deletes.includes(abs)) continue;
-  finalByPath.set(abs, fs.readFileSync(abs, 'utf-8'));
-}
-for (const [abs, content] of writes) finalByPath.set(abs, content);
-const residuals = [];
-for (const [abs, content] of finalByPath) {
-  if (!TEXT_EXT.has(path.extname(abs))) continue;
-  for (const re of RESIDUAL) {
-    if (re.test(content)) {
-      residuals.push(`${toRel(abs)}  ⟂  ${re}`);
-      break;
+    let mut catalog = serde_json::Map::new();
+    catalog.insert(
+        "models".to_string(),
+        serde_json::to_value(&models).unwrap_or_else(|_| serde_json::Value::Array(Vec::new())),
+    );
+    if let Some(current_model_id) = current_model_id {
+        catalog.insert(
+            "currentModelId".to_string(),
+            serde_json::Value::String(current_model_id),
+        );
     }
-  }
+
+    let mut meta = serde_json::Map::new();
+    meta.insert(
+        "calamex.dev/modelCatalog".to_string(),
+        serde_json::Value::Object(catalog),
+    );
+    Some(meta)
 }
 
-// ---------- 报告 ----------
-console.log(`\n=== migrate-git-domain (${APPLY ? 'APPLY' : 'DRY-RUN'}) ===`);
-console.log(`ROOT: ${ROOT}`);
-console.log(`\n搬迁文件 ${moveMap.size} 个：`);
-for (const [from, to] of moveMap) console.log(`  ${toRel(from)}  ->  ${toRel(to)}`);
-console.log(`\n改写：${rewriteFiles} 个文件 / ${rewriteHits} 处 specifier`);
-console.log(`基线补丁 file-size.json: ${baselinePatched ? '已更新 src/store/git.ts -> src/domains/git/state/git.ts' : '无变化(需人工确认)'}`);
-console.log(`域入口 ${indexRel}: ${createIndex ? '将创建' : '已存在,跳过'}`);
-console.log(`总写入 ${writes.size} 个文件，删除 ${deletes.length} 个旧文件`);
-if (residuals.length) {
-  console.log(`\n⚠ 残留旧引用 ${residuals.length} 处：`);
-  residuals.forEach((r) => console.log('   ' + r));
-} else {
-  console.log('\n✓ 无残留旧引用');
-}
+/// 生产入口：从已保存 AI 配置组装 builtin session/new 的 _meta 模型目录。
+/// models 取「用户真正可用（有 Key）」的全量 seeded 清单（seeded_sidecar_model_configs 已逐条
+/// best-effort 跳过无凭据者）；currentModelId 取当前主模型（解析失败则省略）。
+fn builtin_model_catalog_meta() -> Option<serde_json::Map<String, serde_json::Value>> {
+    builtin_model_catalog_meta_from(
+        crate::ai::gateway::seeded_sidecar_model_configs(),
+        crate::ai::gateway::current_sidecar_model_config()
+            .ok()
+            .map(|config| config.model_id),
+    )
+}`,
+  "builtin_agent.rs catalog helper",
+);
 
-// ---------- 落盘 ----------
-if (APPLY) {
-  for (const [abs, content] of writes) {
-    fs.mkdirSync(path.dirname(abs), { recursive: true });
-    fs.writeFileSync(abs, content, 'utf-8');
-  }
-  for (const abs of deletes) {
-    if (writes.has(abs)) continue; // 同路径已覆盖
-    fs.rmSync(abs, { force: true });
-  }
-  // 清理可能变空的旧目录
-  for (const { from } of MOVE_DIRS) {
-    const d = toAbs(from);
-    if (fs.existsSync(d) && fs.readdirSync(d).length === 0) fs.rmdirSync(d);
-  }
-  console.log('\n✅ 已落盘。请运行: pnpm guard && pnpm test && pnpm build');
-} else {
-  console.log('\n(dry-run；加 --apply 落盘)');
-}
+// B2: external_chat 按 backend 注入目录（仅 Builtin）
+cmd.text = replaceOnce(
+  cmd.text,
+`        let acp_session_id = host.ensure_session(thread_id, workspace_root_path).await?;`,
+`        // 仅 builtin 后端经 session/new 的 _meta 下发模型目录（含凭据 + 当前选中项），供其边车
+        // 公示官方 config_options 模型选择器、并在 set_config_option 切换时按 modelId 命中已下发
+        // 凭据；外部 agent（Kimi/Codex）凭据自管，不下发（None）。详见 builtin_model_catalog_meta。
+        let session_meta = match backend {
+            crate::acp::AcpBackendId::Builtin => builtin_model_catalog_meta(),
+            crate::acp::AcpBackendId::Kimi | crate::acp::AcpBackendId::Codex => None,
+        };
+        let acp_session_id = host
+            .ensure_session(thread_id, workspace_root_path, session_meta)
+            .await?;`,
+  "builtin_agent.rs external_chat ensure_session",
+);
+
+// B3: 旧带外三命令（chat / resolve_approval / resolve_ask_user）的 ensure_session 补 None
+cmd.text = replaceExactly(
+  cmd.text,
+`        .ensure_session(
+            payload.thread_id.as_deref().unwrap_or_default(),
+            payload.workspace_root_path.as_deref(),
+        )`,
+`        .ensure_session(
+            payload.thread_id.as_deref().unwrap_or_default(),
+            payload.workspace_root_path.as_deref(),
+            // 旧带外 agent_chat 通路：模型配置走 extMethod 的 model_config 字段（见
+            // ensure_model_config），session/new 不下发 _meta 目录。D1 删除该通路后随之消失。
+            None,
+        )`,
+  3,
+  "builtin_agent.rs legacy ensure_session x3",
+);
+
+// B4: 目录组装单测（紧随 sample_config 测试夹具）
+cmd.text = replaceOnce(
+  cmd.text,
+`    fn sample_config(model_id: &str) -> AgentSidecarModelConfigPayload {
+        AgentSidecarModelConfigPayload {
+            model_id: model_id.to_string(),
+            api_key: "secret-key".into(),
+            base_url: None,
+        }
+    }`,
+`    fn sample_config(model_id: &str) -> AgentSidecarModelConfigPayload {
+        AgentSidecarModelConfigPayload {
+            model_id: model_id.to_string(),
+            api_key: "secret-key".into(),
+            base_url: None,
+        }
+    }
+
+    #[test]
+    fn builtin_model_catalog_meta_assembles_models_and_current() {
+        let meta = builtin_model_catalog_meta_from(
+            vec![
+                sample_config("deepseek/deepseek-v4-pro"),
+                sample_config("zhipuai/glm-4.7-flash"),
+            ],
+            Some("deepseek/deepseek-v4-pro".to_string()),
+        )
+        .expect("有模型时应组装出目录");
+        let catalog = &meta["calamex.dev/modelCatalog"];
+        assert_eq!(catalog["models"].as_array().unwrap().len(), 2);
+        assert_eq!(catalog["models"][0]["modelId"], "deepseek/deepseek-v4-pro");
+        // ExtModelConfig 的 api_key（SecretString）序列化为明文，与逐请求模型配置同形。
+        assert_eq!(catalog["models"][0]["apiKey"], "secret-key");
+        assert!(catalog["models"][0].get("baseUrl").is_none());
+        assert_eq!(catalog["currentModelId"], "deepseek/deepseek-v4-pro");
+    }
+
+    #[test]
+    fn builtin_model_catalog_meta_omits_current_when_absent() {
+        let meta =
+            builtin_model_catalog_meta_from(vec![sample_config("deepseek/deepseek-v4-pro")], None)
+                .expect("仅有模型清单时也应组装出目录");
+        let catalog = &meta["calamex.dev/modelCatalog"];
+        assert_eq!(catalog["models"].as_array().unwrap().len(), 1);
+        // 当前选中项缺省时不下发 currentModelId（整字段省略，不发 null）。
+        assert!(catalog.get("currentModelId").is_none());
+    }
+
+    #[test]
+    fn builtin_model_catalog_meta_none_when_empty() {
+        // 无任何可用模型且无当前项时不附 _meta（回退既有行为）。
+        assert!(builtin_model_catalog_meta_from(Vec::new(), None).is_none());
+    }`,
+  "builtin_agent.rs catalog tests",
+);
+
+write(cmd, cmd.text);
+
+console.log("S2 完成：");
+console.log("  - " + client.rel + "（Command::NewSession / new_session / arm + meta 集成测试）");
+console.log("  - " + host.rel + "（ensure_session 透传 meta；prompt 复用回合传 None）");
+console.log("  - " + cmd.rel + "（builtin_model_catalog_meta 组装 + external_chat 注入 + 旧三命令补 None + 3 单测）");
+console.log("提示：S2 准备好宿主目录通路，须配合 S3（前端把 builtin 改走 sidecarExternalChat({backend:'builtin'})）才会真正生效。");
+console.log("门槛：cargo clippy/test --features acp_client --manifest-path src-tauri/Cargo.toml");

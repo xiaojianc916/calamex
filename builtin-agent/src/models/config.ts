@@ -23,7 +23,7 @@ const BASE_URL_ENV = 'BUILTIN_AGENT_BASE_URL';
 const OBSERVER_MODEL_ID_ENV = 'BUILTIN_AGENT_OBSERVER_MODEL';
 const REFLECTOR_MODEL_ID_ENV = 'BUILTIN_AGENT_REFLECTOR_MODEL';
 
-const DEFAULT_MODEL_ID = 'deepseek/deepseek-v4-pro';
+export const DEFAULT_MODEL_ID = 'deepseek/deepseek-v4-pro';
 const ALLOWED_BASE_URL_PROTOCOLS: ReadonlySet<string> = new Set(['http:', 'https:']);
 
 const readEnv = (
