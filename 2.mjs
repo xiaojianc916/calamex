@@ -1,154 +1,73 @@
-// 一次性脚本：修复编辑器滚动卡顿（🔴1 空事务 / 🔴2 首行切片 / 🟠3 每帧响应式）。
-// 用唯一锚点替换，找不到或命中多处即报错退出，绝不误改。跑完即可删除本文件。
-import { readFileSync, writeFileSync } from 'node:fs';
+#!/usr/bin/env node
+// scripts/inline-completion-perf-fix.mjs
+//
+// 一次性脚本：修复行内补全 clearGhost 的「空事务」性能问题。
+// clearGhost 原本无条件 dispatch，导致每次打字(docChanged)与每次移动光标(selectionSet)
+// 即便没有 ghost 也会空跑一个事务，触发全量 update 循环。改为仅在确有 ghost 装饰时才派发。
+//
+// 用法：node scripts/inline-completion-perf-fix.mjs
+// 安全性：锚点必须在文件中「恰好命中 1 次」，否则不写入、非零退出。
+// 用完即删，再 git diff / pnpm build / 提交到 main。
 
-const edits = [
-  // ── 🔴2：新增「从首行切片」降级阈值常量 ──
-  {
-    file: 'src/services/editor/codemirror-shiki-highlight.ts',
-    find: `const MAX_HIGHLIGHT_SLICE_LENGTH = 200_000;`,
-    replace: `const MAX_HIGHLIGHT_SLICE_LENGTH = 200_000;
+import { readFileSync, writeFileSync } from "node:fs";
+import { resolve } from "node:path";
 
-// 「从文档首行起」切片的舒适体积上限：超过即降级为有界窗口切片（仅取视口附近），避免向大
-// 文件深处滚动时在主线程 sliceString 出超大前缀并结构化克隆给 Worker。低于
-// MAX_HIGHLIGHT_SLICE_LENGTH（后者仍作为窗口切片的最终放弃阈值）。代价：极少数跨越数千行
-// 的多行结构（超长 heredoc/字符串/注释）降级后可能着色不准，shell 脚本下罕见。
-const MAX_FROM_DOCUMENT_START_SLICE_LENGTH = 120_000;`,
-  },
+const FILE = "src/services/editor/codemirror-inline-completion.ts";
 
-  // ── 🔴2：降级判定改用新阈值 ──
-  {
-    file: 'src/services/editor/codemirror-shiki-highlight.ts',
-    find: `  if (options.fromDocumentStart && sliceTo - sliceFrom > MAX_HIGHLIGHT_SLICE_LENGTH) {
-    ({ range, sliceFrom, sliceTo } = buildSlice(false));
-  }`,
-    replace: `  if (options.fromDocumentStart && sliceTo - sliceFrom > MAX_FROM_DOCUMENT_START_SLICE_LENGTH) {
-    ({ range, sliceFrom, sliceTo } = buildSlice(false));
-  }`,
-  },
+const ANCHOR =
+  "  const clearGhost = (): void => {\n" +
+  "    viewRef?.dispatch({ effects: setInlineCompletionGhost.of(null) });\n" +
+  "  };";
 
-  // ── 🔴1：纯滚动仅在视口存在未缓存行时才派发重算 ──
-  {
-    file: 'src/services/editor/codemirror-shiki-highlight.ts',
-    find: `        if (update.viewportChanged && !languageChanged && !recomputeRequested) {
-          // 纯滚动：先用按行缓存同步重建装饰（命中缓存的行零闪烁、不清空），再让 CodeMirror
-          // 虚拟滚动把新行文本画出来，下一帧（post-paint）对新进入视口的未缓存行补算高亮。
-          this.renderViewportFromCache(update.view);
-          this.schedulePostPaintRecompute(update.view);
-          return;
-        }`,
-    replace: `        if (update.viewportChanged && !languageChanged && !recomputeRequested) {
-          // 纯滚动：先用按行缓存同步重建装饰（命中缓存的行零闪烁、不清空），再让 CodeMirror
-          // 虚拟滚动把新行文本画出来，下一帧（post-paint）对新进入视口的未缓存行补算高亮。
-          this.renderViewportFromCache(update.view);
-          // 仅当新视口确有未缓存行时才安排重算派发。滚回已着色区域（或小文件整篇已缓存）时，
-          // 跳过这次 dispatch——否则每次滚动停下都会多派发一个空事务，触发全量 update 循环
-          // （所有 ViewPlugin.update 与 updateListener 重跑），与浏览器滚动/绘制抢主线程。
-          if (!this.viewportFullyCached(update.view)) {
-            this.schedulePostPaintRecompute(update.view);
-          }
-          return;
-        }`,
-  },
+const REPLACEMENT =
+  "  const clearGhost = (): void => {\n" +
+  "    const view = viewRef;\n" +
+  "    if (!view) {\n" +
+  "      return;\n" +
+  "    }\n" +
+  "    // 仅在确有 ghost 装饰时才派发清除事务；否则纯打字 / 移动光标（每次 docChanged 与\n" +
+  "    // selectionSet 都会调用本函数）都会空跑一个事务，触发全量 update 循环。\n" +
+  "    const ghost = view.state.field(inlineCompletionGhostField, false);\n" +
+  "    if (!ghost || ghost.size === 0) {\n" +
+  "      return;\n" +
+  "    }\n" +
+  "    view.dispatch({ effects: setInlineCompletionGhost.of(null) });\n" +
+  "  };";
 
-  // ── 🔴1：新增 viewportFullyCached 方法（紧跟 getVisibleLineRange 之后）──
-  {
-    file: 'src/services/editor/codemirror-shiki-highlight.ts',
-    find: `    private getVisibleLineRange(view: EditorView): { first: number; last: number } | null {
-      const { visibleRanges } = view;
-      if (visibleRanges.length === 0) {
-        return null;
-      }
-      const { doc } = view.state;
-      return {
-        first: doc.lineAt(visibleRanges[0].from).number,
-        last: doc.lineAt(visibleRanges[visibleRanges.length - 1].to).number,
-      };
-    }`,
-    replace: `    private getVisibleLineRange(view: EditorView): { first: number; last: number } | null {
-      const { visibleRanges } = view;
-      if (visibleRanges.length === 0) {
-        return null;
-      }
-      const { doc } = view.state;
-      return {
-        first: doc.lineAt(visibleRanges[0].from).number,
-        last: doc.lineAt(visibleRanges[visibleRanges.length - 1].to).number,
-      };
-    }
-
-    /**
-     * 当前视口（含 overscan）是否已全部命中按行缓存。用于纯滚动时判定能否跳过重算派发：
-     * 返回 true 表示这次滚动可见区无需 tokenize，recompute 也只会同步重建装饰（空操作），
-     * 故可安全跳过派发。缓存上下文（语言/文档版本）与当前不一致时一律返回 false，把作废与
-     * 重算交给 recompute，避免用过期缓存误判而漏掉重算。判定范围与 recompute 内完全一致。
-     */
-    private viewportFullyCached(view: EditorView): boolean {
-      const language = view.state.field(shikiLanguageField, false) ?? 'text';
-      if (this.cacheLanguage !== language || this.cacheDocVersion !== this.docVersion) {
-        return false;
-      }
-      const visible = this.getVisibleLineRange(view);
-      if (!visible) {
-        return false;
-      }
-      const range = computeShikiHighlightRange({
-        firstVisibleLine: visible.first,
-        lastVisibleLine: visible.last,
-        totalLines: view.state.doc.lines,
-        overscanLines: HIGHLIGHT_OVERSCAN_LINES,
-        leadInLines: HIGHLIGHT_OVERSCAN_LINES,
-        fromDocumentStart: false,
-      });
-      return (
-        findUncachedLineRange({
-          startLine: range.startLine,
-          endLine: range.endLine,
-          isCached: (lineNumber) => this.lineTokenCache.has(lineNumber),
-        }) === null
-      );
-    }`,
-  },
-
-  // ── 🟠3：closeContextMenu 幂等化 ──
-  {
-    file: 'src/components/editor/CodeMirrorScriptEditor.vue',
-    find: `const closeContextMenu = (): void => {
-  contextMenuState.value.open = false;
-  contextMenuGroups.value = [];
-};`,
-    replace: `const closeContextMenu = (): void => {
-  // 幂等保护：菜单本就关闭且分组已空时直接返回，避免每帧滚动都给 contextMenuGroups 赋新空
-  // 数组（handleEditorUpdate 的 viewportChanged 分支每帧调用本函数），触发无意义 Vue 响应式更新。
-  if (!contextMenuState.value.open && contextMenuGroups.value.length === 0) return;
-  contextMenuState.value.open = false;
-  contextMenuGroups.value = [];
-};`,
-  },
-];
-
-let ok = true;
-const byFile = new Map();
-for (const e of edits) (byFile.get(e.file) ?? byFile.set(e.file, []).get(e.file)).push(e);
-
-for (const [file, fileEdits] of byFile) {
-  let content = readFileSync(file, 'utf8');
-  for (const e of fileEdits) {
-    const count = content.split(e.find).length - 1;
-    if (count !== 1) {
-      console.error(`✗ ${file}: 锚点命中 ${count} 处（期望 1），跳过。请检查文件是否已改动。`);
-      console.error(`  锚点首行: ${e.find.split('\n')[0]}`);
-      ok = false;
-      continue;
-    }
-    content = content.replace(e.find, e.replace);
-    console.log(`✓ ${file}: ${e.find.split('\n')[0].slice(0, 60)}…`);
-  }
-  if (ok) writeFileSync(file, content, 'utf8');
-}
-
-if (!ok) {
-  console.error('\n有锚点未精确命中，未写入任何文件。');
+function fail(msg) {
+  console.error(`\x1b[31m✗ ${msg}\x1b[0m`);
   process.exit(1);
 }
-console.log('\n全部完成。请执行 git diff 复核，本地构建验证后提交。');
+
+const path = resolve(process.cwd(), FILE);
+
+let src;
+try {
+  src = readFileSync(path, "utf8");
+} catch (err) {
+  fail(`读不到文件：${FILE}（请在仓库根目录运行）\n  ${err.message}`);
+}
+
+// 幂等：已改过就跳过，避免重复运行报错。
+if (src.includes("const ghost = view.state.field(inlineCompletionGhostField, false);")) {
+  console.log("• 已检测到补丁，无需重复应用，跳过。");
+  process.exit(0);
+}
+
+// 锚点必须恰好命中 1 次。
+const count = src.split(ANCHOR).length - 1;
+if (count !== 1) {
+  fail(
+    `锚点在 ${FILE} 中命中 ${count} 次（期望 1 次），文件可能已变动。\n` +
+      `  未写入任何改动。请重新核对 clearGhost 当前源码后再生成锚点。`,
+  );
+}
+
+const out = src.replace(ANCHOR, REPLACEMENT);
+if (out === src) {
+  fail("替换后内容无变化，已中止（不应发生）。");
+}
+
+writeFileSync(path, out, "utf8");
+console.log(`\x1b[32m✓ 已修补 ${FILE}（clearGhost 现仅在有 ghost 时派发清除事务）\x1b[0m`);
+console.log("  接下来：git diff → pnpm build → 删除本脚本 → 提交到 main");

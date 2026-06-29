@@ -213,7 +213,17 @@ export const createCodeMirrorInlineCompletionController = (
   };
 
   const clearGhost = (): void => {
-    viewRef?.dispatch({ effects: setInlineCompletionGhost.of(null) });
+    const view = viewRef;
+    if (!view) {
+      return;
+    }
+    // 仅在确有 ghost 装饰时才派发清除事务；否则纯打字 / 移动光标（每次 docChanged 与
+    // selectionSet 都会调用本函数）都会空跑一个事务，触发全量 update 循环。
+    const ghost = view.state.field(inlineCompletionGhostField, false);
+    if (!ghost || ghost.size === 0) {
+      return;
+    }
+    view.dispatch({ effects: setInlineCompletionGhost.of(null) });
   };
 
   const requestInlineCompletion = async (
