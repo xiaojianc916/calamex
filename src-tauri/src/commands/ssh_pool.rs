@@ -52,14 +52,6 @@ const POOL_CLEANUP_INTERVAL: Duration = Duration::from_secs(60);
 /// 新建连接后按 LRU 驱逐空闲连接,防止句柄无界累积耗尽 fd / 远端会话。
 const POOL_MAX_ENTRIES: usize = 32;
 
-// ---- shutdown signalling ----
-
-/// 应用退出时置位:后台清理任务在下一次 `select!` 时感知并退出,避免空转。
-static POOL_SHUTDOWN: AtomicBool = AtomicBool::new(false);
-/// 用于在关停时立即唤醒正在等待 tick 的清理任务(否则最坏要等满一个清理周期)。
-static POOL_SHUTDOWN_NOTIFY: LazyLock<tokio::sync::Notify> =
-    LazyLock::new(tokio::sync::Notify::new);
-
 // ---- connection key ----
 
 /// Uniquely identifies a pooled connection.
@@ -158,18 +150,17 @@ impl SshConnectionPool {
         // an async Tauri command handler, i.e. inside the Tokio runtime.
         static CLEANUP_SPAWNED: AtomicBool = AtomicBool::new(false);
         if !CLEANUP_SPAWNED.swap(true, Ordering::Relaxed) {
-            tokio::spawn(async {
+            // 统一关停管线：观察进程级 CancellationToken。应用退出时 run_exit_cleanup 取消令牌，
+            // 本清理任务即在 select! 中命中 cancelled() 退出，替代此前 POOL_SHUTDOWN 标志 +
+            // POOL_SHUTDOWN_NOTIFY 唤醒这套各自为政的关停信号。
+            let shutdown = crate::lifecycle::shutdown_token();
+            tokio::spawn(async move {
                 let mut interval = tokio::time::interval(POOL_CLEANUP_INTERVAL);
                 interval.tick().await; // skip first immediate tick
                 loop {
                     tokio::select! {
-                        _ = interval.tick() => {
-                            if POOL_SHUTDOWN.load(Ordering::Relaxed) {
-                                break;
-                            }
-                            POOL.cleanup().await;
-                        }
-                        _ = POOL_SHUTDOWN_NOTIFY.notified() => break,
+                        _ = interval.tick() => POOL.cleanup().await,
+                        _ = shutdown.cancelled() => break,
                     }
                 }
             });
@@ -313,15 +304,10 @@ impl SshConnectionPool {
 
 pub(crate) static POOL: LazyLock<SshConnectionPool> = LazyLock::new(SshConnectionPool::new);
 
-/// 应用退出时调用:置位关停标志并唤醒后台清理任务退出,随后清空连接池。
-///
-/// 与进程直接退出相比,这里主动断开池内长连接,避免远端遗留半开会话。
+/// 应用退出时调用:清空连接池缓存的所有连接。后台清理任务的停止已由进程级 CancellationToken
+/// 统一驱动（run_exit_cleanup 取消令牌时本池清理任务即在 select! 中退出），故此处不再维护各自的
+/// 关停标志,仅主动断开池内长连接,避免远端遗留半开会话。
 pub(crate) async fn shutdown_ssh_pool() {
-    POOL_SHUTDOWN.store(true, Ordering::Relaxed);
-    // notify_one（而非 notify_waiters）：即使清理任务此刻不在 notified() 挂起点，
-    // 也会存下一枚许可，下一次 select 立即命中退出分支，不丢唤醒、不必等满一个清理周期。
-    // 仅一个清理任务等待，notify_one 语义正确。
-    POOL_SHUTDOWN_NOTIFY.notify_one();
     POOL.shutdown().await;
 }
 
