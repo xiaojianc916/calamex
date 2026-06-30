@@ -298,9 +298,9 @@ export const aiTauriService: TAiTauriService = {
     commands.aiResolveApproval(payload),
   ),
 
-  aiEnsureAcpSession: payloadCommand(AI_COMMAND_META.aiEnsureAcpSession, async (payload) => {
-    await commands.aiEnsureAcpSession(payload);
-  }),
+  aiEnsureAcpSession: payloadCommand(AI_COMMAND_META.aiEnsureAcpSession, (payload) =>
+    commands.aiEnsureAcpSession(payload),
+  ),
 
   aiSetSessionConfigOption: payloadCommand(AI_COMMAND_META.aiSetSessionConfigOption, (payload) =>
     commands.aiSetSessionConfigOption(payload),

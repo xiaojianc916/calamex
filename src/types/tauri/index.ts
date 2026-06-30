@@ -392,7 +392,9 @@ export interface ITauriService {
   aiChatStream(payload: IAiChatRequest): Promise<AiChatStreamPayload>;
   aiCancel(payload: IAiCancelRequest): Promise<void>;
   aiResolveApproval(payload: IAiResolveApprovalRequest): Promise<boolean>;
-  aiEnsureAcpSession(payload: IAiEnsureAcpSessionRequest): Promise<void>;
+  aiEnsureAcpSession(
+    payload: IAiEnsureAcpSessionRequest,
+  ): Promise<IAiSessionConfigOptionsPayload | null>;
   aiSetSessionConfigOption(
     payload: IAiSetSessionConfigOptionRequest,
   ): Promise<IAiSessionConfigOptionsPayload | null>;

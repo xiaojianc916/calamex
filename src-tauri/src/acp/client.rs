@@ -174,7 +174,7 @@ enum Command {
         session_id: SessionId,
         config_id: SessionConfigId,
         value: SessionConfigOptionValue,
-        reply: oneshot::Sender<Result<(), String>>,
+        reply: oneshot::Sender<Result<Option<Value>, String>>,
     },
     RestoreCheckpoint {
         request: CheckpointRestoreRequest,
@@ -252,7 +252,7 @@ impl AcpClientHandle {
         session_id: SessionId,
         config_id: String,
         value: String,
-    ) -> Result<(), AcpClientError> {
+    ) -> Result<Option<Value>, AcpClientError> {
         let (reply, rx) = oneshot::channel();
         self.cmd_tx
             .send(Command::SetSessionConfigOption {
@@ -492,7 +492,16 @@ pub fn spawn_acp_client(
                                 ))
                                 .block_task()
                                 .await;
-                            let _ = reply.send(res.map(|_| ()).map_err(|e| e.to_string()));
+                            // 最小透传：set_config_option 响应携带的 configOptions（切换后
+                            // 完整快照）原样序列化回传（camelCase wire；缺失/null → None），
+                            // 宿主侧据 thread_id 更新缓存并回传前端即时快照。
+                            let outcome = res.map(|r| {
+                                serde_json::to_value(&r)
+                                    .ok()
+                                    .and_then(|v| v.get("configOptions").cloned())
+                                    .filter(|v| !v.is_null())
+                            });
+                            let _ = reply.send(outcome.map_err(|e| e.to_string()));
                         }
                         Command::RestoreCheckpoint { request, reply } => {
                             let res = cx.send_request(request).block_task().await;

@@ -229,28 +229,28 @@ impl AcpRuntime {
         resolved
     }
 
-    /// 切换指定线程当前 ACP 会话的某个配置项值（标准 session/set_config_option）。线程绑定的
-    /// 会话可能落在任一后端宿主，故向全部已建立宿主广播下发：命中即记为已应用并返回 true。
-    /// 无任何宿主 / 无匹配线程时返回 Ok(false)（安全空操作——配置项切换绝不应触发子进程派生）。
-    /// 至多一个宿主持有该线程，故某宿主下发失败即整体失败。
+    /// 切换指定线程当前 ACP 会话的某个配置项值（标准 session/set_config_option）。线程绑定的会话可能
+    /// 落在任一后端宿主，故向全部已建立宿主广播下发：返回首个命中宿主回传的「切换后完整配置项快照」
+    /// （ACP SetSessionConfigOptionResponse.config_options 原样 JSON）。无任何宿主 / 无匹配线程时返回
+    /// Ok(None)（安全空操作——配置项切换绝不应触发子进程派生）。至多一个宿主持有该线程，故某宿主下发
+    /// 失败即整体失败。
     pub async fn set_session_config_option(
         &self,
         thread_id: &str,
         config_id: &str,
         value_id: &str,
-    ) -> Result<bool, AcpClientError> {
+    ) -> Result<Option<serde_json::Value>, AcpClientError> {
         // 先取出 Arc 列表并释放锁，避免在广播下发（跨 await）期间持有 runtime 锁。
         let hosts = self.hosts.lock().all();
-        let mut applied = false;
         for host in hosts {
-            if host
+            if let Some(config_options) = host
                 .set_session_config_option(thread_id, config_id, value_id)
                 .await?
             {
-                applied = true;
+                return Ok(Some(config_options));
             }
         }
-        Ok(applied)
+        Ok(None)
     }
 
     /// 取某线程会话建立时 agent 公示的可用配置项清单（ACP NewSessionResponse.config_options
@@ -338,12 +338,12 @@ mod tests {
     #[test]
     fn set_session_config_option_on_unestablished_runtime_is_noop() {
         let runtime = AcpRuntime::default();
-        // 无任何宿主时，配置项切换为安全空操作：返回 Ok(false) 且绝不派生子进程。
-        let applied = tauri::async_runtime::block_on(
+        // 无任何宿主时，配置项切换为安全空操作：返回 Ok(None) 且绝不派生子进程。
+        let snapshot = tauri::async_runtime::block_on(
             runtime.set_session_config_option("thread-1", "model", "gpt-5"),
         )
         .expect("set_session_config_option on empty runtime should not error");
-        assert!(!applied);
+        assert!(snapshot.is_none());
         assert!(runtime.hosts.lock().all().is_empty());
     }
 

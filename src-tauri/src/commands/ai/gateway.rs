@@ -317,34 +317,30 @@ pub async fn ai_set_session_config_option(
 
     use tauri::Manager as _;
     let runtime = app.state::<crate::acp::AcpRuntime>();
-    let applied = runtime
+    // 切换后的权威配置项快照由 session/set_config_option 响应直接回传（agent 未回填时回退到
+    // 会话级缓存快照）；未命中任何已绑定会话则为 None。
+    let config_options = runtime
         .set_session_config_option(thread_id, config_id, value_id)
         .await
         .map_err(|error| format!("AI_SET_SESSION_CONFIG_OPTION_FAILED: {error}"))?;
-    // v3：权威新值由 agent 的 config_option_update 帧回推前端 ACL；此处命中已绑定会话时回传
-    // 当前缓存的配置项全集作为即时快照（未命中则 None）。
-    if !applied {
-        return Ok(None);
-    }
-    Ok(runtime
-        .session_config_options(thread_id)
-        .map(|config_options| AiSessionConfigOptionsPayload { config_options }))
+    Ok(config_options.map(|config_options| AiSessionConfigOptionsPayload { config_options }))
 }
 
-/// 握手并复用/建立某线程在指定后端上的 ACP 会话（v3 · 唯一标准管线）。
+/// 握手并复用/建立某线程在指定后端上的 ACP 会话，并回传 agent 在 session/new 响应公示的可用配置项
+/// 全集（v3 · 唯一标准管线）。
 ///
-/// 取代 ai_get_session_config_options：配置项发现统一走事件通道，握手不再返回快照。经
-/// get_or_spawn_backend 懒建立目标后端宿主后 ensure_session 建立/复用会话——这会触发外部 agent
-/// （如 Kimi）在 session/new 之后下发一次性 config_option_update 通知。握手末尾再 bind_config_stream
-/// 为该会话绑定稳定的「会话级配置流」前端键（config:{thread_id}）：宿主立即重放已缓存快照、并令 sink
-/// 把随后抵达的一次性帧额外路由到该键，使前端在「首个 prompt 之前」即可填充选择器/命令面板（不再依赖
-/// 回合发起时的重写重放）。thread_id / backend 先行校验；未知 backend 报错。
+/// 配置项发现的唯一来源即此握手返回值：经 get_or_spawn_backend 懒建立目标后端宿主后 ensure_session
+/// 建立/复用会话，agent 在 session/new 响应里以 config_options 公示「模型 / 模式 / 思考强度等」可切换
+/// 配置项全集（含 currentValue 当前选中项），宿主据 thread_id 登记后由本命令原样回传前端选择器。会话
+/// 复用回合（已存在映射）不重发 session/new，则回退到宿主缓存的同一快照；agent 未公示任何配置项时
+/// 返回 None。后续 agent 主动发起的 config_option_update（标准回合内通知）经流式投影由前端增量并入，
+/// 不在此通道。thread_id / backend 先行校验；未知 backend 报错。
 #[tauri::command]
 #[specta::specta]
 pub async fn ai_ensure_acp_session(
     app: AppHandle,
     payload: AiEnsureAcpSessionRequest,
-) -> Result<(), String> {
+) -> Result<Option<AiSessionConfigOptionsPayload>, String> {
     let thread_id = payload.thread_id.trim();
     if thread_id.is_empty() {
         return Err("AI_ENSURE_ACP_SESSION_INVALID: threadId 不能为空。".to_string());
@@ -371,12 +367,11 @@ pub async fn ai_ensure_acp_session(
     host.ensure_session(thread_id, workspace_root_path, None)
         .await
         .map_err(|error| format!("AI_ENSURE_ACP_SESSION_FAILED: {error}"))?;
-    // 首个 prompt 之前即开放配置项发现：为该会话绑定稳定的「会话级配置流」前端订阅键
-    // （约定 config:{thread_id}，与前端 useAcpSessionConfigOptions 订阅键一致）。绑定后宿主立即重放
-    // 已缓存快照、并令 sink 把随后经 setTimeout(0) 抵达的一次性 config_option_update /
-    // available_commands_update 额外路由到该键——使模型选择器/命令面板在未发首条消息时即可填充。
-    host.bind_config_stream(thread_id, &format!("config:{thread_id}"));
-    Ok(())
+    // 配置项发现的唯一来源：回传 agent 在 session/new 响应公示的可用配置项全集（会话复用回合回退到
+    // 宿主缓存的同一快照；agent 未公示则为 None）。
+    Ok(host
+        .session_config_options(thread_id)
+        .map(|config_options| AiSessionConfigOptionsPayload { config_options }))
 }
 
 #[tauri::command]

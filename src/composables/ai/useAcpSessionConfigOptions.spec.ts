@@ -1,23 +1,16 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { effectScope } from 'vue';
 
-const { ensureAcpSession, setSessionConfigOption, subscribeSidecarSessionStream } = vi.hoisted(
-  () => ({
-    ensureAcpSession: vi.fn(),
-    setSessionConfigOption: vi.fn(),
-    subscribeSidecarSessionStream: vi.fn(),
-  }),
-);
+const { ensureAcpSession, setSessionConfigOption } = vi.hoisted(() => ({
+  ensureAcpSession: vi.fn(),
+  setSessionConfigOption: vi.fn(),
+}));
 
 vi.mock('@/services/ipc/ai.service', () => ({
   aiService: {
     ensureAcpSession,
     setSessionConfigOption,
   },
-}));
-
-vi.mock('@/composables/ai/sidecar-stream-listener', () => ({
-  subscribeSidecarSessionStream,
 }));
 
 import { useAcpSessionConfigOptions } from '@/composables/ai/useAcpSessionConfigOptions';
@@ -65,45 +58,28 @@ function withScope<T>(fn: () => T): T {
 describe('useAcpSessionConfigOptions', () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    vi.useRealTimers();
-    subscribeSidecarSessionStream.mockResolvedValue(() => {});
   });
 
-  it('handshakes, enters discovering, then resolves to empty ready after grace', async () => {
-    vi.useFakeTimers();
-    ensureAcpSession.mockResolvedValue(undefined);
+  it('discovers config options from the session/new handshake response', async () => {
+    ensureAcpSession.mockResolvedValue({ configOptions: buildConfigOptions() });
     const vm = withScope(() => useAcpSessionConfigOptions());
 
     await vm.ensureAcpSession('thread-1', 'kimi');
 
     expect(ensureAcpSession).toHaveBeenCalledWith({ threadId: 'thread-1', backend: 'kimi' });
-    expect(subscribeSidecarSessionStream).toHaveBeenCalledWith(
-      'config:thread-1',
-      expect.any(Function),
-    );
-    expect(vm.state.value.kind).toBe('discovering');
-
-    await vi.advanceTimersByTimeAsync(1200);
-    expect(vm.state.value).toEqual({ kind: 'ready', configOptions: [] });
-    expect(vm.hasConfigOptions.value).toBe(false);
+    expect(vm.state.value.kind).toBe('ready');
+    expect(vm.configOptions.value).toHaveLength(2);
+    expect(vm.hasConfigOptions.value).toBe(true);
   });
 
-  it('applies a pre-prompt config_option_update arriving on the session config stream', async () => {
-    ensureAcpSession.mockResolvedValue(undefined);
-    let streamHandler: ((event: unknown) => void) | null = null;
-    subscribeSidecarSessionStream.mockImplementation((_sessionId: string, onEvent) => {
-      streamHandler = onEvent;
-      return Promise.resolve(() => {});
-    });
+  it('resolves to empty ready when the handshake exposes no config options', async () => {
+    ensureAcpSession.mockResolvedValue(null);
     const vm = withScope(() => useAcpSessionConfigOptions());
 
     await vm.ensureAcpSession('thread-1', 'kimi');
-    expect(vm.state.value.kind).toBe('discovering');
 
-    streamHandler?.({ type: 'config_option_update', configOptions: buildConfigOptions() });
-
-    expect(vm.state.value.kind).toBe('ready');
-    expect(vm.configOptions.value).toHaveLength(2);
+    expect(vm.state.value).toEqual({ kind: 'ready', configOptions: [] });
+    expect(vm.hasConfigOptions.value).toBe(false);
   });
 
   it('marks unavailable when the handshake throws', async () => {

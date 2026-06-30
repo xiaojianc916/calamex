@@ -90,7 +90,9 @@ export const aiService = {
   resolveAcpApproval(payload: IAiResolveApprovalRequest): Promise<boolean> {
     return tauriService.aiResolveApproval(payload);
   },
-  ensureAcpSession(payload: IAiEnsureAcpSessionRequest): Promise<void> {
+  ensureAcpSession(
+    payload: IAiEnsureAcpSessionRequest,
+  ): Promise<IAiSessionConfigOptionsPayload | null> {
     return tauriService.aiEnsureAcpSession(payload);
   },
   setSessionConfigOption(

@@ -102,8 +102,9 @@ pub struct AiSetSessionConfigOptionRequest {
 /// ACP 会话握手请求（契约层，v3 · 唯一标准管线）。
 ///
 /// 对齐 ai_ensure_acp_session：thread_id 定位/复用会话；backend 指定后端（builtin/kimi/codex）；
-/// workspace_root_path 为新建会话的 cwd。握手仅建立/复用会话（触发外部 agent 在 session/new
-/// 之后下发一次性 config_option_update 通知），不返回快照——配置项发现统一走事件通道。
+/// workspace_root_path 为新建会话的 cwd。握手建立/复用会话后，直接回传 agent 在 session/new 响应
+/// 公示的可用配置项全集（AiSessionConfigOptionsPayload）——这是配置项初始发现的唯一来源；后续 agent
+/// 主动发起的 config_option_update 经标准回合流式投影由前端增量并入。
 #[derive(Debug, Clone, Deserialize, Type)]
 #[serde(rename_all = "camelCase")]
 pub struct AiEnsureAcpSessionRequest {

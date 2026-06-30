@@ -1,11 +1,10 @@
 import type { ComputedRef, Ref } from 'vue';
-import { computed, onScopeDispose, ref } from 'vue';
+import { computed, ref } from 'vue';
 
 import {
   applyAcpConfigOptionUpdate,
   parseAcpSessionConfigOptions,
 } from '@/components/business/ai/thread/projection/from-acp-session-config-options';
-import { subscribeSidecarSessionStream } from '@/composables/ai/sidecar-stream-listener';
 import { aiService } from '@/services/ipc/ai.service';
 import type {
   IAcpSessionConfigOption,
@@ -13,16 +12,6 @@ import type {
   TAgentBackendKind,
 } from '@/types/ai/sidecar';
 import { toErrorMessage } from '@/utils/error/error';
-
-/** 握手后短等 agent 首帧 config_option_update 的宽限窗口（ms）：到期判定为「已公示、空」。 */
-const READY_GRACE_MS = 1200;
-
-/**
- * 「会话级配置流」前端订阅键约定（须与后端 ai_ensure_acp_session 的 bind_config_stream 完全一致）：
- * 宿主把 agent 在 session/new 之后一次性下发的 config_option_update 额外路由到该稳定键，使选择器在
- * 「首个 prompt 之前」即可填充，不再依赖回合发起时的重写重放。
- */
-const configStreamKey = (threadId: string): string => `config:${threadId}`;
 
 export interface IUseAcpSessionConfigOptionsReturn {
   state: Ref<TAcpSessionConfigOptions>;
@@ -42,75 +31,25 @@ export interface IUseAcpSessionConfigOptionsReturn {
 /**
  * ACP config_options 选择器 composable（v3 · 唯一标准管线 / 判别式状态机）。
  *
- * 取代 v2 的 get-工作区 + 乐观切换/回滚：
- * - ensureAcpSession：握手建立会话（void），置 discovering 并武装宽限计时器；配置项发现统一
- *   走事件通道（config_option_update）。
- * - applyConfigOptionUpdate：唯一写入点——完整快照整体替换为 ready；坏帧保留旧态。
- * - selectConfigOption：仅触发 set；权威新值由 agent 的 config_option_update 回推，不乐观、不回滚；
- *   set 响应若携带即时快照则并入（best-effort），最终仍以事件为准。
+ * 完全按 ACP 规范：配置项发现的唯一来源是 session/new 响应公示的 config_options。
+ * - ensureAcpSession：握手建立/复用会话，直接以握手返回的快照落 ready（无快照即 ready-空）。
+ * - applyConfigOptionUpdate：增量写入点——agent 在标准回合内主动下发 config_option_update（完整
+ *   快照）时整体替换；坏帧保留旧态。
+ * - selectConfigOption：仅触发 set；set 响应携带的切换后完整快照即并入，最终仍可被后续
+ *   config_option_update 覆盖。不乐观、不回滚。
  */
 export function useAcpSessionConfigOptions(): IUseAcpSessionConfigOptionsReturn {
   const state = ref<TAcpSessionConfigOptions>({ kind: 'idle' });
   const isSwitching = ref(false);
 
   let activeThreadId: string | null = null;
-  let readyGraceTimer: ReturnType<typeof setTimeout> | null = null;
-  // 会话级配置流订阅取消句柄（订阅 config:{threadId}）：每次握手切线程时先退订旧的再订阅新的。
-  let configStreamUnlisten: (() => void) | null = null;
 
   const configOptions = computed<IAcpSessionConfigOption[]>(() =>
     state.value.kind === 'ready' ? state.value.configOptions : [],
   );
   const hasConfigOptions = computed(() => configOptions.value.length > 0);
 
-  function clearReadyGrace(): void {
-    if (readyGraceTimer !== null) {
-      clearTimeout(readyGraceTimer);
-      readyGraceTimer = null;
-    }
-  }
-
-  function teardownConfigStream(): void {
-    if (configStreamUnlisten !== null) {
-      configStreamUnlisten();
-      configStreamUnlisten = null;
-    }
-  }
-
-  // 订阅 config:{threadId} 会话级配置流：宿主把一次性 config_option_update 额外路由到该键，在首个
-  // prompt 之前抵达本订阅 → 写入选择器。available_commands_update 由命令面板的独立 composable 处理，
-  // 这里只认配置项帧。异步订阅就绪后若线程已切走则立即退订（防竞态泄漏）。
-  function subscribeConfigStream(threadId: string): void {
-    teardownConfigStream();
-    void subscribeSidecarSessionStream(configStreamKey(threadId), (event) => {
-      if (activeThreadId !== threadId) {
-        return;
-      }
-      if (event.type === 'config_option_update') {
-        applyConfigOptionUpdate(event.configOptions);
-      }
-    }).then((unlisten) => {
-      if (activeThreadId !== threadId) {
-        unlisten();
-        return;
-      }
-      configStreamUnlisten = unlisten;
-    });
-  }
-
-  function armReadyGrace(threadId: string): void {
-    clearReadyGrace();
-    readyGraceTimer = setTimeout(() => {
-      readyGraceTimer = null;
-      // 宽限到期仍停在 discovering（未收到任何 config_option_update）：判定无可切换配置项。
-      if (activeThreadId === threadId && state.value.kind === 'discovering') {
-        state.value = { kind: 'ready', configOptions: [] };
-      }
-    }, READY_GRACE_MS);
-  }
-
   function applyConfigOptionUpdate(raw: unknown): void {
-    clearReadyGrace();
     state.value = applyAcpConfigOptionUpdate(state.value, raw);
   }
 
@@ -120,24 +59,20 @@ export function useAcpSessionConfigOptions(): IUseAcpSessionConfigOptionsReturn 
     workspaceRootPath?: string | null,
   ): Promise<void> {
     activeThreadId = threadId;
-    clearReadyGrace();
     state.value = { kind: 'discovering' };
-    // 先订阅会话级配置流，再握手：确保宿主握手末尾绑定/路由的一次性 config_option_update 不被漏接。
-    subscribeConfigStream(threadId);
     try {
-      await aiService.ensureAcpSession({
+      const payload = await aiService.ensureAcpSession({
         threadId,
         backend,
         ...(workspaceRootPath ? { workspaceRootPath } : {}),
       });
       if (activeThreadId !== threadId) return;
-      // 握手只确保会话建立；配置项发现走事件通道，短等首帧 config_option_update 兜底。
-      if (state.value.kind === 'discovering') {
-        armReadyGrace(threadId);
-      }
+      // 配置项发现的唯一来源：握手回传 agent 在 session/new 公示的 config_options 快照。
+      // 无快照（agent 未公示）即视为「已公示、空」，落 ready-空。
+      const snapshot = payload ? parseAcpSessionConfigOptions(payload.configOptions) : null;
+      state.value = snapshot ?? { kind: 'ready', configOptions: [] };
     } catch (error) {
       if (activeThreadId !== threadId) return;
-      clearReadyGrace();
       state.value = {
         kind: 'unavailable',
         reason: 'handshake_failed',
@@ -171,17 +106,10 @@ export function useAcpSessionConfigOptions(): IUseAcpSessionConfigOptionsReturn 
   }
 
   function reset(): void {
-    clearReadyGrace();
-    teardownConfigStream();
     activeThreadId = null;
     isSwitching.value = false;
     state.value = { kind: 'idle' };
   }
-
-  onScopeDispose(() => {
-    clearReadyGrace();
-    teardownConfigStream();
-  });
 
   return {
     state,
