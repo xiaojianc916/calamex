@@ -5,7 +5,7 @@
  * 接口，把 ACP 的会话生命周期方法接到现有运行时与保留的投影模块：
  * - initialize       → 协商协议版本与能力。
  * - newSession        → 在会话登记表登记 cwd(→workspaceRootPath)、客户端声明的 mcpServers。
- * - setSessionMode    → 校验 modeId 为 TAgentMode 后切换该会话运行模式。
+ * - setSessionConfigOption → 校验 configId/value 后切换该会话的模式或模型(官方唯一配置管线)。
  * - prompt            → 按模式路由到 runtime.chat/plan/execute；过程中的运行时输出事件
  *                       经 output-event-stream 投影为 session/update 通知即时下发，
  *                       回合内若出现待裁决审批，经 session/request_permission 取得裁决后
@@ -42,8 +42,6 @@ import {
 	type SessionNotification,
 	type SetSessionConfigOptionRequest,
 	type SetSessionConfigOptionResponse,
-	type SetSessionModeRequest,
-	type SetSessionModeResponse,
 } from "@agentclientprotocol/sdk"
 import { randomUUID } from "node:crypto"
 
@@ -51,10 +49,7 @@ import type {
 	IAgentRuntimeRunOptions,
 	IAgentTokenUsageSnapshot,
 } from "../engines/contracts/runtime-contracts.js"
-import {
-	AGENT_MODES,
-	type TAgentMode,
-} from "../engines/contracts/runtime-input.js"
+import type { TAgentMode } from "../engines/contracts/runtime-input.js"
 import type {
 	IAgentSidecarRuntime,
 	TAgentRuntimeOutputEvent,
@@ -159,10 +154,6 @@ const RUNTIME_METHOD_BY_MODE = {
 	patch: "execute",
 	review: "execute",
 } as const satisfies Record<TAgentMode, "chat" | "plan" | "execute">
-
-/** modeId 是否为合法的运行时模式。 */
-const isAgentMode = (value: string): value is TAgentMode =>
-	(AGENT_MODES as readonly string[]).includes(value)
 
 /** 未知会话的统一 RPC 错误映射。 */
 const sessionNotFound = (sessionId: string): RequestError =>
@@ -275,22 +266,6 @@ export class CalamexAcpAgent implements Agent {
 		_params: AuthenticateRequest,
 	): Promise<AuthenticateResponse | void> {
 		// 本地 sidecar 无需鉴权(模型凭证由环境变量注入)。
-		return {}
-	}
-
-	async setSessionMode(
-		params: SetSessionModeRequest,
-	): Promise<SetSessionModeResponse> {
-		if (!isAgentMode(params.modeId)) {
-			throw RequestError.invalidParams(
-				{ modeId: params.modeId, allowed: AGENT_MODES },
-				`非法会话模式：${params.modeId}`,
-			)
-		}
-		const state = this.registry.setMode(params.sessionId, params.modeId)
-		if (!state) {
-			throw sessionNotFound(params.sessionId)
-		}
 		return {}
 	}
 

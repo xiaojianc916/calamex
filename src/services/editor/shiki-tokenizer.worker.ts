@@ -80,6 +80,9 @@ type TSession = {
   lines: string[];
   blockEndState: Map<number, unknown>;
   bgCursor: number;
+  // 向下滚动的“连续续算”提示：上一次 tokenizeRange 结束处的下一行与其语法末态。
+  // 下一请求若正好从 nextLine 开始（典型向下滚动），可直接以 endState 续算、零导入行重切。
+  lastForwardRange: { docVersion: number; nextLine: number; endState: unknown } | null;
 };
 
 let highlighterPromise: Promise<HighlighterCore> | null = null;
@@ -286,6 +289,7 @@ const applyEdit = (req: TEditRequest): void => {
   if (session.bgCursor > editedBlock) {
     session.bgCursor = editedBlock;
   }
+  session.lastForwardRange = null;
   scheduleBackground();
 };
 
@@ -316,12 +320,29 @@ const tokenizeRange = async (req: TTokenizeRangeRequest): Promise<IShikiThemedTo
   if (startLine > totalLines) {
     return null;
   }
-  const startBlock = Math.floor((startLine - 1) / BLOCK_LINES);
-  const blockStartLine = startBlock * BLOCK_LINES + 1;
-  const startState = ensureBlockEndState(highlighter, session, shikiId, startBlock - 1);
-  const code = session.lines.slice(blockStartLine - 1, endLine).join('\n');
-  const { tokens } = tokenizeBlockCode(highlighter, shikiId, code, startState);
-  const offset = startLine - blockStartLine;
+  // 续算快路径：上一次该会话的 tokenize 正好停在 startLine-1（典型向下滚动），且已拿到
+  // 真实语法末态时，直接复用它从 startLine 起切，免去“块首→startLine”的导入行重切。
+  const last = session.lastForwardRange;
+  let sliceStartLine: number;
+  let startState: unknown;
+  if (
+    last &&
+    last.docVersion === session.docVersion &&
+    last.nextLine === startLine &&
+    last.endState != null
+  ) {
+    sliceStartLine = startLine;
+    startState = last.endState;
+  } else {
+    const startBlock = Math.floor((startLine - 1) / BLOCK_LINES);
+    sliceStartLine = startBlock * BLOCK_LINES + 1;
+    startState = ensureBlockEndState(highlighter, session, shikiId, startBlock - 1);
+  }
+  const code = session.lines.slice(sliceStartLine - 1, endLine).join('\n');
+  const { tokens, endState } = tokenizeBlockCode(highlighter, shikiId, code, startState);
+  // 记录本次末态供下一段连续区间续算；docVersion 变化时由 applyEdit 清空。
+  session.lastForwardRange = { docVersion: session.docVersion, nextLine: endLine + 1, endState };
+  const offset = startLine - sliceStartLine;
   const count = endLine - startLine + 1;
   return tokens.slice(offset, offset + count);
 };
@@ -348,6 +369,7 @@ workerSelf.addEventListener('message', (event) => {
       lines: data.code.split('\n'),
       blockEndState: new Map(),
       bgCursor: 0,
+      lastForwardRange: null,
     };
     sessions.set(data.sessionKey, session);
     if (sessions.size > MAX_SESSIONS) {

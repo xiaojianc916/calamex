@@ -3,7 +3,7 @@
  *
  * 纯状态容器，不耦合 JSON-RPC / 传输：
  * - session/new      → create()：登记 cwd(→workspaceRootPath)、客户端声明的 mcpServers、初始模式。
- * - session/set_mode → setMode()：切换已登记会话的运行模式。
+ * - set_config_option(mode) → setMode()：切换已登记会话的运行模式。
  * - session/prompt   → get() 读状态构造运行时输入；beginTurn()/endTurn() 管理回合 AbortController。
  * - session/cancel   → cancel()：中止该会话当前回合（映射运行时 options.context.signal）。
  *

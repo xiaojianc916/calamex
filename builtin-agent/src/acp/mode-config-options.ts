@@ -1,10 +1,10 @@
 /**
  * builtin agent 会话级「模式选择器」——官方 session config option（category=mode）。
  *
- * ACP 的 session/set_mode 已被官方标注为将在未来版本移除，由 session config options 统一
- * 取代（见 protocol/session-config-options）。本模块据此把用户可选的运行模式（ask / plan /
- * agent）公示为官方 SessionConfigOption（category=mode），经 session/set_config_option
- * (configId="mode") 切换，与模型选择器（category=model）同构，构成唯一的会话配置管线。
+ * 运行模式由官方 session config options 统一管理（见 protocol/session-config-options）：本模块把
+ * 用户可选的运行模式（ask / plan / agent）公示为官方 SessionConfigOption（category=mode），经
+ * session/set_config_option (configId="mode") 切换，与模型选择器（category=model）同构，
+ * 构成唯一的会话配置管线。
  *
  * 纯函数、无状态、无 IO；类型对齐 SDK SessionConfigOption（select 变体）与运行时模式枚举。
  */

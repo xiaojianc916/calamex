@@ -197,7 +197,7 @@ test("prompt 在回合被 cancel 后返回 cancelled", async () => {
 	assert.equal(response.stopReason, "cancelled")
 })
 
-test("setSessionMode 拒绝非法模式,接受合法模式并路由到对应 runtime 方法", async () => {
+test("set_config_option(mode) 拒绝非法模式,接受合法模式并路由到对应 runtime 方法", async () => {
 	const { connection } = recordingConnection()
 	const calls: string[] = []
 	const runtime = makeRuntime(
@@ -219,11 +219,11 @@ test("setSessionMode 拒绝非法模式,接受合法模式并路由到对应 run
 	const agent = new CalamexAcpAgent(connection, runtime)
 	const { sessionId } = await agent.newSession({ cwd: "/w", mcpServers: [] })
 	await assert.rejects(() =>
-		agent.setSessionMode({ sessionId, modeId: "bogus" }),
+		agent.setSessionConfigOption({ sessionId, configId: "mode", value: "bogus" }),
 	)
-	await agent.setSessionMode({ sessionId, modeId: "plan" })
+	await agent.setSessionConfigOption({ sessionId, configId: "mode", value: "plan" })
 	await agent.prompt({ sessionId, prompt: [{ type: "text", text: "x" }] })
-	await agent.setSessionMode({ sessionId, modeId: "ask" })
+	await agent.setSessionConfigOption({ sessionId, configId: "mode", value: "ask" })
 	await agent.prompt({ sessionId, prompt: [{ type: "text", text: "x" }] })
 	assert.deepEqual(calls, ["plan", "chat"])
 })
