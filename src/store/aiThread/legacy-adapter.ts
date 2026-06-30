@@ -14,9 +14,7 @@
  * ========================================================================== */
 import { attachChangedFileDiffsToToolCalls } from '@/components/business/ai/thread/projection/attach-changed-file-diffs';
 import type { IAiChatMessage } from '@/types/ai';
-import type { IAiConversationThread } from '@/types/ai/conversation.schema';
 import type {
-  IAiThread,
   IAiThreadAssistantMessageEntry,
   IAiThreadEntry,
   IAiThreadToolCall,
@@ -164,17 +162,4 @@ export function legacyMessageToEntries(message: IAiChatMessage): IAiThreadEntry[
     });
   }
   return entries;
-}
-
-/** 把一整个 legacy 会话线程投影为 `IAiThread`（沿用元信息，仅换 entries）。 */
-export function legacyThreadToThread(thread: IAiConversationThread): IAiThread {
-  return {
-    id: thread.id,
-    title: thread.title,
-    titleStatus: thread.titleStatus,
-    createdAt: thread.createdAt,
-    updatedAt: thread.updatedAt,
-    entries: thread.messages.flatMap(legacyMessageToEntries),
-    ...(thread.scrollState ? { scrollState: thread.scrollState } : {}),
-  };
 }

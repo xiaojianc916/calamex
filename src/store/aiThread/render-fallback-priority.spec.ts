@@ -1,13 +1,12 @@
 /* ============================================================================
- * 渲染回退「三路优先级」回归 harness（ADR-0014 Step 7 收尾 / Step 8 安全网）
+ * 渲染回退「两路优先级」回归 harness（ADR-0014 Step 8 安全网）
  *
- * 在删除双轨期开关与旧渲染分支（Step 8）之前，把当前已稳定的契约钉死：
+ * 把当前已稳定的契约钉死：
  *   1) activeThread 两路回退优先级：liveThread > persistedActiveThread
- *      —— legacy 投影（projectedActiveThread）随 aiConversation store 退役已移除，
- *      此前的 projected 档一并下线，仅保留 live / persisted 两路回归锁。
+ *      —— legacy 投影随 aiConversation store 退役已移除，仅保留 live / persisted 两路回归锁。
  *   2) 启动读管线端到端（7.5a 组合器 → 7.5b store 回退槽）：
  *      entries 快照 → resolvePersistedThreads 归一 → setPersistedThreads → activeThread。
- *   3) 坏快照回退 legacy（“迁移失败不致空白”）。
+ *   3) 坏快照 → resolver 回退空态（legacy 迁移读侧已随 Step 8 拆除，不再有 legacy 兜底）。
  *
  * 隔离策略与 persisted-read.spec.ts 对齐：指针恢复被 mock，
  * read 管线通过 7.5a/7.5c 暴露的 DI 缝注入假快照与真 resolver。
@@ -16,11 +15,10 @@ import { createPinia, setActivePinia } from 'pinia';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { nextTick } from 'vue';
 import { useAiThreadStore } from '@/store/aiThread';
+import { projectAuthoritativeToThreadPersist } from '@/store/aiThread/authoritativeEntriesMirror';
 import { hydrateAiThreadEntriesForRender } from '@/store/aiThread/entriesRenderHydrate';
 import { resolvePersistedThreads } from '@/store/aiThread/hydrate';
-import { projectConversationToThreadPersist } from '@/store/aiThread/project';
 import { runStartupPersistedRead } from '@/store/aiThread/startupPersistedReadWiring';
-import type { IAiConversationThread } from '@/types/ai/conversation.schema';
 import type { IAiThread } from '@/types/ai/thread';
 
 vi.mock('@/store/plugins/attachmentPreviewStorage', () => ({
@@ -28,17 +26,14 @@ vi.mock('@/store/plugins/attachmentPreviewStorage', () => ({
 }));
 
 const makeThread = (id: string): IAiThread =>
-  ({ id, title: id, entries: [] }) as unknown as IAiThread;
-
-const makeLegacyThread = (id: string): IAiConversationThread =>
   ({
     id,
     title: 'T-' + id,
     titleStatus: 'temporary',
     createdAt: '2026-01-01T00:00:00.000Z',
     updatedAt: '2026-01-01T00:00:00.000Z',
-    messages: [],
-  }) as unknown as IAiConversationThread;
+    entries: [],
+  }) as unknown as IAiThread;
 
 // 冲刷 watcher(nextTick) 与异步指针恢复(微任务链)。
 const flush = async (): Promise<void> => {
@@ -84,16 +79,15 @@ describe('启动读管线端到端（7.5a 组合器 → 7.5b store）', () => {
   it('entries 快照 → resolve → persisted → activeThread', async () => {
     const store = useAiThreadStore();
     const snapshot = JSON.stringify(
-      projectConversationToThreadPersist({
+      projectAuthoritativeToThreadPersist({
         activeThreadId: 'e2',
-        threads: [makeLegacyThread('e1'), makeLegacyThread('e2')],
+        threads: [makeThread('e1'), makeThread('e2')],
       }),
     );
 
     await runStartupPersistedRead({
-      readLegacy: () => ({ legacyActiveThreadId: null, legacyThreads: [] }),
-      hydrateForRender: (input) =>
-        hydrateAiThreadEntriesForRender(input, {
+      hydrateForRender: () =>
+        hydrateAiThreadEntriesForRender({
           loadSnapshot: async () => ({ status: 'loaded', raw: snapshot }),
           resolve: resolvePersistedThreads,
           restorePointers: async (thread) => ({ changed: false, value: thread }),
@@ -108,13 +102,12 @@ describe('启动读管线端到端（7.5a 组合器 → 7.5b store）', () => {
     expect(store.activeThread?.id).toBe('e2');
   });
 
-  it('坏快照 → resolver 回退 legacy，store 仍非空（不致空白）', async () => {
+  it('坏快照 → resolver 回退空态，store 为空（legacy 兜底已退役）', async () => {
     const store = useAiThreadStore();
 
     await runStartupPersistedRead({
-      readLegacy: () => ({ legacyActiveThreadId: 'L1', legacyThreads: [makeLegacyThread('L1')] }),
-      hydrateForRender: (input) =>
-        hydrateAiThreadEntriesForRender(input, {
+      hydrateForRender: () =>
+        hydrateAiThreadEntriesForRender({
           loadSnapshot: async () => ({ status: 'loaded', raw: '{ broken json' }),
           resolve: resolvePersistedThreads,
           restorePointers: async (thread) => ({ changed: false, value: thread }),
@@ -125,7 +118,7 @@ describe('启动读管线端到端（7.5a 组合器 → 7.5b store）', () => {
     });
     await flush();
 
-    expect(store.persistedThreads.map((thread) => thread.id)).toEqual(['L1']);
-    expect(store.activeThread?.id).toBe('L1');
+    expect(store.persistedThreads).toEqual([]);
+    expect(store.activeThread).toBeNull();
   });
 });

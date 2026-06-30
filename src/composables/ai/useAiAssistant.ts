@@ -331,7 +331,7 @@ export const useAiAssistant = (options: IUseAiAssistantOptions) => {
       return;
     }
     // entries 唯一真源：直接以权威 entries 为 seed，剔除本回合占位 assistant entry（buildLive 会重建），
-    // 不再经 legacy 形状往返（threadToLegacyThread → legacyThreadToThread）。
+    // 不再经 legacy 会话形状往返（已无 thread↔message 逆投影）。
     const seedThread: IAiThread = {
       ...targetThread,
       entries: targetThread.entries.filter((entry) => entry.id !== assistantMessageId),

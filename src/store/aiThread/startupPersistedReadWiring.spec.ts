@@ -1,8 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import type { IHydrateAiThreadEntriesForRenderInput } from '@/store/aiThread/entriesRenderHydrate';
 import type { IResolvedPersistedThreads } from '@/store/aiThread/hydrate';
 import { runStartupPersistedRead } from '@/store/aiThread/startupPersistedReadWiring';
-import type { IAiConversationThread } from '@/types/ai/conversation.schema';
 import type { IAiThread } from '@/types/ai/thread';
 
 function makeThread(id: string): IAiThread {
@@ -17,9 +15,7 @@ function makeThread(id: string): IAiThread {
 }
 
 describe('runStartupPersistedRead', () => {
-  it('把 legacy 快照透传给 7.5a 组合器，并灌入归一结果', async () => {
-    const legacyThreads: IAiConversationThread[] = [];
-    let hydrateInput: IHydrateAiThreadEntriesForRenderInput | null = null;
+  it('hydrate 归一后灌入结果', async () => {
     const applied: Array<{ threads: IAiThread[]; activeThreadId: string | null }> = [];
     const resolved: IResolvedPersistedThreads = {
       source: 'entries',
@@ -28,21 +24,16 @@ describe('runStartupPersistedRead', () => {
     };
 
     await runStartupPersistedRead({
-      readLegacy: () => ({ legacyActiveThreadId: 'leg-1', legacyThreads }),
-      hydrateForRender: async (input) => {
-        hydrateInput = input;
-        return resolved;
-      },
+      hydrateForRender: async () => resolved,
       applyPersisted: (threads, activeThreadId) => {
         applied.push({ threads, activeThreadId });
       },
     });
 
-    expect(hydrateInput).toEqual({ legacyActiveThreadId: 'leg-1', legacyThreads });
     expect(applied).toEqual([{ threads: resolved.threads, activeThreadId: 't1' }]);
   });
 
-  it('先读 legacy 再 hydrate 再灌入，且只灌一次', async () => {
+  it('先 hydrate 再灌入，且只灌一次', async () => {
     const order: string[] = [];
     const resolved: IResolvedPersistedThreads = {
       source: 'empty',
@@ -51,10 +42,6 @@ describe('runStartupPersistedRead', () => {
     };
 
     await runStartupPersistedRead({
-      readLegacy: () => {
-        order.push('read');
-        return { legacyActiveThreadId: null, legacyThreads: [] };
-      },
       hydrateForRender: async () => {
         order.push('hydrate');
         return resolved;
@@ -64,6 +51,6 @@ describe('runStartupPersistedRead', () => {
       },
     });
 
-    expect(order).toEqual(['read', 'hydrate', 'apply']);
+    expect(order).toEqual(['hydrate', 'apply']);
   });
 });

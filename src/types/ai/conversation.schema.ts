@@ -64,10 +64,6 @@ export const aiConversationPersistSchema = z.object({
   threads: z.array(aiConversationThreadSchema),
 });
 
-export const aiConversationLegacyPersistSchema = z.object({
-  activeMessages: z.array(aiChatMessageSchema),
-});
-
 export {
   aiChatMessageSchema,
   aiChatRequestSchema,

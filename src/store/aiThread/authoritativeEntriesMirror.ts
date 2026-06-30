@@ -6,7 +6,7 @@
  * 并写入 entries 新 key。与 entriesMirrorBridge 对称：副作用经 deps 注入，默认绑定
  * 真实镜像引擎，便于单测且与实现解耦。
  *
- * 与 project.ts 的关系：authoritative 状态已是 entries 模型（IAiThread[]），无需
+ * 与读路径 resolver 的对称：authoritative 状态已是 entries 模型（IAiThread[]），无需
  * legacy→entries 投影，仅做信封封装 + activeThreadId 归一（复用 normalizeActiveThreadId，
  * 与读路径 resolver 对称，保证 project→parse→resolve 往返一致）。
  *

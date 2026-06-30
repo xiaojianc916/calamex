@@ -1,6 +1,5 @@
 import { describe, expect, it } from 'vitest';
 import {
-  aiConversationLegacyPersistSchema,
   aiConversationPersistSchema,
   aiConversationThreadSchema,
 } from '@/types/ai/conversation.schema';
@@ -37,14 +36,5 @@ describe('AI conversation schema', () => {
     });
 
     expect(persisted.threads[0]?.messages[0]?.content).toBe('你好');
-  });
-
-  it('兼容旧版 activeMessages 持久化形状', () => {
-    const legacy = aiConversationLegacyPersistSchema.parse({
-      activeMessages: [createMessage()],
-    });
-
-    expect(legacy.activeMessages).toHaveLength(1);
-    expect(() => aiConversationPersistSchema.parse({ activeThreadId: '', threads: [] })).toThrow();
   });
 });

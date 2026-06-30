@@ -1,12 +1,7 @@
 import { describe, expect, it } from 'vitest';
-import {
-  inferToolKind,
-  legacyMessageToEntries,
-  legacyThreadToThread,
-} from '@/store/aiThread/legacy-adapter';
+import { inferToolKind, legacyMessageToEntries } from '@/store/aiThread/legacy-adapter';
 import type { IAiAgentPatchSummary, IAiChatMessage } from '@/types/ai';
 import type { IAiContextReference } from '@/types/ai/context';
-import type { IAiConversationThread } from '@/types/ai/conversation.schema';
 import type {
   IAiThreadAssistantMessageEntry,
   IAiThreadToolCall,
@@ -258,26 +253,5 @@ describe('legacyMessageToEntries', () => {
     expect(inferToolKind('run_command')).toBe('execute');
     expect(inferToolKind('web_fetch')).toBe('fetch');
     expect(inferToolKind('totally_unknown')).toBe('other');
-  });
-});
-
-describe('legacyThreadToThread', () => {
-  it('沿用元信息, 展平 messages 为 entries', () => {
-    const thread: IAiConversationThread = {
-      id: 'th1',
-      title: '标题',
-      titleStatus: 'generated',
-      createdAt: ISO,
-      updatedAt: ISO,
-      messages: [
-        userMessage(),
-        { id: 'a1', role: 'assistant', content: '回答', createdAt: ISO, references: [] },
-      ],
-    };
-    const result = legacyThreadToThread(thread);
-    expect(result.id).toBe('th1');
-    expect(result.title).toBe('标题');
-    expect(result.titleStatus).toBe('generated');
-    expect(result.entries.map((e) => e.type)).toEqual(['user_message', 'assistant_message']);
   });
 });

@@ -4,7 +4,6 @@ import type {
   IResolvedPersistedThreads,
   IResolvePersistedThreadsInput,
 } from '@/store/aiThread/hydrate';
-import type { IAiConversationThread } from '@/types/ai/conversation.schema';
 import type { IAiThread } from '@/types/ai/thread';
 
 function makeThread(id: string): IAiThread {
@@ -19,54 +18,45 @@ function makeThread(id: string): IAiThread {
 }
 
 describe('hydrateAiThreadEntriesForRender', () => {
-  it('解析原始快照 JSON 并把 legacy 入参透传给 resolver', async () => {
+  it('解析原始快照 JSON 并把 rawEntriesSnapshot 透传给 resolver', async () => {
     const receivedInputs: IResolvePersistedThreadsInput[] = [];
-    const legacyThreads: IAiConversationThread[] = [];
     const resolved: IResolvedPersistedThreads = {
       source: 'entries',
       activeThreadId: null,
       threads: [],
     };
 
-    const result = await hydrateAiThreadEntriesForRender(
-      { legacyActiveThreadId: 'legacy-1', legacyThreads },
-      {
-        loadSnapshot: async () => ({ status: 'loaded', raw: JSON.stringify({ hello: 'world' }) }),
-        resolve: (input) => {
-          receivedInputs.push(input);
-          return resolved;
-        },
-        restorePointers: async (value: IAiThread) => ({ changed: false, value }),
+    const result = await hydrateAiThreadEntriesForRender({
+      loadSnapshot: async () => ({ status: 'loaded', raw: JSON.stringify({ hello: 'world' }) }),
+      resolve: (input) => {
+        receivedInputs.push(input);
+        return resolved;
       },
-    );
+      restorePointers: async (value: IAiThread) => ({ changed: false, value }),
+    });
 
     const received = receivedInputs[0];
     expect(received).toBeDefined();
     expect(received?.rawEntriesSnapshot).toEqual({ hello: 'world' });
-    expect(received?.legacyActiveThreadId).toBe('legacy-1');
-    expect(received?.legacyThreads).toBe(legacyThreads);
     expect(result).toBe(resolved);
   });
 
-  it('坏 JSON 容错为 null（交由 resolver 回退 legacy）', async () => {
+  it('坏 JSON 容错为 null（交由 resolver 回退空态）', async () => {
     const receivedInputs: IResolvePersistedThreadsInput[] = [];
     const resolved: IResolvedPersistedThreads = {
-      source: 'legacy',
+      source: 'empty',
       activeThreadId: null,
       threads: [],
     };
 
-    await hydrateAiThreadEntriesForRender(
-      { legacyActiveThreadId: null, legacyThreads: [] },
-      {
-        loadSnapshot: async () => ({ status: 'loaded', raw: '{ not valid json' }),
-        resolve: (input) => {
-          receivedInputs.push(input);
-          return resolved;
-        },
-        restorePointers: async (value: IAiThread) => ({ changed: false, value }),
+    await hydrateAiThreadEntriesForRender({
+      loadSnapshot: async () => ({ status: 'loaded', raw: '{ not valid json' }),
+      resolve: (input) => {
+        receivedInputs.push(input);
+        return resolved;
       },
-    );
+      restorePointers: async (value: IAiThread) => ({ changed: false, value }),
+    });
 
     expect(receivedInputs[0]?.rawEntriesSnapshot).toBeNull();
   });
@@ -83,17 +73,14 @@ describe('hydrateAiThreadEntriesForRender', () => {
     };
     const restoreCalls: IAiThread[] = [];
 
-    const result = await hydrateAiThreadEntriesForRender(
-      { legacyActiveThreadId: null, legacyThreads: [] },
-      {
-        loadSnapshot: async () => ({ status: 'loaded', raw: '{}' }),
-        resolve: () => resolved,
-        restorePointers: async (value: IAiThread) => {
-          restoreCalls.push(value);
-          return { changed: true, value: restoredT2 };
-        },
+    const result = await hydrateAiThreadEntriesForRender({
+      loadSnapshot: async () => ({ status: 'loaded', raw: '{}' }),
+      resolve: () => resolved,
+      restorePointers: async (value: IAiThread) => {
+        restoreCalls.push(value);
+        return { changed: true, value: restoredT2 };
       },
-    );
+    });
 
     expect(restoreCalls).toEqual([t2]);
     expect(result.threads[0]).toBe(t1);
@@ -110,16 +97,13 @@ describe('hydrateAiThreadEntriesForRender', () => {
       threads: [t1],
     };
 
-    const result = await hydrateAiThreadEntriesForRender(
-      { legacyActiveThreadId: null, legacyThreads: [] },
-      {
-        loadSnapshot: async () => ({ status: 'loaded', raw: '{}' }),
-        resolve: () => resolved,
-        restorePointers: async () => {
-          throw new Error('idb down');
-        },
+    const result = await hydrateAiThreadEntriesForRender({
+      loadSnapshot: async () => ({ status: 'loaded', raw: '{}' }),
+      resolve: () => resolved,
+      restorePointers: async () => {
+        throw new Error('idb down');
       },
-    );
+    });
 
     expect(result).toBe(resolved);
     expect(result.threads[0]).toBe(t1);
