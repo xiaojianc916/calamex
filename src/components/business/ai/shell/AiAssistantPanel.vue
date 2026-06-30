@@ -34,7 +34,6 @@ import { aiService } from '@/services/ipc/ai.service';
 import { cloneAiConfigPayload, resolveDefaultAiBaseUrl } from '@/services/ipc/ai-config.service';
 import { useAiThreadStore } from '@/store/aiThread';
 import type {
-  IAiChatMessage,
   IAiConfigPayload,
   IAiProviderSettingsActionFeedback,
   TAiAgentNetworkPermission,
@@ -191,44 +190,13 @@ const webSourcesVisible = computed(() => {
   );
 });
 
-const isAgentTokenMessage = (message: IAiChatMessage): boolean =>
-  message.role !== 'assistant' ||
-  Boolean(message.toolCalls?.length) ||
-  Boolean(message.stream?.runtimeEvents?.length);
-
-const threadMessages = computed<IAiChatMessage[]>(() => assistant.messages.value);
-const tokenUsageMessages = computed<IAiChatMessage[]>(() => {
-  if (assistant.activeMode.value === 'chat') {
-    return threadMessages.value;
-  }
-
-  return assistant.messages.value.filter(isAgentTokenMessage);
-});
-const tokenEstimationMessages = computed<IAiChatMessage[]>(() => {
-  if (assistant.activeMode.value === 'chat') {
-    return threadMessages.value;
-  }
-
-  return [];
-});
-const tokenContextReferences = computed(() =>
-  assistant.attachedFiles.value.map((file) => file.reference),
-);
-const hasPendingTokenRequest = computed(
-  () => assistant.draft.value.trim().length > 0 || assistant.attachedFiles.value.length > 0,
-);
 // 接收侧 ACP usage_update 闭环（ADR-20260617 · D7-⑦）：宿主已把 usage_update 投影为共享
 // IAiLanguageModelUsage VM；本回合有 ACP 用量即采用，无则置空（plan 旧用量来源已随 store 删除）。
 const tokenOfficialUsage = computed(() => assistant.acpUsage.usage.value ?? null);
 const { contextProps: tokenContextProps } = useAiTokenContext({
   mode: computed(() => assistant.activeMode.value),
   modelId: computed(() => assistant.config.value.selectedModel),
-  runtimeEvents: computed(() => assistant.runtimeTimelineEvents.value),
-  messages: tokenUsageMessages,
-  estimationMessages: tokenEstimationMessages,
-  contextReferences: tokenContextReferences,
-  hasPendingRequest: hasPendingTokenRequest,
-  draft: computed(() => assistant.draft.value),
+  entries: computed(() => aiThreadStore.authoritativeActiveEntries),
   officialUsage: tokenOfficialUsage,
 });
 const submitLabel = computed(() => {

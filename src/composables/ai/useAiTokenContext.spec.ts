@@ -1,61 +1,31 @@
 import { describe, expect, it } from 'vitest';
 import { computed, ref } from 'vue';
 import { useAiTokenContext } from '@/composables/ai/useAiTokenContext';
-import type { IAiChatMessage, IAiLanguageModelUsage } from '@/types/ai';
-import type { IAiContextReference } from '@/types/ai/context';
-import type { TAgentRuntimeEvent } from '@/types/ai/sidecar';
+import type { IAiLanguageModelUsage } from '@/types/ai';
+import type { IAiThreadAssistantMessageEntry, IAiThreadEntry } from '@/types/ai/thread';
 
-const createMessage = (content: string): IAiChatMessage => ({
-  id: 'message-1',
-  role: 'assistant',
-  content,
+type TAssistantStream = IAiThreadAssistantMessageEntry['stream'];
+
+const createAssistantEntry = (id: string, stream?: TAssistantStream): IAiThreadEntry => ({
+  type: 'assistant_message',
+  id,
   createdAt: '2026-05-09T10:00:00.000Z',
-  references: [],
-});
-
-const createModelStartedEvent = (projectedInputTokens: number): TAgentRuntimeEvent => ({
-  id: 'runtime-token-1',
-  type: 'agent.model.started',
-  runId: 'run-1',
-  sessionId: 'session-1',
-  agentId: 'agent-1',
-  timestamp: '2026-05-09T10:00:01.000Z',
-  seq: 1,
-  schemaVersion: 1,
-  redacted: true,
-  visibility: 'debug',
-  level: 'info',
-  projectedInputTokens,
-  projectedInputTokensAvailable: true,
+  chunks: [{ type: 'message', block: { type: 'text', text: '回复' } }],
+  ...(stream !== undefined ? { stream } : {}),
 });
 
 const createContext = (options?: {
   mode?: 'chat' | 'agent' | 'plan';
-  runtimeEvents?: ReturnType<typeof ref<readonly TAgentRuntimeEvent[]>>;
-  messages?: ReturnType<typeof ref<IAiChatMessage[]>>;
-  estimationMessages?: ReturnType<typeof ref<IAiChatMessage[]>>;
-  contextReferences?: ReturnType<typeof ref<IAiContextReference[]>>;
-  hasPendingRequest?: ReturnType<typeof ref<boolean>>;
-  draft?: ReturnType<typeof ref<string>>;
+  entries?: ReturnType<typeof ref<IAiThreadEntry[]>>;
   officialUsage?: ReturnType<typeof ref<IAiLanguageModelUsage | null | undefined>>;
 }) => {
-  const runtimeEvents = options?.runtimeEvents ?? ref<readonly TAgentRuntimeEvent[]>([]);
-  const messages = options?.messages ?? ref<IAiChatMessage[]>([]);
-  const estimationMessages = options?.estimationMessages ?? ref<IAiChatMessage[]>(messages.value);
-  const contextReferences = options?.contextReferences ?? ref<IAiContextReference[]>([]);
-  const hasPendingRequest = options?.hasPendingRequest ?? ref(false);
-  const draft = options?.draft ?? ref('');
+  const entries = options?.entries ?? ref<IAiThreadEntry[]>([]);
   const officialUsage = options?.officialUsage ?? ref<IAiLanguageModelUsage | null>(null);
 
   return useAiTokenContext({
     mode: computed(() => options?.mode ?? 'chat'),
     modelId: computed(() => 'deepseek/deepseek-v4-pro'),
-    runtimeEvents: computed(() => runtimeEvents.value),
-    messages: computed(() => messages.value),
-    estimationMessages: computed(() => estimationMessages.value),
-    contextReferences: computed(() => contextReferences.value),
-    hasPendingRequest: computed(() => hasPendingRequest.value),
-    draft: computed(() => draft.value),
+    entries: computed(() => entries.value),
     officialUsage: computed(() => officialUsage.value),
   });
 };
@@ -65,12 +35,7 @@ describe('useAiTokenContext', () => {
     const context = useAiTokenContext({
       mode: computed(() => 'chat'),
       modelId: computed(() => 'deepseek/deepseek-v4-flash'),
-      runtimeEvents: computed(() => []),
-      messages: computed(() => []),
-      estimationMessages: computed(() => []),
-      contextReferences: computed(() => []),
-      hasPendingRequest: computed(() => false),
-      draft: computed(() => ''),
+      entries: computed(() => []),
     });
 
     expect(context.contextProps.value.maxTokens).toBe(1_000_000);
@@ -80,12 +45,7 @@ describe('useAiTokenContext', () => {
     const context = useAiTokenContext({
       mode: computed(() => 'chat'),
       modelId: computed(() => 'zhipuai/glm-4-flash'),
-      runtimeEvents: computed(() => []),
-      messages: computed(() => []),
-      estimationMessages: computed(() => []),
-      contextReferences: computed(() => []),
-      hasPendingRequest: computed(() => false),
-      draft: computed(() => ''),
+      entries: computed(() => []),
     });
 
     expect(context.contextProps.value.maxTokens).toBe(128_000);
@@ -100,41 +60,32 @@ describe('useAiTokenContext', () => {
     expect(context.contextProps.value.usageSource).toBe('official');
   });
 
-  it('ignores runtime projections and uses official stream usage', () => {
-    const messages = ref<IAiChatMessage[]>([
-      {
-        ...createMessage('上一轮回复'),
-        stream: {
-          status: 'completed',
+  it('reads official stream usage from assistant entries', () => {
+    const entries = ref<IAiThreadEntry[]>([
+      createAssistantEntry('assistant-1', {
+        status: 'completed',
+        inputTokens: 13,
+        outputTokens: 5,
+        totalTokens: 18,
+        usage: {
           inputTokens: 13,
+          inputTokenDetails: {
+            noCacheTokens: 13,
+            cacheReadTokens: 0,
+            cacheWriteTokens: 0,
+          },
           outputTokens: 5,
-          totalTokens: 18,
-          usage: {
-            inputTokens: 13,
-            inputTokenDetails: {
-              noCacheTokens: 13,
-              cacheReadTokens: 0,
-              cacheWriteTokens: 0,
-            },
-            outputTokens: 5,
-            outputTokenDetails: {
-              textTokens: 4,
-              reasoningTokens: 1,
-            },
-            totalTokens: 18,
-            cachedInputTokens: 0,
+          outputTokenDetails: {
+            textTokens: 4,
             reasoningTokens: 1,
           },
+          totalTokens: 18,
+          cachedInputTokens: 0,
+          reasoningTokens: 1,
         },
-      },
+      }),
     ]);
-    const runtimeEvents = ref<readonly TAgentRuntimeEvent[]>([createModelStartedEvent(999)]);
-    const context = createContext({
-      mode: 'chat',
-      messages,
-      estimationMessages: messages,
-      runtimeEvents,
-    });
+    const context = createContext({ mode: 'chat', entries });
 
     expect(context.contextProps.value.usedTokens).toBe(13);
     expect(context.contextProps.value.usage.inputTokens).toBe(13);
@@ -142,60 +93,48 @@ describe('useAiTokenContext', () => {
     expect(context.contextProps.value.usageSource).toBe('official');
   });
 
-  it('accumulates official stream usage for the current conversation', () => {
-    const messages = ref<IAiChatMessage[]>([
-      {
-        ...createMessage('第一轮回复'),
-        id: 'message-1',
-        stream: {
-          status: 'completed',
-          usage: {
-            inputTokens: 10,
-            inputTokenDetails: {
-              noCacheTokens: 8,
-              cacheReadTokens: 2,
-              cacheWriteTokens: 0,
-            },
-            outputTokens: 5,
-            outputTokenDetails: {
-              textTokens: 4,
-              reasoningTokens: 1,
-            },
-            totalTokens: 15,
-            cachedInputTokens: 2,
+  it('accumulates official stream usage across assistant entries', () => {
+    const entries = ref<IAiThreadEntry[]>([
+      createAssistantEntry('assistant-1', {
+        status: 'completed',
+        usage: {
+          inputTokens: 10,
+          inputTokenDetails: {
+            noCacheTokens: 8,
+            cacheReadTokens: 2,
+            cacheWriteTokens: 0,
+          },
+          outputTokens: 5,
+          outputTokenDetails: {
+            textTokens: 4,
             reasoningTokens: 1,
           },
+          totalTokens: 15,
+          cachedInputTokens: 2,
+          reasoningTokens: 1,
         },
-      },
-      {
-        ...createMessage('第二轮回复'),
-        id: 'message-2',
-        stream: {
-          status: 'completed',
-          usage: {
-            inputTokens: 20,
-            inputTokenDetails: {
-              noCacheTokens: 15,
-              cacheReadTokens: 5,
-              cacheWriteTokens: 0,
-            },
-            outputTokens: 7,
-            outputTokenDetails: {
-              textTokens: 5,
-              reasoningTokens: 2,
-            },
-            totalTokens: 27,
-            cachedInputTokens: 5,
+      }),
+      createAssistantEntry('assistant-2', {
+        status: 'completed',
+        usage: {
+          inputTokens: 20,
+          inputTokenDetails: {
+            noCacheTokens: 15,
+            cacheReadTokens: 5,
+            cacheWriteTokens: 0,
+          },
+          outputTokens: 7,
+          outputTokenDetails: {
+            textTokens: 5,
             reasoningTokens: 2,
           },
+          totalTokens: 27,
+          cachedInputTokens: 5,
+          reasoningTokens: 2,
         },
-      },
+      }),
     ]);
-    const context = createContext({
-      mode: 'chat',
-      messages,
-      estimationMessages: messages,
-    });
+    const context = createContext({ mode: 'chat', entries });
 
     expect(context.contextProps.value.usedTokens).toBe(30);
     expect(context.contextProps.value.usage).toMatchObject({
@@ -217,32 +156,28 @@ describe('useAiTokenContext', () => {
     expect(context.contextProps.value.usageSource).toBe('official');
   });
 
-  it('prioritizes official sidecar usage over stream usage', () => {
-    const messages = ref<IAiChatMessage[]>([
-      {
-        ...createMessage('这条消息的流式 usage 不应覆盖官方 usage。'),
-        stream: {
-          status: 'completed',
-          usage: {
-            inputTokens: 10,
-            inputTokenDetails: {
-              noCacheTokens: 10,
-              cacheReadTokens: 0,
-              cacheWriteTokens: 0,
-            },
-            outputTokens: 3,
-            outputTokenDetails: {
-              textTokens: 3,
-              reasoningTokens: 0,
-            },
-            totalTokens: 13,
-            cachedInputTokens: 0,
+  it('prioritizes official sidecar usage over accumulated stream usage', () => {
+    const entries = ref<IAiThreadEntry[]>([
+      createAssistantEntry('assistant-1', {
+        status: 'completed',
+        usage: {
+          inputTokens: 10,
+          inputTokenDetails: {
+            noCacheTokens: 10,
+            cacheReadTokens: 0,
+            cacheWriteTokens: 0,
+          },
+          outputTokens: 3,
+          outputTokenDetails: {
+            textTokens: 3,
             reasoningTokens: 0,
           },
+          totalTokens: 13,
+          cachedInputTokens: 0,
+          reasoningTokens: 0,
         },
-      },
+      }),
     ]);
-    const runtimeEvents = ref<readonly TAgentRuntimeEvent[]>([createModelStartedEvent(999)]);
     const officialUsage = ref<IAiLanguageModelUsage>({
       inputTokens: 41,
       inputTokenDetails: {
@@ -260,10 +195,8 @@ describe('useAiTokenContext', () => {
       reasoningTokens: 3,
     });
     const context = createContext({
-      mode: 'plan',
-      messages,
-      estimationMessages: ref<IAiChatMessage[]>([]),
-      runtimeEvents,
+      mode: 'chat',
+      entries,
       officialUsage,
     });
 

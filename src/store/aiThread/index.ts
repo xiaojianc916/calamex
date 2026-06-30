@@ -10,11 +10,9 @@ import { defineStore } from 'pinia';
 import { computed, ref, watch } from 'vue';
 
 import type { TAiThreadReduceEvent } from '@/store/aiThread/events';
-import { threadEntriesToMessages } from '@/store/aiThread/legacy-adapter';
 import { selectRenderThread } from '@/store/aiThread/render-authority';
 import * as threadMutations from '@/store/aiThread/thread-mutations';
 import { restoreAttachmentPreviewPointers } from '@/store/plugins/attachmentPreviewStorage';
-import type { IAiChatMessage } from '@/types/ai';
 import type { IAiThread, IAiThreadEntry } from '@/types/ai/thread';
 
 export const useAiThreadStore = defineStore('ai-thread', () => {
@@ -345,17 +343,11 @@ export const useAiThreadStore = defineStore('ai-thread', () => {
 
   /* ==================================================================
    * Step 8 ④.2-B → ④.3：entries 写真源面（编排器已接管）
-   * 在 entries 权威之上提供 activeThreadId / activeMessages 只读投影与
-   * patchActiveThreadEntries 写真源。activeMessages 经 threadEntriesToMessages
-   * 还原，仅供续聊上下文与 token 估算（有损边界见 legacy-adapter 文件头）。
-   * 编排器写路径已全部走 patchActiveThreadEntries；legacy message 形状 setter 与
-   * thread 形状 getter 已退役。
+   * 在 entries 权威之上提供 activeThreadId 只读投影与 patchActiveThreadEntries
+   * 写真源。编排器写路径已全部走 patchActiveThreadEntries；legacy message 形状
+   * setter 与 thread 形状 getter 已退役。
    * ================================================================ */
   const activeThreadId = computed(() => authoritativeActiveThreadId.value);
-
-  const activeMessages = computed<IAiChatMessage[]>(() =>
-    threadEntriesToMessages(authoritativeActiveThread.value?.entries ?? []),
-  );
 
   /**
    * Entries-native 写真源：以 updater 直接变换活动线程 entries 并提交（经 patchActiveThread 归一）。
@@ -414,9 +406,8 @@ export const useAiThreadStore = defineStore('ai-thread', () => {
     failThreadTitleGeneration,
     setAuthoritativeThreads,
     flushPendingScrollStateUpdates,
-    // Step 8 ④.3：entries 写真源面（activeMessages 为续聊/token 只读投影）
+    // Step 8 ④.3：entries 写真源面
     activeThreadId,
-    activeMessages,
     patchActiveThreadEntries,
   };
 });

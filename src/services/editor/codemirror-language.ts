@@ -95,9 +95,7 @@ const CODEMIRROR_LANGUAGE_LOADERS: Readonly<Record<string, () => Promise<Extensi
     import('@codemirror/legacy-modes/mode/properties').then((m) => m.properties),
   ),
   xml: () => import('@codemirror/lang-xml').then((m) => m.xml()),
-  yaml: streamLanguageLoader(() =>
-    import('@codemirror/legacy-modes/mode/yaml').then((m) => m.yaml),
-  ),
+  yaml: () => import('@codemirror/lang-yaml').then((m) => m.yaml()),
 };
 
 /** 具备 CodeMirror 解析器的规范语言 id(loader 键集合)。 */

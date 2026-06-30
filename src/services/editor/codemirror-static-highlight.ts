@@ -123,9 +123,6 @@ export const highlightCodeAsync = async (
   return tokenized;
 };
 
-/** @deprecated 使用 highlightCodeSync(同步缓存) 或 highlightCodeAsync(按需加载)。 */
-export const highlightCode = highlightCodeSync;
-
 const escapeHtmlChar = (char: string): string =>
   char === '&' ? '&amp;' : char === '<' ? '&lt;' : '&gt;';
 

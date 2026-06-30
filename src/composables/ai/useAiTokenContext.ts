@@ -1,10 +1,9 @@
 import type { ComputedRef } from 'vue';
 import { computed, onBeforeUnmount, ref, watch } from 'vue';
 import { findModelContextWindow } from '@/constants/ai/providers';
-import type { IAiChatMessage, IAiLanguageModelUsage } from '@/types/ai';
+import type { IAiLanguageModelUsage } from '@/types/ai';
 import type { TAiAssistantMode } from '@/types/ai/assistant-mode';
-import type { IAiContextReference } from '@/types/ai/context';
-import type { TAgentRuntimeEvent } from '@/types/ai/sidecar';
+import type { IAiThreadAssistantMessageEntry, IAiThreadEntry } from '@/types/ai/thread';
 
 export interface IAiTokenContextProps {
   usedTokens: number;
@@ -20,12 +19,7 @@ export type TAiTokenUsageSource = 'official' | 'estimated';
 interface IUseAiTokenContextOptions {
   mode: ComputedRef<TAiTokenContextMode>;
   modelId: ComputedRef<string | null | undefined>;
-  runtimeEvents: ComputedRef<readonly TAgentRuntimeEvent[]>;
-  messages: ComputedRef<readonly IAiChatMessage[]>;
-  estimationMessages?: ComputedRef<readonly IAiChatMessage[]>;
-  contextReferences: ComputedRef<readonly IAiContextReference[]>;
-  hasPendingRequest: ComputedRef<boolean>;
-  draft: ComputedRef<string>;
+  entries: ComputedRef<readonly IAiThreadEntry[]>;
   officialUsage?: ComputedRef<IAiLanguageModelUsage | null | undefined>;
 }
 
@@ -188,7 +182,7 @@ const aggregateUsage = (
 };
 
 const resolveStreamOfficialUsage = (
-  stream: IAiChatMessage['stream'] | undefined,
+  stream: IAiThreadAssistantMessageEntry['stream'],
 ): IAiLanguageModelUsage | undefined => {
   if (!stream) {
     return undefined;
@@ -216,11 +210,47 @@ const resolveStreamOfficialUsage = (
   });
 };
 
+type TTokenUsageStream = IAiThreadAssistantMessageEntry['stream'];
+
+// 非 chat 模式只计入「与工具回合关联或带运行时事件」的助手流（对标旧的 token 计入过滤）：
+// user 重置回合、tool_call 标记本回合涉工具、assistant 结算后复位。
+const collectTokenUsageStreams = (
+  entries: readonly IAiThreadEntry[],
+  mode: TAiTokenContextMode,
+): TTokenUsageStream[] => {
+  const streams: TTokenUsageStream[] = [];
+  let pendingTurnToolCall = false;
+
+  for (const entry of entries) {
+    if (entry.type === 'user_message') {
+      pendingTurnToolCall = false;
+      continue;
+    }
+
+    if (entry.type === 'tool_call') {
+      pendingTurnToolCall = true;
+      continue;
+    }
+
+    if (entry.type === 'assistant_message') {
+      const hasRuntimeEvents = (entry.stream?.runtimeEvents?.length ?? 0) > 0;
+
+      if (mode === 'chat' || pendingTurnToolCall || hasRuntimeEvents) {
+        streams.push(entry.stream);
+      }
+
+      pendingTurnToolCall = false;
+    }
+  }
+
+  return streams;
+};
+
 const resolveAccumulatedStreamUsage = (
-  messages: readonly IAiChatMessage[],
+  streams: readonly TTokenUsageStream[],
 ): IResolvedTokenUsage | undefined => {
-  const usage = messages.reduce<IAiLanguageModelUsage | undefined>((current, message) => {
-    const streamUsage = resolveStreamOfficialUsage(message.stream);
+  const usage = streams.reduce<IAiLanguageModelUsage | undefined>((current, stream) => {
+    const streamUsage = resolveStreamOfficialUsage(stream);
 
     if (!streamUsage) {
       return current;
@@ -272,7 +302,9 @@ export const useAiTokenContext = (options: IUseAiTokenContextOptions) => {
   });
 
   const accumulatedStreamUsage = computed(() =>
-    resolveAccumulatedStreamUsage(options.messages.value),
+    resolveAccumulatedStreamUsage(
+      collectTokenUsageStreams(options.entries.value, options.mode.value),
+    ),
   );
   const latestOfficialUsage = computed<IResolvedTokenUsage | undefined>(() => {
     const usage = options.officialUsage?.value;

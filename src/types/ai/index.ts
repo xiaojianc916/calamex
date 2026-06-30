@@ -224,9 +224,9 @@ export interface IAiChatMessage extends IAiChatMessageWire {
   acpToolCalls?: IAiThreadToolCall[];
   /**
    * 思维链(reasoning / 思考过程)纯文本:assistant 思考通道(thought chunks)折叠而成,
-   * 仅 UI 状态层使用、绝不发到 IPC(schema parse 时被 strip)。承载 entries <-> messages
-   * 往返中的 thought 通道,使任何经 legacyMessageToEntries / threadEntriesToMessages 的
-   * 回写都不再丢失思考过程(修复「AI 回复结束后思考过程文本/UI 消失」)。
+   * 仅 UI 状态层使用、绝不发到 IPC(schema parse 时被 strip)。承载 messages -> entries
+   * 折叠中的 thought 通道,使任何经 legacyMessageToEntries 的折叠都不再丢失思考过程
+   * (修复「AI 回复结束后思考过程文本/UI 消失」)。
    */
   reasoning?: string;
   /**

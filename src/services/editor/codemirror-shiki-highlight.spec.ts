@@ -2,7 +2,9 @@ import { describe, expect, it, vi } from 'vitest';
 
 // 避免在测试环境加载真实 Shiki/Oniguruma 包；本用例只验证纯决策/计算函数。
 vi.mock('@/services/editor/shiki-highlighter', () => ({
-  tokenizeWithShikiWorker: vi.fn(() => Promise.resolve(null)),
+  tokenizeRangeWithShikiWorker: vi.fn(() => Promise.resolve(null)),
+  applyShikiEdit: vi.fn(),
+  disposeShikiSession: vi.fn(),
 }));
 
 vi.mock('@/services/editor/shiki-shared', () => ({
@@ -95,139 +97,37 @@ describe('resolveShikiHighlightUpdateAction', () => {
 });
 
 describe('computeShikiHighlightRange', () => {
-  it('默认从文档首行切片，下沿按可见区 + overscan', () => {
-    expect(
-      computeShikiHighlightRange({
-        firstVisibleLine: 100,
-        lastVisibleLine: 160,
-        totalLines: 500,
-        overscanLines: 40,
-        fromDocumentStart: true,
-      }),
-    ).toEqual({ startLine: 1, endLine: 200 });
-  });
-
-  it('从文档首行切片时下沿夹取到文档末行', () => {
-    expect(
-      computeShikiHighlightRange({
-        firstVisibleLine: 460,
-        lastVisibleLine: 500,
-        totalLines: 500,
-        overscanLines: 40,
-        fromDocumentStart: true,
-      }),
-    ).toEqual({ startLine: 1, endLine: 500 });
-  });
-
-  it('退化为窗口时上沿按可见区 - overscan，并夹取到第 1 行', () => {
+  it('窗口上沿按可见区首行 - overscan，并夹取到第 1 行', () => {
     expect(
       computeShikiHighlightRange({
         firstVisibleLine: 30,
         lastVisibleLine: 90,
         totalLines: 500,
         overscanLines: 40,
-        fromDocumentStart: false,
       }),
     ).toEqual({ startLine: 1, endLine: 130 });
   });
 
-  it('退化为窗口时上沿随可见区下移而大于 1', () => {
+  it('窗口上沿随可见区下移而大于 1，下沿按可见区末行 + overscan', () => {
     expect(
       computeShikiHighlightRange({
         firstVisibleLine: 300,
         lastVisibleLine: 360,
         totalLines: 1000,
         overscanLines: 40,
-        fromDocumentStart: false,
       }),
     ).toEqual({ startLine: 260, endLine: 400 });
   });
 
-  it('lead-in 与 overscan 非对称：上沿用 leadInLines，下沿用 overscanLines', () => {
+  it('下沿夹取到文档末行', () => {
     expect(
       computeShikiHighlightRange({
-        firstVisibleLine: 300,
-        lastVisibleLine: 360,
-        totalLines: 1000,
-        overscanLines: 120,
-        leadInLines: 200,
-        fromDocumentStart: false,
-      }),
-    ).toEqual({ startLine: 100, endLine: 480 });
-  });
-
-  it('leadInLines 未传时默认等于 overscanLines（向后兼容旧调用点）', () => {
-    expect(
-      computeShikiHighlightRange({
-        firstVisibleLine: 300,
-        lastVisibleLine: 360,
-        totalLines: 1000,
-        overscanLines: 50,
-        fromDocumentStart: false,
-      }),
-    ).toEqual({ startLine: 250, endLine: 410 });
-  });
-
-  it('fromDocumentStart=true 时 leadInLines 不影响上沿（恒为第 1 行）', () => {
-    expect(
-      computeShikiHighlightRange({
-        firstVisibleLine: 300,
-        lastVisibleLine: 360,
-        totalLines: 1000,
-        overscanLines: 120,
-        leadInLines: 200,
-        fromDocumentStart: true,
-      }),
-    ).toEqual({ startLine: 1, endLine: 480 });
-  });
-
-  it('chunkLines 把下沿向上取整到块边界（滚动时切片按块稳定）', () => {
-    // 380 + 40 = 420 → 向上取整到 512 的整数倍 = 512
-    expect(
-      computeShikiHighlightRange({
-        firstVisibleLine: 300,
-        lastVisibleLine: 380,
-        totalLines: 5000,
+        firstVisibleLine: 460,
+        lastVisibleLine: 500,
+        totalLines: 500,
         overscanLines: 40,
-        fromDocumentStart: true,
-        chunkLines: 512,
       }),
-    ).toEqual({ startLine: 1, endLine: 512 });
-  });
-
-  it('chunkLines 量化后的下沿仍夹取到文档末行', () => {
-    // 980 + 40 = 1020 → 取整到 1024 → 夹取到 1000
-    expect(
-      computeShikiHighlightRange({
-        firstVisibleLine: 900,
-        lastVisibleLine: 980,
-        totalLines: 1000,
-        overscanLines: 40,
-        fromDocumentStart: true,
-        chunkLines: 512,
-      }),
-    ).toEqual({ startLine: 1, endLine: 1000 });
-  });
-
-  it('同一块内视口移动产生相同量化下沿（切片串稳定的前提）', () => {
-    const a = computeShikiHighlightRange({
-      firstVisibleLine: 10,
-      lastVisibleLine: 60,
-      totalLines: 5000,
-      overscanLines: 40,
-      fromDocumentStart: true,
-      chunkLines: 512,
-    });
-    const b = computeShikiHighlightRange({
-      firstVisibleLine: 80,
-      lastVisibleLine: 130,
-      totalLines: 5000,
-      overscanLines: 40,
-      fromDocumentStart: true,
-      chunkLines: 512,
-    });
-    expect(a.endLine).toBe(b.endLine);
-    expect(a.endLine).toBe(512);
+    ).toEqual({ startLine: 420, endLine: 500 });
   });
 });
 

@@ -17,7 +17,6 @@ import type { IAiChatMessage } from '@/types/ai';
 import type { IAiConversationThread } from '@/types/ai/conversation.schema';
 import type {
   IAiThread,
-  IAiThreadAssistantChunk,
   IAiThreadAssistantMessageEntry,
   IAiThreadEntry,
   IAiThreadToolCall,
@@ -115,7 +114,7 @@ export function legacyMessageToEntries(message: IAiChatMessage): IAiThreadEntry[
   }
   // 思维链(thought)与正文(message)是同一条 chunks 流的两种 variant。从 legacy 消息的
   // reasoning 还原 thought chunk(置于正文之前),使 messages -> entries 不丢思考过程
-  // (与 threadEntriesToMessages 的 assistantChunksToReasoning 对称、无损往返)。
+  // (与逆向折叠的 reasoning 还原对称、无损往返)。
   const reasoningText = message.reasoning ?? '';
   const reasoningChunks: IAiThreadAssistantMessageEntry['chunks'] =
     reasoningText.trim().length > 0
@@ -126,7 +125,7 @@ export function legacyMessageToEntries(message: IAiChatMessage): IAiThreadEntry[
       ? [{ type: 'message', block: { type: 'text', text: message.content } }]
       : [];
   // 优先用 message.chunks 原样还原（含 tool_call 交织 + 顺序）；缺省再从 reasoning/content 重建，
-  // 使 messages -> entries 不丢工具 chunk 与思考/正文真实交错（与 threadEntriesToMessages 对称）。
+  // 使 messages -> entries 不丢工具 chunk 与思考/正文真实交错（与逆向折叠对称）。
   const assistantChunks: IAiThreadAssistantMessageEntry['chunks'] =
     message.chunks && message.chunks.length > 0
       ? message.chunks
@@ -178,180 +177,4 @@ export function legacyThreadToThread(thread: IAiConversationThread): IAiThread {
     entries: thread.messages.flatMap(legacyMessageToEntries),
     ...(thread.scrollState ? { scrollState: thread.scrollState } : {}),
   };
-}
-
-type IAiThreadUserMessageContent = Extract<IAiThreadEntry, { type: 'user_message' }>['content'];
-type IAiThreadAssistantChunks = Extract<IAiThreadEntry, { type: 'assistant_message' }>['chunks'];
-
-/* ============================================================================
- * Thread -> Legacy 逆投影（ADR-0014 Step 8 ④：entries 单一真源 -> 旧编排器工作缓冲）
- *
- * 正向把 message 展开为 entries；本逆向把 entries 折叠回 useAiAssistant 所需的
- * IAiChatMessage[] 工作缓冲。entries 成为持久化与渲染唯一真源后，编排器在切换/水合
- * 线程时用本逆投影重建 message 缓冲（续聊上下文 toSidecarMessages、历史首轮、会话内
- * checkpoint 计算），不再读取 legacy store。
- *
- * 无损往返（ADR-0014 ④.1 Approach B）：
- * - assistant_message entry 承载 stream（status/runtimeEvents/activityText/token/usage/
- *   finalAnswerStarted）与 acpToolCalls；tool_call entry 承载原始 name。故 messages ↔
- *   entries 往返保真：会话内 checkpoint（依赖 runtime events）、token 统计、工具名均还原。
- * - 折叠规则与正向对称：相邻 tool_call 归并到其后的 assistant_message；changed_files
- *   回挂到对应 assistant；plan / plan_control / context_compaction 续聊无需，跳过。
- * 残余有损（不影响编排器工作缓冲）：tool_call 的 targetPreview/detailItems 合并为
- *   detailItems；plan_control（agentConfirmation）续聊不还原。
- * ========================================================================== */
-
-/** 新状态机 -> 旧工具状态（LEGACY_TOOL_STATUS_MAP 的逆）。 */
-const REVERSE_TOOL_STATUS_MAP: Record<TAiThreadToolCallStatus, LegacyToolStatus> = {
-  pending: 'pending',
-  in_progress: 'running',
-  completed: 'succeeded',
-  failed: 'failed',
-  canceled: 'denied',
-};
-
-function toolCallEntryContentToDetailItems(content: IAiThreadToolCall['content']): string[] {
-  return content.flatMap((item) =>
-    item.type === 'content' && item.block.type === 'text' ? [item.block.text] : [],
-  );
-}
-
-function threadToolCallEntryToLegacy(entry: IAiThreadToolCall): LegacyToolCall {
-  const detailItems = toolCallEntryContentToDetailItems(entry.content);
-  const rawOutput = entry.rawOutput as { elapsedMs?: number } | undefined;
-  const elapsedMs = typeof rawOutput?.elapsedMs === 'number' ? rawOutput.elapsedMs : undefined;
-  return {
-    id: entry.id,
-    name: entry.name ?? entry.title,
-    summary: entry.title,
-    status: REVERSE_TOOL_STATUS_MAP[entry.status],
-    ...(detailItems.length > 0 ? { detailItems } : {}),
-    ...(elapsedMs !== undefined ? { elapsedMs } : {}),
-  };
-}
-
-function userEntryContentToText(content: IAiThreadUserMessageContent): string {
-  return content.flatMap((block) => (block.type === 'text' ? [block.text] : [])).join('\n\n');
-}
-
-function assistantChunksToText(chunks: IAiThreadAssistantChunks): string {
-  return chunks
-    .flatMap((chunk) =>
-      chunk.type === 'message' && chunk.block.type === 'text' ? [chunk.block.text] : [],
-    )
-    .join('');
-}
-
-/**
- * 把 assistant chunks 的思考通道(thought)折叠为纯文本 reasoning(assistantChunksToText 的
- * 思维链对偶)。多段 thought 以空行衔接,对齐渲染层 reasoning 段落拼接,使 entries <-> messages
- * 往返保留思考过程(修复收尾/编辑回写丢失 thought 的 bug)。
- */
-function assistantChunksToReasoning(chunks: IAiThreadAssistantChunks): string {
-  return chunks
-    .flatMap((chunk) =>
-      chunk.type === 'thought' && chunk.block.type === 'text' ? [chunk.block.text] : [],
-    )
-    .join('\n\n');
-}
-
-/**
- * 把 entries 折叠为 IAiChatMessage[]（legacyMessageToEntries 的逆）。
- * 用于编排器从 entries 真源重建 message 工作缓冲；有损项见文件头说明。
- */
-export function threadEntriesToMessages(entries: readonly IAiThreadEntry[]): IAiChatMessage[] {
-  const messages: IAiChatMessage[] = [];
-  let pendingToolCalls: LegacyToolCall[] = [];
-  let pendingToolCreatedAt: string | null = null;
-
-  const flushPendingToolCalls = (): void => {
-    if (pendingToolCalls.length === 0) {
-      return;
-    }
-    // 实时流式先建 assistant_message（正文增量）再来 tool_call entry，使工具排在 assistant 之后。
-    // 此时把尾随工具并入紧邻的、尚无 toolCalls 的前一条 assistant（对齐旧模型「一条 assistant 持有本回合工具」），
-    // 否则才另起一条合成 assistant。
-    const lastMessage = messages.at(-1);
-    if (lastMessage && lastMessage.role === 'assistant' && lastMessage.toolCalls === undefined) {
-      lastMessage.toolCalls = pendingToolCalls;
-      pendingToolCalls = [];
-      pendingToolCreatedAt = null;
-      return;
-    }
-    messages.push({
-      role: 'assistant',
-      id: pendingToolCalls[0]!.id + ':assistant',
-      content: '',
-      createdAt: pendingToolCreatedAt ?? new Date().toISOString(),
-      references: [],
-      toolCalls: pendingToolCalls,
-    });
-    pendingToolCalls = [];
-    pendingToolCreatedAt = null;
-  };
-
-  for (const entry of entries) {
-    switch (entry.type) {
-      case 'user_message': {
-        flushPendingToolCalls();
-        messages.push({
-          role: 'user',
-          id: entry.id,
-          content: userEntryContentToText(entry.content),
-          createdAt: entry.createdAt,
-          references: entry.references,
-        });
-        break;
-      }
-      case 'tool_call': {
-        pendingToolCalls.push(threadToolCallEntryToLegacy(entry));
-        pendingToolCreatedAt = pendingToolCreatedAt ?? entry.createdAt;
-        break;
-      }
-      case 'assistant_message': {
-        const reasoning = assistantChunksToReasoning(entry.chunks);
-        const message: IAiChatMessage = {
-          role: 'assistant',
-          id: entry.id,
-          content: assistantChunksToText(entry.chunks),
-          createdAt: entry.createdAt,
-          references: [],
-          ...(reasoning.length > 0 ? { reasoning } : {}),
-          // chunks 原样回挂（含 tool_call 交织）：使 entries -> messages -> entries 往返保真，
-          // 收尾/水合不丢工具调用与思考/正文交错（reasoning/content 仍并存，供旧读取路径兜底）。
-          ...(entry.chunks.length > 0 ? { chunks: entry.chunks } : {}),
-          ...(pendingToolCalls.length > 0 ? { toolCalls: pendingToolCalls } : {}),
-          ...(entry.stream !== undefined ? { stream: entry.stream } : {}),
-          ...(entry.patches !== undefined ? { patches: entry.patches } : {}),
-        };
-        pendingToolCalls = [];
-        pendingToolCreatedAt = null;
-        messages.push(message);
-        break;
-      }
-      case 'changed_files': {
-        flushPendingToolCalls();
-        const target = messages.at(-1);
-        if (target && target.role === 'assistant' && !target.changedFilesSummary) {
-          target.changedFilesSummary = entry.summary;
-        } else {
-          messages.push({
-            role: 'assistant',
-            id: entry.summary.id + ':assistant',
-            content: '',
-            createdAt: entry.createdAt,
-            references: [],
-            changedFilesSummary: entry.summary,
-          });
-        }
-        break;
-      }
-      default:
-        // plan / plan_control / context_compaction：续聊上下文与历史首轮无需，跳过（有损可接受）。
-        break;
-    }
-  }
-
-  flushPendingToolCalls();
-  return messages;
 }

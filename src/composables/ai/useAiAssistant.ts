@@ -173,8 +173,8 @@ export const useAiAssistant = (options: IUseAiAssistantOptions) => {
   const agentStore = useAiAgentStore();
   const aiThreadStore = useAiThreadStore();
   // ④.1 §D：编排器消息读写真源收敛到 aiThread 权威 entries。conversationStore 别名保留以
-  // 最小化触点；活动滚动状态改读权威 authoritativeActiveThread，其余面（activeMessages /
-  // activeThreadId / 生命周期）1:1 同名。
+  // 最小化触点；活动滚动状态改读权威 authoritativeActiveThread，其余面（activeThreadId /
+  // 生命周期）1:1 同名。
   const conversationStore = aiThreadStore;
 
   const draft = ref('');
@@ -433,10 +433,6 @@ export const useAiAssistant = (options: IUseAiAssistantOptions) => {
       aiThreadStore.overlayStreamingThread(enrichedThread);
     }
   };
-
-  // 读真源 = 权威 entries（activeMessages）。写路径已全面 entries-native
-  // （patchActiveThreadEntries），故本计算属性退化为只读投影，仅供续聊 requestMessages / token 估算。
-  const messages = computed<IAiChatMessage[]>(() => unref(conversationStore.activeMessages));
 
   const historyThreads = computed(() => aiThreadStore.authoritativeHistoryThreads);
   const activeConversationId = computed(() => unref(conversationStore.activeThreadId));
@@ -1560,7 +1556,6 @@ export const useAiAssistant = (options: IUseAiAssistantOptions) => {
     acpUsage,
     acpSessionConfigOptions,
     config,
-    messages,
     historyThreads,
     activeConversationId,
     activeConversationScrollState,

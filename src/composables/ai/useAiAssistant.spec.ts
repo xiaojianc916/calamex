@@ -4,7 +4,9 @@ import { ref } from 'vue';
 
 import { useAiAssistant } from '@/composables/ai/useAiAssistant';
 import { useAiAgentStore } from '@/store/aiAgent';
+import { useAiThreadStore } from '@/store/aiThread';
 import type { TAgentUiEvent } from '@/types/ai/sidecar';
+import type { IAiThreadEntry } from '@/types/ai/thread';
 import type { IEditorDocument } from '@/types/editor';
 import type { IGitRepositoryStatusPayload } from '@/types/git';
 
@@ -240,6 +242,31 @@ const finalDelta = (text: string): TAgentUiEvent => ({
   phase: 'final',
 });
 
+// entries-native 读取：useAiAssistant 写真源为 aiThread store 的权威 entries
+// （逆向 message 投影已随兼容层移除），断言直接读 entries。
+const activeEntries = (): readonly IAiThreadEntry[] =>
+  useAiThreadStore().authoritativeActiveEntries;
+
+const assistantText = (entry: IAiThreadEntry | undefined): string =>
+  entry?.type === 'assistant_message'
+    ? entry.chunks
+        .flatMap((chunk) =>
+          chunk.type === 'message' && chunk.block.type === 'text' ? [chunk.block.text] : [],
+        )
+        .join('')
+    : '';
+
+const assistantStreamStatus = (entry: IAiThreadEntry | undefined): string | undefined =>
+  entry?.type === 'assistant_message' ? entry.stream?.status : undefined;
+
+const userText = (entry: IAiThreadEntry | undefined): string =>
+  entry?.type === 'user_message'
+    ? entry.content.flatMap((block) => (block.type === 'text' ? [block.text] : [])).join('')
+    : '';
+
+const userReferences = (entry: IAiThreadEntry | undefined) =>
+  entry?.type === 'user_message' ? entry.references : [];
+
 // ---------------------------------------------------------------------------
 // 套件
 // ---------------------------------------------------------------------------
@@ -365,8 +392,9 @@ describe('useAiAssistant · ACP-native 单一发送管线', () => {
     assistant.draft.value = '问一个问题';
     await assistant.sendMessage();
 
-    expect(assistant.messages.value[1]?.content).toContain('你好，这是实时回答');
-    expect(assistant.messages.value[1]?.stream?.status).toBe('completed');
+    const entries = activeEntries();
+    expect(assistantText(entries[1])).toContain('你好，这是实时回答');
+    expect(assistantStreamStatus(entries[1])).toBe('completed');
   });
 
   it('prompt 进行中即实时渲染增量，返回后收口 completed', async () => {
@@ -385,16 +413,16 @@ describe('useAiAssistant · ACP-native 单一发送管线', () => {
     assistant.draft.value = '实时流式问题';
     const sendPromise = assistant.sendMessage();
 
-    await waitFor(() => Boolean(assistant.messages.value[1]?.content?.length));
+    await waitFor(() => assistantText(activeEntries()[1]).length > 0);
 
-    expect(assistant.messages.value[1]?.content).toContain('第二段继续到达');
-    expect(assistant.messages.value[1]?.stream?.status).toBe('streaming');
+    expect(assistantText(activeEntries()[1])).toContain('第二段继续到达');
+    expect(assistantStreamStatus(activeEntries()[1])).toBe('streaming');
 
     promptGate.resolve();
     await sendPromise;
 
-    expect(assistant.messages.value[1]?.stream?.status).toBe('completed');
-    expect(assistant.messages.value[1]?.content).toContain('第二段继续到达');
+    expect(assistantStreamStatus(activeEntries()[1])).toBe('completed');
+    expect(assistantText(activeEntries()[1])).toContain('第二段继续到达');
   });
 
   // -------------------------------------------------------------------------
@@ -408,7 +436,7 @@ describe('useAiAssistant · ACP-native 单一发送管线', () => {
     await assistant.sendMessage();
 
     expect(aiServiceMock.sidecarExternalChat).not.toHaveBeenCalled();
-    expect(assistant.messages.value).toHaveLength(0);
+    expect(activeEntries()).toHaveLength(0);
   });
 
   it('未启用 Chat 时给出提示并打开设置面板', async () => {
@@ -449,10 +477,9 @@ describe('useAiAssistant · ACP-native 单一发送管线', () => {
 
     expect(assistant.draft.value).toBe('');
     expect(assistant.isSending.value).toBe(true);
-    expect(assistant.messages.value[0]).toMatchObject({
-      role: 'user',
-      content: '这条会被清空',
-    });
+    const firstEntry = activeEntries()[0];
+    expect(firstEntry?.type).toBe('user_message');
+    expect(userText(firstEntry)).toBe('这条会被清空');
 
     promptGate.resolve();
     await sendPromise;
@@ -472,7 +499,7 @@ describe('useAiAssistant · ACP-native 单一发送管线', () => {
     await assistant.sendMessage();
 
     expect(assistant.errorMessage.value).toContain('网络突然断开');
-    expect(assistant.messages.value[1]?.content).toContain('Agent 执行失败');
+    expect(assistantText(activeEntries()[1])).toContain('Agent 执行失败');
     expect(assistant.isSending.value).toBe(false);
   });
 
@@ -488,11 +515,11 @@ describe('useAiAssistant · ACP-native 单一发送管线', () => {
     assistant.draft.value = '跑一轮长任务';
     const sendPromise = assistant.sendMessage();
 
-    await waitFor(() => assistant.messages.value.length >= 2);
+    await waitFor(() => activeEntries().length >= 2);
     assistant.stopCurrentRequest();
 
-    expect(assistant.messages.value[1]?.stream?.status).toBe('cancelled');
-    expect(assistant.messages.value[1]?.content).toContain('取消');
+    expect(assistantStreamStatus(activeEntries()[1])).toBe('cancelled');
+    expect(assistantText(activeEntries()[1])).toContain('取消');
     expect(assistant.isSending.value).toBe(false);
     expect(aiServiceMock.cancel).not.toHaveBeenCalled();
 
@@ -528,7 +555,7 @@ describe('useAiAssistant · ACP-native 单一发送管线', () => {
 
     expect(aiServiceMock.sidecarExternalChat).toHaveBeenCalledTimes(1);
     expect(assistant.attachedFiles.value).toHaveLength(0);
-    expect(assistant.messages.value[0]?.references?.[0]?.kind).toBe('image-attachment');
+    expect(userReferences(activeEntries()[0])[0]?.kind).toBe('image-attachment');
   });
 
   // -------------------------------------------------------------------------

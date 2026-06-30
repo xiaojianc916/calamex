@@ -154,34 +154,20 @@ export const resolveShikiDocChangeRecomputeTiming = (input: {
 }): TShikiDocChangeRecomputeTiming => (input.isUserTyping ? 'debounced' : 'post-paint');
 
 /**
- * 纯函数：计算需要 tokenize 的行范围 [startLine, endLine]（1-based，含端点）。
- * - endLine：可见区下沿 + overscanLines，并夹取到文档末行；视口下方内容不影响可见区配色。
- * - startLine：
- *   - fromDocumentStart=true：固定为第 1 行，使 Shiki 语法状态从真实边界续算（完全正确）。
- *   - fromDocumentStart=false：可见区上沿 - leadInLines（夹取到第 1 行）的窗口。
- * leadInLines 未传时默认等于 overscanLines（向后兼容旧调用点）；同步路径传入较大的 lead-in
- * 以获取足够的语法启动上下文，而下方 overscan 可以较小，两者非对称。
+ * 纯函数：计算需要 tokenize 的可见行范围 [startLine, endLine]（1-based，含端点）。
+ * - startLine：可见区首行 - overscanLines，夹取到第 1 行。
+ * - endLine：可见区末行 + overscanLines，夹取到文档末行。
+ * Worker 持有整篇文档并按块续算语法状态，主线程只请求当前可见窗口，无需再从文档首行切起。
  */
 export const computeShikiHighlightRange = (input: {
   firstVisibleLine: number;
   lastVisibleLine: number;
   totalLines: number;
   overscanLines: number;
-  fromDocumentStart: boolean;
-  leadInLines?: number;
-  // 可选：把下沿向上取整到该行数的整数倍（夹取到末行）。用于让「从文档首行起」的
-  // tokenize 切片在滚动时按块稳定；不传 = 不量化（渲染/覆盖判定等调用点行为不变）。
-  chunkLines?: number;
-}): { startLine: number; endLine: number } => {
-  const leadInLines = input.leadInLines ?? input.overscanLines;
-  const rawEndLine = Math.min(input.totalLines, input.lastVisibleLine + input.overscanLines);
-  const endLine =
-    input.chunkLines && input.chunkLines > 0
-      ? Math.min(input.totalLines, Math.ceil(rawEndLine / input.chunkLines) * input.chunkLines)
-      : rawEndLine;
-  const startLine = input.fromDocumentStart ? 1 : Math.max(1, input.firstVisibleLine - leadInLines);
-  return { startLine, endLine };
-};
+}): { startLine: number; endLine: number } => ({
+  startLine: Math.max(1, input.firstVisibleLine - input.overscanLines),
+  endLine: Math.min(input.totalLines, input.lastVisibleLine + input.overscanLines),
+});
 
 export const isShikiHighlightRangeCovered = (input: {
   coveredStartLine: number | null;
@@ -544,8 +530,6 @@ const shikiHighlightPlugin = ViewPlugin.fromClass(
         lastVisibleLine: visible.last,
         totalLines: view.state.doc.lines,
         overscanLines: HIGHLIGHT_OVERSCAN_LINES,
-        leadInLines: HIGHLIGHT_OVERSCAN_LINES,
-        fromDocumentStart: false,
       });
       return (
         findUncachedLineRange({
@@ -568,8 +552,6 @@ const shikiHighlightPlugin = ViewPlugin.fromClass(
         lastVisibleLine: visible.last,
         totalLines,
         overscanLines: DECORATION_RENDER_MARGIN_LINES,
-        leadInLines: DECORATION_RENDER_MARGIN_LINES,
-        fromDocumentStart: false,
       });
       // 把渲染范围上下沿对齐到块边界：同一块内滚动时 renderRange 不变 → 下方 decorationCache
       // 直接命中复用，逐帧零重建装饰（上下滑动丝滑的关键）；仅跨块时重建一次。
@@ -677,8 +659,6 @@ const shikiHighlightPlugin = ViewPlugin.fromClass(
         lastVisibleLine: visible.last,
         totalLines: view.state.doc.lines,
         overscanLines: HIGHLIGHT_OVERSCAN_LINES,
-        leadInLines: HIGHLIGHT_OVERSCAN_LINES,
-        fromDocumentStart: false,
       });
 
       // 渲染范围已全部命中缓存：直接同步重建装饰，零 tokenize、零露白（含来回滚动）。
