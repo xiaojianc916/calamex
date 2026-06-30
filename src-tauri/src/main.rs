@@ -7,6 +7,7 @@ mod assets;
 #[macro_use]
 mod commands;
 mod lifecycle;
+mod launch;
 mod process_guard;
 mod storage_paths;
 mod tauri_bindings;
@@ -23,7 +24,7 @@ use std::{
     time::Instant,
 };
 use tauri::{
-    Emitter, Manager, WindowEvent,
+    Manager, WindowEvent,
     menu::{MenuBuilder, MenuItemBuilder},
     tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent},
 };
@@ -142,35 +143,7 @@ fn reveal_main_window<R: tauri::Runtime>(app_handle: &tauri::AppHandle<R>) {
     let _ = window.set_focus();
 }
 
-const OPEN_FILE_EVENT: &str = "calamex://open-file";
-
-/// 从进程启动参数中提取可打开的脚本路径（关联文件双击 / 命令行传入）。
-/// 跳过 argv[0]（程序自身）与以 - 开头的选项，仅保留确实存在的 .sh/.bash 文件。
-fn extract_openable_files(argv: &[String]) -> Vec<String> {
-    argv.iter()
-        .skip(1)
-        .filter(|arg| !arg.starts_with('-'))
-        .filter(|arg| {
-            let path = std::path::Path::new(arg.as_str());
-            let is_shell = path
-                .extension()
-                .and_then(|ext| ext.to_str())
-                .map(|ext| ext.eq_ignore_ascii_case("sh") || ext.eq_ignore_ascii_case("bash"))
-                .unwrap_or(false);
-            is_shell && path.is_file()
-        })
-        .cloned()
-        .collect()
-}
-
-/// 把启动参数里的待打开文件逐个发往前端（事件名 calamex://open-file，payload 为绝对路径）。
-fn emit_open_files<R: tauri::Runtime>(app_handle: &tauri::AppHandle<R>, argv: &[String]) {
-    for path in extract_openable_files(argv) {
-        if let Err(error) = app_handle.emit(OPEN_FILE_EVENT, path.clone()) {
-            tracing::warn!("failed to emit open-file event for {path}: {error}");
-        }
-    }
-}
+// 关联文件打开（冷启动入队 + 二次启动实时事件）的逻辑统一收敛到 launch 模块。
 
 /// 统一退出清理：幂等地收口所有后台资源（终端会话、LSP、SSH 连接池、ACP 宿主连接）。
 /// 由用户主动退出（托盘 / 快捷键 → request_app_exit）与运行时退出事件
@@ -344,7 +317,7 @@ fn main() {
             // 二次启动拦截：已有实例运行时，新进程（如双击关联文件）的启动参数回流到这里。
             // 显示主窗口并把待打开文件转发给前端，新进程随后自动退出，避免多开。
             reveal_main_window(app);
-            emit_open_files(app, &argv);
+            launch::emit_open_files(app, &argv);
         }))
         .register_asynchronous_uri_scheme_protocol("favicon", |context, request, responder| {
             let app_handle = context.app_handle().clone();
@@ -368,6 +341,7 @@ fn main() {
         )
         .manage(AiEditState::default())
         .manage(AppLifecycleState::default())
+        .manage(launch::PendingOpenFiles::default())
         .manage(TerminalSessionState::default())
         .manage(WorkspaceWatcher::default())
         .manage(LspManager::new())
@@ -459,20 +433,12 @@ fn main() {
             }
 
             // 冷启动关联文件打开：进程首次启动（非二次实例）时，关联文件路径在 argv 中。
-            // 前端事件监听器要等 Vue 挂载后才注册，存在竞态——此处延迟后按 [1500ms, 2500ms]
-            // 重发，由前端按路径去重，确保「冷启动双击 .sh」必定打开对应文件。
+            // 前端监听器要等 Vue 挂载后才注册，存在竞态——此处不再「定时重发猜时序」，而是把待
+            // 打开文件入队，由前端就绪后经 drain_pending_open_files 主动拉取（pull），确保
+            // 「冷启动双击 .sh」必定打开且只打开一次。
             {
-                let open_files_app = app.handle().clone();
-                std::thread::spawn(move || {
-                    let argv: Vec<String> = std::env::args().collect();
-                    if extract_openable_files(&argv).is_empty() {
-                        return;
-                    }
-                    for delay_ms in [1500_u64, 2500_u64] {
-                        std::thread::sleep(std::time::Duration::from_millis(delay_ms));
-                        emit_open_files(&open_files_app, &argv);
-                    }
-                });
+                let argv: Vec<String> = std::env::args().collect();
+                launch::queue_pending_open_files(app.handle(), &argv);
             }
 
             emit_startup_step("tauri.setup.done", app_started_at, setup_started_at);

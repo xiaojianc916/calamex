@@ -158,7 +158,10 @@ function stageBashLanguageServer(): void {
   log(`已内置 bash-language-server（${spec}）`);
 }
 
-// 5) shellcheck：优先从根 node_modules 复制已下载的二进制，缺失时退回 npm 安装。
+// 5) shellcheck：shellcheck npm 包在「首次执行」时才惰性下载真正的二进制，
+//    `npm install` 本身不会下载（故 install 秒过但 bin/ 下无二进制）。
+//    优先复用根 node_modules 已下载的二进制；缺失时安装该包并用其 download()
+//    API 把二进制直接下载到随包目录。
 function stageShellcheck(): void {
   const dest = join(stageRoot, shellcheckExeName);
   const fromRoot = join(rootNodeModules, 'shellcheck', 'bin', shellcheckExeName);
@@ -172,11 +175,16 @@ function stageShellcheck(): void {
   const installed = readInstalledVersion('shellcheck');
   const spec = installed ? `shellcheck@${installed}` : 'shellcheck';
   run(npmBin(), ['install', '--no-save', '--no-audit', '--no-fund', '--prefix', scPrefix, spec]);
-  const fromInstall = join(scPrefix, 'node_modules', 'shellcheck', 'bin', shellcheckExeName);
-  if (!existsSync(fromInstall)) {
-    fail(`shellcheck 安装后未找到二进制：${fromInstall}`);
+  // 该包首次执行才下载二进制；用其 download() API 直接写到 dest（destination 取 argv[2]）。
+  const downloadScript = join(scPrefix, 'download-shellcheck.mjs');
+  writeFileSync(
+    downloadScript,
+    "import { download } from 'shellcheck';\nawait download({ destination: process.argv[2] });\n",
+  );
+  run(process.execPath, [downloadScript, dest], { cwd: scPrefix });
+  if (!existsSync(dest)) {
+    fail(`shellcheck 下载后未找到二进制：${dest}`);
   }
-  copyFileSync(fromInstall, dest);
   rmSync(scPrefix, { recursive: true, force: true });
   log(`已内置 shellcheck（${spec}）`);
 }

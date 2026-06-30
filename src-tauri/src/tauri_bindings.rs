@@ -4,6 +4,7 @@ use crate::commands::{
     builtin_agent, agent_webview, ai, format, git, script_run, search, shell_tools, skills, ssh,
     window, window_stage, workspace_fs, workspace_watcher,
 };
+use crate::launch;
 use specta_typescript::Typescript;
 use std::path::PathBuf;
 use tauri_specta::{Builder, ErrorHandlingMode, collect_commands, collect_events};
@@ -150,6 +151,7 @@ pub fn builder() -> Builder<tauri::Wry> {
             lsp_commands::lsp_did_close,
             lsp_commands::lsp_completion,
             lsp_commands::lsp_hover,
+            launch::drain_pending_open_files,
         ])
 }
 

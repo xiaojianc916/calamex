@@ -248,6 +248,7 @@ export const commands = {
 	lspHover: (filePath: string, line: number, column: number) => __TAURI_INVOKE<{
 	contents: string,
 } | null>("lsp_hover", { filePath, line, column }),
+	drainPendingOpenFiles: () => __TAURI_INVOKE<string[]>("drain_pending_open_files"),
 };
 
 /** Events */
