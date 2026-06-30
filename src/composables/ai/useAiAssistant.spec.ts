@@ -361,14 +361,18 @@ describe('useAiAssistant · ACP-native 单一发送管线', () => {
   // 外部后端自管会话模式：不下发模式取值
   // -------------------------------------------------------------------------
 
-  it('外部 Kimi 后端不下发模式取值，直接 session/prompt', async () => {
+  it('外部 Kimi 后端建立会话但不下发模式取值，直接 session/prompt', async () => {
     const assistant = createAssistantHarness();
 
     assistant.activeMode.value = 'chat';
     assistant.draft.value = '用 Kimi 跑一轮';
     await assistant.sendMessage({ agentBackend: 'kimi' });
 
-    expect(aiServiceMock.ensureAcpSession).not.toHaveBeenCalled();
+    // 唯一标准管线：所有后端发起回合前均建立会话（绑定 thread↔会话，使配置项切换命中既有会话）；
+    // 但 Kimi / Codex 自管会话模式，不经 set_config_option 下发 mode 取值。
+    expect(aiServiceMock.ensureAcpSession).toHaveBeenCalledWith(
+      expect.objectContaining({ backend: 'kimi' }),
+    );
     expect(aiServiceMock.setSessionConfigOption).not.toHaveBeenCalled();
     expect(aiServiceMock.sidecarExternalChat).toHaveBeenCalledWith(
       expect.objectContaining({ backend: 'kimi', text: '用 Kimi 跑一轮' }),

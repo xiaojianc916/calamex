@@ -976,16 +976,19 @@ export const useAiAssistant = (options: IUseAiAssistantOptions) => {
         liveEventBuffer.push(event);
       });
 
+      // 唯一标准管线（ADR-20260617）：所有 ACP 后端（builtin / Kimi / Codex）在发起回合「之前」一律
+      // 确保会话建立，把 thread_id 绑定到宿主会话——使后续 set_config_option 命中既有会话（未绑定时
+      // 宿主 set_session_config_option 会静默空操作 Ok(false)），并让 agent（如 Kimi）在 session/new 后
+      // 下发的一次性 config_option_update 有稳定会话可挂靠。builtin 额外经官方 set_config_option
+      // （configId=mode）一次性切到目标模式取值（映射 ask/plan/agent）；Kimi / Codex 自管会话模式，
+      // 不下发模式取值。随后标准 session/prompt 按会话模式分流（见 builtin-agent CalamexAcpAgent.prompt）。
+      const sessionThreadId = targetThreadId ?? '';
+      await aiService.ensureAcpSession({
+        threadId: sessionThreadId,
+        backend,
+        workspaceRootPath: options.workspaceRootPath.value,
+      });
       if (backend === 'builtin' && modeConfigValue !== undefined) {
-        // builtin 也是标准 ACP 后端：先确保会话建立（与本回合 prompt 同一 thread 键，故被 prompt
-        // 复用），再经官方 set_config_option（configId=mode）把会话一次性切到目标模式取值；随后标准
-        // session/prompt 即按会话模式分流到 chat/plan/execute（见 builtin-agent CalamexAcpAgent.prompt）。
-        const sessionThreadId = targetThreadId ?? '';
-        await aiService.ensureAcpSession({
-          threadId: sessionThreadId,
-          backend,
-          workspaceRootPath: options.workspaceRootPath.value,
-        });
         await aiService.setSessionConfigOption({
           threadId: sessionThreadId,
           configId: MODE_CONFIG_OPTION_ID,
