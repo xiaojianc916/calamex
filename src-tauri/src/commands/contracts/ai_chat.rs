@@ -116,7 +116,7 @@ pub struct AiEnsureAcpSessionRequest {
 ///
 /// config_options 为 agent 在 NewSessionResponse 公示的可用配置项清单原样 JSON
 /// （Vec SessionConfigOption：id + name + description + category + kind 等）。最小透传，宿主侧
-/// 不重建 SDK 类型，交前端 ACL 解释（对齐 AiSessionModesPayload.modes 的整体透传）。用
+/// 不重建 SDK 类型，交前端 ACL 解释（最小透传整体 JSON）。用
 /// specta_typescript::Unknown 将导出 TS 映射为 unknown，避开 serde_json::Number 触发 specta
 /// BigInt-forbidden；serde 运行时仍为 serde_json::Value，行为不变。
 #[derive(Debug, Clone, Serialize, Type)]
@@ -124,46 +124,6 @@ pub struct AiEnsureAcpSessionRequest {
 pub struct AiSessionConfigOptionsPayload {
     #[specta(type = specta_typescript::Unknown)]
     pub(crate) config_options: serde_json::Value,
-}
-
-/// ACP 标准 session/set_mode 的会话级模式切换请求（契约层）。
-///
-/// 对齐 acp::AcpRuntime::set_session_mode(thread_id, mode_id)：
-///   * thread_id —— 定位目标会话（宿主持有 thread_id ↔ SessionId 映射，跨回合复用）；
-///   * mode_id —— 目标模式的 ACP SessionModeId 原值，逐字透传，绝不本地映射。
-///
-/// 二者均必填且非空（前端总能从已渲染的模式选择器取得），空白校验由接线层负责。
-/// 与 AiSetSessionConfigOptionRequest 同构。
-#[derive(Debug, Clone, Deserialize, Type)]
-#[serde(rename_all = "camelCase")]
-pub struct AiSetSessionModeRequest {
-    pub(crate) thread_id: String,
-    pub(crate) mode_id: String,
-}
-
-/// ACP 会话可用模式清单的查询请求（契约层）。
-///
-/// 对齐 acp::AcpRuntime::session_modes(thread_id)：thread_id 定位目标会话（宿主持有 thread_id
-/// ↔ SessionId 映射，并在会话建立时登记 agent 公示的可用模式）。必填且非空，空白校验由接线层
-/// 负责。与 AiGetSessionConfigOptionsRequest 同构。
-#[derive(Debug, Clone, Deserialize, Type)]
-#[serde(rename_all = "camelCase")]
-pub struct AiGetSessionModesRequest {
-    pub(crate) thread_id: String,
-}
-
-/// ACP 会话可用模式清单的响应载荷（契约层）。
-///
-/// modes 为 agent 在 NewSessionResponse 公示的可用模式清单原样 JSON（SessionModeState：
-/// currentModeId + availableModes[]）。最小透传，宿主侧不重建 SDK 类型，交前端 ACL 解释。用
-/// specta_typescript::Unknown 将导出 TS 映射为 unknown，避开 serde_json::Number 触发 specta
-/// BigInt-forbidden；serde 运行时仍为 serde_json::Value，行为不变。与 AiSessionConfigOptionsPayload
-/// 同构。
-#[derive(Debug, Clone, Serialize, Type)]
-#[serde(rename_all = "camelCase")]
-pub struct AiSessionModesPayload {
-    #[specta(type = specta_typescript::Unknown)]
-    pub(crate) modes: serde_json::Value,
 }
 
 // ============================================================================

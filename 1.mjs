@@ -2,8 +2,8 @@
 // 链路：client.rs → host.rs → runtime.rs → gateway.rs → tauri_bindings.rs
 //        + contracts/ai_chat.rs + 生成绑定 src/bindings/tauri.ts
 // 唯一标准管线 = session/set_config_option（config_option_update 事件通道）
-import { readFileSync, writeFileSync, readdirSync } from "node:fs"
-import { join } from "node:path"
+import { readFileSync, writeFileSync, readdirSync, statSync } from "node:fs"
+import { join, relative, sep } from "node:path"
 
 const ROOT = process.cwd()
 const toLf = (s) => s.replace(/\r\n/g, "\n")
@@ -655,11 +655,11 @@ function editBindingsTs(c) {
 		" *  不重建 SDK 类型，交前端 ACL 解释（对齐 AiSessionModesPayload.modes 的整体透传）。用",
 		" *  不重建 SDK 类型，交前端 ACL 解释（最小透传整体 JSON）。用",
 		"tauri.ts/ConfigOptionsPayload doc")
-		// ============================================================
+			// ============================================================
 	// 7e · 删除 AiSessionModesPayload 响应载荷类型（config_options 为唯一标准管线）
 	// ============================================================
-	src = replaceOnce(
-		src,
+	c = replaceOnce(
+		c,
 		t(
 			"/**",
 			" *  ACP 会话可用模式清单的响应载荷（契约层）。",
@@ -677,14 +677,14 @@ function editBindingsTs(c) {
 			"",
 		),
 		"",
-		"tauri.ts · 删 AiSessionModesPayload 类型",
+		"tauri.ts/删 AiSessionModesPayload 类型",
 	)
 
 	// ============================================================
 	// 7f · 删除 AiSetSessionModeRequest 契约类型
 	// ============================================================
-	src = replaceOnce(
-		src,
+	c = replaceOnce(
+		c,
 		t(
 			"/**",
 			" *  ACP 标准 session/set_mode 的会话级模式切换请求（契约层）。",
@@ -704,7 +704,7 @@ function editBindingsTs(c) {
 			"",
 		),
 		"",
-		"tauri.ts · 删 AiSetSessionModeRequest 类型",
+		"tauri.ts/删 AiSetSessionModeRequest 类型",
 	)
 
 	// —— tauri.ts 文件级自检：模式命令/契约类型彻底消失，配置项命令仍在 ——
@@ -715,15 +715,11 @@ function editBindingsTs(c) {
 		"AiGetSessionModesRequest",
 		"AiSessionModesPayload",
 	]) {
-		if (src.includes(tok)) {
-			throw new Error(`[中止] 自检失败:src/bindings/tauri.ts · 残留 ${tok}`)
-		}
+		absent(c, tok, "tauri.ts")
 	}
-	if (!src.includes("aiSetSessionConfigOption")) {
-		throw new Error("[中止] 自检失败:src/bindings/tauri.ts · 丢失 aiSetSessionConfigOption")
-	}
+	present(c, "aiSetSessionConfigOption", "tauri.ts")
 
-	return src
+	return c
 }
 
 // ============================================================
@@ -738,13 +734,13 @@ const SRC_TAURI = join(REPO_ROOT, "src-tauri", "src")
 
 // 8 个目标文件 ↔ 上半段定义的编辑函数（函数名若与你的命名不同，按你的替换）
 const TARGETS = [
-	{ rel: "src-tauri/src/acp/client.rs", edit: editAcpClient },
-	{ rel: "src-tauri/src/acp/host.rs", edit: editAcpHost },
-	{ rel: "src-tauri/src/acp/ui_event.rs", edit: editAcpUiEvent },
-	{ rel: "src-tauri/src/acp/runtime.rs", edit: editAcpRuntime },
-	{ rel: "src-tauri/src/commands/ai/gateway.rs", edit: editGateway },
-	{ rel: "src-tauri/src/commands/contracts/ai_chat.rs", edit: editAiChatContract },
-	{ rel: "src-tauri/src/tauri_bindings.rs", edit: editTauriBindings },
+	{ rel: "src-tauri/src/acp/client.rs", edit: editClientRs },
+	{ rel: "src-tauri/src/acp/host.rs", edit: editHostRs },
+	{ rel: "src-tauri/src/acp/ui_event.rs", edit: editUiEventRs },
+	{ rel: "src-tauri/src/acp/runtime.rs", edit: editRuntimeRs },
+	{ rel: "src-tauri/src/commands/ai/gateway.rs", edit: editGatewayRs },
+	{ rel: "src-tauri/src/commands/contracts/ai_chat.rs", edit: editAiChatRs },
+	{ rel: "src-tauri/src/tauri_bindings.rs", edit: editTauriBindingsRs },
 	{ rel: "src/bindings/tauri.ts", edit: editBindingsTs },
 ]
 

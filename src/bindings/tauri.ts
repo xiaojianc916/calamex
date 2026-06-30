@@ -205,7 +205,7 @@ export const commands = {
 	 *  切换 ACP 会话的某个配置项值（标准 session/set_config_option），令外部 agent（Kimi Code /
 	 *  Codex 等）在 agent 公示的模型 / 模式 / 思考强度等配置项间切换。
 	 * 
-	 *  与 ai_set_session_mode 同构地委托给 Tauri 托管的 AcpRuntime：线程归属哪个后端宿主对命令层
+	 *  与 ai_resolve_approval 同构地委托给 Tauri 托管的 AcpRuntime：线程归属哪个后端宿主对命令层
 	 *  透明，由 runtime 向全部已建立宿主广播下发。三字段先行空白校验；返回是否命中某已绑定会话——
 	 *  false 表示无匹配（多为会话尚未建立/已结束的良性竞态，命令层不视作错误）。
 	 */
@@ -221,28 +221,6 @@ export const commands = {
 	 *  前端键重放），前端据此填充选择器。thread_id / backend 先行校验；未知 backend 报错。
 	 */
 	aiEnsureAcpSession: (payload: AiEnsureAcpSessionRequest) => __TAURI_INVOKE<null>("ai_ensure_acp_session", { payload }),
-	/**
-	 *  切换 ACP 会话的当前模式（标准 session/set_mode），令外部 agent（Kimi Code / Codex 等）在
-	 *  agent 公示的模式（如 Auto / Plan / …）间真实切换。当 Agent 为 Kimi 时，前端模式选择器直接
-	 *  驱动此命令，复用 Kimi 自身的模式切换语义，绝不本地伪造。
-	 * 
-	 *  与 ai_set_session_config_option 同构地委托给 Tauri 托管的 AcpRuntime：线程归属哪个后端宿主
-	 *  对命令层透明，由 runtime 向全部已建立宿主广播下发。两字段先行空白校验；返回是否命中某已绑定
-	 *  会话——false 表示无匹配（多为会话尚未建立/已结束的良性竞态，命令层不视作错误）。
-	 */
-	aiSetSessionMode: (payload: AiSetSessionModeRequest) => __TAURI_INVOKE<boolean>("ai_set_session_mode", { payload }),
-	/**
-	 *  取某线程会话建立时 agent 公示的可用模式清单（ACP session/new 的 NewSessionResponse.modes
-	 *  原样 JSON：SessionModeState = currentModeId + availableModes[]），供前端模式选择器在会话建立
-	 *  后填充候选项并高亮当前模式（默认即 agent 公示的 currentModeId，如 Kimi 的 Auto）。
-	 * 
-	 *  与 ai_get_session_config_options 同构地委托给 Tauri 托管的 AcpRuntime：由 runtime 向全部已
-	 *  建立宿主查询并返回首个命中。thread_id 先行空白校验；返回 None 表示尚无该线程会话或 agent 未
-	 *  公示模式（前端据此回退内置模式）。modes 为最小透传的原样 JSON（导出 TS 为 unknown）。
-	 */
-	aiGetSessionModes: (payload: AiGetSessionModesRequest) => __TAURI_INVOKE<{
-	modes: unknown,
-} | null>("ai_get_session_modes", { payload }),
 	aiInlineComplete: (payload: AiInlineCompletionRequest) => __TAURI_INVOKE<AiInlineCompletionResult>("ai_inline_complete", { payload }),
 	aiAgentClassifyTask: (payload: AiAgentClassifyTaskRequest) => __TAURI_INVOKE<AiAgentClassifyTaskPayload>("ai_agent_classify_task", { payload }),
 	aiAgentSetNetworkPermission: (payload: AiAgentSetNetworkPermissionRequest) => __TAURI_INVOKE<AiAgentNetworkPermissionPayload>("ai_agent_set_network_permission", { payload }),
@@ -769,17 +747,6 @@ export type AiEnsureAcpSessionRequest = {
 	workspaceRootPath: string | null,
 };
 
-/**
- *  ACP 会话可用模式清单的查询请求（契约层）。
- * 
- *  对齐 acp::AcpRuntime::session_modes(thread_id)：thread_id 定位目标会话（宿主持有 thread_id
- *  ↔ SessionId 映射，并在会话建立时登记 agent 公示的可用模式）。必填且非空，空白校验由接线层
- *  负责。与 AiGetSessionConfigOptionsRequest 同构。
- */
-export type AiGetSessionModesRequest = {
-	threadId: string,
-};
-
 export type AiInlineCompletionRangePayload = {
 	startOffset: number,
 	endOffset: number,
@@ -924,25 +891,12 @@ export type AiSaveCredentialsRequest = {
  * 
  *  config_options 为 agent 在 NewSessionResponse 公示的可用配置项清单原样 JSON
  *  （Vec SessionConfigOption：id + name + description + category + kind 等）。最小透传，宿主侧
- *  不重建 SDK 类型，交前端 ACL 解释（对齐 AiSessionModesPayload.modes 的整体透传）。用
+ *  不重建 SDK 类型，交前端 ACL 解释（最小透传整体 JSON）。用
  *  specta_typescript::Unknown 将导出 TS 映射为 unknown，避开 serde_json::Number 触发 specta
  *  BigInt-forbidden；serde 运行时仍为 serde_json::Value，行为不变。
  */
 export type AiSessionConfigOptionsPayload = {
 	configOptions: unknown,
-};
-
-/**
- *  ACP 会话可用模式清单的响应载荷（契约层）。
- * 
- *  modes 为 agent 在 NewSessionResponse 公示的可用模式清单原样 JSON（SessionModeState：
- *  currentModeId + availableModes[]）。最小透传，宿主侧不重建 SDK 类型，交前端 ACL 解释。用
- *  specta_typescript::Unknown 将导出 TS 映射为 unknown，避开 serde_json::Number 触发 specta
- *  BigInt-forbidden；serde 运行时仍为 serde_json::Value，行为不变。与 AiSessionConfigOptionsPayload
- *  同构。
- */
-export type AiSessionModesPayload = {
-	modes: unknown,
 };
 
 /**
@@ -971,21 +925,6 @@ export type AiSetSessionConfigOptionRequest = {
 	threadId: string,
 	configId: string,
 	valueId: string,
-};
-
-/**
- *  ACP 标准 session/set_mode 的会话级模式切换请求（契约层）。
- * 
- *  对齐 acp::AcpRuntime::set_session_mode(thread_id, mode_id)：
- *    * thread_id —— 定位目标会话（宿主持有 thread_id ↔ SessionId 映射，跨回合复用）；
- *    * mode_id —— 目标模式的 ACP SessionModeId 原值，逐字透传，绝不本地映射。
- * 
- *  二者均必填且非空（前端总能从已渲染的模式选择器取得），空白校验由接线层负责。
- *  与 AiSetSessionConfigOptionRequest 同构。
- */
-export type AiSetSessionModeRequest = {
-	threadId: string,
-	modeId: string,
 };
 
 export type AiSnapshotPayload = {

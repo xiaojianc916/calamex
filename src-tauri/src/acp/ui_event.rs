@@ -82,15 +82,6 @@ fn usage_update_ui_event(usage: &Value) -> Value {
     json!({ "type": "usage_update", "usage": usage.clone() })
 }
 
-/// 构造会话当前模式变更 `TAgentUiEvent`（`type` 为 `current_mode_update`）。
-///
-/// 投影 ACP `current_mode_update`（外部 agent 在回合中自行切换模式时下发新的 currentModeId）：
-/// 仅透传 `currentModeId`（可为 null），交前端回灌模式选择器高亮（见 src/types/ai/sidecar.ts 的
-/// TAgentUiEventCurrentModeUpdate 与 from-acp-session-modes.ts）。
-fn current_mode_update_ui_event(current_mode_id: &Value) -> Value {
-    json!({ "type": "current_mode_update", "currentModeId": current_mode_id.clone() })
-}
-
 /// 构造会话配置项变更 `TAgentUiEvent`（`type` 为 `config_option_update`）。
 ///
 /// 投影 ACP `config_option_update`（外部 agent 公示/更新本会话可配置项，含模型 / 模式 / 推理强度
@@ -147,12 +138,6 @@ pub fn session_notification_to_ui_event(mut notification: Value) -> Option<Value
         "usage_update" => {
             let usage = update.get("usage")?;
             Some(usage_update_ui_event(usage))
-        }
-        // 外部 agent 在回合中自行切换模式（标准 current_mode_update）：透传 currentModeId，
-        // 交前端回灌模式选择器高亮（session/set_mode 协议）。
-        "current_mode_update" => {
-            let current_mode_id = update.get("currentModeId")?;
-            Some(current_mode_update_ui_event(current_mode_id))
         }
         // 外部 agent 公示/更新本会话可配置项（标准 config_option_update，模型选择器即走此通道）：
         // 整份透传 configOptions 原始数组（完整快照），交前端 ACL 归一到配置项选择器 VM。Kimi 等
@@ -301,23 +286,6 @@ mod tests {
     #[test]
     fn usage_update_without_field_yields_none() {
         let n = notif(json!({ "sessionUpdate": "usage_update" }));
-        assert!(session_notification_to_ui_event(n).is_none());
-    }
-
-    #[test]
-    fn current_mode_update_passes_through_current_mode_id() {
-        let n = notif(json!({
-            "sessionUpdate": "current_mode_update",
-            "currentModeId": "agent"
-        }));
-        let ui = session_notification_to_ui_event(n).unwrap();
-        assert_eq!(ui["type"], "current_mode_update");
-        assert_eq!(ui["currentModeId"], "agent");
-    }
-
-    #[test]
-    fn current_mode_update_without_field_yields_none() {
-        let n = notif(json!({ "sessionUpdate": "current_mode_update" }));
         assert!(session_notification_to_ui_event(n).is_none());
     }
 

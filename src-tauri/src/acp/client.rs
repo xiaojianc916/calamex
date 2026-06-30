@@ -20,8 +20,8 @@ use agent_client_protocol::schema::{
     CancelNotification, ContentBlock, InitializeRequest, NewSessionRequest, PermissionOptionId,
     PromptRequest, ProtocolVersion, RequestPermissionOutcome, RequestPermissionRequest,
     RequestPermissionResponse, SelectedPermissionOutcome, SessionConfigId,
-    SessionConfigOptionValue, SessionConfigValueId, SessionId, SessionModeId, SessionNotification,
-    SetSessionConfigOptionRequest, SetSessionModeRequest, StopReason,
+    SessionConfigOptionValue, SessionConfigValueId, SessionId, SessionNotification,
+    SetSessionConfigOptionRequest, StopReason,
 };
 use agent_client_protocol::{
     AcpAgent, Agent, BoxFuture, Client, ConnectionTo, JsonRpcRequest, Responder,
@@ -145,19 +145,14 @@ pub enum AcpClientError {
     NotRunning,
 }
 
-/// `new_session` 的结果：会话标识 + 可选的可用模式清单。
-///
-/// `modes` 为 ACP `NewSessionResponse.modes`（`SessionModeState`：`currentModeId` +
-/// `availableModes[]`）的原样 JSON——最小透传，宿主侧不重建 SDK 类型，交前端 ACL 解释
-/// （对齐 tool_call 的 `acpUpdate` 整体透传）。`None` 表示 agent 未公示会话模式。
+/// `new_session` 的结果：会话标识 + 可选的可用配置项清单。
 pub struct NewSessionOutcome {
     pub session_id: SessionId,
-    pub modes: Option<Value>,
     /// ACP `NewSessionResponse.config_options`（`SessionConfigOption[]`：每项含
-    /// `id`/`name`/`kind`/`currentValue` 等）的原样 JSON——与 `modes` 同构、最小透传，
-    /// 交前端 ACL 解释。这是「模型/思考强度/模式等」可切换配置项的目录来源,对任意公示
-    /// configOptions 的 agent 通用；默认选中项即 agent 在 currentValue 中回填的当前模型。
-    /// `None` 表示 agent 未公示会话级配置项。
+    /// `id`/`name`/`kind`/`currentValue` 等）的原样 JSON——最小透传，宿主侧不重建 SDK
+    /// 类型，交前端 ACL 解释。这是「模型/思考强度/模式等」可切换配置项的目录来源,对任意
+    /// 公示 configOptions 的 agent 通用；默认选中项即 agent 在 currentValue 中回填的当前
+    /// 模型。`None` 表示 agent 未公示会话级配置项。
     pub config_options: Option<Value>,
 }
 
@@ -174,11 +169,6 @@ enum Command {
         session_id: SessionId,
         blocks: Vec<ContentBlock>,
         reply: oneshot::Sender<Result<StopReason, String>>,
-    },
-    SetSessionMode {
-        session_id: SessionId,
-        mode_id: SessionModeId,
-        reply: oneshot::Sender<Result<(), String>>,
     },
     SetSessionConfigOption {
         session_id: SessionId,
@@ -246,24 +236,6 @@ impl AcpClientHandle {
             .send(Command::Prompt {
                 session_id,
                 blocks,
-                reply,
-            })
-            .map_err(|_| AcpClientError::NotRunning)?;
-        rx.await
-            .map_err(|_| AcpClientError::NotRunning)?
-            .map_err(AcpClientError::Protocol)
-    }
-
-    pub async fn set_session_mode(
-        &self,
-        session_id: SessionId,
-        mode_id: SessionModeId,
-    ) -> Result<(), AcpClientError> {
-        let (reply, rx) = oneshot::channel();
-        self.cmd_tx
-            .send(Command::SetSessionMode {
-                session_id,
-                mode_id,
                 reply,
             })
             .map_err(|_| AcpClientError::NotRunning)?;
@@ -488,11 +460,10 @@ pub fn spawn_acp_client(
                                 .send_request(request)
                                 .block_task()
                                 .await;
-                            // 最小透传：把 NewSessionResponse.modes（可用模式清单）原样序列化为
-                            // JSON 一并回传（null → None），宿主侧据 thread_id 登记，供模式选择器消费。
+                            // 最小透传：把 NewSessionResponse.config_options（可用配置项清单）原样
+                            // 序列化为 JSON 一并回传（null → None），宿主侧据 thread_id 登记，供配置项选择器消费。
                             let outcome = res.map(|r| NewSessionOutcome {
                                 session_id: r.session_id,
-                                modes: serde_json::to_value(&r.modes).ok().filter(|v| !v.is_null()),
                                 config_options: serde_json::to_value(&r.config_options)
                                     .ok()
                                     .filter(|v| !v.is_null()),
@@ -508,17 +479,6 @@ pub fn spawn_acp_client(
                             let res = cx.send_request(req).block_task().await;
                             let _ =
                                 reply.send(res.map(|r| r.stop_reason).map_err(|e| e.to_string()));
-                        }
-                        Command::SetSessionMode {
-                            session_id,
-                            mode_id,
-                            reply,
-                        } => {
-                            let res = cx
-                                .send_request(SetSessionModeRequest::new(session_id, mode_id))
-                                .block_task()
-                                .await;
-                            let _ = reply.send(res.map(|_| ()).map_err(|e| e.to_string()));
                         }
                         Command::SetSessionConfigOption {
                             session_id,
