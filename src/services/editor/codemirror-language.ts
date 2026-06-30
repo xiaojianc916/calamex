@@ -52,7 +52,7 @@ const CODEMIRROR_LANGUAGE_LOADERS: Readonly<Record<string, () => Promise<Extensi
   diff: streamLanguageLoader(() =>
     import('@codemirror/legacy-modes/mode/diff').then((m) => m.diff),
   ),
-  c: streamLanguageLoader(() => import('@codemirror/legacy-modes/mode/clike').then((m) => m.c)),
+  c: () => import('@codemirror/lang-cpp').then((m) => m.cpp()),
   cpp: () => import('@codemirror/lang-cpp').then((m) => m.cpp()),
   csharp: streamLanguageLoader(() =>
     import('@codemirror/legacy-modes/mode/clike').then((m) => m.csharp),

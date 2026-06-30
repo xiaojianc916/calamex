@@ -6,7 +6,11 @@ import {
   ViewPlugin,
   type ViewUpdate,
 } from '@codemirror/view';
-import { tokenizeRangeWithShikiWorker } from '@/services/editor/shiki-highlighter';
+import {
+  applyShikiEdit,
+  disposeShikiSession,
+  tokenizeRangeWithShikiWorker,
+} from '@/services/editor/shiki-highlighter';
 import {
   type IShikiThemedToken,
   resolveShikiLanguageId,
@@ -17,23 +21,6 @@ import {
 /** 编辑器与代码渲染统一使用的等宽字体，按要求以 Consolas 为首选。 */
 export const EDITOR_FONT_FAMILY =
   "Consolas, 'Cascadia Mono', 'SF Mono', 'JetBrains Mono', Menlo, Monaco, 'Courier New', monospace";
-
-// 单次 tokenize 切片的字节上限：Worker 路径默认从文档开头切到可见区下沿，超过
-// 此上限时退化为仅切可见区窗口；窗口切片仍超限（极端长行，如压缩成一行的文件）
-// 则放弃高亮，避免 Worker 任务过重。注意这是“切片”上限而非“整文档”上限。
-const MAX_HIGHLIGHT_SLICE_LENGTH = 200_000;
-
-// 「从文档首行起」切片的舒适体积上限：超过即降级为有界窗口切片（仅取视口附近），避免向大
-// 文件深处滚动时在主线程 sliceString 出超大前缀并结构化克隆给 Worker。低于
-// MAX_HIGHLIGHT_SLICE_LENGTH（后者仍作为窗口切片的最终放弃阈值）。代价：极少数跨越数千行
-// 的多行结构（超长 heredoc/字符串/注释）降级后可能着色不准，shell 脚本下罕见。
-const MAX_FROM_DOCUMENT_START_SLICE_LENGTH = 120_000;
-
-// 「从文档首行起」tokenize 切片下沿的块大小（行）。滚动/打字时把切片终点向上对齐到
-// 块边界，使相同区段的切片字符串稳定 → 命中 shiki-highlighter 的按串 token 缓存与按行
-// 缓存，把「向下滚动/打字时逐行重算整段前缀」从每行一次降到每跨一个块一次。512 行在
-// 常规代码下远低于 MAX_HIGHLIGHT_SLICE_LENGTH 体积上限。
-const HIGHLIGHT_SLICE_CHUNK_LINES = 512;
 
 // 可见区下方额外着色的行数：平滑滚动时的下方衔接缓冲。取较大值以覆盖快速滚动
 // 单帧的跨度，减少滚动越界触发重算的频率，降低闪烁概率。
@@ -95,12 +82,6 @@ export const setShikiLanguage = (language: string): StateEffect<string> =>
 export type TShikiHighlightUpdateAction = 'recompute' | 'remap' | 'skip';
 
 type TShikiDocChangeRecomputeTiming = 'debounced' | 'post-paint';
-
-type TShikiHighlightSlice = {
-  code: string;
-  startLine: number;
-  endLine: number;
-};
 
 type TShikiWorkerHighlightResult = {
   requestId: number;
@@ -302,68 +283,6 @@ const tokenDecoration = (style: string): Decoration => {
 };
 
 /**
- * 截取需要 tokenize 的切片，单次成本与可见行数相关而非文档总长。
- * - fromDocumentStart=true（Worker 路径）：从文档首行切起，跨行结构完全正确；超过体积
- *   上限则退化为可见区窗口（fromDocumentStart=false 模式）。
- * - fromDocumentStart=false：仅切 [视口顶 - leadInLines .. 视口底 + overscan] 的有界窗口。
- * 窗口切片仍超体积上限（极端长行）时返回 null，调用方据此放弃高亮。返回所用行范围供复用判定。
- */
-const computeShikiHighlightSlice = (
-  view: EditorView,
-  options: { fromDocumentStart: boolean; leadInLines?: number },
-): TShikiHighlightSlice | null => {
-  const { doc } = view.state;
-  if (doc.length === 0) {
-    return null;
-  }
-
-  const { visibleRanges } = view;
-  if (visibleRanges.length === 0) {
-    return null;
-  }
-
-  const firstVisibleLine = doc.lineAt(visibleRanges[0].from).number;
-  const lastVisibleLine = doc.lineAt(visibleRanges[visibleRanges.length - 1].to).number;
-
-  const buildSlice = (
-    fromDocumentStart: boolean,
-  ): { range: { startLine: number; endLine: number }; sliceFrom: number; sliceTo: number } => {
-    const range = computeShikiHighlightRange({
-      firstVisibleLine,
-      lastVisibleLine,
-      totalLines: doc.lines,
-      overscanLines: HIGHLIGHT_OVERSCAN_LINES,
-      leadInLines: options.leadInLines ?? HIGHLIGHT_OVERSCAN_LINES,
-      fromDocumentStart,
-      chunkLines: fromDocumentStart ? HIGHLIGHT_SLICE_CHUNK_LINES : undefined,
-    });
-    return {
-      range,
-      sliceFrom: doc.line(range.startLine).from,
-      sliceTo: doc.line(range.endLine).to,
-    };
-  };
-
-  let { range, sliceFrom, sliceTo } = buildSlice(options.fromDocumentStart);
-
-  // 仅 fromDocumentStart 模式可能切片过大（超大文件），退化为可见区窗口；窗口模式本就有界。
-  if (options.fromDocumentStart && sliceTo - sliceFrom > MAX_FROM_DOCUMENT_START_SLICE_LENGTH) {
-    ({ range, sliceFrom, sliceTo } = buildSlice(false));
-  }
-
-  // 窗口切片仍超限（极端长行）时放弃高亮，避免任务过重。
-  if (sliceTo - sliceFrom > MAX_HIGHLIGHT_SLICE_LENGTH) {
-    return null;
-  }
-
-  return {
-    code: doc.sliceString(sliceFrom, sliceTo),
-    startLine: range.startLine,
-    endLine: range.endLine,
-  };
-};
-
-/**
  * 从按行 token 缓存构建 [startLine, endLine] 区间的装饰集合。
  * 仅渲染缓存命中的行；未命中的行不产生装饰（呈纯文本），由调用方在 Worker 路径补齐后
  * 重建。RangeSetBuilder 要求按位置升序添加：按行升序、行内 token 顺序累加可天然满足。
@@ -443,6 +362,7 @@ const shikiHighlightPlugin = ViewPlugin.fromClass(
     update(update: ViewUpdate): void {
       if (update.docChanged) {
         this.docVersion += 1;
+        this.sendShikiEdit(update);
       }
 
       const workerResult = this.takeWorkerResult(update);
@@ -510,6 +430,7 @@ const shikiHighlightPlugin = ViewPlugin.fromClass(
     destroy(): void {
       this.destroyed = true;
       this.cancelScheduledRecompute();
+      disposeShikiSession(this.shikiSessionKey);
       this.pendingRequest = null;
       this.activeWorkerRequestId = null;
       this.queuedWorkerRequest = null;
@@ -684,6 +605,51 @@ const shikiHighlightPlugin = ViewPlugin.fromClass(
       this.decorations = decorations;
     }
 
+    /**
+     * 文档变更后向 Worker 发送行级增量 delta：fromLine..oldEndLine（旧文档）被替换为
+     * fromLine..newEndLine（新文档）的行文本；Worker 据此原地更新整篇文本并仅作废受影响块状态。
+     */
+    private sendShikiEdit(update: ViewUpdate): void {
+      const language = update.state.field(shikiLanguageField, false) ?? 'text';
+      if (!resolveShikiLanguageId(language)) {
+        return;
+      }
+      const oldDoc = update.startState.doc;
+      const newDoc = update.state.doc;
+      let minFromA = Number.POSITIVE_INFINITY;
+      let maxToA = -1;
+      let maxToB = -1;
+      update.changes.iterChanges((fromA, toA, _fromB, toB) => {
+        if (fromA < minFromA) {
+          minFromA = fromA;
+        }
+        if (toA > maxToA) {
+          maxToA = toA;
+        }
+        if (toB > maxToB) {
+          maxToB = toB;
+        }
+      });
+      if (maxToA < 0) {
+        return;
+      }
+      const fromLine = oldDoc.lineAt(minFromA).number;
+      const oldEndLine = oldDoc.lineAt(maxToA).number;
+      const newEndLine = newDoc.lineAt(maxToB).number;
+      const deletedLineCount = oldEndLine - fromLine + 1;
+      const insertedLines: string[] = [];
+      for (let ln = fromLine; ln <= newEndLine; ln += 1) {
+        insertedLines.push(newDoc.line(ln).text);
+      }
+      applyShikiEdit(
+        this.shikiSessionKey,
+        this.docVersion,
+        fromLine,
+        deletedLineCount,
+        insertedLines,
+      );
+    }
+
     private recompute(view: EditorView, options: { allowReuse: boolean }): void {
       const language = view.state.field(shikiLanguageField, false) ?? 'text';
       if (!resolveShikiLanguageId(language)) {
@@ -727,22 +693,17 @@ const shikiHighlightPlugin = ViewPlugin.fromClass(
       }
 
       // —— Worker tokenize ——
-      // 先用现有缓存（可能为部分命中）同步重建，已着色的行保持不变、不清空、不露白；再从
-      // 文档开头切片交给 Worker，保证跨行结构配色正确，回包后入缓存重建。
+      // 先用现有缓存（可能为部分命中）同步重建，已着色的行保持不变；再请求 Worker 对未命中的
+      // 行范围 tokenize（Worker 持有整篇文档，按会话 + 行范围续算，无需主线程切片传整段代码）。
       this.renderViewportFromCache(view);
-
-      const slice = computeShikiHighlightSlice(view, { fromDocumentStart: false });
-      if (!slice) {
-        return;
-      }
 
       const docVersion = this.docVersion;
       const requestKey = createShikiHighlightRequestKey({
         language,
         docVersion,
-        startLine: slice.startLine,
-        endLine: slice.endLine,
-        codeLength: slice.code.length,
+        startLine: uncached.startLine,
+        endLine: uncached.endLine,
+        codeLength: view.state.doc.length,
       });
 
       if (
@@ -754,8 +715,8 @@ const shikiHighlightPlugin = ViewPlugin.fromClass(
           isShikiHighlightRangeCovered({
             coveredStartLine: this.pendingRequest.startLine,
             coveredEndLine: this.pendingRequest.endLine,
-            requestedStartLine: slice.startLine,
-            requestedEndLine: slice.endLine,
+            requestedStartLine: uncached.startLine,
+            requestedEndLine: uncached.endLine,
           }))
       ) {
         return;
@@ -769,8 +730,8 @@ const shikiHighlightPlugin = ViewPlugin.fromClass(
         requestId,
         docVersion,
         language,
-        startLine: slice.startLine,
-        endLine: slice.endLine,
+        startLine: uncached.startLine,
+        endLine: uncached.endLine,
       };
 
       this.enqueueWorkerTokenize({
@@ -780,8 +741,8 @@ const shikiHighlightPlugin = ViewPlugin.fromClass(
         requestId,
         docVersion,
         language,
-        startLine: slice.startLine,
-        endLine: slice.endLine,
+        startLine: uncached.startLine,
+        endLine: uncached.endLine,
       });
     }
 

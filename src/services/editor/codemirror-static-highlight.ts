@@ -4,7 +4,7 @@ import {
   resolveShikiLanguageId,
   SHIKI_BACKGROUND,
   SHIKI_FOREGROUND,
-  tokenizeWithShikiWorker,
+  tokenizeSnippetWithShikiWorker,
 } from '@/services/editor/shiki-highlighter';
 
 export interface ICodeMirrorHighlightToken {
@@ -113,7 +113,7 @@ export const highlightCodeAsync = async (
     return cached;
   }
 
-  const lines = await tokenizeWithShikiWorker(code, language);
+  const lines = await tokenizeSnippetWithShikiWorker(code, language);
   if (!lines) {
     return null;
   }
