@@ -413,6 +413,5 @@ export const useAiThreadStore = defineStore('ai-thread', () => {
 });
 
 export * from '@/store/aiThread/events';
-export * from '@/store/aiThread/legacy-adapter';
 export * from '@/store/aiThread/reduce';
 export * from '@/store/aiThread/render-authority';

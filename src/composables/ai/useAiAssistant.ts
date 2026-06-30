@@ -22,7 +22,7 @@ import { useSidecarChangedDocumentRefresh } from '@/composables/useSidecarChange
 import { aiService } from '@/services/ipc/ai.service';
 import { aiEditService } from '@/services/ipc/ai-edit.service';
 import { type IAiPersistedSidecarAgentSession, useAiAgentStore } from '@/store/aiAgent';
-import { legacyMessageToEntries, useAiThreadStore } from '@/store/aiThread';
+import { useAiThreadStore } from '@/store/aiThread';
 import type {
   IAiAgentPatchSummary,
   IAiAttachedFile,
@@ -39,6 +39,7 @@ import type {
   IAiThreadAssistantMessageEntry,
   IAiThreadEntry,
   IAiThreadToolCall,
+  IAiThreadUserMessageEntry,
 } from '@/types/ai/thread';
 import type { IActiveRunSummary, IEditorDocument, IEditorSelectionSummary } from '@/types/editor';
 import type { IGitRepositoryStatusPayload } from '@/types/git';
@@ -928,13 +929,11 @@ export const useAiAssistant = (options: IUseAiAssistantOptions) => {
     const assistantMessageId = createMessageId('assistant');
     const targetThreadId = threadId;
     const initialActivityText = buildInitialAgentActivityText();
-    const placeholderMessage: IAiChatMessage = {
+    const placeholderEntry: IAiThreadAssistantMessageEntry = {
+      type: 'assistant_message',
       id: assistantMessageId,
-      role: 'assistant',
-      content: '',
       createdAt: new Date().toISOString(),
-      references: [],
-      toolCalls: [],
+      chunks: [],
       stream: {
         status: 'streaming',
         activityText: initialActivityText,
@@ -942,10 +941,7 @@ export const useAiAssistant = (options: IUseAiAssistantOptions) => {
       },
     };
 
-    aiThreadStore.patchActiveThreadEntries((entries) => [
-      ...entries,
-      ...legacyMessageToEntries(placeholderMessage),
-    ]);
+    aiThreadStore.patchActiveThreadEntries((entries) => [...entries, placeholderEntry]);
     activeAgentMessageId.value = assistantMessageId;
     activeAbortController.value = new AbortController();
     const requestAbortController = activeAbortController.value;
@@ -1103,18 +1099,15 @@ export const useAiAssistant = (options: IUseAiAssistantOptions) => {
 
     const messageContent = content || '请分析我添加的附件内容。';
     const titleThreadId = activeConversationId.value;
-    const userMessage: IAiChatMessage = {
+    const userEntry: IAiThreadUserMessageEntry = {
+      type: 'user_message',
       id: createMessageId('user'),
-      role: 'user',
-      content: messageContent,
       createdAt: new Date().toISOString(),
+      content: [{ type: 'text', text: messageContent }],
       references: [],
     };
 
-    aiThreadStore.patchActiveThreadEntries((entries) => [
-      ...entries,
-      ...legacyMessageToEntries(userMessage),
-    ]);
+    aiThreadStore.patchActiveThreadEntries((entries) => [...entries, userEntry]);
     draft.value = '';
     errorMessage.value = '';
     isSending.value = true;
@@ -1127,16 +1120,15 @@ export const useAiAssistant = (options: IUseAiAssistantOptions) => {
     } catch (error) {
       const message = toErrorMessage(error, MSG_CALL_FAILED);
       errorMessage.value = message;
-      aiThreadStore.patchActiveThreadEntries((entries) => [
-        ...entries,
-        ...legacyMessageToEntries({
-          id: createMessageId('assistant'),
-          role: 'assistant',
-          content: `AI 上下文收集失败：${message}`,
-          createdAt: new Date().toISOString(),
-          references: [],
-        }),
-      ]);
+      const contextErrorEntry: IAiThreadAssistantMessageEntry = {
+        type: 'assistant_message',
+        id: createMessageId('assistant'),
+        createdAt: new Date().toISOString(),
+        chunks: [
+          { type: 'message', block: { type: 'text', text: `AI 上下文收集失败：${message}` } },
+        ],
+      };
+      aiThreadStore.patchActiveThreadEntries((entries) => [...entries, contextErrorEntry]);
       clearActiveBufferedThread(titleThreadId);
       isSending.value = false;
       return;
@@ -1146,7 +1138,7 @@ export const useAiAssistant = (options: IUseAiAssistantOptions) => {
 
     aiThreadStore.patchActiveThreadEntries((entries) =>
       entries.map((entry) =>
-        entry.type === 'user_message' && entry.id === userMessage.id
+        entry.type === 'user_message' && entry.id === userEntry.id
           ? { ...entry, references }
           : entry,
       ),
