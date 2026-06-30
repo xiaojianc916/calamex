@@ -57,7 +57,7 @@ const FONT_STYLE_ITALIC = 1;
 const FONT_STYLE_BOLD = 2;
 const FONT_STYLE_UNDERLINE = 4;
 
-const tokenDecorationCache = new Map<string, Decoration>();
+const tokenDecorationCache = new Map<string, Decoration | null>();
 
 // 每个高亮插件实例分配一个稳定的 sessionKey，Worker 据此分别持有各自文档的整篇文本与
 // 块级语法状态缓存（支持多个编辑器实例并存而互不串话）。
@@ -251,20 +251,24 @@ const tokenInlineStyle = (token: IShikiThemedToken): string => {
   return declarations.join(';');
 };
 
-const tokenDecoration = (style: string): Decoration => {
-  const cached = tokenDecorationCache.get(style);
-  if (cached) {
+// 以「色/背景/字形」三元组为键缓存 Decoration（无样式时缓存 null）。命中时直接返回，
+// 省去每个 token 每帧重新拼接 style 字符串的数组分配；仅未命中（样式种类很少）才构建。
+const tokenDecorationForToken = (token: IShikiThemedToken): Decoration | null => {
+  const cacheKey = [token.color ?? '', token.bgColor ?? '', token.fontStyle ?? 0].join('|');
+  const cached = tokenDecorationCache.get(cacheKey);
+  if (cached !== undefined) {
     return cached;
   }
 
-  const decoration = Decoration.mark({ attributes: { style } });
+  const style = tokenInlineStyle(token);
+  const decoration = style ? Decoration.mark({ attributes: { style } }) : null;
   if (tokenDecorationCache.size >= MAX_TOKEN_DECORATION_CACHE_SIZE) {
     const oldestKey = tokenDecorationCache.keys().next().value;
-    if (oldestKey) {
+    if (oldestKey !== undefined) {
       tokenDecorationCache.delete(oldestKey);
     }
   }
-  tokenDecorationCache.set(style, decoration);
+  tokenDecorationCache.set(cacheKey, decoration);
   return decoration;
 };
 
@@ -308,9 +312,9 @@ const buildDecorationsFromLineCache = (
       if (from >= to) {
         continue;
       }
-      const style = tokenInlineStyle(token);
-      if (style) {
-        builder.add(from, to, tokenDecoration(style));
+      const decoration = tokenDecorationForToken(token);
+      if (decoration) {
+        builder.add(from, to, decoration);
       }
     }
   }

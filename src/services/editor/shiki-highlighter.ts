@@ -73,6 +73,43 @@ let nextWorkerRequestId = 1;
 let nextSessionId = 1;
 const sessionStateByKey = new Map<number, TWorkerSessionState>();
 
+// 在途 tokenizeRange 请求按 id 路由。用单一持久 message/error 监听取代“每请求增删监听”，
+// 避免滚动时频繁 add/removeEventListener、以及一条消息触发全部在途监听的线性分发开销。
+type TPendingShikiRequest = {
+  resolve: (tokens: IShikiThemedToken[][] | null) => void;
+  timeoutId: ReturnType<typeof setTimeout>;
+  language: string;
+};
+const pendingShikiRequests = new Map<number, TPendingShikiRequest>();
+
+const settleShikiRequest = (id: number, tokens: IShikiThemedToken[][] | null): void => {
+  const pending = pendingShikiRequests.get(id);
+  if (!pending) {
+    return;
+  }
+  pendingShikiRequests.delete(id);
+  clearTimeout(pending.timeoutId);
+  pending.resolve(tokens);
+};
+
+const failAllPendingShikiRequests = (): void => {
+  for (const pending of pendingShikiRequests.values()) {
+    clearTimeout(pending.timeoutId);
+    pending.resolve(null);
+  }
+  pendingShikiRequests.clear();
+};
+
+const handleShikiWorkerMessage = (event: MessageEvent<TShikiWorkerResponse>): void => {
+  const data = event.data;
+  if (data.error) {
+    logger.error({ event: 'shiki.worker.tokenize_failed', err: data.error });
+    settleShikiRequest(data.id, null);
+    return;
+  }
+  settleShikiRequest(data.id, data.tokens ?? null);
+};
+
 // 片段（静态代码块）一次性高亮使用递减的负 sessionKey，与编辑器实例的正 sessionKey 互不冲突。
 let snippetSessionKeySeq = -1;
 
@@ -85,12 +122,14 @@ const getShikiWorker = (): Worker | null => {
       shikiWorker = new Worker(new URL('./shiki-tokenizer.worker.ts', import.meta.url), {
         type: 'module',
       });
+      shikiWorker.addEventListener('message', handleShikiWorkerMessage);
       shikiWorker.addEventListener('error', (event) => {
         shikiWorkerBroken = true;
         logger.error({ event: 'shiki.worker.error', err: event.message });
         shikiWorker?.terminate();
         shikiWorker = null;
         sessionStateByKey.clear();
+        failAllPendingShikiRequests();
       });
     } catch (error) {
       shikiWorkerBroken = true;
@@ -211,52 +250,11 @@ export const tokenizeRangeWithShikiWorker = async (
     endLine,
   };
   return new Promise((resolve) => {
-    let settled = false;
-    let timeoutId: ReturnType<typeof setTimeout>;
-    const cleanup = (): void => {
-      clearTimeout(timeoutId);
-      worker.removeEventListener('message', handleMessage);
-      worker.removeEventListener('error', handleError);
-    };
-    const finish = (tokens: IShikiThemedToken[][] | null): void => {
-      if (settled) {
-        return;
-      }
-      settled = true;
-      cleanup();
-      resolve(tokens);
-    };
-    const handleMessage = (event: MessageEvent<TShikiWorkerResponse>): void => {
-      if (event.data.id !== id) {
-        return;
-      }
-      if (event.data.error || !event.data.tokens) {
-        if (event.data.error) {
-          logger.error({
-            event: 'shiki.worker.tokenize_failed',
-            err: event.data.error,
-            language,
-          });
-        }
-        finish(null);
-        return;
-      }
-      finish(event.data.tokens);
-    };
-    const handleError = (event: ErrorEvent): void => {
-      shikiWorkerBroken = true;
-      logger.error({ event: 'shiki.worker.runtime_failed', err: event.message });
-      shikiWorker?.terminate();
-      shikiWorker = null;
-      sessionStateByKey.clear();
-      finish(null);
-    };
-    timeoutId = setTimeout(() => {
+    const timeoutId = setTimeout(() => {
       logger.error({ event: 'shiki.worker.timeout', language });
-      finish(null);
+      settleShikiRequest(id, null);
     }, SHIKI_WORKER_TIMEOUT_MS);
-    worker.addEventListener('message', handleMessage);
-    worker.addEventListener('error', handleError);
+    pendingShikiRequests.set(id, { resolve, timeoutId, language });
     worker.postMessage(request);
   });
 };

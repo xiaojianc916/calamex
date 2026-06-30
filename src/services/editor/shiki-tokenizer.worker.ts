@@ -278,7 +278,7 @@ const applyEdit = (req: TEditRequest): void => {
   session.lines.splice(fromIndex, req.deletedLineCount, ...req.insertedLines);
   session.docVersion = req.docVersion;
   const editedBlock = Math.floor(fromIndex / BLOCK_LINES);
-  for (const blockIndex of [...session.blockEndState.keys()]) {
+  for (const blockIndex of session.blockEndState.keys()) {
     if (blockIndex >= editedBlock) {
       session.blockEndState.delete(blockIndex);
     }
@@ -310,7 +310,7 @@ const tokenizeRange = async (req: TTokenizeRangeRequest): Promise<IShikiThemedTo
   if (totalLines === 0) {
     return null;
   }
-  const highlighter = await ensureHighlighter();
+  const highlighter = highlighterInstance ?? (await ensureHighlighter());
   const startLine = Math.max(1, req.startLine);
   const endLine = Math.min(totalLines, Math.max(startLine, req.endLine));
   if (startLine > totalLines) {
