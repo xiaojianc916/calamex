@@ -49,8 +49,11 @@ desktop = [
   "dep:tauri-plugin-dialog",
   "dep:tauri-plugin-fs",
   "dep:tauri-plugin-store",
+  "dep:tauri-plugin-single-instance",
+  "dep:tauri-plugin-window-state",
   "dep:tracing",
   "dep:tracing-subscriber",
+  "dep:tracing-appender",
   "dep:tree-sitter",
   "dep:tree-sitter-bash",
 ]
@@ -130,6 +133,9 @@ vte = "0.15.0"
 # 子进程超时等待（cargo 自身亦使用）：替代 wsl_pty.rs 同步 wsl.exe 调用里的 25ms 轮询。
 wait-timeout = "0.2"
 tauri-plugin-opener = "2.5.4"
+tauri-plugin-single-instance = { version = "2", optional = true }
+tauri-plugin-window-state = { version = "2", optional = true }
+tracing-appender = { version = "0.2", optional = true }
 
 [target.'cfg(windows)'.dependencies]
 windows-sys = { version = "0.61.2", features = ["Win32_Foundation", "Win32_Networking_WinSock", "Win32_System_Hypervisor", "Win32_System_JobObjects", "Win32_System_Threading"] }

@@ -127,14 +127,14 @@ function stageSidecar(): void {
   if (!existsSync(tsxCli)) {
     fail(`sidecar 安装后未找到 tsx 启动器：${tsxCli}`);
   }
-  const serverEntry = join(destDir, 'src', 'server.ts');
+  const serverEntry = join(destDir, 'src', 'acp', 'stdio-entry.ts');
   if (!existsSync(serverEntry)) {
     fail(`sidecar 入口缺失：${serverEntry}`);
   }
   // 预编译生产入口 dist/server.js：在仓库内 builtin-agent 用其完整
   // node_modules/tsconfig 构建，再把 dist 复制进随包目录。
   run(npmBin(), ['run', 'build'], { cwd: srcDir });
-  const compiledEntry = join(srcDir, 'dist', 'server.js');
+  const compiledEntry = join(srcDir, 'dist', 'acp', 'stdio-entry.js');
   if (!existsSync(compiledEntry)) {
     fail(`sidecar 预编译后未找到入口：${compiledEntry}`);
   }

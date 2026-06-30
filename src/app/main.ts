@@ -208,6 +208,11 @@ const bootstrap = async (): Promise<void> => {
 
     initEditorScrollbarActivity();
 
+    // 关联文件打开监听：监听 Rust 端 calamex://open-file 事件，挂载后按需打开脚本。
+    void import('@/services/ipc/launch-open.service').then(({ installLaunchFileOpener }) => {
+      void installLaunchFileOpener();
+    });
+
     prefetchShellCatalogAfterBootstrap();
     hydrateAiConversationAfterBootstrap();
 

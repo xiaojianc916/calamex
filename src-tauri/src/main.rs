@@ -23,7 +23,7 @@ use std::{
     time::Instant,
 };
 use tauri::{
-    Manager, WindowEvent,
+    Emitter, Manager, WindowEvent,
     menu::{MenuBuilder, MenuItemBuilder},
     tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent},
 };
@@ -68,14 +68,43 @@ macro_rules! timed_step {
 /// 初始化全局 tracing 订阅者：统一结构化日志经 fmt 层输出到 stderr（与原 eprintln 渠道一致）。
 /// 启用 env-filter，默认 info 级，可用 RUST_LOG 覆盖；默认的 tracing-log 桥接会捕获 log::* 调用（如 workspace_watcher），不再被静默丢弃。
 /// try_init 失败（已存在全局订阅者，如测试）时静默跳过，避免 panic。
-fn init_tracing() {
-    use tracing_subscriber::{EnvFilter, fmt};
+fn init_tracing() -> Option<tracing_appender::non_blocking::WorkerGuard> {
+    use tracing_subscriber::{
+        EnvFilter, fmt, layer::SubscriberExt, util::SubscriberInitExt,
+    };
 
     let filter = EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info"));
-    let _ = fmt()
-        .with_env_filter(filter)
-        .with_writer(std::io::stderr)
+
+    // 文件日志：按天滚动写入 ~/.calamex/logs/calamex.<date>.log，保留最近 7 天，非阻塞写。
+    // 任一步失败都降级为「仅 stderr」，绝不阻断启动。返回的 guard 必须存活至进程退出，
+    // 否则后台写线程会被提前 drop、丢失缓冲日志。
+    let log_dir = storage_paths::local_root().join("logs");
+    let (file_layer, guard) = match std::fs::create_dir_all(&log_dir).ok().and_then(|_| {
+        tracing_appender::rolling::Builder::new()
+            .rotation(tracing_appender::rolling::Rotation::DAILY)
+            .filename_prefix("calamex")
+            .filename_suffix("log")
+            .max_log_files(7)
+            .build(&log_dir)
+            .ok()
+    }) {
+        Some(file_appender) => {
+            let (non_blocking, guard) = tracing_appender::non_blocking(file_appender);
+            let layer = fmt::layer().with_ansi(false).with_writer(non_blocking);
+            (Some(layer), Some(guard))
+        }
+        None => (None, None),
+    };
+
+    // env-filter 默认 info 级，可用 RUST_LOG 覆盖；try_init 会安装 tracing-log 桥接，
+    // log::* 调用继续被捕获。失败（已有全局订阅者，如测试）时静默跳过。
+    let _ = tracing_subscriber::registry()
+        .with(filter)
+        .with(fmt::layer().with_writer(std::io::stderr))
+        .with(file_layer)
         .try_init();
+
+    guard
 }
 
 // === 生命周期 ============================================================
@@ -111,6 +140,36 @@ fn reveal_main_window<R: tauri::Runtime>(app_handle: &tauri::AppHandle<R>) {
     let _ = window.show();
     let _ = window.unminimize();
     let _ = window.set_focus();
+}
+
+const OPEN_FILE_EVENT: &str = "calamex://open-file";
+
+/// 从进程启动参数中提取可打开的脚本路径（关联文件双击 / 命令行传入）。
+/// 跳过 argv[0]（程序自身）与以 - 开头的选项，仅保留确实存在的 .sh/.bash 文件。
+fn extract_openable_files(argv: &[String]) -> Vec<String> {
+    argv.iter()
+        .skip(1)
+        .filter(|arg| !arg.starts_with('-'))
+        .filter(|arg| {
+            let path = std::path::Path::new(arg.as_str());
+            let is_shell = path
+                .extension()
+                .and_then(|ext| ext.to_str())
+                .map(|ext| ext.eq_ignore_ascii_case("sh") || ext.eq_ignore_ascii_case("bash"))
+                .unwrap_or(false);
+            is_shell && path.is_file()
+        })
+        .cloned()
+        .collect()
+}
+
+/// 把启动参数里的待打开文件逐个发往前端（事件名 calamex://open-file，payload 为绝对路径）。
+fn emit_open_files<R: tauri::Runtime>(app_handle: &tauri::AppHandle<R>, argv: &[String]) {
+    for path in extract_openable_files(argv) {
+        if let Err(error) = app_handle.emit(OPEN_FILE_EVENT, path.clone()) {
+            tracing::warn!("failed to emit open-file event for {path}: {error}");
+        }
+    }
 }
 
 /// 统一退出清理：幂等地收口所有后台资源（终端会话、LSP、SSH 连接池、ACP 宿主连接）。
@@ -261,7 +320,7 @@ fn main() {
         }
     }
 
-    init_tracing();
+    let _tracing_guard = init_tracing();
 
     // 进程树崩溃兜底（Windows）：把当前进程加入 KILL_ON_JOB_CLOSE 的 Job Object，使本进程
     // 一旦非优雅消失（崩溃 / 被强杀）时，OS 连带终结其后派生的全部子孙进程（node 边车 /
@@ -281,6 +340,12 @@ fn main() {
 
     let builder_started_at = Instant::now();
     let app = tauri::Builder::default()
+        .plugin(tauri_plugin_single_instance::init(|app, argv, _cwd| {
+            // 二次启动拦截：已有实例运行时，新进程（如双击关联文件）的启动参数回流到这里。
+            // 显示主窗口并把待打开文件转发给前端，新进程随后自动退出，避免多开。
+            reveal_main_window(app);
+            emit_open_files(app, &argv);
+        }))
         .register_asynchronous_uri_scheme_protocol("favicon", |context, request, responder| {
             let app_handle = context.app_handle().clone();
             tauri::async_runtime::spawn(async move {
@@ -292,6 +357,15 @@ fn main() {
         .plugin(tauri_plugin_fs::init())
         .plugin(tauri_plugin_store::Builder::default().build())
         .plugin(tauri_plugin_opener::init())
+        .plugin(
+            tauri_plugin_window_state::Builder::new()
+                .with_state_flags(
+                    tauri_plugin_window_state::StateFlags::SIZE
+                        | tauri_plugin_window_state::StateFlags::POSITION
+                        | tauri_plugin_window_state::StateFlags::MAXIMIZED,
+                )
+                .build(),
+        )
         .manage(AiEditState::default())
         .manage(AppLifecycleState::default())
         .manage(TerminalSessionState::default())
@@ -381,6 +455,23 @@ fn main() {
                         window.set_background_color(Some(tauri::window::Color(250, 250, 250, 255)));
                     let _ = window.show();
                     let _ = window.set_focus();
+                });
+            }
+
+            // 冷启动关联文件打开：进程首次启动（非二次实例）时，关联文件路径在 argv 中。
+            // 前端事件监听器要等 Vue 挂载后才注册，存在竞态——此处延迟后按 [1500ms, 2500ms]
+            // 重发，由前端按路径去重，确保「冷启动双击 .sh」必定打开对应文件。
+            {
+                let open_files_app = app.handle().clone();
+                std::thread::spawn(move || {
+                    let argv: Vec<String> = std::env::args().collect();
+                    if extract_openable_files(&argv).is_empty() {
+                        return;
+                    }
+                    for delay_ms in [1500_u64, 2500_u64] {
+                        std::thread::sleep(std::time::Duration::from_millis(delay_ms));
+                        emit_open_files(&open_files_app, &argv);
+                    }
                 });
             }
 

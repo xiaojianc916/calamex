@@ -1,568 +1,205 @@
-// 1.mjs — Kimi-fix ②：首个 prompt 之前开放 ACP 配置项发现（会话级配置流 config:{thread_id}）
-// 单一事件通道，不改命令返回类型/契约/bindings。先建后用、按域、无新旧杂糅。
-import { readFileSync, writeFileSync } from 'node:fs';
-import { join } from 'node:path';
+#!/usr/bin/env node
+// 仅修补 src-tauri/src/main.rs（打包加固 + 关联文件打开），LF/CRLF 兼容、幂等可重跑。
+// 用法（仓库根目录）：node 2.mjs   或   node 2.mjs <仓库根目录>
+import { readFileSync, writeFileSync, existsSync } from 'node:fs';
+import { join, resolve } from 'node:path';
 
-const ROOT = process.env.WORKSPACE_ROOT ?? 'd:/com.xiaojianc/my_desktop_app';
-const t = (...xs) => xs.join('\n');
-const toLf = (s) => s.replace(/\r\n/g, '\n');
-
-function replaceOnce(src, oldStr, newStr, tag) {
-  const i = src.indexOf(oldStr);
-  if (i === -1) throw new Error(`[${tag}] 锚点未找到`);
-  if (src.indexOf(oldStr, i + oldStr.length) !== -1) throw new Error(`[${tag}] 锚点不唯一`);
-  return src.slice(0, i) + newStr + src.slice(i + oldStr.length);
+const ROOT = resolve(process.argv.slice(2).find((a) => !a.startsWith('--')) ?? process.cwd());
+const REL = 'src-tauri/src/main.rs';
+if (!existsSync(join(ROOT, REL))) {
+  console.error(`✗ 找不到 ${REL}，请在 calamex 仓库根目录运行。当前：${ROOT}`);
+  process.exit(1);
 }
 
-function applyEdits(relPath, edits) {
-  const abs = join(ROOT, relPath);
-  let src = toLf(readFileSync(abs, 'utf8'));
-  for (const [tag, oldStr, newStr] of edits) src = replaceOnce(src, oldStr, newStr, `${relPath} :: ${tag}`);
-  writeFileSync(abs, src, 'utf8');
-  console.log(`✓ ${relPath} （${edits.length} 处）`);
+const raw = readFileSync(join(ROOT, REL), 'utf8');
+const isCRLF = raw.includes('\r\n');
+let s = raw.replace(/\r\n/g, '\n'); // 归一化为 LF 再匹配
+
+const log = [];
+let hadError = false;
+function patch(label, find, repl, marker) {
+  if (s.includes(marker)) { log.push(`· 跳过  ${label}`); return; }
+  if (!s.includes(find)) { log.push(`✗ 失败  ${label}（锚点仍未找到，请手动检查）`); hadError = true; return; }
+  s = s.replace(find, () => repl);
+  log.push(`✓ 完成  ${label}`);
 }
 
-/* ───────────────────────── src-tauri/src/acp/host.rs ───────────────────────── */
-applyEdits('src-tauri/src/acp/host.rs', [
-  ['H1 struct field',
-    t(
-      '    /// 流式帧下沉口克隆：供回合发起时主动以前端键重放缓存的可用命令（sink 内重写表只在帧自然到达',
-      '    /// 时生效，重放是宿主侧主动构造帧，故宿主直接持 emit）。',
-      '    emit: StreamEmitter,',
-      '}',
-    ),
-    t(
-      '    /// ACP 会话 id ↔ 该会话「会话级配置流」前端订阅键（约定 `config:{thread_id}`）。',
-      '    /// 与 stream_key_overrides（回合级、prompt 结束即移除）正交：本表在 ai_ensure_acp_session',
-      '    /// 握手时由 bind_config_stream 持久登记，使 Kimi 等外部 agent 在 session/new 之后经 setTimeout(0)',
-      '    /// 一次性下发的 available_commands_update / config_option_update 帧，能在「首个 prompt 之前」即被',
-      '    /// sink 额外路由到该稳定键、抵达前端（回合级重写表此刻尚未登记，自然转发会被前端按键过滤丢弃）。',
-      '    config_stream_by_session: Arc<Mutex<HashMap<String, String>>>,',
-      '    /// 流式帧下沉口克隆：供回合发起时主动以前端键重放缓存的可用命令（sink 内重写表只在帧自然到达',
-      '    /// 时生效，重放是宿主侧主动构造帧，故宿主直接持 emit）。',
-      '    emit: StreamEmitter,',
-      '}',
-    ),
-  ],
-  ['H2 spawn clones',
-    t(
-      '        let config_options_cache_for_sink = config_options_by_session.clone();',
-      '',
-      '        // emit 克隆留给宿主侧主动重放（sink 内的重写表只在帧自然到达时生效）。',
-      '        let emit_for_host = emit.clone();',
-    ),
-    t(
-      '        let config_options_cache_for_sink = config_options_by_session.clone();',
-      '',
-      '        // 会话级配置流订阅键表（约定 config:{thread_id}）：bind_config_stream 握手时登记，sink 据此把',
-      '        // 一次性 available_commands_update / config_option_update 额外路由到该稳定键，实现首个 prompt 前发现。',
-      '        let config_stream_by_session: Arc<Mutex<HashMap<String, String>>> =',
-      '            Arc::new(Mutex::new(HashMap::new()));',
-      '        let config_stream_for_sink = config_stream_by_session.clone();',
-      '        // sink 主动构造「额外路由帧」也需 emit；与 emit_for_host 同源，互不干扰（Fn 可多次调用）。',
-      '        let emit_for_sink_route = emit.clone();',
-      '',
-      '        // emit 克隆留给宿主侧主动重放（sink 内的重写表只在帧自然到达时生效）。',
-      '        let emit_for_host = emit.clone();',
-    ),
-  ],
-  ['H3 sink route',
-    t(
-      '            if let Some(acp_session_id) = frame.session_id.as_deref() {',
-      '                if let Some(commands) = extract_available_commands_update(&frame.event) {',
-      '                    commands_cache_for_sink',
-      '                        .lock()',
-      '                        .insert(acp_session_id.to_string(), commands);',
-      '                }',
-      '                if let Some(config_options) = extract_config_option_update(&frame.event) {',
-      '                    config_options_cache_for_sink',
-      '                        .lock()',
-      '                        .insert(acp_session_id.to_string(), config_options);',
-      '                }',
-      '            }',
-    ),
-    t(
-      '            if let Some(acp_session_id) = frame.session_id.as_deref() {',
-      '                // 会话级配置流是否已绑定稳定前端键（ai_ensure_acp_session 握手时登记）。',
-      '                let config_stream_key =',
-      '                    config_stream_for_sink.lock().get(acp_session_id).cloned();',
-      '                if let Some(commands) = extract_available_commands_update(&frame.event) {',
-      '                    if let Some(stream_key) = config_stream_key.as_deref() {',
-      '                        // 首个 prompt 之前：把一次性可用命令额外路由到稳定配置流键（回合级重写表此刻未登记）。',
-      '                        emit_for_sink_route(AcpStreamFrame {',
-      '                            session_id: Some(stream_key.to_string()),',
-      '                            seq: frame.seq,',
-      '                            event: build_available_commands_event(stream_key, &commands),',
-      '                        });',
-      '                    }',
-      '                    commands_cache_for_sink',
-      '                        .lock()',
-      '                        .insert(acp_session_id.to_string(), commands);',
-      '                }',
-      '                if let Some(config_options) = extract_config_option_update(&frame.event) {',
-      '                    if let Some(stream_key) = config_stream_key.as_deref() {',
-      '                        // 首个 prompt 之前：把一次性配置项（含模型选择器）额外路由到稳定配置流键。',
-      '                        emit_for_sink_route(AcpStreamFrame {',
-      '                            session_id: Some(stream_key.to_string()),',
-      '                            seq: frame.seq,',
-      '                            event: build_config_option_update_event(stream_key, &config_options),',
-      '                        });',
-      '                    }',
-      '                    config_options_cache_for_sink',
-      '                        .lock()',
-      '                        .insert(acp_session_id.to_string(), config_options);',
-      '                }',
-      '            }',
-    ),
-  ],
-  ['H4 Ok(Self) field',
-    t(
-      '            stream_key_overrides,',
-      '            available_commands_by_session,',
-      '            config_options_by_session,',
-      '            emit: emit_for_host,',
-      '        })',
-    ),
-    t(
-      '            stream_key_overrides,',
-      '            available_commands_by_session,',
-      '            config_options_by_session,',
-      '            config_stream_by_session,',
-      '            emit: emit_for_host,',
-      '        })',
-    ),
-  ],
-  ['H5 bind_config_stream',
-    t(
-      '        self.config_options_by_thread',
-      '            .lock()',
-      '            .get(thread_key)',
-      '            .cloned()',
-      '    }',
-      '',
-      '    /// 触发检查点回滚（扩展方法 `calamex.dev/checkpoint/restore`）。',
-    ),
-    t(
-      '        self.config_options_by_thread',
-      '            .lock()',
-      '            .get(thread_key)',
-      '            .cloned()',
-      '    }',
-      '',
-      '    /// 为某线程的当前 ACP 会话绑定「会话级配置流」前端订阅键（约定 `config:{thread_id}`），用于在',
-      '    /// 「首个 prompt 之前」就把 agent 公示的可用命令 / 可配置项推达前端选择器。',
-      '    ///',
-      '    /// 仅在本宿主已绑定该 thread_id 的会话时执行（命中返回 true；空 thread / 未绑定返回 false 作为',
-      '    /// 安全空操作，绝不在此新建会话）。登记后立即以该键重放一次已缓存的 config_options /',
-      '    /// available_commands 兜底——覆盖「快照在握手前已抵达并落缓存」的情形；至于握手之后才经',
-      '    /// setTimeout(0) 抵达的一次性帧，则由 sink 依本表额外路由补达（见 spawn 内 sink 注释）。',
-      '    /// 幂等：重复绑定同键只是覆盖登记 + 再重放一次（前端 applyConfigOptionUpdate 为整快照替换，幂等）。',
-      '    pub fn bind_config_stream(&self, thread_id: &str, config_stream_key: &str) -> bool {',
-      '        let thread_key = thread_id.trim();',
-      '        if thread_key.is_empty() {',
-      '            return false;',
-      '        }',
-      '        let stream_key = config_stream_key.trim();',
-      '        if stream_key.is_empty() {',
-      '            return false;',
-      '        }',
-      '        let session_id = self.sessions.lock().get(thread_key).cloned();',
-      '        let Some(session_id) = session_id else {',
-      '            return false;',
-      '        };',
-      '        let acp_session_id = session_id.to_string();',
-      '        self.config_stream_by_session',
-      '            .lock()',
-      '            .insert(acp_session_id.clone(), stream_key.to_string());',
-      '        // 兜底重放：覆盖一次性帧在握手前已抵达并落缓存的情形（之后到达的帧由 sink 额外路由补达）。',
-      '        self.replay_config_options(&acp_session_id, stream_key);',
-      '        self.replay_available_commands(&acp_session_id, stream_key);',
-      '        true',
-      '    }',
-      '',
-      '    /// 触发检查点回滚（扩展方法 `calamex.dev/checkpoint/restore`）。',
-    ),
-  ],
-]);
+// 1) 引入 Emitter
+patch('引入 Emitter',
+  'use tauri::{\n    Manager, WindowEvent,',
+  'use tauri::{\n    Emitter, Manager, WindowEvent,',
+  '    Emitter, Manager, WindowEvent,');
 
-/* ─────────────────── src-tauri/src/commands/ai/gateway.rs ─────────────────── */
-applyEdits('src-tauri/src/commands/ai/gateway.rs', [
-  ['G1 doc',
-    t(
-      '/// 取代 ai_get_session_config_options：配置项发现统一走事件通道，握手不再返回快照。经',
-      '/// get_or_spawn_backend 懒建立目标后端宿主后 ensure_session 建立/复用会话——这会触发外部 agent',
-      '/// （如 Kimi）在 session/new 之后下发一次性 config_option_update 通知（宿主缓存、回合发起时以',
-      '/// 前端键重放），前端据此填充选择器。thread_id / backend 先行校验；未知 backend 报错。',
-    ),
-    t(
-      '/// 取代 ai_get_session_config_options：配置项发现统一走事件通道，握手不再返回快照。经',
-      '/// get_or_spawn_backend 懒建立目标后端宿主后 ensure_session 建立/复用会话——这会触发外部 agent',
-      '/// （如 Kimi）在 session/new 之后下发一次性 config_option_update 通知。握手末尾再 bind_config_stream',
-      '/// 为该会话绑定稳定的「会话级配置流」前端键（config:{thread_id}）：宿主立即重放已缓存快照、并令 sink',
-      '/// 把随后抵达的一次性帧额外路由到该键，使前端在「首个 prompt 之前」即可填充选择器/命令面板（不再依赖',
-      '/// 回合发起时的重写重放）。thread_id / backend 先行校验；未知 backend 报错。',
-    ),
-  ],
-  ['G2 bind call',
-    t(
-      '    host.ensure_session(thread_id, workspace_root_path, None)',
-      '        .await',
-      '        .map_err(|error| format!("AI_ENSURE_ACP_SESSION_FAILED: {error}"))?;',
-      '    Ok(())',
-      '}',
-    ),
-    t(
-      '    host.ensure_session(thread_id, workspace_root_path, None)',
-      '        .await',
-      '        .map_err(|error| format!("AI_ENSURE_ACP_SESSION_FAILED: {error}"))?;',
-      '    // 首个 prompt 之前即开放配置项发现：为该会话绑定稳定的「会话级配置流」前端订阅键',
-      '    // （约定 config:{thread_id}，与前端 useAcpSessionConfigOptions 订阅键一致）。绑定后宿主立即重放',
-      '    // 已缓存快照、并令 sink 把随后经 setTimeout(0) 抵达的一次性 config_option_update /',
-      '    // available_commands_update 额外路由到该键——使模型选择器/命令面板在未发首条消息时即可填充。',
-      '    host.bind_config_stream(thread_id, &format!("config:{thread_id}"));',
-      '    Ok(())',
-      '}',
-    ),
-  ],
-]);
+// 2) 关联文件解析/广播函数（插在 reveal_main_window 之后）
+const revealFn =
+`fn reveal_main_window<R: tauri::Runtime>(app_handle: &tauri::AppHandle<R>) {
+    let Some(window) = app_handle.get_webview_window(MAIN_WINDOW_LABEL) else {
+        return;
+    };
+    let _ = window.show();
+    let _ = window.unminimize();
+    let _ = window.set_focus();
+}`;
+const openFns =
+`
 
-/* ──────────────── src/composables/ai/useAcpSessionConfigOptions.ts ──────────────── */
-applyEdits('src/composables/ai/useAcpSessionConfigOptions.ts', [
-  ['C1 vue import',
-    "import { computed, ref } from 'vue';",
-    "import { computed, onScopeDispose, ref } from 'vue';",
-  ],
-  ['C2 listener import',
-    t(
-      '  parseAcpSessionConfigOptions,',
-      "} from '@/components/business/ai/thread/projection/from-acp-session-config-options';",
-      "import { aiService } from '@/services/ipc/ai.service';",
-    ),
-    t(
-      '  parseAcpSessionConfigOptions,',
-      "} from '@/components/business/ai/thread/projection/from-acp-session-config-options';",
-      "import { subscribeSidecarSessionStream } from '@/composables/ai/sidecar-stream-listener';",
-      "import { aiService } from '@/services/ipc/ai.service';",
-    ),
-  ],
-  ['C3 stream key const',
-    t(
-      '/** 握手后短等 agent 首帧 config_option_update 的宽限窗口（ms）：到期判定为「已公示、空」。 */',
-      'const READY_GRACE_MS = 1200;',
-    ),
-    t(
-      '/** 握手后短等 agent 首帧 config_option_update 的宽限窗口（ms）：到期判定为「已公示、空」。 */',
-      'const READY_GRACE_MS = 1200;',
-      '',
-      '/**',
-      ' * 「会话级配置流」前端订阅键约定（须与后端 ai_ensure_acp_session 的 bind_config_stream 完全一致）：',
-      ' * 宿主把 agent 在 session/new 之后一次性下发的 config_option_update 额外路由到该稳定键，使选择器在',
-      ' * 「首个 prompt 之前」即可填充，不再依赖回合发起时的重写重放。',
-      ' */',
-      'const configStreamKey = (threadId: string): string => `config:${threadId}`;',
-    ),
-  ],
-  ['C4 instance var',
-    t(
-      '  let activeThreadId: string | null = null;',
-      '  let readyGraceTimer: ReturnType<typeof setTimeout> | null = null;',
-    ),
-    t(
-      '  let activeThreadId: string | null = null;',
-      '  let readyGraceTimer: ReturnType<typeof setTimeout> | null = null;',
-      '  // 会话级配置流订阅取消句柄（订阅 config:{threadId}）：每次握手切线程时先退订旧的再订阅新的。',
-      '  let configStreamUnlisten: (() => void) | null = null;',
-    ),
-  ],
-  ['C5 subscribe helpers',
-    t(
-      '  function clearReadyGrace(): void {',
-      '    if (readyGraceTimer !== null) {',
-      '      clearTimeout(readyGraceTimer);',
-      '      readyGraceTimer = null;',
-      '    }',
-      '  }',
-    ),
-    t(
-      '  function clearReadyGrace(): void {',
-      '    if (readyGraceTimer !== null) {',
-      '      clearTimeout(readyGraceTimer);',
-      '      readyGraceTimer = null;',
-      '    }',
-      '  }',
-      '',
-      '  function teardownConfigStream(): void {',
-      '    if (configStreamUnlisten !== null) {',
-      '      configStreamUnlisten();',
-      '      configStreamUnlisten = null;',
-      '    }',
-      '  }',
-      '',
-      '  // 订阅 config:{threadId} 会话级配置流：宿主把一次性 config_option_update 额外路由到该键，在首个',
-      '  // prompt 之前抵达本订阅 → 写入选择器。available_commands_update 由命令面板的独立 composable 处理，',
-      '  // 这里只认配置项帧。异步订阅就绪后若线程已切走则立即退订（防竞态泄漏）。',
-      '  function subscribeConfigStream(threadId: string): void {',
-      '    teardownConfigStream();',
-      '    void subscribeSidecarSessionStream(configStreamKey(threadId), (event) => {',
-      '      if (activeThreadId !== threadId) {',
-      '        return;',
-      '      }',
-      "      if (event.type === 'config_option_update') {",
-      '        applyConfigOptionUpdate(event.configOptions);',
-      '      }',
-      '    }).then((unlisten) => {',
-      '      if (activeThreadId !== threadId) {',
-      '        unlisten();',
-      '        return;',
-      '      }',
-      '      configStreamUnlisten = unlisten;',
-      '    });',
-      '  }',
-    ),
-  ],
-  ['C6 subscribe before handshake',
-    t(
-      '    activeThreadId = threadId;',
-      '    clearReadyGrace();',
-      "    state.value = { kind: 'discovering' };",
-      '    try {',
-    ),
-    t(
-      '    activeThreadId = threadId;',
-      '    clearReadyGrace();',
-      "    state.value = { kind: 'discovering' };",
-      '    // 先订阅会话级配置流，再握手：确保宿主握手末尾绑定/路由的一次性 config_option_update 不被漏接。',
-      '    subscribeConfigStream(threadId);',
-      '    try {',
-    ),
-  ],
-  ['C7 reset + dispose',
-    t(
-      '  function reset(): void {',
-      '    clearReadyGrace();',
-      '    activeThreadId = null;',
-      '    isSwitching.value = false;',
-      "    state.value = { kind: 'idle' };",
-      '  }',
-    ),
-    t(
-      '  function reset(): void {',
-      '    clearReadyGrace();',
-      '    teardownConfigStream();',
-      '    activeThreadId = null;',
-      '    isSwitching.value = false;',
-      "    state.value = { kind: 'idle' };",
-      '  }',
-      '',
-      '  onScopeDispose(() => {',
-      '    clearReadyGrace();',
-      '    teardownConfigStream();',
-      '  });',
-    ),
-  ],
-]);
+const OPEN_FILE_EVENT: &str = "calamex://open-file";
 
-/* ────────────── src/composables/ai/useAcpSessionConfigOptions.spec.ts ────────────── */
-applyEdits('src/composables/ai/useAcpSessionConfigOptions.spec.ts', [
-  ['CS1 hoist + mock',
-    t(
-      'const { ensureAcpSession, setSessionConfigOption } = vi.hoisted(() => ({',
-      '  ensureAcpSession: vi.fn(),',
-      '  setSessionConfigOption: vi.fn(),',
-      '}));',
-      '',
-      "vi.mock('@/services/ipc/ai.service', () => ({",
-      '  aiService: {',
-      '    ensureAcpSession,',
-      '    setSessionConfigOption,',
-      '  },',
-      '}));',
-    ),
-    t(
-      'const { ensureAcpSession, setSessionConfigOption, subscribeSidecarSessionStream } = vi.hoisted(',
-      '  () => ({',
-      '    ensureAcpSession: vi.fn(),',
-      '    setSessionConfigOption: vi.fn(),',
-      '    subscribeSidecarSessionStream: vi.fn(),',
-      '  }),',
-      ');',
-      '',
-      "vi.mock('@/services/ipc/ai.service', () => ({",
-      '  aiService: {',
-      '    ensureAcpSession,',
-      '    setSessionConfigOption,',
-      '  },',
-      '}));',
-      '',
-      "vi.mock('@/composables/ai/sidecar-stream-listener', () => ({",
-      '  subscribeSidecarSessionStream,',
-      '}));',
-    ),
-  ],
-  ['CS2 beforeEach default',
-    t(
-      '  beforeEach(() => {',
-      '    vi.clearAllMocks();',
-      '    vi.useRealTimers();',
-      '  });',
-    ),
-    t(
-      '  beforeEach(() => {',
-      '    vi.clearAllMocks();',
-      '    vi.useRealTimers();',
-      '    subscribeSidecarSessionStream.mockResolvedValue(() => {});',
-      '  });',
-    ),
-  ],
-  ['CS3 subscribe assertion',
-    t(
-      "    expect(ensureAcpSession).toHaveBeenCalledWith({ threadId: 'thread-1', backend: 'kimi' });",
-      "    expect(vm.state.value.kind).toBe('discovering');",
-    ),
-    t(
-      "    expect(ensureAcpSession).toHaveBeenCalledWith({ threadId: 'thread-1', backend: 'kimi' });",
-      '    expect(subscribeSidecarSessionStream).toHaveBeenCalledWith(',
-      "      'config:thread-1',",
-      '      expect.any(Function),',
-      '    );',
-      "    expect(vm.state.value.kind).toBe('discovering');",
-    ),
-  ],
-  ['CS4 pre-prompt stream test',
-    "  it('marks unavailable when the handshake throws', async () => {",
-    t(
-      "  it('applies a pre-prompt config_option_update arriving on the session config stream', async () => {",
-      '    ensureAcpSession.mockResolvedValue(undefined);',
-      '    let streamHandler: ((event: unknown) => void) | null = null;',
-      '    subscribeSidecarSessionStream.mockImplementation((_sessionId: string, onEvent) => {',
-      '      streamHandler = onEvent;',
-      '      return Promise.resolve(() => {});',
-      '    });',
-      '    const vm = withScope(() => useAcpSessionConfigOptions());',
-      '',
-      "    await vm.ensureAcpSession('thread-1', 'kimi');",
-      "    expect(vm.state.value.kind).toBe('discovering');",
-      '',
-      "    streamHandler?.({ type: 'config_option_update', configOptions: buildConfigOptions() });",
-      '',
-      "    expect(vm.state.value.kind).toBe('ready');",
-      '    expect(vm.configOptions.value).toHaveLength(2);',
-      '  });',
-      '',
-      "  it('marks unavailable when the handshake throws', async () => {",
-    ),
-  ],
-]);
+/// 从进程启动参数中提取可打开的脚本路径（关联文件双击 / 命令行传入）。
+/// 跳过 argv[0]（程序自身）与以 - 开头的选项，仅保留确实存在的 .sh/.bash 文件。
+fn extract_openable_files(argv: &[String]) -> Vec<String> {
+    argv.iter()
+        .skip(1)
+        .filter(|arg| !arg.starts_with('-'))
+        .filter(|arg| {
+            let path = std::path::Path::new(arg.as_str());
+            let is_shell = path
+                .extension()
+                .and_then(|ext| ext.to_str())
+                .map(|ext| ext.eq_ignore_ascii_case("sh") || ext.eq_ignore_ascii_case("bash"))
+                .unwrap_or(false);
+            is_shell && path.is_file()
+        })
+        .cloned()
+        .collect()
+}
 
-/* ─────────────── src/components/business/ai/shell/AiAssistantPanel.vue ─────────────── */
-applyEdits('src/components/business/ai/shell/AiAssistantPanel.vue', [
-  ['P1 vue import',
-    "import { computed, defineAsyncComponent, onMounted, ref } from 'vue';",
-    "import { computed, defineAsyncComponent, onMounted, ref, watch } from 'vue';",
-  ],
-  ['P2 discovery helper + backend change',
-    t(
-      '// 切换会话 Agent 后端后，清掉上一条（可能是 Kimi 未接入）的错误提示。',
-      'const handleAgentBackendChange = (agent: unknown): void => {',
-      '  if (!isSessionAgentBackend(agent)) {',
-      '    return;',
-      '  }',
-      '',
-      '  sessionAgentBackend.value = agent;',
-      "  assistant.error.value = '';",
-      '};',
-    ),
-    t(
-      '// 首个 prompt 之前即开放配置项发现：仅 kimi(ACP) 会话需要——握手建立会话即触发 agent 在 session/new',
-      '// 之后一次性下发 config_option_update（含模型选择器），经会话级配置流抵达选择器；builtin 主模型走',
-      '// ai.json 全局配置、不经此路径。挂载 / 切到 kimi / 切换会话时各触发一次（composable 内部幂等防竞态）。',
-      'const ensureKimiSessionConfigDiscovery = (): void => {',
-      "  if (sessionAgentBackend.value !== 'kimi') {",
-      '    return;',
-      '  }',
-      '',
-      '  const threadId = assistant.activeConversationId.value;',
-      '  if (!threadId) {',
-      '    return;',
-      '  }',
-      '',
-      "  void assistant.acpSessionConfigOptions.ensureAcpSession(threadId, 'kimi', props.workspaceRootPath);",
-      '};',
-      '',
-      '// 切换会话 Agent 后端后，清掉上一条（可能是 Kimi 未接入）的错误提示。',
-      'const handleAgentBackendChange = (agent: unknown): void => {',
-      '  if (!isSessionAgentBackend(agent)) {',
-      '    return;',
-      '  }',
-      '',
-      '  sessionAgentBackend.value = agent;',
-      "  assistant.error.value = '';",
-      '',
-      '  // 切到 kimi：立即开放配置项发现；切回 builtin：复位选择器状态（builtin 不走 ACP 配置项）。',
-      "  if (agent === 'kimi') {",
-      '    ensureKimiSessionConfigDiscovery();',
-      '  } else {',
-      '    assistant.acpSessionConfigOptions.reset();',
-      '  }',
-      '};',
-    ),
-  ],
-  ['P3 onMounted + watch',
-    t(
-      'onMounted(() => {',
-      '  // 启动打点（阶段0·量化）：子组件渲染挂载完成（首帧）。',
-      "  markStartup('ai-assistant-panel-mounted');",
-      '  assistant',
-      '    .loadConfig()',
-      '    .then(() => {',
-      '      settingsDraft.value = cloneAiConfigPayload(assistant.config.value);',
-      '    })',
-      '    .catch(() => undefined);',
-      '});',
-    ),
-    t(
-      'onMounted(() => {',
-      '  // 启动打点（阶段0·量化）：子组件渲染挂载完成（首帧）。',
-      "  markStartup('ai-assistant-panel-mounted');",
-      '  assistant',
-      '    .loadConfig()',
-      '    .then(() => {',
-      '      settingsDraft.value = cloneAiConfigPayload(assistant.config.value);',
-      '    })',
-      '    .catch(() => undefined);',
-      '  // 默认即 kimi 会话：挂载即开放「首个 prompt 之前」的配置项发现，模型选择器无需先发消息即可填充。',
-      '  ensureKimiSessionConfigDiscovery();',
-      '});',
-      '',
-      '// 切换会话（新建 / 打开历史）后，为 kimi 会话重新开放配置项发现（线程级会话，配置项随会话变化）。',
-      'watch(',
-      '  () => assistant.activeConversationId.value,',
-      '  () => {',
-      '    ensureKimiSessionConfigDiscovery();',
-      '  },',
-      ');',
-    ),
-  ],
-]);
+/// 把启动参数里的待打开文件逐个发往前端（事件名 calamex://open-file，payload 为绝对路径）。
+fn emit_open_files<R: tauri::Runtime>(app_handle: &tauri::AppHandle<R>, argv: &[String]) {
+    for path in extract_openable_files(argv) {
+        if let Err(error) = app_handle.emit(OPEN_FILE_EVENT, path.clone()) {
+            tracing::warn!("failed to emit open-file event for {path}: {error}");
+        }
+    }
+}`;
+patch('关联文件解析/广播函数', revealFn, revealFn + openFns, 'fn extract_openable_files');
 
-/* ────────────── src/components/business/ai/shell/AiAssistantPanel.spec.ts ────────────── */
-applyEdits('src/components/business/ai/shell/AiAssistantPanel.spec.ts', [
-  ['PS1 mock ensureAcpSession',
-    t(
-      '      isSwitching: computed(() => false),',
-      '      loadConfigOptions: vi.fn().mockResolvedValue(undefined),',
-      '      selectConfigOption: vi.fn().mockResolvedValue(undefined),',
-      '      applyConfigOptionUpdate: vi.fn(),',
-    ),
-    t(
-      '      isSwitching: computed(() => false),',
-      '      ensureAcpSession: vi.fn().mockResolvedValue(undefined),',
-      '      loadConfigOptions: vi.fn().mockResolvedValue(undefined),',
-      '      selectConfigOption: vi.fn().mockResolvedValue(undefined),',
-      '      applyConfigOptionUpdate: vi.fn(),',
-    ),
-  ],
-]);
+// 3) init_tracing 改为文件滚动日志（返回 guard）
+const oldInit =
+`fn init_tracing() {
+    use tracing_subscriber::{EnvFilter, fmt};
 
-console.log('\n✅ Kimi-fix ② 已应用：会话级配置流 config:{thread_id}，首个 prompt 之前开放配置项发现。');
-console.log('下一步：node 1.mjs && pnpm typecheck && pnpm test（命令签名未变，无需 regen bindings）。');
+    let filter = EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info"));
+    let _ = fmt()
+        .with_env_filter(filter)
+        .with_writer(std::io::stderr)
+        .try_init();
+}`;
+const newInit =
+`fn init_tracing() -> Option<tracing_appender::non_blocking::WorkerGuard> {
+    use tracing_subscriber::{
+        EnvFilter, fmt, layer::SubscriberExt, util::SubscriberInitExt,
+    };
+
+    let filter = EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info"));
+
+    // 文件日志：按天滚动写入 ~/.calamex/logs/calamex.<date>.log，保留最近 7 天，非阻塞写。
+    // 任一步失败都降级为「仅 stderr」，绝不阻断启动。返回的 guard 必须存活至进程退出，
+    // 否则后台写线程会被提前 drop、丢失缓冲日志。
+    let log_dir = storage_paths::local_root().join("logs");
+    let (file_layer, guard) = match std::fs::create_dir_all(&log_dir).ok().and_then(|_| {
+        tracing_appender::rolling::Builder::new()
+            .rotation(tracing_appender::rolling::Rotation::DAILY)
+            .filename_prefix("calamex")
+            .filename_suffix("log")
+            .max_log_files(7)
+            .build(&log_dir)
+            .ok()
+    }) {
+        Some(file_appender) => {
+            let (non_blocking, guard) = tracing_appender::non_blocking(file_appender);
+            let layer = fmt::layer().with_ansi(false).with_writer(non_blocking);
+            (Some(layer), Some(guard))
+        }
+        None => (None, None),
+    };
+
+    // env-filter 默认 info 级，可用 RUST_LOG 覆盖；try_init 会安装 tracing-log 桥接，
+    // log::* 调用继续被捕获。失败（已有全局订阅者，如测试）时静默跳过。
+    let _ = tracing_subscriber::registry()
+        .with(filter)
+        .with(fmt::layer().with_writer(std::io::stderr))
+        .with(file_layer)
+        .try_init();
+
+    guard
+}`;
+patch('init_tracing 文件滚动日志', oldInit, newInit, 'WorkerGuard');
+
+// 4) 调用处保留 guard
+patch('保留日志 guard',
+  '\n    init_tracing();\n', '\n    let _tracing_guard = init_tracing();\n',
+  'let _tracing_guard = init_tracing();');
+
+// 5) single-instance 必须作为第一个插件
+const builderHead =
+`    let app = tauri::Builder::default()
+        .register_asynchronous_uri_scheme_protocol("favicon", |context, request, responder| {`;
+const builderNew =
+`    let app = tauri::Builder::default()
+        .plugin(tauri_plugin_single_instance::init(|app, argv, _cwd| {
+            // 二次启动拦截：已有实例运行时，新进程（如双击关联文件）的启动参数回流到这里。
+            // 显示主窗口并把待打开文件转发给前端，新进程随后自动退出，避免多开。
+            reveal_main_window(app);
+            emit_open_files(app, &argv);
+        }))
+        .register_asynchronous_uri_scheme_protocol("favicon", |context, request, responder| {`;
+patch('single-instance 插件', builderHead, builderNew, 'tauri_plugin_single_instance::init');
+
+// 6) window-state 插件（不含 VISIBLE，保持 visible:false 由代码控制）
+const openerLine = '        .plugin(tauri_plugin_opener::init())\n';
+patch('window-state 插件',
+  openerLine + '        .manage(AiEditState::default())',
+  openerLine +
+`        .plugin(
+            tauri_plugin_window_state::Builder::new()
+                .with_state_flags(
+                    tauri_plugin_window_state::StateFlags::SIZE
+                        | tauri_plugin_window_state::StateFlags::POSITION
+                        | tauri_plugin_window_state::StateFlags::MAXIMIZED,
+                )
+                .build(),
+        )
+        .manage(AiEditState::default())`,
+  'tauri_plugin_window_state::Builder');
+
+// 7) 冷启动关联文件：延迟多次重发，规避前端监听器注册竞态（前端按路径去重）
+const setupTail =
+`                });
+            }
+
+            emit_startup_step("tauri.setup.done", app_started_at, setup_started_at);`;
+const setupNew =
+`                });
+            }
+
+            // 冷启动关联文件打开：进程首次启动（非二次实例）时，关联文件路径在 argv 中。
+            // 前端事件监听器要等 Vue 挂载后才注册，存在竞态——此处延迟后按 [1500ms, 2500ms]
+            // 重发，由前端按路径去重，确保「冷启动双击 .sh」必定打开对应文件。
+            {
+                let open_files_app = app.handle().clone();
+                std::thread::spawn(move || {
+                    let argv: Vec<String> = std::env::args().collect();
+                    if extract_openable_files(&argv).is_empty() {
+                        return;
+                    }
+                    for delay_ms in [1500_u64, 2500_u64] {
+                        std::thread::sleep(std::time::Duration::from_millis(delay_ms));
+                        emit_open_files(&open_files_app, &argv);
+                    }
+                });
+            }
+
+            emit_startup_step("tauri.setup.done", app_started_at, setup_started_at);`;
+patch('冷启动关联文件重发', setupTail, setupNew, 'let open_files_app = app.handle().clone();');
+
+// 写回（还原原始换行风格）
+const out = isCRLF ? s.replace(/\n/g, '\r\n') : s;
+writeFileSync(join(ROOT, REL), out);
+
+console.log(`\n目标：${join(ROOT, REL)}`);
+console.log(`换行：${isCRLF ? 'CRLF（写回保持 CRLF）' : 'LF'}\n`);
+console.log(log.join('\n'));
+console.log('\n下一步：pnpm install  然后  pnpm tauri:build  本地验证编译与打包。');
+if (hadError) { console.log('\n⚠ 仍有锚点未命中，说明该文件已被改过或与仓库版本不同，请把 main.rs 发我手动核对。'); process.exit(2); }
+console.log('\nmain.rs 全部补好了。');

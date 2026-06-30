@@ -112,6 +112,18 @@
       "icons/ios/AppIcon-76x76@2x.png",
       "icons/ios/AppIcon-83.5x83.5@2x.png",
       "icons/ios/AppIcon-512@2x.png"
-    ]
+    ],
+    "windows": {
+      "webviewInstallMode": {
+        "type": "embedBootstrapper"
+      },
+      "nsis": {
+        "languages": [
+          "SimpChinese",
+          "English"
+        ],
+        "displayLanguageSelector": false
+      }
+    }
   }
 }
