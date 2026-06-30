@@ -1,10 +1,11 @@
 import type { ComputedRef, Ref } from 'vue';
-import { computed, ref } from 'vue';
+import { computed, onScopeDispose, ref } from 'vue';
 
 import {
   applyAcpConfigOptionUpdate,
   parseAcpSessionConfigOptions,
 } from '@/components/business/ai/thread/projection/from-acp-session-config-options';
+import { subscribeSidecarSessionStream } from '@/composables/ai/sidecar-stream-listener';
 import { aiService } from '@/services/ipc/ai.service';
 import type {
   IAcpSessionConfigOption,
@@ -15,6 +16,13 @@ import { toErrorMessage } from '@/utils/error/error';
 
 /** 握手后短等 agent 首帧 config_option_update 的宽限窗口（ms）：到期判定为「已公示、空」。 */
 const READY_GRACE_MS = 1200;
+
+/**
+ * 「会话级配置流」前端订阅键约定（须与后端 ai_ensure_acp_session 的 bind_config_stream 完全一致）：
+ * 宿主把 agent 在 session/new 之后一次性下发的 config_option_update 额外路由到该稳定键，使选择器在
+ * 「首个 prompt 之前」即可填充，不再依赖回合发起时的重写重放。
+ */
+const configStreamKey = (threadId: string): string => `config:${threadId}`;
 
 export interface IUseAcpSessionConfigOptionsReturn {
   state: Ref<TAcpSessionConfigOptions>;
@@ -47,6 +55,8 @@ export function useAcpSessionConfigOptions(): IUseAcpSessionConfigOptionsReturn 
 
   let activeThreadId: string | null = null;
   let readyGraceTimer: ReturnType<typeof setTimeout> | null = null;
+  // 会话级配置流订阅取消句柄（订阅 config:{threadId}）：每次握手切线程时先退订旧的再订阅新的。
+  let configStreamUnlisten: (() => void) | null = null;
 
   const configOptions = computed<IAcpSessionConfigOption[]>(() =>
     state.value.kind === 'ready' ? state.value.configOptions : [],
@@ -58,6 +68,34 @@ export function useAcpSessionConfigOptions(): IUseAcpSessionConfigOptionsReturn 
       clearTimeout(readyGraceTimer);
       readyGraceTimer = null;
     }
+  }
+
+  function teardownConfigStream(): void {
+    if (configStreamUnlisten !== null) {
+      configStreamUnlisten();
+      configStreamUnlisten = null;
+    }
+  }
+
+  // 订阅 config:{threadId} 会话级配置流：宿主把一次性 config_option_update 额外路由到该键，在首个
+  // prompt 之前抵达本订阅 → 写入选择器。available_commands_update 由命令面板的独立 composable 处理，
+  // 这里只认配置项帧。异步订阅就绪后若线程已切走则立即退订（防竞态泄漏）。
+  function subscribeConfigStream(threadId: string): void {
+    teardownConfigStream();
+    void subscribeSidecarSessionStream(configStreamKey(threadId), (event) => {
+      if (activeThreadId !== threadId) {
+        return;
+      }
+      if (event.type === 'config_option_update') {
+        applyConfigOptionUpdate(event.configOptions);
+      }
+    }).then((unlisten) => {
+      if (activeThreadId !== threadId) {
+        unlisten();
+        return;
+      }
+      configStreamUnlisten = unlisten;
+    });
   }
 
   function armReadyGrace(threadId: string): void {
@@ -84,6 +122,8 @@ export function useAcpSessionConfigOptions(): IUseAcpSessionConfigOptionsReturn 
     activeThreadId = threadId;
     clearReadyGrace();
     state.value = { kind: 'discovering' };
+    // 先订阅会话级配置流，再握手：确保宿主握手末尾绑定/路由的一次性 config_option_update 不被漏接。
+    subscribeConfigStream(threadId);
     try {
       await aiService.ensureAcpSession({
         threadId,
@@ -132,10 +172,16 @@ export function useAcpSessionConfigOptions(): IUseAcpSessionConfigOptionsReturn 
 
   function reset(): void {
     clearReadyGrace();
+    teardownConfigStream();
     activeThreadId = null;
     isSwitching.value = false;
     state.value = { kind: 'idle' };
   }
+
+  onScopeDispose(() => {
+    clearReadyGrace();
+    teardownConfigStream();
+  });
 
   return {
     state,

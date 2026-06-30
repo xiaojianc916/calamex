@@ -261,6 +261,7 @@ const createAssistantMock = (messagesList: IAiChatMessage[] = []) => {
       configOptions: computed(() => []),
       hasConfigOptions: computed(() => false),
       isSwitching: computed(() => false),
+      ensureAcpSession: vi.fn().mockResolvedValue(undefined),
       loadConfigOptions: vi.fn().mockResolvedValue(undefined),
       selectConfigOption: vi.fn().mockResolvedValue(undefined),
       applyConfigOptionUpdate: vi.fn(),

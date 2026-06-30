@@ -14,7 +14,7 @@
     "generate:web-picker": "tsx scripts/build-web-element-picker.ts",
     "dev": "pnpm run generate:shell-catalog && pnpm run generate:web-picker && vite --host 0.0.0.0 --port 1420",
     "pretauri:dev": "tsx scripts/check-dev-env.ts",
-    "build": "pnpm run generate:shell-catalog && pnpm run generate:web-picker && vue-tsc --noEmit && vite build",
+    "build": "pnpm run generate:shell-catalog && pnpm run generate:web-picker && vue-tsc --noEmit && vite build && node scripts/verify-dist.mjs",
     "preview": "vite preview",
     "format": "biome check --write src/ builtin-agent/src/ scripts/",
     "lint": "biome check src/",
@@ -32,7 +32,7 @@
     "guard": "tsx scripts/run-all-guards.ts",
     "tauri": "tsx scripts/run-tauri.ts",
     "tauri:dev": "tsx scripts/run-tauri.ts dev",
-    "tauri:build": "tsx scripts/run-tauri.ts build",
+    "tauri:build": "tsx scripts/run-tauri.ts build && node scripts/verify-bundle.mjs",
     "prepare": "lefthook install"
   },
   "dependencies": {

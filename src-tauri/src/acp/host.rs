@@ -87,6 +87,12 @@ pub struct AcpHost {
     /// 不再重发，仅靠回合内自然转发会被前端按键过滤丢弃 → 模型选择器恒空。sink 无条件按 ACP 会话 id
     /// 缓存，回合发起时以前端键重放，使选择器稳定填充。
     config_options_by_session: Arc<Mutex<HashMap<String, serde_json::Value>>>,
+    /// ACP 会话 id ↔ 该会话「会话级配置流」前端订阅键（约定 `config:{thread_id}`）。
+    /// 与 stream_key_overrides（回合级、prompt 结束即移除）正交：本表在 ai_ensure_acp_session
+    /// 握手时由 bind_config_stream 持久登记，使 Kimi 等外部 agent 在 session/new 之后经 setTimeout(0)
+    /// 一次性下发的 available_commands_update / config_option_update 帧，能在「首个 prompt 之前」即被
+    /// sink 额外路由到该稳定键、抵达前端（回合级重写表此刻尚未登记，自然转发会被前端按键过滤丢弃）。
+    config_stream_by_session: Arc<Mutex<HashMap<String, String>>>,
     /// 流式帧下沉口克隆：供回合发起时主动以前端键重放缓存的可用命令（sink 内重写表只在帧自然到达
     /// 时生效，重放是宿主侧主动构造帧，故宿主直接持 emit）。
     emit: StreamEmitter,
@@ -116,6 +122,14 @@ impl AcpHost {
             Arc::new(Mutex::new(HashMap::new()));
         let config_options_cache_for_sink = config_options_by_session.clone();
 
+        // 会话级配置流订阅键表（约定 config:{thread_id}）：bind_config_stream 握手时登记，sink 据此把
+        // 一次性 available_commands_update / config_option_update 额外路由到该稳定键，实现首个 prompt 前发现。
+        let config_stream_by_session: Arc<Mutex<HashMap<String, String>>> =
+            Arc::new(Mutex::new(HashMap::new()));
+        let config_stream_for_sink = config_stream_by_session.clone();
+        // sink 主动构造「额外路由帧」也需 emit；与 emit_for_host 同源，互不干扰（Fn 可多次调用）。
+        let emit_for_sink_route = emit.clone();
+
         // emit 克隆留给宿主侧主动重放（sink 内的重写表只在帧自然到达时生效）。
         let emit_for_host = emit.clone();
 
@@ -131,12 +145,31 @@ impl AcpHost {
             // 以 as_deref 借用避免每帧（含纯文本增量帧）对 session_id 的两次冗余 String 克隆——
             // 仅在确有一次性命令/配置帧命中、需要落缓存时才 to_string。
             if let Some(acp_session_id) = frame.session_id.as_deref() {
+                // 会话级配置流是否已绑定稳定前端键（ai_ensure_acp_session 握手时登记）。
+                let config_stream_key =
+                    config_stream_for_sink.lock().get(acp_session_id).cloned();
                 if let Some(commands) = extract_available_commands_update(&frame.event) {
+                    if let Some(stream_key) = config_stream_key.as_deref() {
+                        // 首个 prompt 之前：把一次性可用命令额外路由到稳定配置流键（回合级重写表此刻未登记）。
+                        emit_for_sink_route(AcpStreamFrame {
+                            session_id: Some(stream_key.to_string()),
+                            seq: frame.seq,
+                            event: build_available_commands_event(stream_key, &commands),
+                        });
+                    }
                     commands_cache_for_sink
                         .lock()
                         .insert(acp_session_id.to_string(), commands);
                 }
                 if let Some(config_options) = extract_config_option_update(&frame.event) {
+                    if let Some(stream_key) = config_stream_key.as_deref() {
+                        // 首个 prompt 之前：把一次性配置项（含模型选择器）额外路由到稳定配置流键。
+                        emit_for_sink_route(AcpStreamFrame {
+                            session_id: Some(stream_key.to_string()),
+                            seq: frame.seq,
+                            event: build_config_option_update_event(stream_key, &config_options),
+                        });
+                    }
                     config_options_cache_for_sink
                         .lock()
                         .insert(acp_session_id.to_string(), config_options);
@@ -162,6 +195,7 @@ impl AcpHost {
             stream_key_overrides,
             available_commands_by_session,
             config_options_by_session,
+            config_stream_by_session,
             emit: emit_for_host,
         })
     }
@@ -395,6 +429,37 @@ impl AcpHost {
             .lock()
             .get(thread_key)
             .cloned()
+    }
+
+    /// 为某线程的当前 ACP 会话绑定「会话级配置流」前端订阅键（约定 `config:{thread_id}`），用于在
+    /// 「首个 prompt 之前」就把 agent 公示的可用命令 / 可配置项推达前端选择器。
+    ///
+    /// 仅在本宿主已绑定该 thread_id 的会话时执行（命中返回 true；空 thread / 未绑定返回 false 作为
+    /// 安全空操作，绝不在此新建会话）。登记后立即以该键重放一次已缓存的 config_options /
+    /// available_commands 兜底——覆盖「快照在握手前已抵达并落缓存」的情形；至于握手之后才经
+    /// setTimeout(0) 抵达的一次性帧，则由 sink 依本表额外路由补达（见 spawn 内 sink 注释）。
+    /// 幂等：重复绑定同键只是覆盖登记 + 再重放一次（前端 applyConfigOptionUpdate 为整快照替换，幂等）。
+    pub fn bind_config_stream(&self, thread_id: &str, config_stream_key: &str) -> bool {
+        let thread_key = thread_id.trim();
+        if thread_key.is_empty() {
+            return false;
+        }
+        let stream_key = config_stream_key.trim();
+        if stream_key.is_empty() {
+            return false;
+        }
+        let session_id = self.sessions.lock().get(thread_key).cloned();
+        let Some(session_id) = session_id else {
+            return false;
+        };
+        let acp_session_id = session_id.to_string();
+        self.config_stream_by_session
+            .lock()
+            .insert(acp_session_id.clone(), stream_key.to_string());
+        // 兜底重放：覆盖一次性帧在握手前已抵达并落缓存的情形（之后到达的帧由 sink 额外路由补达）。
+        self.replay_config_options(&acp_session_id, stream_key);
+        self.replay_available_commands(&acp_session_id, stream_key);
+        true
     }
 
     /// 触发检查点回滚（扩展方法 `calamex.dev/checkpoint/restore`）。

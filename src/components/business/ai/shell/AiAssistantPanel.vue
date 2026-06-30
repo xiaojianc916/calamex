@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { Bot, SquarePen, Trash2 } from '@lucide/vue';
 import { AnimatePresence, Motion } from 'motion-v';
-import { computed, defineAsyncComponent, onMounted, ref } from 'vue';
+import { computed, defineAsyncComponent, onMounted, ref, watch } from 'vue';
 import {
   ApprovalPrompt,
   resolveAcpDecisionFromAskUserResult,
@@ -257,6 +257,26 @@ const handleSuggestionSelect = async (suggestion: string): Promise<void> => {
   await assistant.sendMessage({ agentBackend: sessionAgentBackend.value });
 };
 
+// 首个 prompt 之前即开放配置项发现：仅 kimi(ACP) 会话需要——握手建立会话即触发 agent 在 session/new
+// 之后一次性下发 config_option_update（含模型选择器），经会话级配置流抵达选择器；builtin 主模型走
+// ai.json 全局配置、不经此路径。挂载 / 切到 kimi / 切换会话时各触发一次（composable 内部幂等防竞态）。
+const ensureKimiSessionConfigDiscovery = (): void => {
+  if (sessionAgentBackend.value !== 'kimi') {
+    return;
+  }
+
+  const threadId = assistant.activeConversationId.value;
+  if (!threadId) {
+    return;
+  }
+
+  void assistant.acpSessionConfigOptions.ensureAcpSession(
+    threadId,
+    'kimi',
+    props.workspaceRootPath,
+  );
+};
+
 // 切换会话 Agent 后端后，清掉上一条（可能是 Kimi 未接入）的错误提示。
 const handleAgentBackendChange = (agent: unknown): void => {
   if (!isSessionAgentBackend(agent)) {
@@ -265,6 +285,13 @@ const handleAgentBackendChange = (agent: unknown): void => {
 
   sessionAgentBackend.value = agent;
   assistant.error.value = '';
+
+  // 切到 kimi：立即开放配置项发现；切回 builtin：复位选择器状态（builtin 不走 ACP 配置项）。
+  if (agent === 'kimi') {
+    ensureKimiSessionConfigDiscovery();
+  } else {
+    assistant.acpSessionConfigOptions.reset();
+  }
 };
 
 const handleSubmitMessage = async (): Promise<void> => {
@@ -515,7 +542,17 @@ onMounted(() => {
       settingsDraft.value = cloneAiConfigPayload(assistant.config.value);
     })
     .catch(() => undefined);
+  // 默认即 kimi 会话：挂载即开放「首个 prompt 之前」的配置项发现，模型选择器无需先发消息即可填充。
+  ensureKimiSessionConfigDiscovery();
 });
+
+// 切换会话（新建 / 打开历史）后，为 kimi 会话重新开放配置项发现（线程级会话，配置项随会话变化）。
+watch(
+  () => assistant.activeConversationId.value,
+  () => {
+    ensureKimiSessionConfigDiscovery();
+  },
+);
 </script>
 
 <template>

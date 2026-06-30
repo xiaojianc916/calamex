@@ -1,16 +1,23 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { effectScope } from 'vue';
 
-const { ensureAcpSession, setSessionConfigOption } = vi.hoisted(() => ({
-  ensureAcpSession: vi.fn(),
-  setSessionConfigOption: vi.fn(),
-}));
+const { ensureAcpSession, setSessionConfigOption, subscribeSidecarSessionStream } = vi.hoisted(
+  () => ({
+    ensureAcpSession: vi.fn(),
+    setSessionConfigOption: vi.fn(),
+    subscribeSidecarSessionStream: vi.fn(),
+  }),
+);
 
 vi.mock('@/services/ipc/ai.service', () => ({
   aiService: {
     ensureAcpSession,
     setSessionConfigOption,
   },
+}));
+
+vi.mock('@/composables/ai/sidecar-stream-listener', () => ({
+  subscribeSidecarSessionStream,
 }));
 
 import { useAcpSessionConfigOptions } from '@/composables/ai/useAcpSessionConfigOptions';
@@ -59,6 +66,7 @@ describe('useAcpSessionConfigOptions', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     vi.useRealTimers();
+    subscribeSidecarSessionStream.mockResolvedValue(() => {});
   });
 
   it('handshakes, enters discovering, then resolves to empty ready after grace', async () => {
@@ -69,11 +77,33 @@ describe('useAcpSessionConfigOptions', () => {
     await vm.ensureAcpSession('thread-1', 'kimi');
 
     expect(ensureAcpSession).toHaveBeenCalledWith({ threadId: 'thread-1', backend: 'kimi' });
+    expect(subscribeSidecarSessionStream).toHaveBeenCalledWith(
+      'config:thread-1',
+      expect.any(Function),
+    );
     expect(vm.state.value.kind).toBe('discovering');
 
     await vi.advanceTimersByTimeAsync(1200);
     expect(vm.state.value).toEqual({ kind: 'ready', configOptions: [] });
     expect(vm.hasConfigOptions.value).toBe(false);
+  });
+
+  it('applies a pre-prompt config_option_update arriving on the session config stream', async () => {
+    ensureAcpSession.mockResolvedValue(undefined);
+    let streamHandler: ((event: unknown) => void) | null = null;
+    subscribeSidecarSessionStream.mockImplementation((_sessionId: string, onEvent) => {
+      streamHandler = onEvent;
+      return Promise.resolve(() => {});
+    });
+    const vm = withScope(() => useAcpSessionConfigOptions());
+
+    await vm.ensureAcpSession('thread-1', 'kimi');
+    expect(vm.state.value.kind).toBe('discovering');
+
+    streamHandler?.({ type: 'config_option_update', configOptions: buildConfigOptions() });
+
+    expect(vm.state.value.kind).toBe('ready');
+    expect(vm.configOptions.value).toHaveLength(2);
   });
 
   it('marks unavailable when the handshake throws', async () => {

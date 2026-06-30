@@ -335,8 +335,10 @@ pub async fn ai_set_session_config_option(
 ///
 /// 取代 ai_get_session_config_options：配置项发现统一走事件通道，握手不再返回快照。经
 /// get_or_spawn_backend 懒建立目标后端宿主后 ensure_session 建立/复用会话——这会触发外部 agent
-/// （如 Kimi）在 session/new 之后下发一次性 config_option_update 通知（宿主缓存、回合发起时以
-/// 前端键重放），前端据此填充选择器。thread_id / backend 先行校验；未知 backend 报错。
+/// （如 Kimi）在 session/new 之后下发一次性 config_option_update 通知。握手末尾再 bind_config_stream
+/// 为该会话绑定稳定的「会话级配置流」前端键（config:{thread_id}）：宿主立即重放已缓存快照、并令 sink
+/// 把随后抵达的一次性帧额外路由到该键，使前端在「首个 prompt 之前」即可填充选择器/命令面板（不再依赖
+/// 回合发起时的重写重放）。thread_id / backend 先行校验；未知 backend 报错。
 #[tauri::command]
 #[specta::specta]
 pub async fn ai_ensure_acp_session(
@@ -369,6 +371,11 @@ pub async fn ai_ensure_acp_session(
     host.ensure_session(thread_id, workspace_root_path, None)
         .await
         .map_err(|error| format!("AI_ENSURE_ACP_SESSION_FAILED: {error}"))?;
+    // 首个 prompt 之前即开放配置项发现：为该会话绑定稳定的「会话级配置流」前端订阅键
+    // （约定 config:{thread_id}，与前端 useAcpSessionConfigOptions 订阅键一致）。绑定后宿主立即重放
+    // 已缓存快照、并令 sink 把随后经 setTimeout(0) 抵达的一次性 config_option_update /
+    // available_commands_update 额外路由到该键——使模型选择器/命令面板在未发首条消息时即可填充。
+    host.bind_config_stream(thread_id, &format!("config:{thread_id}"));
     Ok(())
 }
 
