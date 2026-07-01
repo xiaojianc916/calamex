@@ -1,266 +1,300 @@
-// refactor-drop-async-session-wrappers.mjs
-// 目的:删除 session/store.ts 的三个异步兼容包装(loadSession/saveSession/clearSession),
-//       把唯一生产调用方(useWorkbench.flushSession)改用同步 writeSessionSnapshot,
-//       并把三个测试改测/改 mock 同步核心。行为等价(async 函数内同步 throw == rejected Promise)。
-// 运行:仓库根目录  node refactor-drop-async-session-wrappers.mjs
-// 安全:基线守卫 + 幂等;先全部改在内存,校验通过才统一落盘,避免半迁移态。
-import { readFile, writeFile } from 'node:fs/promises';
-import { existsSync } from 'node:fs';
+// 1.mjs — R3: 移除 vue-router(单视图直接挂载 ShellWorkbenchView)+ 修正 App.spec.ts
+// 写前全仓扫描,越界即中止(不写不删);CRLF 安全;可重复执行(幂等)。
+import fs from 'node:fs';
 import path from 'node:path';
 
 const ROOT = process.cwd();
-const P_STORE = path.join('src', 'services', 'session', 'store.ts');
-const P_STORE_SPEC = path.join('src', 'services', 'session', 'store.spec.ts');
-const P_WB = path.join('src', 'app', 'composables', 'useWorkbench.ts');
-const P_WB_SPEC = path.join('src', 'app', 'composables', 'useWorkbench.lifecycle.spec.ts');
-const P_FACADE_SPEC = path.join('src', 'composables', '__tests__', 'workbench.facade.spec.ts');
+const p = (rel) => path.join(ROOT, rel.split('/').join(path.sep));
+const rel = (abs) => path.relative(ROOT, abs).split(path.sep).join('/');
 
-const abort = (msg) => {
-  console.error(`✗ ${msg}\n  未改动任何文件。`);
+const die = (msg) => {
+  console.error(`\n✗ ${msg}`);
+  console.error('  已中止:未写入任何文件、未删除任何文件。\n');
   process.exit(1);
 };
-const read = async (rel) => {
-  if (!existsSync(rel)) abort(`找不到 ${rel},脚本需在仓库根目录运行。`);
-  return readFile(rel, 'utf8');
+
+// ---- EOL helpers ----
+const detectEol = (s) => (s.includes('\r\n') ? '\r\n' : '\n');
+const toLf = (s) => s.replace(/\r\n/g, '\n');
+const readText = (rp) => {
+  const abs = p(rp);
+  if (!fs.existsSync(abs)) die(`未找到文件:${rp}`);
+  return fs.readFileSync(abs, 'utf8');
 };
-// 精确单次替换:oldStr 必须恰好出现一次,否则中止(防止误伤/文件已漂移)。
-const replaceOnce = (src, oldStr, newStr, label) => {
-  const parts = src.split(oldStr);
-  if (parts.length !== 2) abort(`${label}: 预期锚点恰好出现 1 次,实际 ${parts.length - 1} 次。基线不符,中止。`);
-  return parts.join(newStr);
+
+// ---- 单锚点替换(多命中即中止;可选锚点不命中仅告警) ----
+const replaceIn = (srcLf, oldLf, newLf, label, { optional = false } = {}) => {
+  const first = srcLf.indexOf(oldLf);
+  if (first === -1) {
+    if (optional) {
+      console.warn(`  · 跳过(未命中,可选):${label}`);
+      return srcLf;
+    }
+    die(`未找到锚点「${label}」——文件当前内容与预期不符,请把对应片段贴给我核对`);
+  }
+  if (srcLf.indexOf(oldLf, first + oldLf.length) !== -1) {
+    die(`锚点「${label}」命中多处,拒绝盲替。请贴文件片段核对`);
+  }
+  return srcLf.slice(0, first) + newLf + srcLf.slice(first + oldLf.length);
 };
 
-// --- 读取 ---
-const storeSrc = await read(P_STORE);
-const storeSpecSrc = await read(P_STORE_SPEC);
-const wbSrc = await read(P_WB);
-const wbSpecSrc = await read(P_WB_SPEC);
-const facadeSpecSrc = await read(P_FACADE_SPEC);
+// ---- 遍历 src/ 做扫描 ----
+const SKIP = new Set(['node_modules', '.git', 'dist', 'target', '.next', 'coverage', 'gen']);
+const walk = (dirAbs, out = []) => {
+  for (const name of fs.readdirSync(dirAbs)) {
+    if (SKIP.has(name)) continue;
+    const abs = path.join(dirAbs, name);
+    const st = fs.statSync(abs);
+    if (st.isDirectory()) walk(abs, out);
+    else out.push(abs);
+  }
+  return out;
+};
 
-// --- 幂等:已迁移则跳过 ---
-const alreadyDone =
-  !storeSrc.includes('兼容异步 API') &&
-  !wbSrc.includes("import { saveSession } from '@/services/session/store';");
-if (alreadyDone) {
-  console.log('✓ 已迁移过(store.ts 无异步包装且 useWorkbench 不再 import saveSession),跳过。');
-  process.exit(0);
+const srcRoot = p('src');
+if (!fs.existsSync(srcRoot)) die('未找到 src/ 目录,请在仓库根目录运行 node 1.mjs');
+const pkgRaw0 = readText('package.json');
+if (!/"name"\s*:\s*"calamex"/.test(pkgRaw0)) die('package.json 不是 calamex,请在仓库根目录运行');
+
+const allFiles = walk(srcRoot).filter((f) => /\.(ts|tsx|js|mjs|cjs|vue)$/.test(f));
+
+// needle -> 允许出现的文件白名单(相对路径)
+const SCANS = [
+  // router.ts 待删;App.spec.ts 本轮整文件重写(移除 vue-router)
+  ['vue-router', ['src/app/router.ts', 'src/App.spec.ts']],
+  ['useRouter', []],
+  ['useRoute', []], // 亦覆盖 useRouter
+  // App.vue 历史注释叙述旧 RouterView bug,属被改造目标文件,放行
+  ['RouterView', ['src/app/App.vue']],
+  ['RouterLink', []],
+  // 均为注释叙述(App.vue 僵尸工作台教训 / runtime-diagnostics 错误过滤缘由),非路由消费方
+  ['router-view', ['src/app/App.vue', 'src/utils/platform/runtime-diagnostics.ts']],
+  ['router-link', []],
+  ['$router', []],
+  ['$route', []], // 亦覆盖 $router
+  ["'./router'", ['src/app/main.ts']],
+  ['@/app/router', []],
+];
+
+for (const [needle, allow] of SCANS) {
+  const allowSet = new Set(allow);
+  const hits = [];
+  for (const abs of allFiles) {
+    const r = rel(abs);
+    if (allowSet.has(r)) continue;
+    let text;
+    try {
+      text = fs.readFileSync(abs, 'utf8');
+    } catch {
+      continue;
+    }
+    if (text.includes(needle)) hits.push(r);
+  }
+  if (hits.length) {
+    console.error(`\n✗ 发现未预期的「${needle}」引用(白名单外),说明还有未处理的路由消费方:`);
+    for (const h of hits) console.error(`  - ${h}`);
+    die('需先适配这些文件再移除 vue-router。请把它们贴给我。');
+  }
 }
+console.log('✓ 写前扫描通过:除白名单外无路由残留引用');
 
-// --- 1) store.ts:截断掉「兼容异步 API」整段 ---
-const ASYNC_MARKER =
-  '\n// ---------------------------------------------------------------------------\n' +
-  '// 兼容异步 API (保持既有调用方签名不变)';
-const cut = storeSrc.indexOf(ASYNC_MARKER);
-if (cut === -1) abort('store.ts: 找不到「兼容异步 API」段落锚点,基线不符,中止。');
-for (const sym of ['export const loadSession', 'export const saveSession', 'export const clearSession']) {
-  if (!storeSrc.includes(sym)) abort(`store.ts: 缺少 ${sym},基线不符,中止。`);
-}
-const newStore = storeSrc.slice(0, cut).replace(/\s*$/, '') + '\n';
+// ---- App.spec.ts 新内容(与当前 App.vue 行为一致,不再依赖 vue-router) ----
+const APP_SPEC = `import { flushPromises, mount } from '@vue/test-utils';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { nextTick } from 'vue';
+import App from '@/app/App.vue';
+import { runtimeErrorState } from '@/utils/platform/runtime-diagnostics';
 
-// --- 2) useWorkbench.ts:import + flushSession 改同步核心 ---
-let newWb = replaceOnce(
-  wbSrc,
-  "import { saveSession } from '@/services/session/store';",
-  "import { writeSessionSnapshot } from '@/services/session/store';",
-  'useWorkbench.ts import',
-);
-newWb = replaceOnce(
-  newWb,
-  '  const flushSession = async (): Promise<void> => {\n' +
-    '    await saveSession(editorStore.sessionSnapshot);\n' +
-    '  };',
-  // 保持 async:同步 writeSessionSnapshot 抛错 → 自动变 rejected Promise,
-  // 与旧 saveSession 的 reject 语义一致,flushSessionWithTimeout 的 catch 照常接住。
-  '  const flushSession = async (): Promise<void> => {\n' +
-    '    writeSessionSnapshot(editorStore.sessionSnapshot);\n' +
-    '  };',
-  'useWorkbench.ts flushSession',
-);
+// 首帧交接埋点:保留其余真实导出,仅拦截本用例断言的两个函数。
+const markStartupMock = vi.hoisted(() => vi.fn());
+const reportStartupTimingsMock = vi.hoisted(() => vi.fn());
 
-// --- 3) useWorkbench.lifecycle.spec.ts:mock 改名 ---
-const newWbSpec = replaceOnce(
-  wbSpecSrc,
-  "vi.mock('@/services/session/store', () => ({\n" +
-    '  saveSession: vi.fn(() => Promise.resolve()),\n' +
-    '}));',
-  "vi.mock('@/services/session/store', () => ({\n" +
-    '  writeSessionSnapshot: vi.fn(),\n' +
-    '}));',
-  'useWorkbench.lifecycle.spec.ts mock',
-);
-
-// --- 4) workbench.facade.spec.ts:hoisted + vi.mock 两处改名 ---
-let newFacade = replaceOnce(
-  facadeSpecSrc,
-  '  mockSessionStore: {\n    saveSession: vi.fn(() => Promise.resolve()),\n  },',
-  '  mockSessionStore: {\n    writeSessionSnapshot: vi.fn(),\n  },',
-  'workbench.facade.spec.ts hoisted',
-);
-newFacade = replaceOnce(
-  newFacade,
-  "vi.mock('@/services/session/store', () => ({\n" +
-    '  saveSession: mockSessionStore.saveSession,\n' +
-    '}));',
-  "vi.mock('@/services/session/store', () => ({\n" +
-    '  writeSessionSnapshot: mockSessionStore.writeSessionSnapshot,\n' +
-    '}));',
-  'workbench.facade.spec.ts vi.mock',
-);
-
-// --- 5) store.spec.ts:整文件重写,改测同步核心(7 用例 1:1 对应,reject→throw) ---
-const NEW_STORE_SPEC = `import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import type { AppError } from '@/types/app-error';
-
-const warnMock = vi.hoisted(() => vi.fn());
-
-vi.mock('@/utils/platform/logger', () => {
-  const make = (): unknown => ({
-    warn: warnMock,
-    info: vi.fn(),
-    error: vi.fn(),
-    debug: vi.fn(),
-    child: () => make(),
-  });
-  return { logger: make() };
-});
-
-const SESSION_KEY = 'calamex:session-snapshot';
-const LEGACY_KEY = 'shell-ide:session-snapshot';
-
-const createMemoryStorage = (): Storage => {
-  const map = new Map<string, string>();
+vi.mock('@/utils/platform/startup-profiler', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@/utils/platform/startup-profiler')>();
   return {
-    get length(): number {
-      return map.size;
-    },
-    clear: (): void => {
-      map.clear();
-    },
-    getItem: (key: string): string | null => (map.has(key) ? (map.get(key) as string) : null),
-    key: (index: number): string | null => Array.from(map.keys())[index] ?? null,
-    removeItem: (key: string): void => {
-      map.delete(key);
-    },
-    setItem: (key: string, value: string): void => {
-      map.set(key, String(value));
-    },
+    ...actual,
+    markStartup: markStartupMock,
+    reportStartupTimings: reportStartupTimingsMock,
   };
-};
-
-const createSnapshot = (workspaceRoot: string | null = '/tmp/workspace') => ({
-  schemaVersion: 1 as const,
-  workspaceRoot,
-  openTabs: [],
-  activeTabPath: null,
-  viewStates: [],
-  recentWorkspaces: [],
-  recentFiles: [],
-  savedAt: new Date().toISOString(),
 });
 
-describe('sessionStore (localStorage 权威, 同步核心)', () => {
-  let storage: Storage;
+vi.mock('@/components/common/AppDialogHost.vue', () => ({
+  default: {
+    name: 'AppDialogHostStub',
+    template: '<div data-testid="app-dialog-host-stub"></div>',
+  },
+}));
 
+vi.mock('@/components/common/BrowserContextMenuHost.vue', () => ({
+  default: {
+    name: 'BrowserContextMenuHostStub',
+    template: '<div data-testid="browser-context-menu-host-stub"></div>',
+  },
+}));
+
+// 工作台现由 App.vue 直接挂载(不再经 router-view);桩组件用于断言渲染与 ready 事件接线。
+vi.mock('@/app/ShellWorkbenchView.vue', () => ({
+  default: {
+    name: 'ShellWorkbenchViewStub',
+    emits: ['ready'],
+    template: '<div data-testid="shell-workbench-view"></div>',
+  },
+}));
+
+const flushUi = async (): Promise<void> => {
+  await nextTick();
+  await flushPromises();
+  await nextTick();
+};
+
+describe('App startup handoff', () => {
   beforeEach(() => {
-    vi.resetModules();
-    vi.clearAllMocks();
-    storage = createMemoryStorage();
-    vi.stubGlobal('window', { localStorage: storage } as unknown as Window & typeof globalThis);
+    runtimeErrorState.value = null;
+    document.documentElement.dataset.theme = 'dark';
+    window.__SH_WINDOW_LABEL__ = 'main';
+    markStartupMock.mockClear();
+    reportStartupTimingsMock.mockClear();
   });
 
   afterEach(() => {
-    vi.unstubAllGlobals();
+    runtimeErrorState.value = null;
     vi.restoreAllMocks();
+    delete window.__SH_WINDOW_LABEL__;
   });
 
-  it('无快照时 readSessionSnapshot 返回 null', async () => {
-    const { readSessionSnapshot } = await import('@/services/session/store');
-    expect(readSessionSnapshot()).toBeNull();
+  it('直接挂载工作台与全局宿主组件', async () => {
+    const wrapper = mount(App);
+
+    await flushUi();
+
+    expect(wrapper.find('[data-testid="app-dialog-host-stub"]').exists()).toBe(true);
+    expect(wrapper.find('[data-testid="browser-context-menu-host-stub"]').exists()).toBe(true);
+    expect(wrapper.find('[data-testid="shell-workbench-view"]').exists()).toBe(true);
+
+    wrapper.unmount();
   });
 
-  it('writeSessionSnapshot 写入后 readSessionSnapshot 读回同一快照', async () => {
-    const { writeSessionSnapshot, readSessionSnapshot } = await import('@/services/session/store');
-    writeSessionSnapshot(createSnapshot('/tmp/roundtrip'));
-    expect(readSessionSnapshot()).toMatchObject({ workspaceRoot: '/tmp/roundtrip' });
-    expect(storage.getItem(SESSION_KEY)).not.toBeNull();
-  });
+  it('工作台首帧 ready 后上报启动埋点', async () => {
+    const wrapper = mount(App);
 
-  it('writeSessionSnapshot 入参非法时抛 AppError(SESSION_VALIDATION_FAILED) 且不写盘', async () => {
-    const { writeSessionSnapshot } = await import('@/services/session/store');
-    let caught: AppError | null = null;
-    try {
-      writeSessionSnapshot({} as never);
-    } catch (error) {
-      caught = error as AppError;
-    }
-    expect(caught).toMatchObject<AppError>({
-      code: 'SESSION_VALIDATION_FAILED',
-      scope: 'ipc',
-    });
-    expect(storage.getItem(SESSION_KEY)).toBeNull();
-  });
+    wrapper.getComponent({ name: 'ShellWorkbenchViewStub' }).vm.$emit('ready');
+    await flushUi();
 
-  it('schema 校验失败时 readSessionSnapshot 返回 null 并 warn', async () => {
-    storage.setItem(
-      SESSION_KEY,
-      JSON.stringify({
-        schemaVersion: 999,
-        workspaceRoot: null,
-        openTabs: [],
-        activeTabPath: null,
-        viewStates: [],
-        recentWorkspaces: [],
-        recentFiles: [],
-        savedAt: new Date().toISOString(),
-      }),
-    );
-    const { readSessionSnapshot } = await import('@/services/session/store');
-    expect(readSessionSnapshot()).toBeNull();
-    expect(warnMock).toHaveBeenCalled();
-  });
+    expect(markStartupMock).toHaveBeenCalledWith('workbench-ready-event');
+    expect(reportStartupTimingsMock).toHaveBeenCalledTimes(1);
 
-  it('坏 JSON 时 readSessionSnapshot 返回 null 且不抛', async () => {
-    storage.setItem(SESSION_KEY, '{ not json');
-    const { readSessionSnapshot } = await import('@/services/session/store');
-    expect(readSessionSnapshot()).toBeNull();
-    expect(warnMock).toHaveBeenCalled();
-  });
-
-  it('clearSessionSnapshot 清除快照', async () => {
-    const { writeSessionSnapshot, clearSessionSnapshot, readSessionSnapshot } = await import(
-      '@/services/session/store'
-    );
-    writeSessionSnapshot(createSnapshot());
-    clearSessionSnapshot();
-    expect(storage.getItem(SESSION_KEY)).toBeNull();
-    expect(readSessionSnapshot()).toBeNull();
-  });
-
-  it('首次读取时把旧版键迁移到新键', async () => {
-    storage.setItem(LEGACY_KEY, JSON.stringify(createSnapshot('/tmp/legacy')));
-    const { readSessionSnapshot } = await import('@/services/session/store');
-    expect(readSessionSnapshot()).toMatchObject({ workspaceRoot: '/tmp/legacy' });
-    expect(storage.getItem(SESSION_KEY)).not.toBeNull();
-    expect(storage.getItem(LEGACY_KEY)).toBeNull();
+    wrapper.unmount();
   });
 });
 `;
 
-// --- 统一落盘(全部校验通过后) ---
-await writeFile(P_STORE, newStore, 'utf8');
-await writeFile(P_WB, newWb, 'utf8');
-await writeFile(P_WB_SPEC, newWbSpec, 'utf8');
-await writeFile(P_FACADE_SPEC, newFacade, 'utf8');
-await writeFile(P_STORE_SPEC, NEW_STORE_SPEC, 'utf8');
+// ---- 计算改动(全部先算好,任何 required 失败即在写入前 die) ----
+const planned = []; // { rp, content }
 
-console.log('✓ 已删除三个异步兼容包装,并把调用方/测试改到同步核心。');
-console.log('  改动文件:');
-console.log('   - src/services/session/store.ts            (删「兼容异步 API」整段)');
-console.log('   - src/app/composables/useWorkbench.ts       (saveSession → writeSessionSnapshot)');
-console.log('   - src/services/session/store.spec.ts        (整文件重写,测同步核心)');
-console.log('   - src/app/composables/useWorkbench.lifecycle.spec.ts (mock 改名)');
-console.log('   - src/composables/__tests__/workbench.facade.spec.ts (mock 改名)');
-console.log('  必跑验证:');
-console.log('   pnpm test src/services/session/ src/app/composables/ src/composables/__tests__/');
-console.log('   pnpm tsc --noEmit  &&  pnpm lint --fix');
-console.log('   node scan-session-api-usage.mjs   # 三个符号应彻底归零(仅剩本脚本自匹配)');
+// 1) App.vue
+{
+  const rp = 'src/app/App.vue';
+  const raw = readText(rp);
+  const eol = detectEol(raw);
+  let s = toLf(raw);
+
+  s = replaceIn(
+    s,
+    "import { defineAsyncComponent } from 'vue';\n",
+    "import { defineAsyncComponent } from 'vue';\nimport ShellWorkbenchView from '@/app/ShellWorkbenchView.vue';\n",
+    'App.vue: 追加 ShellWorkbenchView import',
+  );
+
+  s = replaceIn(
+    s,
+    '      <router-view v-slot="{ Component: RouteComponent, route: routeRecord }">\n' +
+      '        <component :is="RouteComponent" :key="routeRecord.fullPath" @ready="handleWorkbenchReady" />\n' +
+      '      </router-view>',
+    '      <ShellWorkbenchView @ready="handleWorkbenchReady" />',
+    'App.vue: router-view → 直接挂载 ShellWorkbenchView',
+  );
+
+  s = replaceIn(
+    s,
+    '工作台(router-view)始终挂载',
+    '工作台(ShellWorkbenchView)始终挂载',
+    'App.vue: 注释措辞(router-view→ShellWorkbenchView,仅当前态那行)',
+    { optional: true },
+  );
+
+  planned.push({ rp, content: s.replace(/\n/g, eol) });
+}
+
+// 2) main.ts
+{
+  const rp = 'src/app/main.ts';
+  const raw = readText(rp);
+  const eol = detectEol(raw);
+  let s = toLf(raw);
+
+  s = replaceIn(
+    s,
+    "      import('./App.vue'),\n      import('./router'),\n    ]).then((modules) => {",
+    "      import('./App.vue'),\n    ]).then((modules) => {",
+    "main.ts: Promise.all 移除 import('./router')",
+  );
+
+  s = replaceIn(
+    s,
+    '    const [vueRuntime, { getThemeManager }, { default: App }, { default: router }] =\n      bootstrapModules;',
+    '    const [vueRuntime, { getThemeManager }, { default: App }] = bootstrapModules;',
+    'main.ts: 解构移除 router',
+  );
+
+  s = replaceIn(
+    s,
+    '    app.use(pinia);\n    app.use(router);\n    app.use(VueQueryPlugin, { queryClient });',
+    '    app.use(pinia);\n    app.use(VueQueryPlugin, { queryClient });',
+    'main.ts: 移除 app.use(router)',
+  );
+
+  s = replaceIn(
+    s,
+    "    await router.isReady();\n    markStartup('router-ready');\n\n    app.mount('#app');",
+    "    app.mount('#app');",
+    'main.ts: 移除 await router.isReady()',
+  );
+
+  planned.push({ rp, content: s.replace(/\n/g, eol) });
+}
+
+// 3) package.json 移除 vue-router 依赖
+{
+  const rp = 'package.json';
+  const raw = readText(rp);
+  const eol = detectEol(raw);
+  let s = toLf(raw);
+  s = replaceIn(s, '    "vue-router": "^5.1.0",\n', '', 'package.json: 移除 vue-router 依赖');
+  planned.push({ rp, content: s.replace(/\n/g, eol) });
+}
+
+// 4) App.spec.ts 整文件重写(移除 vue-router,匹配当前 App.vue 行为)
+{
+  const rp = 'src/App.spec.ts';
+  const eol = detectEol(readText(rp));
+  planned.push({ rp, content: APP_SPEC.replace(/\n/g, eol) });
+}
+
+// 5) 待删除文件
+const toDelete = ['src/app/router.ts'];
+for (const rp of toDelete) if (!fs.existsSync(p(rp))) die(`待删除文件不存在:${rp}`);
+
+// ---- 全部计算通过,统一写入 + 删除 ----
+for (const { rp, content } of planned) {
+  fs.writeFileSync(p(rp), content, 'utf8');
+  console.log(`✓ 写入 ${rp}`);
+}
+for (const rp of toDelete) {
+  fs.rmSync(p(rp));
+  console.log(`✓ 删除 ${rp}`);
+}
+
+console.log('\n✅ R3 完成:vue-router 已移除,直接挂载 ShellWorkbenchView;App.spec.ts 已对齐当前行为。');
+console.log('下一步(必须,同步 lockfile):');
+console.log('  pnpm install');
+console.log('  pnpm typecheck && pnpm lint && pnpm test\n');

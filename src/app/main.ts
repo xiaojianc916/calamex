@@ -87,7 +87,6 @@ const bootstrap = async (): Promise<void> => {
       import('vue'),
       import('@/themes'),
       import('./App.vue'),
-      import('./router'),
     ]).then((modules) => {
       markStartup('bootstrap-imports-loaded');
       return modules;
@@ -95,8 +94,7 @@ const bootstrap = async (): Promise<void> => {
 
     const [bootstrapModules] = await Promise.all([bootstrapModulesPromise, globalStylesPromise]);
 
-    const [vueRuntime, { getThemeManager }, { default: App }, { default: router }] =
-      bootstrapModules;
+    const [vueRuntime, { getThemeManager }, { default: App }] = bootstrapModules;
 
     const { createApp } = vueRuntime;
     const vaporInteropPlugin = Reflect.get(vueRuntime, 'vaporInteropPlugin') as
@@ -161,7 +159,6 @@ const bootstrap = async (): Promise<void> => {
     }
 
     app.use(pinia);
-    app.use(router);
     app.use(VueQueryPlugin, { queryClient });
     markStartup('vue-plugins-installed');
 
@@ -188,9 +185,6 @@ const bootstrap = async (): Promise<void> => {
       // 其余告警维持开发期默认可见性(设置 warnHandler 后 Vue 不再自行打印)。
       console.warn(`[Vue warn] ${message}${trace ? `\n${trace}` : ''}`);
     };
-
-    await router.isReady();
-    markStartup('router-ready');
 
     app.mount('#app');
     markStartup('vue-mounted');
