@@ -1,20 +1,11 @@
 {
     "$schema": "../gen/schemas/desktop-schema.json",
     "identifier": "workspace-fs",
-    "description": "工作区/文件系统域能力：对话框选择路径、脚本加载/保存、工作区条目列举、图片资产加载、资源管理器新建/重命名/删除，以及 AI 输入框原生附件选择后读取用户选中的文件（plugin-fs read_file）。对应命令：load_script / save_script / list_workspace_entries / load_image_asset / create_workspace_path / rename_workspace_path / delete_workspace_path。参见 ADR-0005。注意：delete_workspace_path 为破坏性操作，前端调用前 MUST 经用户确认。fs:scope 为读取作用域，仅供用户通过原生对话框显式选中的文件读取使用。",
+    "description": "工作区/文件系统域能力：对话框选择路径。脚本加载/保存、工作区条目列举、图片资产加载、资源管理器新建/重命名/删除、AI 附件读取等文件 I/O 全部经专用 Rust 命令出口（load_script / save_script / list_workspace_entries / load_image_asset / create_workspace_path / rename_workspace_path / delete_workspace_path / read_attachment_file），命令内自行做 canonicalize + 边界/体积/符号链接校验。参见 ADR-0005 与地基审查 S1。注意：delete_workspace_path 为破坏性操作，前端调用前 MUST 经用户确认。此处不再授予 plugin-fs 读能力（fs:allow-read-file）与 fs:scope —— 附件读取已改走受限的 read_attachment_file 命令，杜绝 WebView 侧经 plugin-fs 的全盘读后门。",
     "windows": [
         "main"
     ],
     "permissions": [
-        "dialog:default",
-        "fs:allow-read-file",
-        {
-            "identifier": "fs:scope",
-            "allow": [
-                {
-                    "path": "**"
-                }
-            ]
-        }
+        "dialog:default"
     ]
 }

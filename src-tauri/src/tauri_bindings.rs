@@ -1,8 +1,8 @@
 use crate::commands::lsp::commands as lsp_commands;
 use crate::commands::terminal::commands as terminal_commands;
 use crate::commands::{
-    builtin_agent, agent_webview, ai, format, git, script_run, search, shell_tools, skills, ssh,
-    window, window_stage, workspace_fs, workspace_watcher,
+    attachment, builtin_agent, agent_webview, ai, format, git, script_run, search, shell_tools,
+    skills, ssh, window, window_stage, workspace_fs, workspace_watcher,
 };
 use crate::launch;
 use specta_typescript::Typescript;
@@ -39,6 +39,7 @@ pub fn builder() -> Builder<tauri::Wry> {
             workspace_fs::load_script,
             workspace_fs::rename_workspace_path,
             workspace_fs::save_script,
+            attachment::read_attachment_file,
             workspace_watcher::start_workspace_watching,
             workspace_watcher::stop_workspace_watching,
             terminal_commands::ensure_terminal_session,

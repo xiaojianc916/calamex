@@ -4,10 +4,15 @@
 // 进程工作目录（cwd），表现为「总是打开某个无关目录」。原生对话框支持
 // defaultPath，可做到专业软件的行为：记忆上次目录、首次回退工作区根/主目录。
 //
-// 全部能力走官方 SDK，避免手写：选路径 @tauri-apps/plugin-dialog、读字节
-// @tauri-apps/plugin-fs、路径拆解（basename/dirname）与主目录 @tauri-apps/api/path。
-// 均懒加载（与 services/tauri.ipc-runtime 的懒加载约定一致），便于浏览器预览
-// 环境下优雅降级（调用方捕获异常后回退到浏览器 <input type="file">）。
+// 选路径走官方 @tauri-apps/plugin-dialog；路径拆解（basename/dirname）与主目录走
+// @tauri-apps/api/path，均懒加载（与 services/tauri.ipc-runtime 的懒加载约定一致），
+// 便于浏览器预览环境下优雅降级（调用方捕获异常后回退到浏览器 <input type="file">）。
+// 读字节改走受限的后端命令 read_attachment_file（见 services/ipc/attachment.service）：
+// 后端做 canonicalize + 拒绝符号链接 + 体积上限，取代此前前端直连 @tauri-apps/plugin-fs
+// 的 readFile —— 后者需能力清单静态授予 fs:allow-read-file + fs:scope "**"（全盘读），
+// 属过度授权（见地基审查 S1）。
+
+import { readAttachmentFile } from '@/services/ipc/attachment.service';
 
 const ATTACHMENT_LAST_DIR_KEY = 'calamex.ai.attachment.last-dir';
 
@@ -69,14 +74,20 @@ const resolveDefaultDir = async (
   }
 };
 
+// Base64 → 字节：后端 read_attachment_file 以 base64 回传文件内容，这里解码为
+// Uint8Array 供构造浏览器 File 对象（附件管线后续按 File 读取文本 / 图片）。
+const decodeBase64ToBytes = (base64: string): Uint8Array => {
+  const binary = atob(base64);
+  const bytes = new Uint8Array(binary.length);
+  for (let index = 0; index < binary.length; index += 1) {
+    bytes[index] = binary.charCodeAt(index);
+  }
+  return bytes;
+};
+
 const readPathAsFile = async (filePath: string): Promise<File> => {
-  const [{ readFile }, { basename }] = await Promise.all([
-    import('@tauri-apps/plugin-fs'),
-    import('@tauri-apps/api/path'),
-  ]);
-  const bytes = await readFile(filePath);
-  const name = await basename(filePath);
-  return new File([bytes], name, { type: guessMimeType(name) });
+  const { name, base64 } = await readAttachmentFile(filePath);
+  return new File([decodeBase64ToBytes(base64)], name, { type: guessMimeType(name) });
 };
 
 export interface IPickAttachmentFilesOptions {

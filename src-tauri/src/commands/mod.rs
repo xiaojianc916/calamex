@@ -1,6 +1,7 @@
 pub(crate) mod builtin_agent;
 pub(crate) mod agent_webview;
 pub(crate) mod ai;
+pub(crate) mod attachment;
 pub(crate) mod contracts;
 pub(crate) mod error;
 pub(crate) mod format;
