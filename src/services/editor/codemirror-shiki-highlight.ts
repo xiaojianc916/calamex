@@ -17,6 +17,7 @@ import {
   SHIKI_BACKGROUND,
   SHIKI_FOREGROUND,
 } from '@/services/editor/shiki-shared';
+import { isTreeSitterHighlightLanguage } from './codemirror-tree-sitter-highlight';
 
 /**
  * bash 的编辑器实时高亮改由 tree-sitter 管线负责（codemirror-tree-sitter-highlight）。
@@ -24,7 +25,7 @@ import {
  * 注意：静态代码块 / 片段渲染路径不经过本文件，不受影响。
  */
 const isEditorTreeSitterLanguage = (language: string): boolean =>
-  resolveShikiLanguageId(language) === 'bash';
+  isTreeSitterHighlightLanguage(language);
 
 /** 编辑器与代码渲染统一使用的等宽字体，按要求以 Consolas 为首选。 */
 export const EDITOR_FONT_FAMILY =

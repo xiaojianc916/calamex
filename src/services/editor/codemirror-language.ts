@@ -2,6 +2,7 @@ import { LanguageSupport, StreamLanguage } from '@codemirror/language';
 import type { Extension } from '@codemirror/state';
 import { LANGUAGE_DEFINITIONS } from '@/utils/editor/language-registry';
 import { logger } from '@/utils/platform/logger';
+import { withTreeSitterHighlight } from './codemirror-tree-sitter-highlight';
 
 export type TCodeMirrorLanguageId = string;
 
@@ -30,14 +31,7 @@ const streamLanguageLoader =
 // 词表 / 别名 / 标签 / 展示名全部来自 language-registry。
 // 共享解析器:javascript 与 jsx 同用 javascript({jsx});css / scss / less 同用 css()。
 const CODEMIRROR_LANGUAGE_LOADERS: Readonly<Record<string, () => Promise<Extension>>> = {
-  shell: () =>
-    Promise.all([
-      import('./codemirror-bash-language'),
-      import('./codemirror-tree-sitter-highlight'),
-    ]).then(([lang, highlight]) => [
-      lang.bashLanguageExtensions(),
-      highlight.bashTreeSitterHighlightExtension(),
-    ]),
+  shell: () => import('./codemirror-bash-language').then((m) => m.bashLanguageExtensions()),
   javascript: () => import('@codemirror/lang-javascript').then((m) => m.javascript({ jsx: true })),
   jsx: () => import('@codemirror/lang-javascript').then((m) => m.javascript({ jsx: true })),
   typescript: () =>
@@ -230,12 +224,20 @@ export const loadCodeMirrorLanguageSupport = async (
  * 配合 loadCodeMirrorLanguageExtension / loadCodeMirrorLanguageSupport 异步补齐。
  */
 export const resolveCodeMirrorLanguageExtension = (language: string): Extension => {
-  return resolveCodeMirrorLanguageSupport(language) ?? [];
+  const support = resolveCodeMirrorLanguageSupport(language);
+  if (!support) {
+    return [];
+  }
+  return withTreeSitterHighlight(resolveCodeMirrorLanguageId(language), support);
 };
 
 /** 按需加载语言扩展(加载完成后可灌入编辑器的 language compartment)。 */
 export const loadCodeMirrorLanguageExtension = async (language: string): Promise<Extension> => {
-  return (await loadCodeMirrorLanguageSupport(language)) ?? [];
+  const support = await loadCodeMirrorLanguageSupport(language);
+  if (!support) {
+    return [];
+  }
+  return withTreeSitterHighlight(resolveCodeMirrorLanguageId(language), support);
 };
 
 export const isCodeMirrorLanguageSupport = (value: Extension): value is LanguageSupport =>

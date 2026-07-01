@@ -1,3 +1,4 @@
+import { type Extension, StateEffect, StateField, type Text } from '@codemirror/state';
 import {
   Decoration,
   type DecorationSet,
@@ -5,183 +6,282 @@ import {
   ViewPlugin,
   type ViewUpdate,
 } from '@codemirror/view';
-
-import { bashAnalysisField } from './codemirror-bash-language';
-import type { Node, Tree } from './tree-sitter/bash-runtime';
+import { Language, Parser, Query } from 'web-tree-sitter';
+import treeSitterWasmUrl from 'web-tree-sitter/web-tree-sitter.wasm?url';
+import { computeBashSourceEdit, type Point, type Tree } from './tree-sitter/bash-runtime';
+import {
+  resolveTreeSitterLanguageId,
+  TREE_SITTER_LANGUAGES,
+} from './tree-sitter/language-registry.generated';
 
 /**
- * 参照 Zed：一棵 CST + 一次深度优先遍历，capture 分类 → CSS class（主题与语言解耦）。
- * 本模块不做任何解析——直接消费 codemirror-bash-language 里已增量维护的 bashAnalysisField，
- * 因此相对 Shiki 补丁层是近零成本。
+ * 语言无关的 tree-sitter 实时高亮（参照 Zed：一棵 CST + 一次 .scm 查询遍历 + capture 映射颜色）。
+ * 结构（缩进/折叠）仍由 Lezer 负责；颜色统一由本引擎出，Shiki 在编辑器缓冲区让位。
  */
-const HIGHLIGHT_OVERSCAN_ROWS = 48;
+const TS_HIGHLIGHT_DEBOUNCE_MS = 24;
+const MAX_TS_SOURCE_LENGTH = 2_000_000; // 超大文件跳过，避免主线程长任务
 
-// 节点类型 → 标准 capture 分类 → CSS class（对齐 Zed/neovim 的 capture 命名习惯）
-const LEAF_TYPE_CLASS: Record<string, string> = {
-  comment: 'cm-ts-comment',
-  string_content: 'cm-ts-string',
-  raw_string: 'cm-ts-string',
-  ansi_c_string: 'cm-ts-string',
-  '"': 'cm-ts-string',
-  "'": 'cm-ts-string',
-  heredoc_body: 'cm-ts-string',
-  heredoc_start: 'cm-ts-string',
-  heredoc_end: 'cm-ts-string',
-  variable_name: 'cm-ts-variable',
-  special_variable_name: 'cm-ts-variable',
-  number: 'cm-ts-number',
-  test_operator: 'cm-ts-operator',
-  if: 'cm-ts-keyword',
-  // biome-ignore lint/suspicious/noThenProperty: bash tree-sitter 关键字节点名，必须保留字面量 then
-  then: 'cm-ts-keyword',
-  else: 'cm-ts-keyword',
-  elif: 'cm-ts-keyword',
-  fi: 'cm-ts-keyword',
-  for: 'cm-ts-keyword',
-  while: 'cm-ts-keyword',
-  until: 'cm-ts-keyword',
-  do: 'cm-ts-keyword',
-  done: 'cm-ts-keyword',
-  case: 'cm-ts-keyword',
-  esac: 'cm-ts-keyword',
-  in: 'cm-ts-keyword',
-  function: 'cm-ts-keyword',
-  select: 'cm-ts-keyword',
+// capture 名 -> CSS class；点分名右向左回退（function.method -> function）。
+const CAPTURE_CLASS: Readonly<Record<string, string>> = {
+  comment: 'cm-tsh-comment',
+  string: 'cm-tsh-string',
+  character: 'cm-tsh-string',
+  'string.escape': 'cm-tsh-escape',
+  escape: 'cm-tsh-escape',
+  number: 'cm-tsh-number',
+  float: 'cm-tsh-number',
+  boolean: 'cm-tsh-constant',
+  constant: 'cm-tsh-constant',
+  variable: 'cm-tsh-variable',
+  'variable.parameter': 'cm-tsh-parameter',
+  parameter: 'cm-tsh-parameter',
+  property: 'cm-tsh-property',
+  field: 'cm-tsh-property',
+  function: 'cm-tsh-function',
+  method: 'cm-tsh-function',
+  constructor: 'cm-tsh-function',
+  keyword: 'cm-tsh-keyword',
+  conditional: 'cm-tsh-keyword',
+  repeat: 'cm-tsh-keyword',
+  operator: 'cm-tsh-operator',
+  type: 'cm-tsh-type',
+  namespace: 'cm-tsh-type',
+  attribute: 'cm-tsh-attribute',
+  tag: 'cm-tsh-tag',
+  label: 'cm-tsh-label',
+  punctuation: 'cm-tsh-punctuation',
 };
 
-// 整块着色、不再下钻的容器节点
-const CONTAINER_TYPE_CLASS: Record<string, string> = {
-  command_name: 'cm-ts-function',
-};
+function classForCapture(name: string): string | undefined {
+  let key = name;
+  for (;;) {
+    const cls = CAPTURE_CLASS[key];
+    if (cls) return cls;
+    const dot = key.lastIndexOf('.');
+    if (dot === -1) return undefined;
+    key = key.slice(0, dot);
+  }
+}
 
 const markCache = new Map<string, Decoration>();
-function markFor(className: string): Decoration {
-  const cached = markCache.get(className);
-  if (cached) return cached;
-  const mark = Decoration.mark({ class: className });
-  markCache.set(className, mark);
+function markFor(cls: string): Decoration {
+  const hit = markCache.get(cls);
+  if (hit) return hit;
+  const mark = Decoration.mark({ class: cls });
+  markCache.set(cls, mark);
   return mark;
 }
 
-// tree-sitter Point.column 以 UTF-8 字节计；CodeMirror 以 UTF-16 char 计，需按行换算。
+// tree-sitter Point.column 以 UTF-8 字节计，需按行换算为 CodeMirror 的 UTF-16 字符列。
 function byteColumnToChar(lineText: string, byteColumn: number): number {
   if (byteColumn <= 0) return 0;
   let bytes = 0;
-  for (let i = 0; i < lineText.length; i += 1) {
-    if (bytes >= byteColumn) return i;
-    const code = lineText.codePointAt(i) ?? 0;
-    if (code > 0xffff) i += 1; // 代理对
-    bytes += code <= 0x7f ? 1 : code <= 0x7ff ? 2 : code <= 0xffff ? 3 : 4;
+  for (let index = 0; index < lineText.length; index += 1) {
+    if (bytes >= byteColumn) return index;
+    const code = lineText.charCodeAt(index);
+    if (code < 0x80) bytes += 1;
+    else if (code < 0x800) bytes += 2;
+    else if (code >= 0xd800 && code <= 0xdbff && index + 1 < lineText.length) {
+      const next = lineText.charCodeAt(index + 1);
+      if (next >= 0xdc00 && next <= 0xdfff) {
+        bytes += 4;
+        index += 1;
+      } else bytes += 3;
+    } else bytes += 3;
   }
   return lineText.length;
 }
 
-function getChildren(node: Node): Node[] {
-  if (Array.isArray(node.children)) return node.children;
-  const out: Node[] = [];
-  const count = node.childCount ?? 0;
-  for (let i = 0; i < count; i += 1) {
-    const child = node.child(i);
-    if (child) out.push(child);
-  }
-  return out;
+function posForPoint(doc: Text, point: Point): number {
+  const lineNo = Math.min(Math.max(point.row, 0) + 1, doc.lines);
+  const line = doc.line(lineNo);
+  return Math.min(line.from + byteColumnToChar(line.text, point.column), doc.length);
 }
 
-function buildBashDecorations(view: EditorView, tree: Tree | null): DecorationSet {
-  if (!tree) return Decoration.none;
-  const { doc } = view.state;
-  const { from, to } = view.viewport;
-  const minRow = Math.max(0, doc.lineAt(from).number - 1 - HIGHLIGHT_OVERSCAN_ROWS);
-  const maxRow = Math.min(doc.lines - 1, doc.lineAt(to).number - 1 + HIGHLIGHT_OVERSCAN_ROWS);
+// 每语言的 Parser / Query 单例缓存（tree-sitter 查询是为逐键解析设计的，编译一次即可复用）。
+let corePromise: Promise<void> | null = null;
+const languagePromises = new Map<string, Promise<Language>>();
+const parserPromises = new Map<string, Promise<Parser>>();
+const queryCache = new Map<string, Query>();
 
-  const ranges: Array<{ from: number; to: number; deco: Decoration }> = [];
-
-  const pushRange = (node: Node, className: string): void => {
-    const startRow = node.startPosition.row;
-    const endRow = node.endPosition.row;
-    if (endRow < minRow || startRow > maxRow) return;
-    const fromLine = doc.line(Math.min(startRow + 1, doc.lines));
-    const toLine = doc.line(Math.min(endRow + 1, doc.lines));
-    const fromPos = Math.min(
-      fromLine.from + byteColumnToChar(fromLine.text, node.startPosition.column),
-      doc.length,
-    );
-    const toPos = Math.min(
-      toLine.from + byteColumnToChar(toLine.text, node.endPosition.column),
-      doc.length,
-    );
-    if (toPos > fromPos) ranges.push({ from: fromPos, to: toPos, deco: markFor(className) });
-  };
-
-  // 单次深度优先遍历，按可见区间剪枝（对齐 Zed 的 range 化查询）
-  const stack: Node[] = [tree.rootNode];
-  while (stack.length) {
-    const node = stack.pop();
-    if (!node) continue;
-    if (node.endPosition.row < minRow || node.startPosition.row > maxRow) continue;
-
-    const container = CONTAINER_TYPE_CLASS[node.type];
-    if (container) {
-      pushRange(node, container);
-      continue; // 整块着色，不再下钻
-    }
-    const children = getChildren(node);
-    if (children.length === 0) {
-      const leaf = LEAF_TYPE_CLASS[node.type];
-      if (leaf) pushRange(node, leaf);
-      continue;
-    }
-    for (const child of children) stack.push(child);
+function ensureCore(): Promise<void> {
+  if (!corePromise) {
+    corePromise = Parser.init({ locateFile: () => treeSitterWasmUrl });
   }
-
-  ranges.sort((a, b) => a.from - b.from || a.to - b.to);
-  return Decoration.set(
-    ranges.map((r) => r.deco.range(r.from, r.to)),
-    true,
-  );
+  return corePromise;
 }
 
-class BashTreeSitterHighlighter {
-  decorations: DecorationSet = Decoration.none;
-  private lastTree: Tree | null = null;
+function ensureLanguage(langId: string): Promise<Language> {
+  let promise = languagePromises.get(langId);
+  if (!promise) {
+    const entry = TREE_SITTER_LANGUAGES[langId];
+    promise = (async () => {
+      await ensureCore();
+      return Language.load(entry.wasmUrl);
+    })();
+    languagePromises.set(langId, promise);
+  }
+  return promise;
+}
 
-  constructor(view: EditorView) {
-    const analysis = view.state.field(bashAnalysisField, false);
-    this.lastTree = analysis?.tree ?? null;
-    this.decorations = buildBashDecorations(view, this.lastTree);
+function ensureParser(langId: string): Promise<Parser> {
+  let promise = parserPromises.get(langId);
+  if (!promise) {
+    promise = (async () => {
+      const language = await ensureLanguage(langId);
+      const parser = new Parser();
+      parser.setLanguage(language);
+      if (!queryCache.has(langId)) {
+        queryCache.set(langId, new Query(language, TREE_SITTER_LANGUAGES[langId].scm));
+      }
+      return parser;
+    })();
+    parserPromises.set(langId, promise);
+  }
+  return promise;
+}
+
+const setTreeSitterDecorations = StateEffect.define<DecorationSet>();
+const treeSitterDecorationField = StateField.define<DecorationSet>({
+  create: () => Decoration.none,
+  update(value, tr) {
+    let next = value.map(tr.changes);
+    for (const effect of tr.effects) {
+      if (effect.is(setTreeSitterDecorations)) next = effect.value;
+    }
+    return next;
+  },
+  provide: (field) => EditorView.decorations.from(field),
+});
+
+class TreeSitterHighlighter {
+  private parser: Parser | null = null;
+  private tree: Tree | null = null;
+  private source: string;
+  private timer: ReturnType<typeof setTimeout> | null = null;
+  private disposed = false;
+
+  constructor(
+    private readonly view: EditorView,
+    private readonly langId: string,
+  ) {
+    this.source = view.state.doc.toString();
+    void this.init();
+  }
+
+  private async init(): Promise<void> {
+    try {
+      const parser = await ensureParser(this.langId);
+      if (this.disposed) return;
+      this.parser = parser;
+      this.reparse(true);
+      this.publish();
+    } catch {
+      // 语法加载失败：保持无色，不影响编辑
+    }
+  }
+
+  private reparse(full: boolean): void {
+    if (!this.parser || this.source.length > MAX_TS_SOURCE_LENGTH) {
+      this.tree = null;
+      return;
+    }
+    const previous = this.tree;
+    this.tree = this.parser.parse(this.source, full ? undefined : (previous ?? undefined));
+    if (previous && previous !== this.tree) previous.delete();
   }
 
   update(update: ViewUpdate): void {
-    const analysis = update.state.field(bashAnalysisField, false);
-    const tree = analysis?.tree ?? null;
-    const treeChanged = tree !== this.lastTree;
-
-    if (update.docChanged) {
-      // 树还没跟上时，先把旧装饰按编辑映射过去，避免闪烁（Zed 也保留短暂旧高亮）
-      this.decorations = this.decorations.map(update.changes);
+    if (!update.docChanged) return;
+    const next = update.state.doc.toString();
+    if (this.parser && this.tree && next.length <= MAX_TS_SOURCE_LENGTH) {
+      this.tree.edit(computeBashSourceEdit(this.source, next));
+      this.source = next;
+      this.reparse(false);
+    } else {
+      this.source = next;
+      this.reparse(true);
     }
-    if (treeChanged || update.viewportChanged || update.docChanged) {
-      this.decorations = buildBashDecorations(update.view, tree);
-      this.lastTree = tree;
+    this.schedulePublish();
+  }
+
+  private schedulePublish(): void {
+    if (this.timer !== null) return;
+    this.timer = setTimeout(() => {
+      this.timer = null;
+      this.publish();
+    }, TS_HIGHLIGHT_DEBOUNCE_MS);
+  }
+
+  private publish(): void {
+    if (this.disposed) return;
+    this.view.dispatch({ effects: setTreeSitterDecorations.of(this.build()) });
+  }
+
+  private build(): DecorationSet {
+    const query = queryCache.get(this.langId);
+    if (!query || !this.tree) return Decoration.none;
+    const doc = this.view.state.doc;
+    const items: Array<{ from: number; to: number; span: number; deco: Decoration }> = [];
+    for (const capture of query.captures(this.tree.rootNode)) {
+      const cls = classForCapture(capture.name);
+      if (!cls) continue;
+      const from = posForPoint(doc, capture.node.startPosition);
+      const to = posForPoint(doc, capture.node.endPosition);
+      if (to > from) items.push({ from, to, span: to - from, deco: markFor(cls) });
+    }
+    // 同起点时大范围在前，使更具体（更小）的 capture 嵌套在内层生效（对齐 tree-sitter 高亮语义）。
+    items.sort((a, b) => a.from - b.from || b.span - a.span);
+    return Decoration.set(
+      items.map((item) => item.deco.range(item.from, item.to)),
+      true,
+    );
+  }
+
+  destroy(): void {
+    this.disposed = true;
+    if (this.timer !== null) clearTimeout(this.timer);
+    if (this.tree) {
+      this.tree.delete();
+      this.tree = null;
     }
   }
 }
 
-const bashTreeSitterHighlightPlugin = ViewPlugin.fromClass(BashTreeSitterHighlighter, {
-  decorations: (plugin) => plugin.decorations,
+const treeSitterHighlightTheme = EditorView.baseTheme({
+  '.cm-tsh-comment': { color: '#6e7781', fontStyle: 'italic' },
+  '.cm-tsh-string': { color: '#0a3069' },
+  '.cm-tsh-escape': { color: '#0a3069', fontWeight: '600' },
+  '.cm-tsh-number': { color: '#0550ae' },
+  '.cm-tsh-constant': { color: '#0550ae' },
+  '.cm-tsh-variable': { color: '#953800' },
+  '.cm-tsh-parameter': { color: '#953800' },
+  '.cm-tsh-property': { color: '#0550ae' },
+  '.cm-tsh-function': { color: '#8250df' },
+  '.cm-tsh-keyword': { color: '#cf222e' },
+  '.cm-tsh-operator': { color: '#0550ae' },
+  '.cm-tsh-type': { color: '#953800' },
+  '.cm-tsh-attribute': { color: '#0550ae' },
+  '.cm-tsh-tag': { color: '#116329' },
+  '.cm-tsh-label': { color: '#0550ae' },
+  '.cm-tsh-punctuation': { color: '#24292f' },
 });
 
-// 主题只按 capture class 着色，与语言解耦（github-light，与 Shiki 主题保持一致观感）
-const bashTreeSitterHighlightTheme = EditorView.baseTheme({
-  '.cm-ts-comment': { color: '#6e7781', fontStyle: 'italic' },
-  '.cm-ts-string': { color: '#0a3069' },
-  '.cm-ts-keyword': { color: '#cf222e' },
-  '.cm-ts-function': { color: '#8250df' },
-  '.cm-ts-variable': { color: '#953800' },
-  '.cm-ts-number': { color: '#0550ae' },
-  '.cm-ts-operator': { color: '#0550ae' },
-});
+function treeSitterHighlightExtension(languageId: string): Extension {
+  return [
+    treeSitterDecorationField,
+    ViewPlugin.define((view) => new TreeSitterHighlighter(view, languageId)),
+    treeSitterHighlightTheme,
+  ];
+}
 
-export function bashTreeSitterHighlightExtension() {
-  return [bashTreeSitterHighlightPlugin, bashTreeSitterHighlightTheme];
+/** 若某语言已被 tree-sitter 覆盖，则在其扩展后追加高亮引擎；否则原样返回。 */
+export function withTreeSitterHighlight(languageId: string, base: Extension): Extension {
+  if (!Object.hasOwn(TREE_SITTER_LANGUAGES, languageId)) return base;
+  return [base, treeSitterHighlightExtension(languageId)];
+}
+
+/** Shiki 编辑器高亮据此对被 tree-sitter 覆盖的语言让位。 */
+export function isTreeSitterHighlightLanguage(language: string): boolean {
+  return resolveTreeSitterLanguageId(language) !== null;
 }

@@ -197,6 +197,9 @@ importers:
       tree-sitter-bash:
         specifier: ^0.25.1
         version: 0.25.1
+      tree-sitter-wasms:
+        specifier: ^0.1.13
+        version: 0.1.13
       tw-animate-css:
         specifier: ^1.4.0
         version: 1.4.0
@@ -5872,6 +5875,9 @@ packages:
     peerDependenciesMeta:
       tree-sitter:
         optional: true
+
+  tree-sitter-wasms@0.1.13:
+    resolution: {integrity: sha512-wT+cR6DwaIz80/vho3AvSF0N4txuNx/5bcRKoXouOfClpxh/qqrF4URNLQXbbt8MaAxeksZcZd1j8gcGjc+QxQ==}
 
   trim-lines@3.0.1:
     resolution: {integrity: sha512-kRj8B+YHZCc9kQYdWfJB2/oUl9rA99qbowYYBtr4ui4mZyAQ2JpvVBd/6U2YloATfqBhBTSMhTpgBHtU0Mf3Rg==}
@@ -12444,6 +12450,8 @@ snapshots:
     dependencies:
       node-addon-api: 8.9.0
       node-gyp-build: 4.8.4
+
+  tree-sitter-wasms@0.1.13: {}
 
   trim-lines@3.0.1: {}
 
