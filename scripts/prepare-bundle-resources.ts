@@ -177,10 +177,27 @@ function stageShellcheck(): void {
   run(npmBin(), ['install', '--no-save', '--no-audit', '--no-fund', '--prefix', scPrefix, spec]);
   // 该包首次执行才下载二进制；用其 download() API 直接写到 dest（destination 取 argv[2]）。
   const downloadScript = join(scPrefix, 'download-shellcheck.mjs');
-  writeFileSync(
-    downloadScript,
-    "import { download } from 'shellcheck';\nawait download({ destination: process.argv[2] });\n",
-  );
+  // GitHub release 直连易被重置（ECONNRESET）；带指数退避重试，缓解国内网络抖动。
+  const downloadSource = [
+    "import { download } from 'shellcheck';",
+    'const destination = process.argv[2];',
+    'const maxAttempts = 5;',
+    'let lastError;',
+    'for (let attempt = 1; attempt <= maxAttempts; attempt++) {',
+    '  try {',
+    '    await download({ destination });',
+    '    lastError = undefined;',
+    '    break;',
+    '  } catch (error) {',
+    '    lastError = error;',
+    "    console.error('[download-shellcheck] 第 ' + attempt + '/' + maxAttempts + ' 次下载失败：' + error);",
+    '    await new Promise((resolve) => setTimeout(resolve, attempt * 3000));',
+    '  }',
+    '}',
+    'if (lastError) throw lastError;',
+    '',
+  ].join('\n');
+  writeFileSync(downloadScript, downloadSource);
   run(process.execPath, [downloadScript, dest], { cwd: scPrefix });
   if (!existsSync(dest)) {
     fail(`shellcheck 下载后未找到二进制：${dest}`);

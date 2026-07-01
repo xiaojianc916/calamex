@@ -627,6 +627,107 @@ fn get_git_pull_request_support_parses_gitlab_remote() -> Result<(), String> {
 }
 
 #[test]
+fn save_git_stash_preserves_tab_and_newline_in_message() -> Result<(), String> {
+    // reflog 行格式用 \t 分隔元数据与消息；消息本身若含 \t/\n 是手写解析最脆弱的边界。
+    let temp = TempGitDir::new("stash-tab-newline")?;
+    let _repo = temp.init_repository()?;
+    let root = temp.repository_root()?;
+    write_worktree_file(&temp.path, "src/app.sh", "echo base\n")?;
+    commit_worktree(&temp.path, "feat: initial")?;
+    write_worktree_file(&temp.path, "src/app.sh", "echo changed\n")?;
+    save_git_stash(GitStashSaveRequest {
+        repository_root_path: root.to_string_lossy().to_string(),
+        message: Some("demo\tstash message".into()),
+        include_untracked: false,
+    })?;
+    let stashes = list_git_stashes(GitRepositoryRootRequest {
+        repository_root_path: root.to_string_lossy().to_string(),
+    })?;
+    assert_eq!(stashes.entries.len(), 1);
+    assert!(stashes.entries[0].summary.contains("demo"));
+    Ok(())
+}
+
+#[test]
+fn drop_git_stash_from_middle_preserves_reflog_chain() -> Result<(), String> {
+    let temp = TempGitDir::new("stash-drop-middle")?;
+    let _repo = temp.init_repository()?;
+    let root = temp.repository_root()?;
+    write_worktree_file(&temp.path, "src/app.sh", "echo base\n")?;
+    commit_worktree(&temp.path, "feat: initial")?;
+
+    for label in ["first", "second", "third"] {
+        write_worktree_file(&temp.path, "src/app.sh", &format!("echo {label}\n"))?;
+        save_git_stash(GitStashSaveRequest {
+            repository_root_path: root.to_string_lossy().to_string(),
+            message: Some(label.into()),
+            include_untracked: false,
+        })?;
+    }
+
+    // drop 中间一条（stash@{1} == "second"），验证 reflog 链未断、其余两条仍可正常应用。
+    drop_git_stash(GitStashDropRequest {
+        repository_root_path: root.to_string_lossy().to_string(),
+        stash_index: 1,
+    })?;
+
+    let stashes = list_git_stashes(GitRepositoryRootRequest {
+        repository_root_path: root.to_string_lossy().to_string(),
+    })?;
+    assert_eq!(stashes.entries.len(), 2);
+    assert!(stashes.entries.iter().any(|entry| entry.summary.contains("third")));
+    assert!(stashes.entries.iter().any(|entry| entry.summary.contains("first")));
+    assert!(!stashes.entries.iter().any(|entry| entry.summary.contains("second")));
+
+    apply_git_stash(GitStashApplyRequest {
+        repository_root_path: root.to_string_lossy().to_string(),
+        stash_index: 0,
+        pop: true,
+    })?;
+    let content = fs::read_to_string(temp.path.join("src/app.sh")).map_err(|e| e.to_string())?;
+    assert_eq!(content.replace("\r\n", "\n"), "echo third\n");
+    Ok(())
+}
+
+#[test]
+fn save_git_stash_after_clearing_all_stashes_recreates_reflog() -> Result<(), String> {
+    let temp = TempGitDir::new("stash-recreate-after-clear")?;
+    let _repo = temp.init_repository()?;
+    let root = temp.repository_root()?;
+    write_worktree_file(&temp.path, "src/app.sh", "echo base\n")?;
+    commit_worktree(&temp.path, "feat: initial")?;
+    write_worktree_file(&temp.path, "src/app.sh", "echo changed-once\n")?;
+    save_git_stash(GitStashSaveRequest {
+        repository_root_path: root.to_string_lossy().to_string(),
+        message: Some("first".into()),
+        include_untracked: false,
+    })?;
+    // drop 到清空：reflog / ref 文件会被删除。
+    drop_git_stash(GitStashDropRequest {
+        repository_root_path: root.to_string_lossy().to_string(),
+        stash_index: 0,
+    })?;
+    let empty = list_git_stashes(GitRepositoryRootRequest {
+        repository_root_path: root.to_string_lossy().to_string(),
+    })?;
+    assert!(empty.entries.is_empty());
+
+    // 清空后再次贮藏，验证 reflog/ref 能被正确重建而不是报错。
+    write_worktree_file(&temp.path, "src/app.sh", "echo changed-twice\n")?;
+    save_git_stash(GitStashSaveRequest {
+        repository_root_path: root.to_string_lossy().to_string(),
+        message: Some("second".into()),
+        include_untracked: false,
+    })?;
+    let stashes = list_git_stashes(GitRepositoryRootRequest {
+        repository_root_path: root.to_string_lossy().to_string(),
+    })?;
+    assert_eq!(stashes.entries.len(), 1);
+    assert!(stashes.entries[0].summary.contains("second"));
+    Ok(())
+}
+
+#[test]
 fn short_commit_oid_falls_back_to_seven_hex_chars_for_unknown_object() {
     // 钉住 short_commit_id 依赖的 \`{:.7}\` 截断行为：避免 gix ObjectId 的 Display
     // 实现变更后短 OID 长度悄悄改变而无人察觉。

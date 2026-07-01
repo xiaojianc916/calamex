@@ -19,6 +19,9 @@ use super::types::{
     PendingMap,
 };
 
+const LSP_INITIALIZE_TIMEOUT: Duration = Duration::from_secs(10);
+const LSP_COMPLETION_TIMEOUT: Duration = Duration::from_secs(2);
+const LSP_HOVER_TIMEOUT: Duration = Duration::from_secs(1);
 const LSP_SHUTDOWN_TIMEOUT: Duration = Duration::from_secs(2);
 
 #[tauri::command]
@@ -120,7 +123,7 @@ pub async fn lsp_start(
         0i64,
         "initialize",
         init_params,
-        Duration::from_secs(10),
+        LSP_INITIALIZE_TIMEOUT,
     )
     .await
     .map_err(|e| format!("initialize 失败: {e}"))?;
@@ -360,7 +363,7 @@ pub async fn lsp_completion(
         id,
         "textDocument/completion",
         params,
-        Duration::from_secs(2),
+        LSP_COMPLETION_TIMEOUT,
     )
     .await?;
     Ok(parse_completion(
@@ -369,25 +372,28 @@ pub async fn lsp_completion(
 }
 
 fn parse_completion(result: Value) -> Vec<LspCompletionItem> {
-    let items = if let Some(items) = result.get("items").and_then(|v| v.as_array()) {
-        items.clone()
-    } else if let Some(arr) = result.as_array() {
-        arr.clone()
-    } else {
-        return vec![];
+    // 用 lsp-types 做协议层解析：字段名/结构由官方 LSP 类型定义保证，
+    // 取代此前手写的裸 Value 索引（字段名拼错时会静默返回 None 而非编译报错）。
+    let items = match serde_json::from_value::<lsp_types::CompletionResponse>(result) {
+        Ok(lsp_types::CompletionResponse::Array(items)) => items,
+        Ok(lsp_types::CompletionResponse::List(list)) => list.items,
+        Err(_) => return vec![],
     };
     items
         .into_iter()
-        .map(|it| LspCompletionItem {
-            label: it["label"].as_str().unwrap_or("").to_string(),
-            insert_text: it["insertText"].as_str().map(String::from),
-            kind: it["kind"].as_u64().map(|n| n as u32),
-            detail: it["detail"].as_str().map(String::from),
-            documentation: it["documentation"].as_str().map(String::from).or_else(|| {
-                it["documentation"]
-                    .get("value")
-                    .and_then(|v| v.as_str())
-                    .map(String::from)
+        .map(|item| LspCompletionItem {
+            label: item.label,
+            insert_text: item.insert_text,
+            // CompletionItemKind 字段私有，用 Serialize 往返取协议线上原始整数。
+            kind: item
+                .kind
+                .and_then(|kind| serde_json::to_value(kind).ok())
+                .and_then(|value| value.as_u64())
+                .map(|value| value as u32),
+            detail: item.detail,
+            documentation: item.documentation.map(|documentation| match documentation {
+                lsp_types::Documentation::String(text) => text,
+                lsp_types::Documentation::MarkupContent(markup) => markup.value,
             }),
         })
         .collect()
@@ -412,7 +418,7 @@ pub async fn lsp_hover(
         id,
         "textDocument/hover",
         params,
-        Duration::from_secs(1),
+        LSP_HOVER_TIMEOUT,
     )
     .await?;
     Ok(parse_hover(
@@ -424,29 +430,27 @@ fn parse_hover(result: Value) -> Option<LspHoverResult> {
     if result.is_null() {
         return None;
     }
-    let contents = result.get("contents")?;
-    let text = match contents {
-        Value::String(s) => s.clone(),
-        Value::Object(o) => o
-            .get("value")
-            .and_then(|v| v.as_str())
-            .unwrap_or("")
-            .to_string(),
-        Value::Array(arr) => arr
-            .iter()
-            .filter_map(|v| match v {
-                Value::String(s) => Some(s.clone()),
-                Value::Object(o) => o.get("value").and_then(|x| x.as_str()).map(String::from),
-                _ => None,
-            })
+    let hover: lsp_types::Hover = serde_json::from_value(result).ok()?;
+    let text = match hover.contents {
+        lsp_types::HoverContents::Scalar(marked) => marked_string_to_text(marked),
+        lsp_types::HoverContents::Array(items) => items
+            .into_iter()
+            .map(marked_string_to_text)
             .collect::<Vec<_>>()
             .join("\n\n"),
-        _ => return None,
+        lsp_types::HoverContents::Markup(markup) => markup.value,
     };
     if text.is_empty() {
         None
     } else {
         Some(LspHoverResult { contents: text })
+    }
+}
+
+fn marked_string_to_text(marked: lsp_types::MarkedString) -> String {
+    match marked {
+        lsp_types::MarkedString::String(text) => text,
+        lsp_types::MarkedString::LanguageString(language_string) => language_string.value,
     }
 }
 

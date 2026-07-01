@@ -107,8 +107,13 @@ impl LocalWslPtyHandle {
             .map_err(|error| LocalWslPtyError::Write(error.to_string()))
     }
 
+    /// 异步写入：交给阻塞线程池执行同步写锁 + write_all，避免在 tokio worker 线程上
+    /// 同步持锁（此前实现体内无任何 await 点，是"假 async"）。
     pub async fn write_input(&self, data: String) -> Result<(), LocalWslPtyError> {
-        self.write_input_sync(&data)
+        let handle = self.clone();
+        tokio::task::spawn_blocking(move || handle.write_input_sync(&data))
+            .await
+            .map_err(|error| LocalWslPtyError::Write(format!("终端写入任务异常终止：{error}")))?
     }
 
     /// 提交一次尺寸调整。不直接驱动 ConPTY，而是投递到该会话独占的 resize 合批线程：窗口拖拽
