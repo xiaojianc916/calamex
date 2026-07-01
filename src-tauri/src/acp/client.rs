@@ -1,8 +1,8 @@
 //! 宿主侧 ACP(Agent Client Protocol)stdio 客户端。
 //!
 //! 这是「先加新模块 → cargo 验证 → 绿了再删旧」迁移路径中新增、可逆、按 cargo
-//! feature `acp_client` 门控的模块。默认构建(`default = ["desktop"]`)不会编译它,
-//! 因此落地阶段不影响现有 HTTP/NDJSON sidecar。
+//! feature `acp_client` 门控的模块。该模块已随默认特性（含 `acp_client`）参与编译，
+//! 旧 HTTP/NDJSON sidecar 已随迁移完成而移除，本模块为当前唯一路径。
 
 #![allow(dead_code)]
 

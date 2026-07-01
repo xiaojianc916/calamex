@@ -24,7 +24,7 @@
 //! Codex 等）的启动配置与凭证预置由各自的 `ExternalAgentProvisioner` 实现自包含，不再经由
 //! 本模块（见 `provisioner.rs`）。
 //!
-//! 按 cargo feature `acp_client` 门控；接线前不影响现有路径。
+//! 本模块已随默认特性（含 `acp_client`）编译，并已接线为 builtin-agent 的启动配置解析层。
 
 #![allow(dead_code)]
 

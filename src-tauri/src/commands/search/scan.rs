@@ -37,6 +37,8 @@ const SKIPPED_SEARCH_DIR_NAMES: &[&str] = &[
     "node_modules",
     "out",
     "target",
+    ".venv",
+    "__pycache__",
 ];
 const SKIPPED_SEARCH_FILE_NAMES: &[&str] = &[".ds_store", "desktop.ini", "thumbs.db"];
 const SKIPPED_SEARCH_EXTENSIONS: &[&str] = &[
