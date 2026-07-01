@@ -258,6 +258,21 @@ pub fn ai_cancel(app: AppHandle, payload: AiCancelRequest) -> Result<(), String>
     Ok(())
 }
 
+/// 驱逐某线程的 ACP 会话态（删除对话时调用）：委托 AcpRuntime 向全部已建立宿主广播移除该线程的
+/// thread↔session / config_options / available_commands 条目，根治这些按 thread/session 键的表随
+/// 会话数单调增长的泄漏。threadId 空白视作无操作（对齐「删除本就不存在的对话」的良性调用）。
+#[tauri::command]
+#[specta::specta]
+pub fn ai_evict_thread(app: AppHandle, thread_id: String) -> Result<(), String> {
+    let thread_id = thread_id.trim();
+    if thread_id.is_empty() {
+        return Ok(());
+    }
+    use tauri::Manager as _;
+    app.state::<crate::acp::AcpRuntime>().evict_thread(thread_id);
+    Ok(())
+}
+
 /// 投递 ACP 反向权限请求（`session/request_permission`）的审批决策，唤醒回合内挂起的工具调用。
 ///
 /// 与 `ai_cancel` 同构地委托给 Tauri 托管的 `AcpRuntime`：会话归属哪个后端宿主对命令层透明，

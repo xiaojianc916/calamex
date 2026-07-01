@@ -471,6 +471,24 @@ impl AcpHost {
         }
     }
 
+    /// 驱逐某线程的全部会话态：从 `thread_id ↔ SessionId`、`config_options_by_thread`、
+    /// `available_commands_by_session` 三张表移除该线程/会话条目。对齐 Zed「线程实体 drop 即释放其
+    /// 连接与 per-thread 状态」——前端删除对话时经命令层调用，根治这三张按 thread/session 键的表随
+    /// 会话数单调增长的泄漏。幂等：未绑定该线程时为安全空操作。删除≠取消回合，故不下发 session/cancel。
+    pub fn evict_thread(&self, thread_id: &str) {
+        let thread_key = thread_id.trim();
+        if thread_key.is_empty() {
+            return;
+        }
+        let removed_session = self.sessions.lock().remove(thread_key);
+        self.config_options_by_thread.lock().remove(thread_key);
+        if let Some(session_id) = removed_session {
+            self.available_commands_by_session
+                .lock()
+                .remove(&session_id.to_string());
+        }
+    }
+
     /// 请求优雅关停：清空挂起审批并令常驻连接任务结束（子进程随之回收）。
     pub fn shutdown(&self) {
         self.approvals.clear();

@@ -210,6 +210,17 @@ impl AcpRuntime {
         }
     }
 
+    /// 驱逐某线程在全部**已建立**后端宿主上的会话态（thread↔session / config_options /
+    /// available_commands）。前端删除对话时经命令层调用；线程绑定的会话可能落在任一后端，故广播。
+    /// 缺省（无任何宿主）为安全空操作——驱逐绝不应触发 node 子进程派生。
+    pub fn evict_thread(&self, thread_id: &str) {
+        // 先取出 Arc 列表并释放锁，避免在广播期间持有 runtime 锁。
+        let hosts = self.hosts.lock().all();
+        for host in hosts {
+            host.evict_thread(thread_id);
+        }
+    }
+
     /// 投递一个审批决策，唤醒回合内挂起的权限请求（反向 `session/request_permission`）。
     /// 挂起项落在发起该请求的那个后端宿主的登记表里，故向全部**已建立**宿主广播投递：
     /// 命中（成功唤醒某挂起回合）任一宿主即返回 `true`；无匹配挂起项或无任何宿主时返回
