@@ -373,7 +373,7 @@ pub fn spawn_acp_client(
     let notif_sink = sink.clone();
     let notif_seq = seq.clone();
 
-    tokio::spawn(async move {
+    tauri::async_runtime::spawn(async move {
         let result = Client
             .builder()
             .name("calamex")
