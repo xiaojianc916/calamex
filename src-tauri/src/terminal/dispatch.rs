@@ -91,7 +91,11 @@ pub(crate) fn build_terminal_run_command_for_local_wsl(
 
     Ok((
         TerminalDispatchCommand {
-            display_command: format!("/bin/bash {}", wsl::bash_quote(&prepared.execution_path)),
+            display_command: format!(
+    "cd {} && /bin/bash {}",
+    wsl::bash_quote(&prepared.working_directory),
+    wsl::bash_quote(&prepared.execution_path)
+),
             used_temp_file: prepared.used_temp_file,
             execution_path: prepared.execution_path,
             working_directory: prepared.working_directory,

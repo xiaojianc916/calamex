@@ -321,3 +321,19 @@ fn cancel_escalation_watch_stops_once_run_is_cleared() {
         Duration::from_secs(2)
     ));
 }
+
+#[test]
+fn dispatch_command_prefixes_cd_to_working_directory() {
+    let payload = DispatchTerminalScriptRequest {
+        // ……按你现有测试的构造方式填充：指定 workspace_root_path / path
+        ..Default::default()
+    };
+    let (command, _) =
+        build_terminal_run_command_for_local_wsl(&payload, "/home/user").expect("build ok");
+    assert!(
+        command.display_command.starts_with("cd "),
+        "运行命令应先 cd 到工作目录：{}",
+        command.display_command
+    );
+    assert!(command.display_command.contains("&& /bin/bash "));
+}
