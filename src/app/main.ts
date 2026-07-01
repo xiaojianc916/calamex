@@ -9,7 +9,6 @@ import {
   runStartupPersistedRead,
   defaultDeps as startupPersistedReadDefaultDeps,
 } from '@/store/aiThread/startupPersistedReadWiring';
-import { hydrateSessionStorage } from '@/store/plugins/tauriSessionStorage';
 import { initEditorScrollbarActivity } from '@/utils/editor/editor-scrollbar-activity';
 import { renderFatalBootstrapError } from '@/utils/error/bootstrap-fatal-error';
 import {
@@ -145,14 +144,10 @@ const bootstrap = async (): Promise<void> => {
       }, 2500);
     };
 
-    // session 快照是首屏(编辑器/工作区状态)恢复所必需的，仍在挂载前阻塞 await。
-    // 而 AI 会话历史只有懒加载的 AI 面板才会用到——首屏并不需要它就位。因此把它移出挂载
-    // 关键路径：在后台 idle 时读 entries 快照并灌入权威线程，不 await。entries hydrate 带
-    // 300ms 超时 + resolver 回退（坏快照/超时不致空白，详见 entriesRenderHydrate /
-    // aiThreadEntriesStorage），会在用户真正打开 AI 面板前完成。
-    markStartup('session-storage-hydrate-start');
-    await hydrateSessionStorage();
-    markStartup('session-storage-hydrated');
+    // 会话快照恢复不再阻塞启动:localStorage 已是唯一权威(见 services/session/store 与
+    // store/plugins/tauriSessionStorage)。Pinia persistedstate 在 editor store 首次实例化时
+    // 同步 getItem 即还原快照,无需在挂载前 await 任何异步 hydrate。AI 会话历史仍非首屏
+    // 必需,由下方 hydrateAiConversationAfterBootstrap 在挂载后 idle 时后台灌入。
 
     const app = createApp(App);
     markStartup('vue-app-created');

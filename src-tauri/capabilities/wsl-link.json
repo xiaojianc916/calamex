@@ -1,9 +1,0 @@
-{
-    "$schema": "../gen/schemas/desktop-schema.json",
-    "identifier": "wsl-link",
-    "description": "WSL Link 域能力：AF_HYPERV/AF_VSOCK + gRPC 单通道、HTTP/2 keepalive、指数退避重连与 session/client_seq 去重状态。当前暴露 get_wsl_link_status、check_wsl_link_environment、get_wsl_link_agent_artifact_status、probe_wsl_link_primary、start_wsl_link_supervisor、stop_wsl_link_supervisor 以及需显式确认的 install_wsl_link_agent / start_wsl_link_agent；生产终端切流尚未启用。参见 ADR-20260506。",
-    "windows": [
-        "main"
-    ],
-    "permissions": []
-}

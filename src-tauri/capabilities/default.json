@@ -1,7 +1,0 @@
-{
-  "$schema": "../gen/schemas/desktop-schema.json",
-  "identifier": "legacy-migrated",
-  "description": "已迁移：此文件权限已拆分到 5 个域文件。参见 ADR-0005。  Migrated to: window.json / workspace-fs.json / script-toolchain.json / terminal.json / git.json",
-  "windows": [],
-  "permissions": []
-}

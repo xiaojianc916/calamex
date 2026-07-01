@@ -1,7 +1,7 @@
 {
     "$schema": "../gen/schemas/desktop-schema.json",
     "identifier": "terminal",
-    "description": "集成终端域能力：WSL Link 交互 PTY 会话生命周期管理与 WSL Link 脚本派发。对应命令：ensure_terminal_session / write_terminal_input / resize_terminal_session / close_terminal_session / dispatch_script_to_terminal / cancel_terminal_run。事件名固定为 terminal:data / terminal:run-chunk / terminal:run-started / terminal:run-completed / terminal:interactive-ready / terminal:interactive-exited / terminal:state-changed。交互终端和脚本运行均默认走 WSL Link gRPC 流式通道，完成态由 agent 回传 terminal:run-completed / terminal:interactive-exited。参见 ADR-20260506。注意：write_terminal_input 可写入任意字节，属高权限操作，前端 MUST 仅通过 services/tauri.ts 收口调用。",
+    "description": "集成终端域能力：本地 PTY（Windows ConPTY 直驱 wsl.exe）交互会话生命周期与脚本派发。对应命令：ensure_terminal_session / write_terminal_input / resize_terminal_session / close_terminal_session / dispatch_script_to_terminal / cancel_terminal_run。事件：terminal:data / terminal:run-* / terminal:interactive-* / terminal:state-changed。注意：write_terminal_input 可写任意字节，属高权限操作，前端 MUST 仅经 services/tauri 收口调用。",
     "windows": [
         "main"
     ],
