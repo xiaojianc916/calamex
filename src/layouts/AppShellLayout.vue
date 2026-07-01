@@ -65,20 +65,7 @@ v-for="handle in resizeHandles" :key="handle.direction" class="window-resize-han
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue';
 import GitHubAuthPill from '@/components/workbench/GitHubAuthPill.vue';
 import { useGitStore } from '@/domains/git/state/git';
-import {
-  SHELL_WINDOW_RESIZE_END_EVENT,
-  SHELL_WINDOW_RESIZE_START_EVENT,
-} from '@/utils/window/window-resize-events';
-
-type TResizeDirection =
-  | 'North'
-  | 'South'
-  | 'East'
-  | 'West'
-  | 'NorthEast'
-  | 'NorthWest'
-  | 'SouthEast'
-  | 'SouthWest';
+import { type TWindowResizeDirection, windowChromeService } from '@/services/tauri/window';
 
 const SIDEBAR_MIN_WIDTH = 240;
 
@@ -105,9 +92,8 @@ const isMaximized = ref(false);
 let isLayoutUnmounted = false;
 let unlistenWindowResized: (() => void) | null = null;
 let windowStateSyncTimer: ReturnType<typeof globalThis.setTimeout> | null = null;
-let removeResizeFinishListeners: (() => void) | null = null;
 
-const resizeHandles: Array<{ direction: TResizeDirection; className: string }> = [
+const resizeHandles: Array<{ direction: TWindowResizeDirection; className: string }> = [
   { direction: 'North', className: 'is-top' },
   { direction: 'South', className: 'is-bottom' },
   { direction: 'East', className: 'is-right' },
@@ -151,98 +137,52 @@ const shellThemeStyle = {
   '--surface-soft-strong': '#d1d9e0b3',
 } as const;
 
-const getAppWindow = async () => {
-  if (!props.isDesktopRuntime) {
-    return null;
-  }
-
-  const { getCurrentWindow } = await import('@tauri-apps/api/window');
-  return getCurrentWindow();
-};
-
 const syncWindowState = async (): Promise<void> => {
-  const appWindow = await getAppWindow();
-  if (!appWindow || isLayoutUnmounted) {
+  const maximized = await windowChromeService.isMaximized();
+  if (isLayoutUnmounted) {
     return;
   }
-
-  try {
-    isMaximized.value = await appWindow.isMaximized();
-  } catch (error) {
-    console.warn('读取窗口最大化状态失败', error);
-  }
+  isMaximized.value = maximized;
 };
 
-const handleMinimize = async (): Promise<void> => {
-  const appWindow = await getAppWindow();
-  if (!appWindow) {
-    return;
-  }
-
-  await appWindow.minimize();
-};
+const handleMinimize = (): Promise<void> => windowChromeService.minimize();
 
 const handleToggleMaximize = async (): Promise<void> => {
-  const appWindow = await getAppWindow();
-  if (!appWindow) {
-    return;
-  }
-
-  await appWindow.toggleMaximize();
+  await windowChromeService.toggleMaximize();
   await syncWindowState();
 };
 
-// 保证交互式 resize 的 START 一定配对 END：派发 END 并解绑收尾监听。
-const finishWindowResizeInteraction = (): void => {
-  if (!removeResizeFinishListeners) {
-    return;
-  }
-
-  removeResizeFinishListeners();
-  removeResizeFinishListeners = null;
-  window.dispatchEvent(new Event(SHELL_WINDOW_RESIZE_END_EVENT));
-};
-
-const startWindowResize = async (direction: TResizeDirection, event: MouseEvent): Promise<void> => {
+// useWindowResizeState 已改由 ResizeObserver 直接响应 <html> 的渲染尺寸变化，
+// 不再需要这里手动派发 START/END 事件、也不需要用 mouseup 给它们“强行配对”
+// ——那一整套配对逻辑的唯一目的就是喂给已被移除的手写 resize 状态机。
+const startWindowResize = async (
+  direction: TWindowResizeDirection,
+  event: MouseEvent,
+): Promise<void> => {
   if (!props.isDesktopRuntime || event.button !== 0) {
     return;
   }
 
-  // 先收尾上一次可能遗留的交互，避免重复绑定监听。
-  finishWindowResizeInteraction();
-  window.dispatchEvent(new Event(SHELL_WINDOW_RESIZE_START_EVENT));
-
-  // 关键修复：原生 startResizeDragging 接管后，鼠标释放发生在 OS 层，webview 通常
-  // 收不到对应的 mouseup，过去仅在出错路径派发 END，成功路径上 END 永不触发，导致
-  // resize frame pump 空跑、is-resizing 长期挂起、界面假死、点击失效。这里在下一次
-  // mouseup 时补发 END，确保交互式 resize 状态被及时收尾。
-  const handleResizeFinish = (): void => {
-    finishWindowResizeInteraction();
-  };
-  window.addEventListener('mouseup', handleResizeFinish, { once: true });
-  removeResizeFinishListeners = () => {
-    window.removeEventListener('mouseup', handleResizeFinish);
-  };
-
   try {
-    const appWindow = await getAppWindow();
-    await appWindow?.startResizeDragging(direction);
+    await windowChromeService.startResizeDragging(direction);
   } catch (error) {
     console.warn('窗口边缘拉伸失败', error);
-    finishWindowResizeInteraction();
   }
 };
 
 const bindNativeWindowStateListeners = async (): Promise<void> => {
-  const appWindow = await getAppWindow();
-  if (!appWindow || isLayoutUnmounted) {
+  if (isLayoutUnmounted) {
     return;
   }
 
   await syncWindowState();
-  const unlisten = await appWindow.onResized(() => {
+  const unlisten = await windowChromeService.onResized(() => {
     void syncWindowState();
   });
+
+  if (!unlisten) {
+    return;
+  }
 
   if (isLayoutUnmounted) {
     unlisten();
@@ -270,8 +210,5 @@ onBeforeUnmount(() => {
   }
   unlistenWindowResized?.();
   unlistenWindowResized = null;
-  // 卸载时仅解绑收尾监听，不再额外派发 END。
-  removeResizeFinishListeners?.();
-  removeResizeFinishListeners = null;
 });
 </script>
