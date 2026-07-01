@@ -365,11 +365,9 @@ fn spawn_interactive_teardown_watch(
     session_id: String,
     handle: LocalWslPtyHandle,
 ) {
-    let spawn_result = std::thread::Builder::new()
-        .name(format!("wsl-teardown-watch-{session_id}"))
-        .spawn(move || {
+    tauri::async_runtime::spawn(async move {
             // 宽限期内等待读线程正常收尾（读到 EOF 后已由读线程自行发出 InteractiveClosed）。
-            if wait_until_finished(&handle, INTERACTIVE_TEARDOWN_GRACE) {
+            if wait_until_finished(&handle, INTERACTIVE_TEARDOWN_GRACE).await {
                 return;
             }
             // 宽限期内未收尾：升级重发 kill，强制终止可能仍卡死的 wsl.exe。
@@ -383,7 +381,7 @@ fn spawn_interactive_teardown_watch(
                 );
             }
             // 升级后再硬等一段；仍未收尾则合成退出事件，避免 UI 永久卡在僵尸会话上。
-            if wait_until_finished(&handle, INTERACTIVE_TEARDOWN_HARD_DEADLINE) {
+            if wait_until_finished(&handle, INTERACTIVE_TEARDOWN_HARD_DEADLINE).await {
                 return;
             }
             log::error!(
@@ -398,16 +396,11 @@ fn spawn_interactive_teardown_watch(
                     exit_code: None,
                 },
             );
-        });
-    if let Err(error) = spawn_result {
-        // 看门狗线程创建失败是极罕见的资源耗尽场景；关闭本身已发出 kill，这里仅警告，
-        // 不阻断关闭流程。
-        log::warn!("WSL 交互终端关闭看门狗线程创建失败：{error}");
-    }
+    });
 }
 
 /// 在 `budget` 内轮询等待交互句柄标记已收尾；收尾返回 true，超预算仍未收尾返回 false。
-fn wait_until_finished(handle: &LocalWslPtyHandle, budget: Duration) -> bool {
+async fn wait_until_finished(handle: &LocalWslPtyHandle, budget: Duration) -> bool {
     let deadline = Instant::now() + budget;
     loop {
         if handle.is_finished() {
@@ -416,7 +409,7 @@ fn wait_until_finished(handle: &LocalWslPtyHandle, budget: Duration) -> bool {
         if Instant::now() >= deadline {
             return false;
         }
-        std::thread::sleep(TEARDOWN_WATCH_POLL);
+        tokio::time::sleep(TEARDOWN_WATCH_POLL).await;
     }
 }
 
@@ -547,11 +540,9 @@ fn spawn_cancel_escalation_watch(
     session_id: String,
     run_id: String,
 ) {
-    let spawn_result = std::thread::Builder::new()
-        .name(format!("wsl-cancel-escalation-{run_id}"))
-        .spawn(move || {
+    tauri::async_runtime::spawn(async move {
             // 首个 SIGINT 已由 cancel_terminal_run 同步发出，这里先等它在宽限期内令运行收尾。
-            if wait_until_run_cleared(&state, &run_id, CANCEL_SIGINT_GRACE) {
+            if wait_until_run_cleared(&state, &run_id, CANCEL_SIGINT_GRACE).await {
                 return;
             }
             // 升级 1：补发 Ctrl-C(SIGINT)，捕捉「首个 INT 被提示符吞掉」或需多次中断的场景。
@@ -562,7 +553,7 @@ fn spawn_cancel_escalation_watch(
             log::warn!(
                 "WSL 取消：运行在首个 SIGINT 宽限期内未收尾（run_id={run_id}），补发 Ctrl-C。"
             );
-            if wait_until_run_cleared(&state, &run_id, CANCEL_SIGINT_GRACE) {
+            if wait_until_run_cleared(&state, &run_id, CANCEL_SIGINT_GRACE).await {
                 return;
             }
             // 升级 2：改发 Ctrl-\(SIGQUIT)，比 SIGINT 更难被忽略。
@@ -572,7 +563,7 @@ fn spawn_cancel_escalation_watch(
             log::warn!(
                 "WSL 取消：运行连续两次 SIGINT 后仍在运行（run_id={run_id}），升级发送 SIGQUIT。"
             );
-            if wait_until_run_cleared(&state, &run_id, CANCEL_SIGQUIT_GRACE) {
+            if wait_until_run_cleared(&state, &run_id, CANCEL_SIGQUIT_GRACE).await {
                 return;
             }
             // 最后手段：进程拒不响应信号（不可中断 / 显式屏蔽）。强拆该会话 PTY 终止整条交互 shell，
@@ -597,16 +588,12 @@ fn spawn_cancel_escalation_watch(
                     exit_code: None,
                 },
             );
-        });
-    if let Err(error) = spawn_result {
-        // 监护线程创建失败极罕见（资源耗尽）；首个 SIGINT 已发出，这里仅告警、不阻断取消。
-        log::warn!("WSL 取消升级监护线程创建失败：{error}");
-    }
+    });
 }
 
 /// 在 budget 内轮询等待指定运行被清理（OSC 133 D 收尾经 clear_active_terminal_run 移除活动运行）：
 /// 已清理返回 true，超预算仍在运行返回 false。供取消升级监护判定「运行是否已结束、可停止升级」。
-pub(super) fn wait_until_run_cleared(
+pub(super) async fn wait_until_run_cleared(
     state: &TerminalSessionState,
     run_id: &str,
     budget: Duration,
@@ -619,7 +606,7 @@ pub(super) fn wait_until_run_cleared(
         if Instant::now() >= deadline {
             return false;
         }
-        std::thread::sleep(CANCEL_ESCALATION_POLL);
+        tokio::time::sleep(CANCEL_ESCALATION_POLL).await;
     }
 }
 

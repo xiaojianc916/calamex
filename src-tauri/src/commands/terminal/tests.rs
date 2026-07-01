@@ -302,24 +302,16 @@ fn clearing_active_run_returns_registered_cleanup_paths() {
     assert_eq!(active_terminal_run_count(&state), 0);
 }
 
-#[test]
-fn cancel_escalation_watch_stops_once_run_is_cleared() {
+#[tokio::test]
+async fn cancel_escalation_watch_stops_once_run_is_cleared() {
     let state = TerminalSessionState::default();
     try_mark_active_terminal_run(&state, "cancel-session", "cancel-run", Vec::new())
         .expect("active run should mark");
     // 运行仍在：取消升级监护在短预算内应判定「未清理」(false)，从而继续升级。
-    assert!(!wait_until_run_cleared(
-        &state,
-        "cancel-run",
-        Duration::from_millis(150)
-    ));
+    assert!(!wait_until_run_cleared(&state, "cancel-run", Duration::from_millis(150)).await);
     // 运行被 OSC 133 D 清理后：应立即判定「已清理」(true)，监护据此停止升级、不再多发信号。
     clear_active_terminal_run(&state, "cancel-run");
-    assert!(wait_until_run_cleared(
-        &state,
-        "cancel-run",
-        Duration::from_secs(2)
-    ));
+    assert!(wait_until_run_cleared(&state, "cancel-run", Duration::from_secs(2)).await);
 }
 
 #[test]

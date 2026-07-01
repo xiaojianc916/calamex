@@ -379,10 +379,28 @@ impl AcpHost {
     }
 
     /// 原始模型透传（扩展方法 `calamex.dev/model/chat`）。
+    ///
+    /// 出站边界密钥防护：把用户内容发往模型 sidecar 前，按凭据「格式」扫描每条消息正文，
+    /// 命中即就地 span 级脱敏（只替换密钥片段、保留正文）。模型自身凭据在 request.model_config
+    /// （不在 messages），故不会误伤本就该随请求传输的 API Key。
     pub async fn model_chat(
         &self,
-        request: ModelChatExtRequest,
+        mut request: ModelChatExtRequest,
     ) -> Result<AgentSidecarResponsePayload, AcpClientError> {
+        let mut redactions = 0usize;
+        for message in &mut request.messages {
+            let outcome = crate::ai::security::redaction::redact_secrets(&message.content);
+            if outcome.is_redacted() {
+                redactions += outcome.redactions;
+                message.content = outcome.text;
+            }
+        }
+        if redactions > 0 {
+            log::warn!(
+                target: "acp",
+                "model/chat 出站脱敏：命中并替换 {redactions} 处疑似密钥（正文其余照常发送）。"
+            );
+        }
         let value = self.handle.model_chat(request).await?;
         serde_json::from_value(value).map_err(|error| {
             AcpClientError::Protocol(format!("invalid model chat response envelope: {error}"))

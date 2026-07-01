@@ -1,64 +1,157 @@
-// r2-acp-concurrent-commands.mjs
-// 用法：node r2-acp-concurrent-commands.mjs [--write]
-// 作用：ACP 命令循环由「逐条 await 串行」改为「每条命令 cx.spawn 派生」，消除命令间头阻塞。
-//       loop 仍在（连接保活）；Shutdown 在派生前处理（break 只能作用于本 while）。
+// r1-watchdogs-to-tokio.mjs
+// 用法：node r1-watchdogs-to-tokio.mjs [--write]
+// 作用：终端关闭/取消看门狗由独占 OS 线程 + std::thread::sleep 忙轮询，改为跑在共享 tokio
+//       运行时上的任务 + tokio::time::sleep；同步 wait 助手改 async；并把依赖它的同步测试
+//       迁移到 #[tokio::test]。全命中或全不写（任一文件、任一锚点计数不符即中止）。
 import { readFileSync, writeFileSync } from "node:fs";
 
-const FILE = "src-tauri/src/acp/client.rs";
 const WRITE = process.argv.includes("--write");
 
-const HUNKS = [
-	{
-		before: `                while let Some(command) = cmd_rx.recv().await {
-                    match command {`,
-		after: `                while let Some(command) = cmd_rx.recv().await {
-                    // Shutdown 必须在派生任务前处理：break 只能作用于本 while 循环。
-                    if matches!(command, Command::Shutdown) {
-                        break;
-                    }
-                    // 每条命令派生到连接自身的任务（cx.spawn，SDK 认可、派发循环后台继续跑），命令循环
-                    // 立刻处理下一条 → 消除命令间头阻塞；同会话依赖顺序仍由调用方 await 各自 oneshot 保证。
-                    // task_cx 移入任务后重绑为 cx，下方各 match arm 主体无需改动。
-                    let task_cx = cx.clone();
-                    let spawn_result = cx.spawn(async move {
-                        let cx = task_cx;
-                        match command {`,
-	},
-	{
-		before: `                        Command::Shutdown => break,
-                    }
-                }`,
-		after: `                        Command::Shutdown => {}
-                    }
-                        Ok::<(), agent_client_protocol::Error>(())
-                    });
-                    if let Err(error) = spawn_result {
-                        log::warn!("acp: 派生命令任务失败：{error}");
-                    }
-                }`,
-	},
-];
+const COMMANDS = "src-tauri/src/commands/terminal/commands.rs";
+const TESTS = "src-tauri/src/commands/terminal/tests.rs";
 
-const raw = readFileSync(FILE, "utf8");
-const isCRLF = raw.includes("\r\n");
-let src = raw.replace(/\r\n/g, "\n");
+// 每个 hunk：{ before, after, count }（count 默认为 1；用 split/join 精确替换 count 次）
+const PLAN = {
+	[COMMANDS]: [
+		// 关闭看门狗：线程 -> tokio 任务
+		{
+			before: `    let spawn_result = std::thread::Builder::new()
+        .name(format!("wsl-teardown-watch-{session_id}"))
+        .spawn(move || {`,
+			after: `    tauri::async_runtime::spawn(async move {`,
+		},
+		{
+			before: `            if wait_until_finished(&handle, INTERACTIVE_TEARDOWN_GRACE) {`,
+			after: `            if wait_until_finished(&handle, INTERACTIVE_TEARDOWN_GRACE).await {`,
+		},
+		{
+			before: `            if wait_until_finished(&handle, INTERACTIVE_TEARDOWN_HARD_DEADLINE) {`,
+			after: `            if wait_until_finished(&handle, INTERACTIVE_TEARDOWN_HARD_DEADLINE).await {`,
+		},
+		{
+			before: `        });
+    if let Err(error) = spawn_result {
+        // 看门狗线程创建失败是极罕见的资源耗尽场景；关闭本身已发出 kill，这里仅警告，
+        // 不阻断关闭流程。
+        log::warn!("WSL 交互终端关闭看门狗线程创建失败：{error}");
+    }
+}`,
+			after: `    });
+}`,
+		},
+		// 取消升级监护：线程 -> tokio 任务
+		{
+			before: `    let spawn_result = std::thread::Builder::new()
+        .name(format!("wsl-cancel-escalation-{run_id}"))
+        .spawn(move || {`,
+			after: `    tauri::async_runtime::spawn(async move {`,
+		},
+		{
+			// 两处 SIGINT 宽限等待，字符串相同 -> 精确替换 2 次
+			before: `            if wait_until_run_cleared(&state, &run_id, CANCEL_SIGINT_GRACE) {`,
+			after: `            if wait_until_run_cleared(&state, &run_id, CANCEL_SIGINT_GRACE).await {`,
+			count: 2,
+		},
+		{
+			before: `            if wait_until_run_cleared(&state, &run_id, CANCEL_SIGQUIT_GRACE) {`,
+			after: `            if wait_until_run_cleared(&state, &run_id, CANCEL_SIGQUIT_GRACE).await {`,
+		},
+		{
+			before: `        });
+    if let Err(error) = spawn_result {
+        // 监护线程创建失败极罕见（资源耗尽）；首个 SIGINT 已发出，这里仅告警、不阻断取消。
+        log::warn!("WSL 取消升级监护线程创建失败：{error}");
+    }
+}`,
+			after: `    });
+}`,
+		},
+		// 两个 wait 助手：同步 -> async，忙轮询 -> tokio::time::sleep
+		{
+			before: `fn wait_until_finished(handle: &LocalWslPtyHandle, budget: Duration) -> bool {`,
+			after: `async fn wait_until_finished(handle: &LocalWslPtyHandle, budget: Duration) -> bool {`,
+		},
+		{
+			before: `        std::thread::sleep(TEARDOWN_WATCH_POLL);`,
+			after: `        tokio::time::sleep(TEARDOWN_WATCH_POLL).await;`,
+		},
+		{
+			before: `pub(super) fn wait_until_run_cleared(`,
+			after: `pub(super) async fn wait_until_run_cleared(`,
+		},
+		{
+			before: `        std::thread::sleep(CANCEL_ESCALATION_POLL);`,
+			after: `        tokio::time::sleep(CANCEL_ESCALATION_POLL).await;`,
+		},
+	],
+	[TESTS]: [
+		{
+			before: `#[test]
+fn cancel_escalation_watch_stops_once_run_is_cleared() {`,
+			after: `#[tokio::test]
+async fn cancel_escalation_watch_stops_once_run_is_cleared() {`,
+		},
+		{
+			before: `    assert!(!wait_until_run_cleared(
+        &state,
+        "cancel-run",
+        Duration::from_millis(150)
+    ));`,
+			after: `    assert!(!wait_until_run_cleared(&state, "cancel-run", Duration::from_millis(150)).await);`,
+		},
+		{
+			before: `    assert!(wait_until_run_cleared(
+        &state,
+        "cancel-run",
+        Duration::from_secs(2)
+    ));`,
+			after: `    assert!(wait_until_run_cleared(&state, "cancel-run", Duration::from_secs(2)).await);`,
+		},
+	],
+};
 
-if (src.includes("let spawn_result = cx.spawn(async move {")) {
+// 读入所有文件、记住行尾、归一化到 LF
+const files = {};
+for (const path of Object.keys(PLAN)) {
+	const raw = readFileSync(path, "utf8");
+	files[path] = { raw, isCRLF: raw.includes("\r\n"), src: raw.replace(/\r\n/g, "\n") };
+}
+
+// 幂等：两文件的关键标记都已存在即跳过
+if (
+	files[COMMANDS].src.includes("async fn wait_until_finished") &&
+	files[TESTS].src.includes("async fn cancel_escalation_watch_stops_once_run_is_cleared")
+) {
 	console.log("[skip] 已应用过，幂等退出。");
 	process.exit(0);
 }
-for (const [i, h] of HUNKS.entries()) {
-	const n = src.split(h.before).length - 1;
-	if (n !== 1) {
-		console.error(`[abort] 第 ${i + 1} 个锚点命中 ${n} 次（需恰好 1 次），未写入任何改动。HEAD 可能已再前进——请对当前工作树重新核对。`);
-		process.exit(1);
-	}
+
+// 先全量核对锚点计数（任一不符 -> 全不写）
+const errors = [];
+for (const [path, hunks] of Object.entries(PLAN)) {
+	const src = files[path].src;
+	hunks.forEach((h, i) => {
+		const want = h.count ?? 1;
+		const got = src.split(h.before).length - 1;
+		if (got !== want) errors.push(`${path} 第 ${i + 1} 个锚点命中 ${got} 次（需 ${want} 次）`);
+	});
 }
-for (const h of HUNKS) src = src.replace(h.before, h.after);
-if (isCRLF) src = src.replace(/\n/g, "\r\n");
+if (errors.length) {
+	console.error("[abort] 锚点核对失败，未写入任何文件：\n  - " + errors.join("\n  - "));
+	console.error("（HEAD 可能又前进了，或本地有未提交改动——请对当前工作树核对。）");
+	process.exit(1);
+}
+
+// 全部命中：应用并按原行尾写回
+for (const [path, hunks] of Object.entries(PLAN)) {
+	let src = files[path].src;
+	for (const h of hunks) src = src.split(h.before).join(h.after);
+	if (files[path].isCRLF) src = src.replace(/\n/g, "\r\n");
+	files[path].out = src;
+}
 if (WRITE) {
-	writeFileSync(FILE, src, "utf8");
-	console.log("[written] client.rs 已更新（2 处）。请依次跑：cargo fmt（match arm 缩进需归位）→ cargo clippy → cargo test。");
+	for (const path of Object.keys(PLAN)) writeFileSync(path, files[path].out, "utf8");
+	console.log("[written] commands.rs + tests.rs 已更新。请依次跑：cargo fmt → cargo clippy → cargo test。");
 } else {
-	console.log("[dry-run] 2 个锚点各命中 1 次，将把命令循环改为 cx.spawn 并发派发。加 --write 落盘。");
+	console.log("[dry-run] 所有锚点计数匹配（commands.rs 12 处含 SIGINT×2、tests.rs 3 处）。加 --write 落盘。");
 }
