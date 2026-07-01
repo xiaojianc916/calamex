@@ -138,7 +138,7 @@ pub fn supported_provider_ids() -> &'static [&'static str] {
 ///
 /// 键集合与 [`supported_provider_ids`] 对齐（见下方单测覆盖）；deepseek 与 sidecar
 /// `builtin-agent/src/models/providers/deepseek-mastra-gateway.ts` 的 DEFAULT_DEEPSEEK_BASE_URL
-/// 保持同值，moonshotai 与 `acp::launch` 的 KIMI_DEFAULT_BASE_URL 保持同值。
+/// 保持同值，moonshotai 与 `acp::provisioner` 的 KIMI_DEFAULT_BASE_URL 保持同值。
 pub fn default_provider_base_url(provider_id: &str) -> Option<&'static str> {
     match provider_id.trim() {
         "openai" => Some("https://api.openai.com/v1"),

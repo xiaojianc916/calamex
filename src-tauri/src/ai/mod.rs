@@ -1,5 +1,4 @@
 pub mod agent;
-pub mod approval;
 pub mod audit;
 pub mod credential;
 pub mod edit;
