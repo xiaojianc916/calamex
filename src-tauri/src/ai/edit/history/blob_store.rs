@@ -29,13 +29,13 @@
 //!
 //! # 并发与原子性
 //! 本模块不再自行加锁或自行 commit/persist：所有写入（`store_blob`）与删除
-//! （`remove_blob`）都通过调用方传入的 `fjall::Batch` 入队，随调用方的批次
+//! （`remove_blob`）都通过调用方传入的 `fjall::WriteBatch` 入队，随调用方的批次
 //! 一次性 `commit` + `persist`。这比旧实现（每个 blob 一次独立的 git 对象
 //! 写入，加上一次独立的 manifest fjall 提交，一次快照 N+1 次落盘）更强：
 //! 一次快照的全部 blob 内容与 manifest 更新现在共享同一次原子批量提交。
 
 use crate::ai::edit::errors;
-use fjall::{Batch, Database, Keyspace, KeyspaceCreateOptions};
+use fjall::{Database, Keyspace, KeyspaceCreateOptions, WriteBatch};
 
 const BLOBS_KEYSPACE: &str = "blobs";
 const BLOB_KEY_PREFIX: &str = "blake3:";
@@ -53,7 +53,7 @@ pub fn open_blobs_keyspace(db: &Database) -> Result<Keyspace, String> {
 /// 相同内容始终产生同一个 key，天然去重——重复写入只是把同一个 key/value
 /// 对再次放入批次，`commit` 时是幂等的覆盖写，不需要像旧实现那样调用一次
 /// git 对象写入去触发它内部的去重逻辑，也不需要任何显式的“先查是否存在”。
-pub fn store_blob(batch: &mut Batch, blobs: &Keyspace, content: &[u8]) -> String {
+pub fn store_blob(batch: &mut WriteBatch, blobs: &Keyspace, content: &[u8]) -> String {
     let key = format!("{BLOB_KEY_PREFIX}{}", blake3::hash(content).to_hex());
     batch.insert(blobs, key.as_bytes().to_vec(), content.to_vec());
     key
@@ -75,7 +75,7 @@ pub fn read_blob(blobs: &Keyspace, blob_key: &str) -> Result<Vec<u8>, String> {
 /// 只接受合法的 `"blake3:<hex>"` key。调用方（`snapshot::strip_manifest_blobs`）
 /// 在调用本函数之前，已经通过 `is_valid_blob_key`/`has_live_blob` 把所有
 /// 迁移前遗留的旧格式 key 过滤在外。
-pub fn remove_blob(blobs: &Keyspace, batch: &mut Batch, blob_key: &str) -> Result<u64, String> {
+pub fn remove_blob(blobs: &Keyspace, batch: &mut WriteBatch, blob_key: &str) -> Result<u64, String> {
     validate_blob_key(blob_key)?;
     let existing_len = blobs
         .get(blob_key)

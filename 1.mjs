@@ -1,47 +1,92 @@
-// fix-resize-events.mjs —— 补齐 window-resize-events 的 START/END 导出（幂等）
+// fix-fjall-batch.mjs —— fjall 3.1.4: 批次类型 Batch 已更名为 WriteBatch（db.batch() -> WriteBatch）
 import { readFileSync, writeFileSync, existsSync, copyFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 
-const TARGET = resolve('src/utils/window/window-resize-events.ts');
+const EDITS = [
+  {
+    file: 'src-tauri/src/ai/edit/history/blob_store.rs',
+    replacements: [
+      {
+        from: 'use fjall::{Batch, Database, Keyspace, KeyspaceCreateOptions};',
+        to: 'use fjall::{Database, Keyspace, KeyspaceCreateOptions, WriteBatch};',
+      },
+      {
+        from: 'pub fn store_blob(batch: &mut Batch, blobs: &Keyspace, content: &[u8]) -> String {',
+        to: 'pub fn store_blob(batch: &mut WriteBatch, blobs: &Keyspace, content: &[u8]) -> String {',
+      },
+      {
+        from: 'pub fn remove_blob(blobs: &Keyspace, batch: &mut Batch, blob_key: &str) -> Result<u64, String> {',
+        to: 'pub fn remove_blob(blobs: &Keyspace, batch: &mut WriteBatch, blob_key: &str) -> Result<u64, String> {',
+      },
+      // 顶部文档注释里的一处说明，改了更准确；缺失不报错
+      { from: 'fjall::Batch', to: 'fjall::WriteBatch', optional: true },
+    ],
+  },
+  {
+    file: 'src-tauri/src/ai/edit/history/snapshot.rs',
+    replacements: [
+      {
+        from: 'use fjall::{Batch, Database, Keyspace, KeyspaceCreateOptions, PersistMode};',
+        to: 'use fjall::{Database, Keyspace, KeyspaceCreateOptions, PersistMode, WriteBatch};',
+      },
+      {
+        from: 'batch: &mut Batch,',
+        to: 'batch: &mut WriteBatch,',
+      },
+    ],
+  },
+];
 
-const CANONICAL = [
-  "export const SHELL_WINDOW_RESIZE_START_EVENT = 'shell-window-resize-start';",
-  "export const SHELL_WINDOW_RESIZE_FRAME_EVENT = 'shell-window-resize-frame';",
-  "export const SHELL_WINDOW_RESIZE_END_EVENT = 'shell-window-resize-end';",
-  "export const SHELL_WINDOW_RESIZE_SETTLED_EVENT = 'shell-window-resize-settled';",
-  '',
-].join('\n');
+let hadError = false;
 
-if (!existsSync(TARGET)) {
-  console.error('[fix-resize-events] 找不到目标文件:', TARGET);
-  process.exit(1);
+for (const edit of EDITS) {
+  const target = resolve(edit.file);
+  if (!existsSync(target)) {
+    console.error('[fix-fjall-batch] 找不到文件:', target);
+    hadError = true;
+    continue;
+  }
+
+  const original = readFileSync(target, 'utf8');
+  if (!original.includes('fjall')) {
+    console.error('[fix-fjall-batch] 缺少 fjall 锚点，跳过（未改动）:', edit.file);
+    hadError = true;
+    continue;
+  }
+
+  let content = original;
+  let applied = 0;
+  let skipped = 0;
+  let aborted = false;
+
+  for (const { from, to, optional } of edit.replacements) {
+    if (content.includes(from)) {
+      content = content.split(from).join(to);
+      applied += 1;
+    } else if (content.includes(to)) {
+      skipped += 1; // 已是目标态，幂等跳过
+    } else if (!optional) {
+      console.error(
+        `[fix-fjall-batch] ${edit.file} 未找到预期片段、且目标也不存在，已中止该文件：\n    ${from}`,
+      );
+      hadError = true;
+      aborted = true;
+      break;
+    }
+  }
+
+  if (aborted || content === original) {
+    if (!aborted) console.log(`[fix-fjall-batch] ${edit.file}: 无需改动（幂等跳过 ${skipped} 处）`);
+    continue;
+  }
+
+  const bak = target + '.bak';
+  if (!existsSync(bak)) {
+    copyFileSync(target, bak);
+    console.log('[fix-fjall-batch] 已备份 ->', bak);
+  }
+  writeFileSync(target, content, 'utf8');
+  console.log(`[fix-fjall-batch] ${edit.file}: 已改 ${applied} 处 Batch -> WriteBatch`);
 }
 
-const original = readFileSync(TARGET, 'utf8');
-
-// 锚点校验：确认确实是这个文件（已含 FRAME/SETTLED），否则中止、绝不乱写
-if (
-  !original.includes('SHELL_WINDOW_RESIZE_FRAME_EVENT') ||
-  !original.includes('SHELL_WINDOW_RESIZE_SETTLED_EVENT')
-) {
-  console.error('[fix-resize-events] 缺少 FRAME/SETTLED 锚点，内容不符预期，已中止，未改动。');
-  process.exit(1);
-}
-
-// 幂等：START/END 都在就跳过
-if (
-  original.includes('SHELL_WINDOW_RESIZE_START_EVENT') &&
-  original.includes('SHELL_WINDOW_RESIZE_END_EVENT')
-) {
-  console.log('[fix-resize-events] START/END 已存在，无需改动（幂等跳过）。');
-  process.exit(0);
-}
-
-const bak = TARGET + '.bak';
-if (!existsSync(bak)) {
-  copyFileSync(TARGET, bak);
-  console.log('[fix-resize-events] 已备份原文件 ->', bak);
-}
-
-writeFileSync(TARGET, CANONICAL, 'utf8');
-console.log('[fix-resize-events] 已补齐 START/END，四拍常量（start→frame→end→settled）写入完成。');
+process.exit(hadError ? 1 : 0);
