@@ -460,7 +460,7 @@ fn store_snapshot_locked(
 }
 
 fn store_snapshot_with_store(
-    storage_root: &Path,
+    _storage_root: &Path,
     store: &SnapshotStore,
     scope: &str,
     task_id: &str,
