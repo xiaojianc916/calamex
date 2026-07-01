@@ -1,50 +1,37 @@
-// fix-remove-dead-redaction-module.mjs
-// 根治 #2：删除无人调用、且范式不符合行业标杆的 redaction 脱敏模块（死代码）。
-//   - 删除 src-tauri/src/ai/security/redaction.rs
-//   - 从 src-tauri/src/ai/security/mod.rs 摘除 `pub mod redaction;`
-// 在仓库根目录运行：node fix-remove-dead-redaction-module.mjs
-// 幂等：重复运行不报错。CRLF 安全。
+// fix-regquery-no-window.mjs
+// 用法：node fix-regquery-no-window.mjs [--write]
+// 作用：读取用户环境变量时经 configure_std_command_for_background 设 CREATE_NO_WINDOW，杜绝闪窗。
+import { readFileSync, writeFileSync } from "node:fs";
 
-import { existsSync, readFileSync, writeFileSync, rmSync } from "node:fs";
+const FILE = "src-tauri/src/acp/launch.rs";
+const WRITE = process.argv.includes("--write");
 
-const REDACTION_FILE = "src-tauri/src/ai/security/redaction.rs";
-const MOD_FILE = "src-tauri/src/ai/security/mod.rs";
+// 用正则跨越含反斜杠的中间片段，避免手工转义出错；[\s\S]*? 惰性匹配到首个 .ok()?;
+const RE = /let output = Command::new\("reg\.exe"\)[\s\S]*?\.ok\(\)\?;/;
 
-function fail(msg) {
-  console.error(`✗ ${msg}`);
-  process.exit(1);
+const AFTER = `let mut command = Command::new("reg.exe");
+    command
+        .args(["query", "HKCU\\\\Environment", "/v", key])
+        .stdin(Stdio::null())
+        .stderr(Stdio::null());
+    // 与其它后台子进程一致设 CREATE_NO_WINDOW，避免读取用户环境变量时闪出控制台窗口。
+    crate::commands::configure_std_command_for_background(&mut command);
+    let output = command.output().ok()?;`;
+
+const src = readFileSync(FILE, "utf8");
+if (src.includes("configure_std_command_for_background(&mut command)")) {
+	console.log("[skip] 已应用过，幂等退出。");
+	process.exit(0);
 }
-
-// 1) 删除 redaction.rs
-if (existsSync(REDACTION_FILE)) {
-  rmSync(REDACTION_FILE);
-  console.log(`✓ 已删除 ${REDACTION_FILE}`);
+const matches = src.match(new RegExp(RE, "g")) || [];
+if (matches.length !== 1) {
+	console.error(`[abort] 锚点命中 ${matches.length} 次（需恰好 1 次），未写入。`);
+	process.exit(1);
+}
+const out = src.replace(RE, AFTER);
+if (WRITE) {
+	writeFileSync(FILE, out, "utf8");
+	console.log("[written] launch.rs 已更新；请跑 cargo clippy && cargo test。");
 } else {
-  console.log(`• ${REDACTION_FILE} 不存在，跳过（幂等）`);
+	console.log("[dry-run] 命中锚点 1 次，将改为经 CREATE_NO_WINDOW 派发 reg.exe。加 --write 落盘。");
 }
-
-// 2) 从 mod.rs 摘除 `pub mod redaction;`
-if (!existsSync(MOD_FILE)) fail(`未找到 ${MOD_FILE}`);
-
-const original = readFileSync(MOD_FILE, "utf8");
-const eol = original.includes("\r\n") ? "\r\n" : "\n";
-const lines = original.split(/\r?\n/);
-
-const isRedactionModLine = (line) => line.trim() === "pub mod redaction;";
-const matches = lines.filter(isRedactionModLine).length;
-
-if (matches === 0) {
-  console.log(`• ${MOD_FILE} 已无 \`pub mod redaction;\`，跳过（幂等）`);
-} else if (matches > 1) {
-  fail(`${MOD_FILE} 出现 ${matches} 处 \`pub mod redaction;\`，预期恰好 1 处，中止以免误删`);
-} else {
-  const kept = lines.filter((line) => !isRedactionModLine(line));
-  writeFileSync(MOD_FILE, kept.join(eol), "utf8");
-  console.log(`✓ 已从 ${MOD_FILE} 摘除 \`pub mod redaction;\``);
-}
-
-// 3) 残留校验
-const after = existsSync(MOD_FILE) ? readFileSync(MOD_FILE, "utf8") : "";
-if (/\bredaction\b/.test(after)) fail(`${MOD_FILE} 仍残留 redaction 引用，请人工检查`);
-
-console.log("✓ 完成：redaction 模块已根除");

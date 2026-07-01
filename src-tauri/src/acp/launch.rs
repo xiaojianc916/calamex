@@ -275,12 +275,14 @@ fn non_empty_string(value: String) -> Option<String> {
 fn read_user_environment_value(key: &str) -> Option<String> {
     use std::process::{Command, Stdio};
 
-    let output = Command::new("reg.exe")
+    let mut command = Command::new("reg.exe");
+    command
         .args(["query", "HKCU\\Environment", "/v", key])
         .stdin(Stdio::null())
-        .stderr(Stdio::null())
-        .output()
-        .ok()?;
+        .stderr(Stdio::null());
+    // 与其它后台子进程一致设 CREATE_NO_WINDOW，避免读取用户环境变量时闪出控制台窗口。
+    crate::commands::configure_std_command_for_background(&mut command);
+    let output = command.output().ok()?;
 
     if !output.status.success() {
         return None;
