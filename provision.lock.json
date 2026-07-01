@@ -1,0 +1,16 @@
+{
+  "node": {
+    "version": "26.2.0",
+    "platform": "win-x64",
+    "zipSha256": "371071a4f7e2c8a5dd280730049c685911feecc59f50ebc488d675dc1087c69c",
+    "exeSha256": "96f768b95e8e9d443f5eead1cb2d199744923320bb8240d2c3129362e7ae2a5d"
+  },
+  "shellcheck": {
+    "source": "vendor",
+    "sha256": "c9e82ada36ef4b8d4caf1f97fa89289048c8f4a33c2c76ffffc88bfe09ff00c5"
+  },
+  "shfmt": {
+    "source": "vendor",
+    "sha256": "6e4c6acd38de7b4b1ba8f8082b9e688df8c9b861d3f8b2e7bb1b7270201a3587"
+  }
+}
