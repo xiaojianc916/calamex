@@ -1,379 +1,67 @@
 #!/usr/bin/env node
-// apply-p1.mjs —— 一次性补丁工具：生成/改写项目文件后即可删除。运行：node apply-p1.mjs
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+// apply-p2.mjs —— P2 第一步：把 builtin-agent/build.mjs 改为「打包进程内导入图」。运行后可删。
+import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const repoRoot = dirname(fileURLToPath(import.meta.url));
-const scriptsDir = join(repoRoot, 'scripts');
+const buildMjsPath = join(repoRoot, 'builtin-agent', 'build.mjs');
 
-// ============ 生成 scripts/provision.ts（长期脚本，tsx 运行）============
-const provisionTs = String.raw`#!/usr/bin/env node
-// scripts/provision.ts
+const buildMjs = String.raw`// builtin-agent/build.mjs
 //
-// P1 可复现「外部产物准备」。把所有联网/安装从打包期(beforeBundleCommand)
-// 挪到这里，产到版本化缓存 .provision/，供 prepare-bundle-resources.ts 纯复制。
+// P2：用 esbuild 把「进程内」导入图打成单文件 dist/acp/stdio-entry.js。
+// 目的：从随包 node_modules 中剔除纯进程内依赖，缩小安装包 / 加速 NSIS 压缩。
 //
-// 产物布局（与 resources-bundle 一致，便于纯复制）：
-//   .provision/node/node.exe
-//   .provision/builtin-agent/{package.json,src,dist,node_modules}
-//   .provision/lsp/node_modules/bash-language-server/out/cli.js
-//   .provision/bin/{shellcheck.exe,shfmt.exe}
-//   .provision/manifest.json          （缓存元信息，随 .provision 忽略）
-// 校验和锁：provision.lock.json（仓库根，需提交）
-//
-// 用法：
-//   tsx scripts/provision.ts           # 缓存命中即跳过
-//   tsx scripts/provision.ts --force   # 强制全部重建
-// 环境变量（国内加速，可选）：
-//   set NODE_MIRROR=https://cdn.npmmirror.com/binaries/node
+// 外置（不可/不应打包）：
+//   - 原生插件（.node）：@ast-grep/napi、@libsql/client（及依赖它的 @mastra/libsql）
+//   - 以子进程/bin 启动的包：typescript-language-server、各 MCP server
+//     （运行时要执行它们的 bin，必须以真实 node_modules 形式随包）
+// 说明：类型检查仍由 pnpm typecheck 负责；单测仍从 src 经 tsx 运行，不受影响。
 
-import { Buffer } from 'node:buffer';
-import { execFileSync, execSync } from 'node:child_process';
-import { createHash } from 'node:crypto';
-import { copyFileSync, cpSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
-import { dirname, join, resolve } from 'node:path';
-import process from 'node:process';
-import { fileURLToPath } from 'node:url';
+import { build } from 'esbuild';
 
-// ---- 版本锁（唯一可信来源）----
-const NODE_VERSION = '26.2.0';
-const NODE_PLATFORM = 'win-x64';
-const SHFMT_VERSION = 'v3.10.0';
-const BASH_LS_VERSION = '5.6.0';
+const external = [
+  '@ast-grep/napi',
+  '@libsql/client',
+  '@mastra/libsql',
+  'typescript-language-server',
+  '@modelcontextprotocol/server-memory',
+  '@modelcontextprotocol/server-sequential-thinking',
+  '@upstash/context7-mcp',
+  'tavily-mcp',
+];
 
-const here = dirname(fileURLToPath(import.meta.url));
-const repoRoot = resolve(here, '..');
-const srcTauri = join(repoRoot, 'src-tauri');
-const vendorDir = join(srcTauri, 'vendor');
-const provisionRoot = join(repoRoot, '.provision');
-const lockPath = join(repoRoot, 'provision.lock.json');
+// ESM 输出里补齐 require/__dirname/__filename：不少 CJS 依赖被打包后仍会在运行时用到。
+const banner = [
+  "import { createRequire as __createRequire } from 'node:module';",
+  "import { fileURLToPath as __fileURLToPath } from 'node:url';",
+  "import { dirname as __pathDirname } from 'node:path';",
+  'const require = __createRequire(import.meta.url);',
+  'const __filename = __fileURLToPath(import.meta.url);',
+  'const __dirname = __pathDirname(__filename);',
+].join('\n');
 
-const force = process.argv.includes('--force');
-const isWindows = process.platform === 'win32';
-const nodeExeName = isWindows ? 'node.exe' : 'node';
-const shellcheckExeName = isWindows ? 'shellcheck.exe' : 'shellcheck';
-const shfmtExeName = isWindows ? 'shfmt.exe' : 'shfmt';
-
-function log(m: string): void {
-  console.log('[provision] ' + m);
-}
-function fail(m: string): never {
-  console.error('[provision] FAILED: ' + m);
-  process.exit(1);
-}
-function npmBin(): string {
-  return isWindows ? 'npm.cmd' : 'npm';
-}
-function run(command: string, args: string[], options: { cwd?: string } = {}): void {
-  log('$ ' + command + ' ' + args.join(' '));
-  const needsShell = isWindows && /\.(cmd|bat)$/i.test(command);
-  if (needsShell) {
-    const quote = (s: string): string => (/\s/.test(s) ? '"' + s + '"' : s);
-    execSync([quote(command)].concat(args.map(quote)).join(' '), Object.assign({ stdio: 'inherit' }, options));
-    return;
-  }
-  execFileSync(command, args, Object.assign({ stdio: 'inherit' }, options));
-}
-function sha256File(p: string): string {
-  return createHash('sha256').update(readFileSync(p)).digest('hex');
-}
-function loadJson(p: string, fallback: any): any {
-  try {
-    return existsSync(p) ? JSON.parse(readFileSync(p, 'utf8')) : fallback;
-  } catch {
-    return fallback;
-  }
-}
-function writeJson(p: string, obj: any): void {
-  writeFileSync(p, JSON.stringify(obj, null, 2) + '\n');
-}
-async function download(url: string, dest: string): Promise<void> {
-  const res = await fetch(url);
-  if (!res.ok) throw new Error('HTTP ' + res.status + ' for ' + url);
-  writeFileSync(dest, Buffer.from(await res.arrayBuffer()));
-}
-function expandZip(zip: string, out: string): void {
-  execFileSync(
-    'powershell',
-    ['-NoProfile', '-NonInteractive', '-Command', "Expand-Archive -Path '" + zip + "' -DestinationPath '" + out + "' -Force"],
-    { stdio: 'inherit' },
-  );
-}
-
-// ---- 1) Node（pinned + SHA256）----
-async function provisionNode(lock: any): Promise<void> {
-  const dest = join(provisionRoot, 'node', nodeExeName);
-  if (!force && existsSync(dest) && lock.node && lock.node.exeSha256 && sha256File(dest) === lock.node.exeSha256) {
-    log('Node 缓存命中，跳过');
-    return;
-  }
-  if (!isWindows) fail('provision 目标为 Windows/NSIS，请在 Windows 上运行');
-  const base = process.env.NODE_MIRROR || 'https://nodejs.org/dist';
-  const zipName = 'node-v' + NODE_VERSION + '-' + NODE_PLATFORM + '.zip';
-  const zipUrl = base + '/v' + NODE_VERSION + '/' + zipName;
-  const tmp = join(provisionRoot, '_tmp');
-  rmSync(tmp, { recursive: true, force: true });
-  mkdirSync(tmp, { recursive: true });
-  const zipPath = join(tmp, zipName);
-  log('下载 Node ' + NODE_VERSION + ': ' + zipUrl);
-  await download(zipUrl, zipPath);
-
-  let expected = lock.node && lock.node.zipSha256 ? lock.node.zipSha256 : '';
-  if (!expected) {
-    const res = await fetch(base + '/v' + NODE_VERSION + '/SHASUMS256.txt');
-    if (!res.ok) fail('无法获取 SHASUMS256：HTTP ' + res.status);
-    const line = (await res.text()).split(/\r?\n/).find((l: string) => l.indexOf(zipName) !== -1);
-    if (!line) fail('SHASUMS256 中未找到 ' + zipName);
-    expected = line.trim().split(/\s+/)[0];
-    log('已从官方 SHASUMS256 记录 Node 校验和');
-  }
-  const actual = sha256File(zipPath);
-  if (actual !== expected) fail('Node 校验失败：期望 ' + expected + ' 实际 ' + actual);
-
-  const outDir = join(tmp, 'unzip');
-  mkdirSync(outDir, { recursive: true });
-  expandZip(zipPath, outDir);
-  const inner = join(outDir, 'node-v' + NODE_VERSION + '-' + NODE_PLATFORM, nodeExeName);
-  if (!existsSync(inner)) fail('解压后未找到 node.exe：' + inner);
-  mkdirSync(dirname(dest), { recursive: true });
-  copyFileSync(inner, dest);
-  rmSync(tmp, { recursive: true, force: true });
-  lock.node = { version: NODE_VERSION, platform: NODE_PLATFORM, zipSha256: expected, exeSha256: sha256File(dest) };
-  log('已内置 Node（pinned ' + NODE_VERSION + '）: ' + dest);
-}
-
-// ---- 2) shellcheck（vendor 唯一可信源 + 校验和）----
-function provisionShellcheck(lock: any): void {
-  const dest = join(provisionRoot, 'bin', shellcheckExeName);
-  mkdirSync(dirname(dest), { recursive: true });
-  const vend = join(vendorDir, shellcheckExeName);
-  if (!existsSync(vend)) fail('缺少 vendor 二进制：' + vend + '\n请先运行：node setup-vendor.mjs');
-  const sha = sha256File(vend);
-  if (lock.shellcheck && lock.shellcheck.sha256 && lock.shellcheck.sha256 !== sha) {
-    fail('shellcheck 校验和与锁不一致（vendor 被改动？如属预期请删 provision.lock.json 中该项）');
-  }
-  copyFileSync(vend, dest);
-  lock.shellcheck = { source: 'vendor', sha256: sha };
-  log('已内置 shellcheck（vendored, sha ' + sha.slice(0, 12) + '…）');
-}
-
-// ---- 3) shfmt（vendor 优先；否则官方下载，非致命）----
-async function provisionShfmt(lock: any): Promise<void> {
-  const dest = join(provisionRoot, 'bin', shfmtExeName);
-  mkdirSync(dirname(dest), { recursive: true });
-  const vend = join(vendorDir, shfmtExeName);
-  if (existsSync(vend)) {
-    const sha = sha256File(vend);
-    if (lock.shfmt && lock.shfmt.sha256 && lock.shfmt.sha256 !== sha) fail('shfmt 校验和与锁不一致');
-    copyFileSync(vend, dest);
-    lock.shfmt = { source: 'vendor', sha256: sha };
-    log('已内置 shfmt（vendored）');
-    return;
-  }
-  const url = 'https://github.com/mvdan/sh/releases/download/' + SHFMT_VERSION + '/shfmt_' + SHFMT_VERSION + '_windows_amd64.exe';
-  try {
-    await download(url, dest);
-    lock.shfmt = { source: 'download', version: SHFMT_VERSION, sha256: sha256File(dest) };
-    log('已内置 shfmt（下载 ' + SHFMT_VERSION + '）');
-  } catch (e) {
-    log('WARN shfmt 缺失且下载失败（非致命，运行时退回系统/WSL）：' + e);
-  }
-}
-
-// ---- 4) sidecar（builtin-agent：deps + dist）----
-function provisionSidecar(manifest: any): void {
-  const srcDir = join(repoRoot, 'builtin-agent');
-  const dest = join(provisionRoot, 'builtin-agent');
-  if (!existsSync(srcDir)) fail('未找到 builtin-agent：' + srcDir);
-  const pkgHash = sha256File(join(srcDir, 'package.json'));
-  const cached = !force && existsSync(join(dest, 'node_modules')) && manifest.builtinAgentPkgHash === pkgHash;
-
-  mkdirSync(dest, { recursive: true });
-  copyFileSync(join(srcDir, 'package.json'), join(dest, 'package.json'));
-  rmSync(join(dest, 'src'), { recursive: true, force: true });
-  cpSync(join(srcDir, 'src'), join(dest, 'src'), { recursive: true });
-
-  if (cached) {
-    log('sidecar 依赖缓存命中，跳过 npm install');
-  } else {
-    rmSync(join(dest, 'node_modules'), { recursive: true, force: true });
-    run(npmBin(), ['install', '--no-audit', '--no-fund', '--prefix', dest], { cwd: dest });
-  }
-  const tsxCli = join(dest, 'node_modules', 'tsx', 'dist', 'cli.mjs');
-  if (!existsSync(tsxCli)) fail('sidecar 缺少 tsx 启动器：' + tsxCli);
-
-  run(npmBin(), ['run', 'build'], { cwd: srcDir });
-  const compiled = join(srcDir, 'dist', 'acp', 'stdio-entry.js');
-  if (!existsSync(compiled)) fail('sidecar 预编译未找到入口：' + compiled);
-  rmSync(join(dest, 'dist'), { recursive: true, force: true });
-  cpSync(join(srcDir, 'dist'), join(dest, 'dist'), { recursive: true });
-
-  manifest.builtinAgentPkgHash = pkgHash;
-  log('已准备 builtin-agent（deps + dist）');
-}
-
-// ---- 5) bash-language-server ----
-function provisionLsp(manifest: any): void {
-  const dest = join(provisionRoot, 'lsp');
-  const cli = join(dest, 'node_modules', 'bash-language-server', 'out', 'cli.js');
-  if (!force && existsSync(cli) && manifest.bashLanguageServer === BASH_LS_VERSION) {
-    log('bash-language-server 缓存命中，跳过');
-    return;
-  }
-  rmSync(dest, { recursive: true, force: true });
-  mkdirSync(dest, { recursive: true });
-  run(npmBin(), ['install', '--no-save', '--no-audit', '--no-fund', '--prefix', dest, 'bash-language-server@' + BASH_LS_VERSION]);
-  if (!existsSync(cli)) fail('bash-language-server 安装后未找到 CLI：' + cli);
-  manifest.bashLanguageServer = BASH_LS_VERSION;
-  log('已准备 bash-language-server（' + BASH_LS_VERSION + '）');
-}
-
-async function main(): Promise<void> {
-  if (!isWindows) log('WARN 当前非 Windows；打包目标为 Windows/NSIS。');
-  log('provision 根目录：' + provisionRoot + (force ? '（--force）' : ''));
-  mkdirSync(provisionRoot, { recursive: true });
-  writeFileSync(join(provisionRoot, '.gitignore'), '*\n!.gitignore\n');
-
-  const lock = loadJson(lockPath, {});
-  const manifest = loadJson(join(provisionRoot, 'manifest.json'), {});
-
-  await provisionNode(lock);
-  provisionShellcheck(lock);
-  await provisionShfmt(lock);
-  provisionSidecar(manifest);
-  provisionLsp(manifest);
-
-  manifest.node = NODE_VERSION;
-  manifest.generatedAt = new Date().toISOString();
-  writeJson(join(provisionRoot, 'manifest.json'), manifest);
-  writeJson(lockPath, lock);
-  log('OK provision 完成。请提交 provision.lock.json 固定校验和。');
-}
-
-main().catch((e) => fail('未捕获异常：' + (e && e.stack ? e.stack : e)));
+await build({
+  entryPoints: ['src/acp/stdio-entry.ts'],
+  outfile: 'dist/acp/stdio-entry.js',
+  platform: 'node',
+  format: 'esm',
+  target: 'node26',
+  bundle: true,
+  sourcemap: true,
+  external,
+  banner: { js: banner },
+  logLevel: 'info',
+});
 `;
 
-// ============ 改写 scripts/prepare-bundle-resources.ts（纯复制）============
-const prepareTs = String.raw`#!/usr/bin/env node
-
-// scripts/prepare-bundle-resources.ts
-//
-// 打包前置（beforeBundleCommand）：【纯复制、零联网、零安装】。
-// 把 provision 产好的 .provision/ 镜像到 src-tauri/resources-bundle/。
-// 缺产物直接报错并提示先跑 pnpm provision。
-//
-// 产物布局（必须与 Rust bundled_resource_roots() 对齐）：
-//   resources-bundle/node/node.exe
-//   resources-bundle/builtin-agent/{package.json,src,dist,node_modules}
-//   resources-bundle/lsp/node_modules/bash-language-server/out/cli.js
-//   resources-bundle/shellcheck.exe
-//   resources-bundle/shfmt.exe  （可选）
-
-import { copyFileSync, cpSync, existsSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
-import { dirname, join, resolve } from 'node:path';
-import process from 'node:process';
-import { fileURLToPath } from 'node:url';
-
-const here = dirname(fileURLToPath(import.meta.url));
-const repoRoot = resolve(here, '..');
-const provisionRoot = join(repoRoot, '.provision');
-const stageRoot = join(repoRoot, 'src-tauri', 'resources-bundle');
-
-const isWindows = process.platform === 'win32';
-const nodeExeName = isWindows ? 'node.exe' : 'node';
-const shellcheckExeName = isWindows ? 'shellcheck.exe' : 'shellcheck';
-const shfmtExeName = isWindows ? 'shfmt.exe' : 'shfmt';
-
-function log(message: string): void {
-  console.log('[prepare-bundle-resources] ' + message);
-}
-function fail(message: string): never {
-  console.error('[prepare-bundle-resources] FAILED: ' + message);
+if (!existsSync(buildMjsPath)) {
+  console.error('[apply-p2] 未找到 ' + buildMjsPath);
   process.exit(1);
 }
-function requireArtifact(path: string): void {
-  if (!existsSync(path)) fail('缺少 provision 产物：' + path + '\n请先运行：pnpm provision');
+if (!existsSync(buildMjsPath + '.bak')) {
+  writeFileSync(buildMjsPath + '.bak', readFileSync(buildMjsPath));
 }
-function resetStage(): void {
-  rmSync(stageRoot, { recursive: true, force: true });
-  mkdirSync(stageRoot, { recursive: true });
-  writeFileSync(join(stageRoot, '.gitignore'), '*\n!.gitignore\n');
-}
-function copyTree(name: string): void {
-  cpSync(join(provisionRoot, name), join(stageRoot, name), { recursive: true });
-}
-function main(): void {
-  if (!existsSync(provisionRoot)) fail('未找到 .provision/。请先运行：pnpm provision');
-  log('staging 根目录：' + stageRoot);
-  resetStage();
-
-  requireArtifact(join(provisionRoot, 'node', nodeExeName));
-  copyTree('node');
-  log('已复制 Node 运行时');
-
-  requireArtifact(join(provisionRoot, 'builtin-agent', 'package.json'));
-  requireArtifact(join(provisionRoot, 'builtin-agent', 'node_modules'));
-  requireArtifact(join(provisionRoot, 'builtin-agent', 'dist', 'acp', 'stdio-entry.js'));
-  copyTree('builtin-agent');
-  log('已复制 builtin-agent（含 dist 与生产依赖）');
-
-  requireArtifact(join(provisionRoot, 'lsp', 'node_modules', 'bash-language-server', 'out', 'cli.js'));
-  copyTree('lsp');
-  log('已复制 bash-language-server');
-
-  requireArtifact(join(provisionRoot, 'bin', shellcheckExeName));
-  copyFileSync(join(provisionRoot, 'bin', shellcheckExeName), join(stageRoot, shellcheckExeName));
-  log('已复制 shellcheck');
-
-  const shfmtSrc = join(provisionRoot, 'bin', shfmtExeName);
-  if (existsSync(shfmtSrc)) {
-    copyFileSync(shfmtSrc, join(stageRoot, shfmtExeName));
-    log('已复制 shfmt');
-  } else {
-    log('WARN 未见 shfmt 产物（非致命，运行时退回系统/WSL）');
-  }
-
-  log('OK 资源 staging 完成（纯复制）');
-}
-
-main();
-`;
-
-// ============ 写文件 ============
-mkdirSync(scriptsDir, { recursive: true });
-
-writeFileSync(join(scriptsDir, 'provision.ts'), provisionTs);
-console.log('[apply-p1] 写入 scripts/provision.ts');
-
-const prepPath = join(scriptsDir, 'prepare-bundle-resources.ts');
-if (existsSync(prepPath) && !existsSync(prepPath + '.bak')) {
-  writeFileSync(prepPath + '.bak', readFileSync(prepPath));
-}
-writeFileSync(prepPath, prepareTs);
-console.log('[apply-p1] 改写 scripts/prepare-bundle-resources.ts（旧文件备份 .bak）');
-
-// ============ package.json ============
-const pkgPath = join(repoRoot, 'package.json');
-const pkg = JSON.parse(readFileSync(pkgPath, 'utf8'));
-if (!existsSync(pkgPath + '.bak')) writeFileSync(pkgPath + '.bak', readFileSync(pkgPath));
-pkg.scripts = pkg.scripts || {};
-pkg.scripts.provision = 'tsx scripts/provision.ts';
-pkg.scripts['tauri:build'] = 'pnpm run provision && tsx scripts/run-tauri.ts build && node scripts/verify-bundle.mjs';
-writeFileSync(pkgPath, JSON.stringify(pkg, null, 2) + '\n');
-console.log('[apply-p1] package.json 已更新：provision / tauri:build');
-
-// ============ .gitignore ============
-const giPath = join(repoRoot, '.gitignore');
-let gi = existsSync(giPath) ? readFileSync(giPath, 'utf8') : '';
-const has = gi.split(/\r?\n/).some((l) => l.trim() === '.provision' || l.trim() === '.provision/');
-if (!has) {
-  if (gi.length && !gi.endsWith('\n')) gi += '\n';
-  gi += '\n# P1: provision 缓存（可复现构建产物，勿提交）\n.provision/\n';
-  writeFileSync(giPath, gi);
-  console.log('[apply-p1] .gitignore 追加 .provision/');
-} else {
-  console.log('[apply-p1] .gitignore 已含 .provision/，跳过');
-}
-
-console.log('[apply-p1] 完成。下一步：pnpm provision && pnpm tauri:build');
+writeFileSync(buildMjsPath, buildMjs);
+console.log('[apply-p2] 已改写 builtin-agent/build.mjs（旧文件备份 build.mjs.bak）');
+console.log('[apply-p2] 下一步：cd builtin-agent && node build.mjs   把输出贴回');
