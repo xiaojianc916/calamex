@@ -30,7 +30,14 @@ const streamLanguageLoader =
 // 词表 / 别名 / 标签 / 展示名全部来自 language-registry。
 // 共享解析器:javascript 与 jsx 同用 javascript({jsx});css / scss / less 同用 css()。
 const CODEMIRROR_LANGUAGE_LOADERS: Readonly<Record<string, () => Promise<Extension>>> = {
-  shell: () => import('./codemirror-bash-language').then((m) => m.bashLanguageExtensions()),
+  shell: () =>
+    Promise.all([
+      import('./codemirror-bash-language'),
+      import('./codemirror-tree-sitter-highlight'),
+    ]).then(([lang, highlight]) => [
+      lang.bashLanguageExtensions(),
+      highlight.bashTreeSitterHighlightExtension(),
+    ]),
   javascript: () => import('@codemirror/lang-javascript').then((m) => m.javascript({ jsx: true })),
   jsx: () => import('@codemirror/lang-javascript').then((m) => m.javascript({ jsx: true })),
   typescript: () =>

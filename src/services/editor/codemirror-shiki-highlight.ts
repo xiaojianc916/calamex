@@ -18,6 +18,14 @@ import {
   SHIKI_FOREGROUND,
 } from '@/services/editor/shiki-shared';
 
+/**
+ * bash 的编辑器实时高亮改由 tree-sitter 管线负责（codemirror-tree-sitter-highlight）。
+ * Shiki 在编辑器缓冲区内对这些语言让位，避免双重高亮 / 双引擎抢渲染。
+ * 注意：静态代码块 / 片段渲染路径不经过本文件，不受影响。
+ */
+const isEditorTreeSitterLanguage = (language: string): boolean =>
+  resolveShikiLanguageId(language) === 'bash';
+
 /** 编辑器与代码渲染统一使用的等宽字体，按要求以 Consolas 为首选。 */
 export const EDITOR_FONT_FAMILY =
   "Consolas, 'Cascadia Mono', 'SF Mono', 'JetBrains Mono', Menlo, Monaco, 'Courier New', monospace";
@@ -597,7 +605,7 @@ const shikiHighlightPlugin = ViewPlugin.fromClass(
      */
     private sendShikiEdit(update: ViewUpdate): void {
       const language = update.state.field(shikiLanguageField, false) ?? 'text';
-      if (!resolveShikiLanguageId(language)) {
+      if (!resolveShikiLanguageId(language) || isEditorTreeSitterLanguage(language)) {
         return;
       }
       const oldDoc = update.startState.doc;
@@ -638,7 +646,7 @@ const shikiHighlightPlugin = ViewPlugin.fromClass(
 
     private recompute(view: EditorView, options: { allowReuse: boolean }): void {
       const language = view.state.field(shikiLanguageField, false) ?? 'text';
-      if (!resolveShikiLanguageId(language)) {
+      if (!resolveShikiLanguageId(language) || isEditorTreeSitterLanguage(language)) {
         this.decorations = Decoration.none;
         this.lineTokenCache.clear();
         this.lineTokenCacheRevision += 1;
