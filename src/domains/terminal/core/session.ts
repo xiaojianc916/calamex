@@ -1138,19 +1138,8 @@ export class TerminalSession {
       if (this._visible) this._scheduleLayoutSync();
     });
     this._resizeObserver.observe(this._hostEl);
-
-    if (this._windowResizeCleanup) return;
-    const handleWindowResize = (): void => {
-      if (!this._visible) return;
-      const el = this._hostEl;
-      if (!el || !this._didHostSizeChange(el.clientWidth, el.clientHeight)) return;
-      this._scheduleLayoutSync();
-    };
-    window.addEventListener('resize', handleWindowResize);
-    this._windowResizeCleanup = () => {
-      window.removeEventListener('resize', handleWindowResize);
-      this._windowResizeCleanup = null;
-    };
+    // 单一触发源：窗口 resize 引起的宿主 flex 重排已由上面的 ResizeObserver 覆盖，
+    // 不再叠加 window 'resize'，避免拖拽期间每帧触发两次 fitAddon.fit() 与 PTY resize IPC。
   }
 
   // -- Private: size change detection --------------------------------------

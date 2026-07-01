@@ -35,7 +35,14 @@ export const useWindowResizeState = (): void => {
     );
   };
 
+  // ResizeObserver 在 observe() 时会立即回调一次当前尺寸；那不是真实缩放，
+  // 跳过它以免启动瞬间平白加一次 160ms 的全局动画冻结。
+  let hasSeenInitialObservation = false;
   useResizeObserver(html, () => {
+    if (!hasSeenInitialObservation) {
+      hasSeenInitialObservation = true;
+      return;
+    }
     html.classList.add('is-resizing');
     scheduleSettle();
   });

@@ -37,6 +37,9 @@ const BUILTIN_AGENT_ROOT_ENV: &str = "XIAOJIANC_BUILTIN_AGENT_ROOT";
 const NODE_EXE_ENV: &str = "XIAOJIANC_NODE_EXE";
 const MCP_UVX_PATH_ENV: &str = "AGENT_MCP_UVX_PATH";
 const TAVILY_API_KEY_ENV: &str = "TAVILY_API_KEY";
+/// 全局技能目录的跨进程契约：宿主解析后经此 env 注入边车，Node 侧据此定位技能库
+/// （见 builtin-agent workspace.ts 的 resolveGlobalSkillsDirectory / CALAMEX_SKILLS_DIR 分支）。
+const SKILLS_DIR_ENV: &str = "CALAMEX_SKILLS_DIR";
 
 /// 可挂载的 ACP 后端标识（ADR-0015）。`Builtin` 为自家 Node 边车（默认后端，行为与历史
 /// 一致）；其余为外部 ACP 编码 agent，其启动配置与凭证预置由 `provisioner` 模块的各
@@ -126,6 +129,13 @@ fn build_builtin_agent_env() -> Vec<(String, String)> {
 
     if let Some(path) = resolve_windows_uvx_path() {
         env.push((MCP_UVX_PATH_ENV.to_string(), path_to_string(&path)));
+    }
+
+    // 全局技能目录：由宿主（唯一事实源）解析后经 env 注入子进程，杜绝 Node 侧
+    // %APPDATA%/.calamex/skills 与 Rust 侧 ~/.calamex/skills 各算各的（此前在 Windows
+    // 上指向不同目录，导致 UI 存的技能 Agent 读不到）。与 commands::skills 同源。
+    if let Some(root) = crate::storage_paths::roaming_root() {
+        env.push((SKILLS_DIR_ENV.to_string(), path_to_string(&root.join("skills"))));
     }
 
     env

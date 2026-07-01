@@ -1,5 +1,5 @@
 /**
- * src/composables/useIntegratedTerminal.ts
+ * src/domains/terminal/composables/useIntegratedTerminal.ts
  * UI 层薄封装：负责 Vue 生命周期 / DOM 挂载 / watcher。
  * 终端状态与事件编排收口在 TerminalSession（src/domains/terminal/core/session.ts）。
  * R-18.4.1 / R-20.2.1 / R-20.2.3
