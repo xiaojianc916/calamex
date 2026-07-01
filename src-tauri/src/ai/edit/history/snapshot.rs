@@ -21,7 +21,8 @@ const SNAPSHOT_SCOPE_REVERT: &str = "revert";
 /// gix 对象库（见 `history::blob_store`），blob_key 前缀从 `fjall:`/`cas:`
 /// 变为唯一的 `git:`。不做双读兼容：v3 之前写入的快照清单里的 blob_key 在新
 /// 代码下一律读取失败（清单本身仍可正常列出，`content_available` 会如实
-/// 报告为 false，见 `has_live_blob`）。
+/// 报告为 false，见 `has_live_blob`）。同样，这些旧 key 的字节数也不会计入
+/// 保留策略的配额统计——它们从未在新对象库里存在过，见 `live_blob_keys`。
 const SNAPSHOT_MANIFEST_VERSION: u32 = 3;
 pub const FULL_BLOB_TTL_DAYS: i64 = 14;
 pub const PINNED_FULL_BLOB_TTL_DAYS: i64 = 30;
@@ -614,15 +615,24 @@ fn list_manifests(snapshots: &Keyspace) -> Result<Vec<SnapshotManifest>, String>
     Ok(manifests)
 }
 
+/// 遍历一个快照清单里所有“新格式、且物理上确实可能存在于 gix 对象库”的
+/// blob key 及其字节数。迁移前遗留的旧格式 key 会被过滤掉——它们从未在新对象
+/// 库里存在过，参与引用计数或字节统计只会带来虚假数据（幽灵占用配额、引用
+/// 计数指向不存在的对象）。这是 `build_blob_ref_counts` 与
+/// `build_active_blob_bytes` 共享的唯一过滤点，避免同一条判断在两个函数里
+/// 各写一遍。
+fn live_blob_keys(manifest: &SnapshotManifest) -> impl Iterator<Item = (&str, u64)> {
+    manifest.files.iter().filter_map(|file| {
+        let blob_key = file.blob_key.as_deref()?;
+        blob_store::is_valid_blob_key(blob_key).then_some((blob_key, file.byte_size))
+    })
+}
+
 fn build_blob_ref_counts(manifests: &[SnapshotManifest]) -> HashMap<String, usize> {
     let mut counts = HashMap::new();
     for manifest in manifests {
-        for blob_key in manifest
-            .files
-            .iter()
-            .filter_map(|file| file.blob_key.as_ref())
-        {
-            *counts.entry(blob_key.clone()).or_insert(0) += 1;
+        for (blob_key, _byte_size) in live_blob_keys(manifest) {
+            *counts.entry(blob_key.to_string()).or_insert(0) += 1;
         }
     }
     counts
@@ -631,12 +641,8 @@ fn build_blob_ref_counts(manifests: &[SnapshotManifest]) -> HashMap<String, usiz
 fn build_active_blob_bytes(manifests: &[SnapshotManifest]) -> HashMap<String, u64> {
     let mut bytes_by_key = HashMap::new();
     for manifest in manifests {
-        for file in &manifest.files {
-            if let Some(blob_key) = file.blob_key.as_ref() {
-                bytes_by_key
-                    .entry(blob_key.clone())
-                    .or_insert(file.byte_size);
-            }
+        for (blob_key, byte_size) in live_blob_keys(manifest) {
+            bytes_by_key.entry(blob_key.to_string()).or_insert(byte_size);
         }
     }
     bytes_by_key
@@ -777,7 +783,11 @@ impl SnapshotManifest {
     /// - 保留策略主动清理（`blob_key` 被设为 `None`）
     /// - 迁移前遗留的旧格式 key（`blob_key` 是 `Some`，但不是 `git:` 前缀）
     /// 两者对最终用户而言都等价于“内容已不可恢复”，`content_available` 必须
-    /// 对两者都如实报告为 `false`，而不是只看 `blob_key` 是否存在。
+    /// 对两者都如实报告为 `false`，而不是只看 `blob_key` 是否存在。这也是
+    /// `apply_snapshot_retention` 里唯一的裁剪资格判断——只有全部文件都通过
+    /// 此检查的清单，才会进入 `strip_manifest_blobs`；`live_blob_keys` 用同一个
+    /// `blob_store::is_valid_blob_key` 谓词，保证字节/引用计数统计与这里的
+    /// 资格判断永远一致。
     fn has_live_blob(&self) -> bool {
         self.files.iter().all(|file| {
             file.blob_key
@@ -796,13 +806,14 @@ fn read_blob(blob_repo: &gix::Repository, blob_key: &str) -> Result<String, Stri
 #[cfg(test)]
 mod tests {
     use super::{
-        SnapshotRetentionPolicy, SnapshotSourceFile, apply_snapshot_retention,
+        SNAPSHOTS_KEYSPACE, SnapshotRetentionPolicy, SnapshotSourceFile, apply_snapshot_retention,
         list_stored_snapshots, load_stored_snapshot, store_checkpoint_snapshots,
         store_manual_snapshot,
     };
     use crate::ai::edit::history::pins::PinIndex;
     use crate::ai::edit::io;
     use crate::commands::contracts::AiApplyPatchMetadataRequest;
+    use fjall::KeyspaceCreateOptions;
     use std::fs;
 
     #[test]
@@ -977,6 +988,101 @@ mod tests {
         assert_eq!(outcome.downgraded_snapshot_count, 2);
         assert_eq!(outcome.removed_blob_count, 2);
         assert!(outcome.reclaimed_bytes > 0);
+
+        let _ = fs::remove_dir_all(&temp_dir);
+    }
+
+    /// 模拟一条“迁移前（v2）”遗留清单：blob_key 用旧的 `fjall:` 前缀，且携带
+    /// 一个巨大的 byte_size。它必须：
+    /// 1) 在列表里如实报告 content_available: false（而不是假装可用）；
+    /// 2) 不会让保留策略 GC 报错中断（remove_blob 从不会被传入这种 key）；
+    /// 3) 它的巨大字节数不会被算进配额裁剪的“当前总量”，从而错误地牵连、
+    ///    裁剪同时存在的、体积很小的新格式快照。
+    #[test]
+    fn legacy_manifest_blob_key_is_excluded_from_listing_and_quota_and_does_not_break_gc() {
+        let temp_dir = temp_dir("aed-snapshot-legacy-manifest");
+        fs::create_dir_all(&temp_dir).expect("temp directory should be created");
+
+        let legacy_manifest_json = serde_json::json!({
+            "version": 2,
+            "id": "legacy-snapshot-1",
+            "scope": "manual",
+            "taskId": "legacy-task",
+            "createdAt": jiff::Timestamp::now().to_string(),
+            "label": "迁移前快照",
+            "sizeBytes": 999_999_999_u64,
+            "files": [{
+                "path": "src/legacy.sh",
+                "contentHash": "blake3:legacy",
+                "blobKey": "fjall:deadbeef",
+                "byteSize": 999_999_999_u64,
+            }],
+        });
+
+        io::with_aed_database_write(&temp_dir, "写入迁移前遗留清单", |db| {
+            let snapshots = db
+                .keyspace(SNAPSHOTS_KEYSPACE, KeyspaceCreateOptions::default)
+                .map_err(|error| error.to_string())?;
+            let mut batch = db.batch();
+            batch.insert(
+                &snapshots,
+                b"legacy-snapshot-1".to_vec(),
+                serde_json::to_vec(&legacy_manifest_json).map_err(|error| error.to_string())?,
+            );
+            batch.commit().map_err(|error| error.to_string())?;
+            db.persist(fjall::PersistMode::SyncAll)
+                .map_err(|error| error.to_string())
+        })
+        .expect("legacy manifest should be seeded");
+
+        // 新格式快照，体积远小于假设的配额；如果旧快照的巨大 byte_size 被错误
+        // 计入配额总量，这条新快照会被误裁。
+        let fresh = store_manual_snapshot(
+            &temp_dir,
+            &[SnapshotSourceFile {
+                path: "src/fresh.sh",
+                content_hash: "blake3:fresh",
+                content: "echo fresh",
+            }],
+            None,
+            "fresh",
+        )
+        .expect("fresh snapshot should be written");
+
+        let snapshots = list_stored_snapshots(&temp_dir).expect("snapshots should be listed");
+        let legacy = snapshots
+            .iter()
+            .find(|snapshot| snapshot.id == "legacy-snapshot-1")
+            .expect("legacy manifest should still be listed");
+        assert!(
+            !legacy.content_available,
+            "legacy blob_key format must report content as unavailable"
+        );
+
+        let outcome = io::with_aed_database_write(&temp_dir, "测试配额裁剪", |db| {
+            apply_snapshot_retention(
+                db,
+                &temp_dir,
+                &PinIndex::default(),
+                SnapshotRetentionPolicy {
+                    total_blob_quota_bytes: 1024,
+                    ..SnapshotRetentionPolicy::default()
+                },
+            )
+        })
+        .expect("retention should run without aborting on the legacy manifest");
+
+        // 旧快照的幽灵字节不应被计入配额总量，因此新快照不该被误裁。
+        assert_eq!(outcome.removed_blob_count, 0);
+        let snapshots_after = list_stored_snapshots(&temp_dir).expect("snapshots should be listed");
+        let fresh_after = snapshots_after
+            .iter()
+            .find(|snapshot| snapshot.id == fresh.id)
+            .expect("fresh snapshot should still be listed");
+        assert!(
+            fresh_after.content_available,
+            "fresh snapshot must not be stripped due to phantom legacy byte accounting"
+        );
 
         let _ = fs::remove_dir_all(&temp_dir);
     }
