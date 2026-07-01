@@ -143,11 +143,26 @@ pub enum AgentBackendKind {
     Codex,
 }
 
+/// 随标准 session/prompt 一并送达的上下文附件（契约层）。
+///
+/// 每个附件在宿主侧被投影为一个 ACP embedded resource 内容块（协议首选的上下文注入方式，见
+/// agent-client-protocol content.rs：`ContentBlock::Resource`），与用户正文 text 块并列送达，
+/// 而非拼进正文字符串——避免正文分隔符冲突/提示注入，并保留 name/uri/mimeType 语义。
+#[derive(Debug, Clone, Serialize, Deserialize, Type)]
+#[serde(rename_all = "camelCase")]
+pub struct AgentPromptAttachment {
+    pub(crate) name: String,
+    pub(crate) uri: String,
+    pub(crate) text: String,
+    #[serde(skip_serializing_if = "is_blank_optional_string")]
+    pub(crate) mime_type: Option<String>,
+}
+
 /// 外部 ACP 编码 agent 的标准回合（`session/prompt`）请求（契约层）。
 ///
 /// 与自家边车的带外 `agent_chat` 扩展回合不同：外部 agent 只实现标准 `prompt`、不认识
 /// `calamex.dev/*` 扩展方法，也不接收逐请求 `model_config`（凭据由其自身 CLI 自管，见
-/// ADR-0015 / `acp/launch.rs`），故仅携带后端类型、纯文本提示与会话定位字段。
+/// ADR-0015 / `acp/launch.rs`），故仅携带后端类型、纯文本提示、上下文附件与会话定位字段。
 #[derive(Debug, Clone, Serialize, Deserialize, Type)]
 #[serde(rename_all = "camelCase")]
 pub struct AgentExternalChatRequest {
@@ -164,6 +179,10 @@ pub struct AgentExternalChatRequest {
     /// prompt_with_stream_key），实现真正的逐 token 流式。缺省/空白时回退到 ACP 会话 id。
     #[serde(skip_serializing_if = "is_blank_optional_string")]
     pub(crate) session_id: Option<String>,
+    /// 本回合随附的上下文附件（文本类）。宿主为每个附件构造一个 ACP embedded resource 块并与
+    /// 正文 text 块并列送达（见 acp/host.rs prompt_with_attachments）。缺省为空。
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub(crate) attachments: Vec<AgentPromptAttachment>,
 }
 
 /// 外部 ACP 回合的终态结果（契约层）。
@@ -313,6 +332,7 @@ mod builtin_agent_contract_tests {
             thread_id: None,
             workspace_root_path: None,
             session_id: Some("  ".to_string()),
+            attachments: Vec::new(),
         };
 
         let omitted_object = serialize_object(&omitted);
@@ -335,6 +355,7 @@ mod builtin_agent_contract_tests {
             thread_id: Some("thread-external-1".to_string()),
             workspace_root_path: None,
             session_id: Some("sidecar:assistant-1".to_string()),
+            attachments: Vec::new(),
         };
 
         let present_object = serialize_object(&present);

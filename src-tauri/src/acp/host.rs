@@ -34,7 +34,7 @@ use std::sync::Arc;
 use agent_client_protocol::schema::{ContentBlock, SessionId, StopReason, ToolCallId};
 
 use crate::commands::contracts::{
-    AgentSidecarHealthPayload, AgentSidecarResponsePayload,
+    AgentPromptAttachment, AgentSidecarHealthPayload, AgentSidecarResponsePayload,
     AgentSidecarWarmupPayload, AiWebFetchPayload, AiWebSearchPayload,
 };
 
@@ -277,14 +277,35 @@ impl AcpHost {
         text: &str,
         stream_key: Option<&str>,
     ) -> Result<StopReason, AcpClientError> {
-        let block: ContentBlock = serde_json::from_value(serde_json::json!({
-            "type": "text",
-            "text": text,
-        }))
-        .map_err(|error| {
-            AcpClientError::Protocol(format!("构造 ACP 文本内容块失败：{error}"))
-        })?;
-        self.prompt_with_stream_key(thread_id, workspace_root_path, vec![block], stream_key)
+        self.prompt_with_stream_key(
+            thread_id,
+            workspace_root_path,
+            vec![text_content_block(text)?],
+            stream_key,
+        )
+        .await
+    }
+
+    /// 用「正文文本 + 若干上下文附件」驱动一轮标准 ACP 回合（`session/prompt`）：正文包成一个
+    /// `text` 内容块，每个附件包成一个 ACP embedded `resource` 内容块（协议首选的上下文注入方式，
+    /// 见 agent-client-protocol `ContentBlock::Resource`；内置边车入站投影 to-runtime-input.ts 会把
+    /// 带内联 text 的 resource 块并入用户消息正文，外部 agent 按协议原生消费）。附件作为独立结构化块
+    /// 送达而非拼进正文字符串——避免分隔符冲突/提示注入，并保留 uri/mimeType 语义。ContentBlock 经
+    /// 其线上 wire 形态 JSON 反序列化构造（与 `prompt_text` 同源），不在宿主侧硬编码 SDK 构造路径。
+    pub async fn prompt_with_attachments(
+        &self,
+        thread_id: &str,
+        workspace_root_path: Option<&str>,
+        text: &str,
+        attachments: &[AgentPromptAttachment],
+        stream_key: Option<&str>,
+    ) -> Result<StopReason, AcpClientError> {
+        let mut blocks: Vec<ContentBlock> = Vec::with_capacity(1 + attachments.len());
+        blocks.push(text_content_block(text)?);
+        for attachment in attachments {
+            blocks.push(resource_content_block(attachment)?);
+        }
+        self.prompt_with_stream_key(thread_id, workspace_root_path, blocks, stream_key)
             .await
     }
 
@@ -481,6 +502,48 @@ impl AcpHost {
         self.approvals.clear();
         self.handle.shutdown();
     }
+}
+
+/// 构造一个 ACP `text` 内容块（经线上 wire 形态 JSON 反序列化，不硬编码 SDK 构造路径）。
+fn text_content_block(text: &str) -> Result<ContentBlock, AcpClientError> {
+    serde_json::from_value(serde_json::json!({
+        "type": "text",
+        "text": text,
+    }))
+    .map_err(|error| AcpClientError::Protocol(format!("构造 ACP 文本内容块失败：{error}")))
+}
+
+/// 构造一个 ACP embedded `resource` 内容块（内联文本资源）。形状对齐 agent-client-protocol
+/// content.rs 的 `EmbeddedResource` + `TextResourceContents`（camelCase）：
+/// `{ "type": "resource", "resource": { "uri", "text", "mimeType"? } }`。mimeType 空白/缺省时省略。
+fn resource_content_block(
+    attachment: &AgentPromptAttachment,
+) -> Result<ContentBlock, AcpClientError> {
+    let mut resource = serde_json::Map::new();
+    resource.insert(
+        "uri".to_string(),
+        serde_json::Value::String(attachment.uri.clone()),
+    );
+    resource.insert(
+        "text".to_string(),
+        serde_json::Value::String(attachment.text.clone()),
+    );
+    if let Some(mime_type) = attachment
+        .mime_type
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    {
+        resource.insert(
+            "mimeType".to_string(),
+            serde_json::Value::String(mime_type.to_string()),
+        );
+    }
+    serde_json::from_value(serde_json::json!({
+        "type": "resource",
+        "resource": serde_json::Value::Object(resource),
+    }))
+    .map_err(|error| AcpClientError::Protocol(format!("构造 ACP 资源内容块失败：{error}")))
 }
 
 /// 从一帧 session/update 事件 JSON 中提取 available_commands_update 的 availableCommands 数组。

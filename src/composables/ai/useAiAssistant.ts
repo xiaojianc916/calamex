@@ -33,7 +33,12 @@ import type {
 } from '@/types/ai';
 import type { TAiAssistantMode } from '@/types/ai/assistant-mode';
 import type { IAiConversationScrollState } from '@/types/ai/conversation.schema';
-import type { TAgentBackendKind, TAgentRuntimeEvent, TAgentUiEvent } from '@/types/ai/sidecar';
+import type {
+  IAgentPromptAttachment,
+  TAgentBackendKind,
+  TAgentRuntimeEvent,
+  TAgentUiEvent,
+} from '@/types/ai/sidecar';
 import type {
   IAiThread,
   IAiThreadAssistantMessageEntry,
@@ -869,6 +874,7 @@ export const useAiAssistant = (options: IUseAiAssistantOptions) => {
     messageContent: string,
     threadId: string | null,
     modeConfigValue?: string,
+    attachments: IAgentPromptAttachment[] = [],
   ): Promise<void> => {
     errorMessage.value = '';
     isSending.value = true;
@@ -951,6 +957,7 @@ export const useAiAssistant = (options: IUseAiAssistantOptions) => {
         sessionId: sidecarSessionId,
         workspaceRootPath: options.workspaceRootPath.value,
         ...(targetThreadId ? { threadId: targetThreadId } : {}),
+        ...(attachments.length > 0 ? { attachments } : {}),
       });
 
       liveEventBuffer.flush();
@@ -1088,18 +1095,18 @@ export const useAiAssistant = (options: IUseAiAssistantOptions) => {
 
     currentReferences.value = references;
 
-    // 修复断链：把附件全文随标准 ACP session/prompt 一并送达模型。
-    // references.contentPreview 已含文本附件全文；图片仍只作 UI 预览、不并入文本 prompt。
-    const attachmentContextBlocks = references
+    // 正规范式（替代旧的 <附件> 字符串折叠）：把文本类附件作为独立的 ACP embedded resource 内容块
+    // 随标准 session/prompt 送达（见 Rust host.prompt_with_attachments / agent-client-protocol
+    // ContentBlock::Resource——协议首选的上下文注入方式）。这样保留 name/uri/mimeType 语义、避免正文
+    // 分隔符冲突与提示注入；图片附件仍只作 UI 预览、不并入（多模态注入待 promptCapabilities 协商）。
+    const promptAttachments: IAgentPromptAttachment[] = references
       .filter((reference) => reference.kind !== 'image-attachment')
-      .map((reference) =>
-        ['<附件 ' + reference.path + '>', reference.contentPreview, '</附件>'].join('\n'),
-      )
-      .join('\n\n');
-    const promptText =
-      attachmentContextBlocks.length > 0
-        ? messageContent + '\n\n' + attachmentContextBlocks
-        : messageContent;
+      .map((reference) => ({
+        name: reference.label,
+        uri: `attachment:///${reference.path ?? reference.id}`,
+        text: reference.contentPreview,
+        mimeType: 'text/plain',
+      }));
 
     aiThreadStore.patchActiveThreadEntries((entries) =>
       entries.map((entry) =>
@@ -1121,7 +1128,13 @@ export const useAiAssistant = (options: IUseAiAssistantOptions) => {
         ? BUILTIN_MODE_CONFIG_VALUE_BY_ASSISTANT_MODE[activeMode.value]
         : undefined;
 
-    await executeExternalAgentRequest(backend, promptText, titleThreadId, modeConfigValue);
+    await executeExternalAgentRequest(
+      backend,
+      messageContent,
+      titleThreadId,
+      modeConfigValue,
+      promptAttachments,
+    );
 
     if (!errorMessage.value) {
       void maybeGenerateConversationTitle(titleThreadId);

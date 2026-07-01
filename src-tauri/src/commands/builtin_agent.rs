@@ -177,6 +177,7 @@ pub async fn builtin_agent_external_chat(
         thread_id,
         workspace_root_path,
         session_id: client_stream_session_id,
+        attachments,
         ..
     } = payload;
     let thread_id = thread_id.as_deref().unwrap_or_default();
@@ -210,10 +211,11 @@ pub async fn builtin_agent_external_chat(
             .unwrap_or_else(|| acp_session_id.to_string());
 
         let stop_reason = host
-            .prompt_text(
+            .prompt_with_attachments(
                 thread_id,
                 workspace_root_path,
                 &text,
+                &attachments,
                 Some(stream_session_id.as_str()),
             )
             .await?;

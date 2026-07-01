@@ -1,74 +1,448 @@
-#!/usr/bin/env node
-// codemod-inject-skills-dir-env.mjs (v2)
-// 用途：在 launch.rs::build_builtin_agent_env() 注入 CALAMEX_SKILLS_DIR，
-//       让边车（Node）与宿主（Rust commands/skills.rs）指向同一技能目录，
-//       修复 Windows 上 ~/.calamex/skills 与 %APPDATA%/.calamex/skills 分裂的 bug。
-// v2 修复：v1 用「跨行模板字符串」当锚点，在 CRLF 换行的文件上匹配不到（Windows 常见）；
-//          v2 改为「单行子串 + indexOf 定位 + 自动探测 CRLF/LF」，不再受换行风格影响。
-// 特性：dry-run 默认；--write 落盘；幂等（注过即跳过）；纯 std，无新依赖。
-// 用法：node scripts/codemod-inject-skills-dir-env.mjs [repoRoot] [--write]
-import { readFileSync, writeFileSync, existsSync } from 'node:fs';
-import { join, resolve } from 'node:path';
+// 1.mjs —— R4 附件链路改为 ACP embedded resource 正规范式(替换字符串折叠)
+import { readFileSync, writeFileSync } from 'node:fs';
 
-const WRITE = process.argv.includes('--write');
-const posArgs = process.argv.slice(2).filter((a) => a !== '--write');
-const ROOT = posArgs[0] ? resolve(posArgs[0]) : process.cwd();
-const rel = 'src-tauri/src/acp/launch.rs';
-const abs = join(ROOT, rel);
-if (!existsSync(abs)) { console.error('✗ 找不到 ' + rel + '（请在仓库根运行或传入 repoRoot）'); process.exit(1); }
+const edits = [
+  // ── 1) Rust 契约:新增 AgentPromptAttachment + AgentExternalChatRequest.attachments ──
+  { file: 'src-tauri/src/commands/contracts/builtin_agent.rs', changes: [
+    { label: 'A 新增 AgentPromptAttachment 结构',
+      find: [
+        '/// 外部 ACP 编码 agent 的标准回合（`session/prompt`）请求（契约层）。',
+        '///',
+        '/// 与自家边车的带外 `agent_chat` 扩展回合不同：外部 agent 只实现标准 `prompt`、不认识',
+        '/// `calamex.dev/*` 扩展方法，也不接收逐请求 `model_config`（凭据由其自身 CLI 自管，见',
+        '/// ADR-0015 / `acp/launch.rs`），故仅携带后端类型、纯文本提示与会话定位字段。',
+        '#[derive(Debug, Clone, Serialize, Deserialize, Type)]',
+        '#[serde(rename_all = "camelCase")]',
+        'pub struct AgentExternalChatRequest {',
+        '    pub(crate) backend: AgentBackendKind,',
+        '    pub(crate) text: String,',
+      ],
+      replace: [
+        '/// 随标准 session/prompt 一并送达的上下文附件（契约层）。',
+        '///',
+        '/// 每个附件在宿主侧被投影为一个 ACP embedded resource 内容块（协议首选的上下文注入方式，见',
+        '/// agent-client-protocol content.rs：`ContentBlock::Resource`），与用户正文 text 块并列送达，',
+        '/// 而非拼进正文字符串——避免正文分隔符冲突/提示注入，并保留 name/uri/mimeType 语义。',
+        '#[derive(Debug, Clone, Serialize, Deserialize, Type)]',
+        '#[serde(rename_all = "camelCase")]',
+        'pub struct AgentPromptAttachment {',
+        '    pub(crate) name: String,',
+        '    pub(crate) uri: String,',
+        '    pub(crate) text: String,',
+        '    #[serde(skip_serializing_if = "is_blank_optional_string")]',
+        '    pub(crate) mime_type: Option<String>,',
+        '}',
+        '',
+        '/// 外部 ACP 编码 agent 的标准回合（`session/prompt`）请求（契约层）。',
+        '///',
+        '/// 与自家边车的带外 `agent_chat` 扩展回合不同：外部 agent 只实现标准 `prompt`、不认识',
+        '/// `calamex.dev/*` 扩展方法，也不接收逐请求 `model_config`（凭据由其自身 CLI 自管，见',
+        '/// ADR-0015 / `acp/launch.rs`），故仅携带后端类型、纯文本提示、上下文附件与会话定位字段。',
+        '#[derive(Debug, Clone, Serialize, Deserialize, Type)]',
+        '#[serde(rename_all = "camelCase")]',
+        'pub struct AgentExternalChatRequest {',
+        '    pub(crate) backend: AgentBackendKind,',
+        '    pub(crate) text: String,',
+      ] },
+    { label: 'B 新增 attachments 字段',
+      find: [
+        '    #[serde(skip_serializing_if = "is_blank_optional_string")]',
+        '    pub(crate) session_id: Option<String>,',
+        '}',
+        '',
+        '/// 外部 ACP 回合的终态结果（契约层）。',
+      ],
+      replace: [
+        '    #[serde(skip_serializing_if = "is_blank_optional_string")]',
+        '    pub(crate) session_id: Option<String>,',
+        '    /// 本回合随附的上下文附件（文本类）。宿主为每个附件构造一个 ACP embedded resource 块并与',
+        '    /// 正文 text 块并列送达（见 acp/host.rs prompt_with_attachments）。缺省为空。',
+        '    #[serde(default, skip_serializing_if = "Vec::is_empty")]',
+        '    pub(crate) attachments: Vec<AgentPromptAttachment>,',
+        '}',
+        '',
+        '/// 外部 ACP 回合的终态结果（契约层）。',
+      ] },
+    { label: 'C 修契约测试 omitted',
+      find: [
+        '        let omitted = AgentExternalChatRequest {',
+        '            backend: AgentBackendKind::Kimi,',
+        '            text: "继续".to_string(),',
+        '            thread_id: None,',
+        '            workspace_root_path: None,',
+        '            session_id: Some("  ".to_string()),',
+        '        };',
+      ],
+      replace: [
+        '        let omitted = AgentExternalChatRequest {',
+        '            backend: AgentBackendKind::Kimi,',
+        '            text: "继续".to_string(),',
+        '            thread_id: None,',
+        '            workspace_root_path: None,',
+        '            session_id: Some("  ".to_string()),',
+        '            attachments: Vec::new(),',
+        '        };',
+      ] },
+    { label: 'D 修契约测试 present',
+      find: [
+        '        let present = AgentExternalChatRequest {',
+        '            backend: AgentBackendKind::Kimi,',
+        '            text: "继续".to_string(),',
+        '            thread_id: Some("thread-external-1".to_string()),',
+        '            workspace_root_path: None,',
+        '            session_id: Some("sidecar:assistant-1".to_string()),',
+        '        };',
+      ],
+      replace: [
+        '        let present = AgentExternalChatRequest {',
+        '            backend: AgentBackendKind::Kimi,',
+        '            text: "继续".to_string(),',
+        '            thread_id: Some("thread-external-1".to_string()),',
+        '            workspace_root_path: None,',
+        '            session_id: Some("sidecar:assistant-1".to_string()),',
+        '            attachments: Vec::new(),',
+        '        };',
+      ] },
+  ]},
 
-let src = readFileSync(abs, 'utf8');
-const before = src;
-const EOL = src.includes('\r\n') ? '\r\n' : '\n';
+  // ── 2) Rust 宿主:prompt_text 复用 helper + 新增 prompt_with_attachments + 两个块构造 helper ──
+  { file: 'src-tauri/src/acp/host.rs', changes: [
+    { label: 'E 引入 AgentPromptAttachment',
+      find: [
+        'use crate::commands::contracts::{',
+        '    AgentSidecarHealthPayload, AgentSidecarResponsePayload,',
+        '    AgentSidecarWarmupPayload, AiWebFetchPayload, AiWebSearchPayload,',
+        '};',
+      ],
+      replace: [
+        'use crate::commands::contracts::{',
+        '    AgentPromptAttachment, AgentSidecarHealthPayload, AgentSidecarResponsePayload,',
+        '    AgentSidecarWarmupPayload, AiWebFetchPayload, AiWebSearchPayload,',
+        '};',
+      ] },
+    { label: 'F prompt_text 复用 helper + prompt_with_attachments',
+      find: [
+        '    pub async fn prompt_text(',
+        '        &self,',
+        '        thread_id: &str,',
+        '        workspace_root_path: Option<&str>,',
+        '        text: &str,',
+        '        stream_key: Option<&str>,',
+        '    ) -> Result<StopReason, AcpClientError> {',
+        '        let block: ContentBlock = serde_json::from_value(serde_json::json!({',
+        '            "type": "text",',
+        '            "text": text,',
+        '        }))',
+        '        .map_err(|error| {',
+        '            AcpClientError::Protocol(format!("构造 ACP 文本内容块失败：{error}"))',
+        '        })?;',
+        '        self.prompt_with_stream_key(thread_id, workspace_root_path, vec![block], stream_key)',
+        '            .await',
+        '    }',
+      ],
+      replace: [
+        '    pub async fn prompt_text(',
+        '        &self,',
+        '        thread_id: &str,',
+        '        workspace_root_path: Option<&str>,',
+        '        text: &str,',
+        '        stream_key: Option<&str>,',
+        '    ) -> Result<StopReason, AcpClientError> {',
+        '        self.prompt_with_stream_key(',
+        '            thread_id,',
+        '            workspace_root_path,',
+        '            vec![text_content_block(text)?],',
+        '            stream_key,',
+        '        )',
+        '        .await',
+        '    }',
+        '',
+        '    /// 用「正文文本 + 若干上下文附件」驱动一轮标准 ACP 回合（`session/prompt`）：正文包成一个',
+        '    /// `text` 内容块，每个附件包成一个 ACP embedded `resource` 内容块（协议首选的上下文注入方式，',
+        '    /// 见 agent-client-protocol `ContentBlock::Resource`；内置边车入站投影 to-runtime-input.ts 会把',
+        '    /// 带内联 text 的 resource 块并入用户消息正文，外部 agent 按协议原生消费）。附件作为独立结构化块',
+        '    /// 送达而非拼进正文字符串——避免分隔符冲突/提示注入，并保留 uri/mimeType 语义。ContentBlock 经',
+        '    /// 其线上 wire 形态 JSON 反序列化构造（与 `prompt_text` 同源），不在宿主侧硬编码 SDK 构造路径。',
+        '    pub async fn prompt_with_attachments(',
+        '        &self,',
+        '        thread_id: &str,',
+        '        workspace_root_path: Option<&str>,',
+        '        text: &str,',
+        '        attachments: &[AgentPromptAttachment],',
+        '        stream_key: Option<&str>,',
+        '    ) -> Result<StopReason, AcpClientError> {',
+        '        let mut blocks: Vec<ContentBlock> = Vec::with_capacity(1 + attachments.len());',
+        '        blocks.push(text_content_block(text)?);',
+        '        for attachment in attachments {',
+        '            blocks.push(resource_content_block(attachment)?);',
+        '        }',
+        '        self.prompt_with_stream_key(thread_id, workspace_root_path, blocks, stream_key)',
+        '            .await',
+        '    }',
+      ] },
+    { label: 'G 新增 text_content_block / resource_content_block',
+      find: [
+        '/// 从一帧 session/update 事件 JSON 中提取 available_commands_update 的 availableCommands 数组。',
+      ],
+      replace: [
+        '/// 构造一个 ACP `text` 内容块（经线上 wire 形态 JSON 反序列化，不硬编码 SDK 构造路径）。',
+        'fn text_content_block(text: &str) -> Result<ContentBlock, AcpClientError> {',
+        '    serde_json::from_value(serde_json::json!({',
+        '        "type": "text",',
+        '        "text": text,',
+        '    }))',
+        '    .map_err(|error| AcpClientError::Protocol(format!("构造 ACP 文本内容块失败：{error}")))',
+        '}',
+        '',
+        '/// 构造一个 ACP embedded `resource` 内容块（内联文本资源）。形状对齐 agent-client-protocol',
+        '/// content.rs 的 `EmbeddedResource` + `TextResourceContents`（camelCase）：',
+        '/// `{ "type": "resource", "resource": { "uri", "text", "mimeType"? } }`。mimeType 空白/缺省时省略。',
+        'fn resource_content_block(',
+        '    attachment: &AgentPromptAttachment,',
+        ') -> Result<ContentBlock, AcpClientError> {',
+        '    let mut resource = serde_json::Map::new();',
+        '    resource.insert(',
+        '        "uri".to_string(),',
+        '        serde_json::Value::String(attachment.uri.clone()),',
+        '    );',
+        '    resource.insert(',
+        '        "text".to_string(),',
+        '        serde_json::Value::String(attachment.text.clone()),',
+        '    );',
+        '    if let Some(mime_type) = attachment',
+        '        .mime_type',
+        '        .as_deref()',
+        '        .map(str::trim)',
+        '        .filter(|value| !value.is_empty())',
+        '    {',
+        '        resource.insert(',
+        '            "mimeType".to_string(),',
+        '            serde_json::Value::String(mime_type.to_string()),',
+        '        );',
+        '    }',
+        '    serde_json::from_value(serde_json::json!({',
+        '        "type": "resource",',
+        '        "resource": serde_json::Value::Object(resource),',
+        '    }))',
+        '    .map_err(|error| AcpClientError::Protocol(format!("构造 ACP 资源内容块失败：{error}")))',
+        '}',
+        '',
+        '/// 从一帧 session/update 事件 JSON 中提取 available_commands_update 的 availableCommands 数组。',
+      ] },
+  ]},
 
-// 在含 anchor（单行、不跨行）的那一行之后插入 lines（按文件换行风格逐行拼接）。
-function insertAfterLine(text, anchor, lines) {
-  const i = text.indexOf(anchor);
-  if (i === -1) return null;
-  const nl = text.indexOf('\n', i);
-  const end = nl === -1 ? text.length : nl + 1;
-  return text.slice(0, end) + lines.map((l) => l + EOL).join('') + text.slice(end);
+  // ── 3) Rust 命令:透传 attachments 并改用 prompt_with_attachments ──
+  { file: 'src-tauri/src/commands/builtin_agent.rs', changes: [
+    { label: 'H1 解构 attachments',
+      find: [
+        '    let AgentExternalChatRequest {',
+        '        text,',
+        '        thread_id,',
+        '        workspace_root_path,',
+        '        session_id: client_stream_session_id,',
+        '        ..',
+        '    } = payload;',
+      ],
+      replace: [
+        '    let AgentExternalChatRequest {',
+        '        text,',
+        '        thread_id,',
+        '        workspace_root_path,',
+        '        session_id: client_stream_session_id,',
+        '        attachments,',
+        '        ..',
+        '    } = payload;',
+      ] },
+    { label: 'H2 改用 prompt_with_attachments',
+      find: [
+        '        let stop_reason = host',
+        '            .prompt_text(',
+        '                thread_id,',
+        '                workspace_root_path,',
+        '                &text,',
+        '                Some(stream_session_id.as_str()),',
+        '            )',
+        '            .await?;',
+      ],
+      replace: [
+        '        let stop_reason = host',
+        '            .prompt_with_attachments(',
+        '                thread_id,',
+        '                workspace_root_path,',
+        '                &text,',
+        '                &attachments,',
+        '                Some(stream_session_id.as_str()),',
+        '            )',
+        '            .await?;',
+      ] },
+  ]},
+
+  // ── 4) TS 类型:镜像契约 ──
+  { file: 'src/types/ai/sidecar.ts', changes: [
+    { label: 'I1 新增 IAgentPromptAttachment',
+      find: [
+        "export type TAgentBackendKind = 'builtin' | 'kimi' | 'codex';",
+        "",
+        "export interface IAgentExternalChatRequest {",
+      ],
+      replace: [
+        "export type TAgentBackendKind = 'builtin' | 'kimi' | 'codex';",
+        "",
+        "/**",
+        " * 随标准 session/prompt 一并送达的上下文附件（文本类）。镜像 Rust 契约",
+        " * src-tauri/src/commands/contracts/builtin_agent.rs 的 AgentPromptAttachment",
+        ' * （serde rename_all = "camelCase"）。宿主为每个附件构造一个 ACP embedded resource 内容块',
+        " * （协议首选的上下文注入方式），与用户正文并列送达，而非拼进正文字符串。",
+        " */",
+        "export interface IAgentPromptAttachment {",
+        "  name: string;",
+        "  uri: string;",
+        "  text: string;",
+        "  mimeType?: string;",
+        "}",
+        "",
+        "export interface IAgentExternalChatRequest {",
+      ] },
+    { label: 'I2 新增 attachments 字段',
+      find: [
+        "  sessionId?: string;",
+        "}",
+        "",
+        "export interface IAgentExternalChatResultPayload {",
+      ],
+      replace: [
+        "  sessionId?: string;",
+        "  /**",
+        "   * 本回合随附的上下文附件（文本类）。宿主为每个附件构造一个 ACP embedded resource 内容块并与",
+        "   * 正文并列送达。缺省/省略等价于无附件。",
+        "   */",
+        "  attachments?: IAgentPromptAttachment[];",
+        "}",
+        "",
+        "export interface IAgentExternalChatResultPayload {",
+      ] },
+  ]},
+
+  // ── 5) 前端:用结构化 attachments 取代 <附件> 字符串折叠 ──
+  { file: 'src/composables/ai/useAiAssistant.ts', changes: [
+    { label: 'J1 引入 IAgentPromptAttachment 类型',
+      find: [
+        "import type { TAgentBackendKind, TAgentRuntimeEvent, TAgentUiEvent } from '@/types/ai/sidecar';",
+      ],
+      replace: [
+        "import type {",
+        "  IAgentPromptAttachment,",
+        "  TAgentBackendKind,",
+        "  TAgentRuntimeEvent,",
+        "  TAgentUiEvent,",
+        "} from '@/types/ai/sidecar';",
+      ] },
+    { label: 'J2 折叠 → 结构化 attachments',
+      find: [
+        "    currentReferences.value = references;",
+        "",
+        "    // 修复断链：把附件全文随标准 ACP session/prompt 一并送达模型。",
+        "    // references.contentPreview 已含文本附件全文；图片仍只作 UI 预览、不并入文本 prompt。",
+        "    const attachmentContextBlocks = references",
+        "      .filter((reference) => reference.kind !== 'image-attachment')",
+        "      .map((reference) =>",
+        "        ['<附件 ' + reference.path + '>', reference.contentPreview, '</附件>'].join('\\n'),",
+        "      )",
+        "      .join('\\n\\n');",
+        "    const promptText =",
+        "      attachmentContextBlocks.length > 0",
+        "        ? messageContent + '\\n\\n' + attachmentContextBlocks",
+        "        : messageContent;",
+      ],
+      replace: [
+        "    currentReferences.value = references;",
+        "",
+        "    // 正规范式（替代旧的 <附件> 字符串折叠）：把文本类附件作为独立的 ACP embedded resource 内容块",
+        "    // 随标准 session/prompt 送达（见 Rust host.prompt_with_attachments / agent-client-protocol",
+        "    // ContentBlock::Resource——协议首选的上下文注入方式）。这样保留 name/uri/mimeType 语义、避免正文",
+        "    // 分隔符冲突与提示注入；图片附件仍只作 UI 预览、不并入（多模态注入待 promptCapabilities 协商）。",
+        "    const promptAttachments: IAgentPromptAttachment[] = references",
+        "      .filter((reference) => reference.kind !== 'image-attachment')",
+        "      .map((reference) => ({",
+        "        name: reference.label,",
+        "        uri: `attachment:///${reference.path ?? reference.id}`,",
+        "        text: reference.contentPreview,",
+        "        mimeType: 'text/plain',",
+        "      }));",
+      ] },
+    { label: 'J3 execute 传 messageContent + attachments',
+      find: [
+        "    await executeExternalAgentRequest(backend, promptText, titleThreadId, modeConfigValue);",
+      ],
+      replace: [
+        "    await executeExternalAgentRequest(",
+        "      backend,",
+        "      messageContent,",
+        "      titleThreadId,",
+        "      modeConfigValue,",
+        "      promptAttachments,",
+        "    );",
+      ] },
+    { label: 'J4 executeExternalAgentRequest 签名加 attachments',
+      find: [
+        "  const executeExternalAgentRequest = async (",
+        "    backend: TAgentBackendKind,",
+        "    messageContent: string,",
+        "    threadId: string | null,",
+        "    modeConfigValue?: string,",
+        "  ): Promise<void> => {",
+      ],
+      replace: [
+        "  const executeExternalAgentRequest = async (",
+        "    backend: TAgentBackendKind,",
+        "    messageContent: string,",
+        "    threadId: string | null,",
+        "    modeConfigValue?: string,",
+        "    attachments: IAgentPromptAttachment[] = [],",
+        "  ): Promise<void> => {",
+      ] },
+    { label: 'J5 sidecarExternalChat 透传 attachments',
+      find: [
+        "      await aiService.sidecarExternalChat({",
+        "        backend,",
+        "        text: messageContent,",
+        "        sessionId: sidecarSessionId,",
+        "        workspaceRootPath: options.workspaceRootPath.value,",
+        "        ...(targetThreadId ? { threadId: targetThreadId } : {}),",
+        "      });",
+      ],
+      replace: [
+        "      await aiService.sidecarExternalChat({",
+        "        backend,",
+        "        text: messageContent,",
+        "        sessionId: sidecarSessionId,",
+        "        workspaceRootPath: options.workspaceRootPath.value,",
+        "        ...(targetThreadId ? { threadId: targetThreadId } : {}),",
+        "        ...(attachments.length > 0 ? { attachments } : {}),",
+        "      });",
+      ] },
+  ]},
+];
+
+let files = 0;
+for (const { file, changes } of edits) {
+  let raw;
+  try { raw = readFileSync(file, 'utf8'); }
+  catch (e) { console.error(`✗ 读取失败 ${file}: ${e.message}`); process.exitCode = 1; continue; }
+  const hadCRLF = raw.includes('\r\n');
+  let text = hadCRLF ? raw.replace(/\r\n/g, '\n') : raw;
+  let ok = true;
+  for (const ch of changes) {
+    const find = ch.find.join('\n');
+    const repl = ch.replace.join('\n');
+    const i = text.indexOf(find);
+    if (i === -1) { console.error(`✗ [${file}] 未找到锚点：${ch.label}`); ok = false; break; }
+    if (text.indexOf(find, i + find.length) !== -1) { console.error(`✗ [${file}] 锚点多处命中：${ch.label}`); ok = false; break; }
+    text = text.slice(0, i) + repl + text.slice(i + find.length);
+  }
+  if (!ok) { console.error(`  → ${file} 未写入（把这条锚点名反馈给我）`); process.exitCode = 1; continue; }
+  writeFileSync(file, hadCRLF ? text.replace(/\n/g, '\r\n') : text, 'utf8');
+  console.log(`✓ ${file}（${changes.length} 处）`);
+  files++;
 }
-
-// 编辑 1：新增 const SKILLS_DIR_ENV（锚点 = TAVILY 常量行，单行、无引号，CRLF 无关）。
-if (src.includes('SKILLS_DIR_ENV')) {
-  console.log('· [const] SKILLS_DIR_ENV 已存在，跳过。');
-} else {
-  const next = insertAfterLine(src, 'const TAVILY_API_KEY_ENV: &str =', [
-    '/// 全局技能目录的跨进程契约：宿主解析后经此 env 注入边车，Node 侧据此定位技能库',
-    '/// （见 builtin-agent workspace.ts 的 resolveGlobalSkillsDirectory / CALAMEX_SKILLS_DIR 分支）。',
-    'const SKILLS_DIR_ENV: &str = "CALAMEX_SKILLS_DIR";',
-  ]);
-  if (next === null) { console.error('✗ [const] 未命中锚点（TAVILY 常量行），请人工核对；未改动。'); process.exit(2); }
-  src = next;
-  console.log('✓ [const] 已插入 SKILLS_DIR_ENV。');
-}
-
-// 编辑 2：在 uvx 注入块之后追加技能目录注入（锚点 = uvx push 行，单行、无引号）。
-if (src.includes('SKILLS_DIR_ENV.to_string()')) {
-  console.log('· [env.push] 技能目录注入已存在，跳过。');
-} else {
-  const uvxLine = 'env.push((MCP_UVX_PATH_ENV.to_string(), path_to_string(&path)));';
-  const ui = src.indexOf(uvxLine);
-  if (ui === -1) { console.error('✗ [env.push] 未命中锚点（uvx 注入行），请人工核对；未改动。'); process.exit(2); }
-  const braceIdx = src.indexOf('}', ui);
-  if (braceIdx === -1) { console.error('✗ [env.push] 未找到 uvx if 块收尾括号，请人工核对；未改动。'); process.exit(2); }
-  const nl = src.indexOf('\n', braceIdx);
-  const end = nl === -1 ? src.length : nl + 1;
-  const block = [
-    '',
-    '    // 全局技能目录：由宿主（唯一事实源）解析后经 env 注入子进程，杜绝 Node 侧',
-    '    // %APPDATA%/.calamex/skills 与 Rust 侧 ~/.calamex/skills 各算各的（此前在 Windows',
-    '    // 上指向不同目录，导致 UI 存的技能 Agent 读不到）。与 commands::skills 同源。',
-    '    if let Some(root) = crate::storage_paths::roaming_root() {',
-    '        env.push((SKILLS_DIR_ENV.to_string(), path_to_string(&root.join("skills"))));',
-    '    }',
-  ].map((l) => l + EOL).join('');
-  src = src.slice(0, end) + block + src.slice(end);
-  console.log('✓ [env.push] 已注入技能目录。');
-}
-
-if (src === before) { console.log('全部已注入，无需改动。'); process.exit(0); }
-if (!WRITE) { console.log('[dry-run] 预览完成，未写盘。确认无误后加 --write 落盘。'); process.exit(0); }
-writeFileSync(abs, src, 'utf8');
-console.log('✓ 已写入 ' + rel + '。必做自检：cd src-tauri && cargo build');
+console.log(`\n完成：${files}/${edits.length} 个文件已更新。`);

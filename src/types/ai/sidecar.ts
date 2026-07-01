@@ -881,6 +881,19 @@ export interface IAgentSidecarStreamEventPayload {
 
 export type TAgentBackendKind = 'builtin' | 'kimi' | 'codex';
 
+/**
+ * 随标准 session/prompt 一并送达的上下文附件（文本类）。镜像 Rust 契约
+ * src-tauri/src/commands/contracts/builtin_agent.rs 的 AgentPromptAttachment
+ * （serde rename_all = "camelCase"）。宿主为每个附件构造一个 ACP embedded resource 内容块
+ * （协议首选的上下文注入方式），与用户正文并列送达，而非拼进正文字符串。
+ */
+export interface IAgentPromptAttachment {
+  name: string;
+  uri: string;
+  text: string;
+  mimeType?: string;
+}
+
 export interface IAgentExternalChatRequest {
   backend: TAgentBackendKind;
   text: string;
@@ -893,6 +906,11 @@ export interface IAgentExternalChatRequest {
    * 缺省时后端回退到 ACP 会话 id。
    */
   sessionId?: string;
+  /**
+   * 本回合随附的上下文附件（文本类）。宿主为每个附件构造一个 ACP embedded resource 内容块并与
+   * 正文并列送达。缺省/省略等价于无附件。
+   */
+  attachments?: IAgentPromptAttachment[];
 }
 
 export interface IAgentExternalChatResultPayload {
