@@ -3,7 +3,7 @@
         <div class="app-window-shell relative flex h-full flex-col overflow-hidden border border-(--shell-divider)">
             <template v-if="isDesktopRuntime">
                 <div
-v-for="handle in resizeHandles" :key="handle.direction" class="window-resize-handle"
+                    v-for="handle in resizeHandles" :key="handle.direction" class="window-resize-handle"
                     :class="handle.className" @mousedown.prevent.stop="startWindowResize(handle.direction, $event)" />
                 <div class="app-window-drag-region" data-tauri-drag-region />
             </template>
@@ -68,6 +68,11 @@ import { useGitStore } from '@/domains/git/state/git';
 import { type TWindowResizeDirection, windowChromeService } from '@/services/tauri/window';
 
 const SIDEBAR_MIN_WIDTH = 240;
+// 原生 onResized 会在拖拽缩放期间对每一个 WM_SIZE 帧持续触发；把最大化态回读
+// 去抖到「停止收到 resize 事件之后」再跑一次，避免拖拽全程对 WebView2<->Rust
+// IPC 桥发起 isMaximized() 洪泛（正是我们想要保持顺滑的那段时间）。最大化按钮
+// 图标只需在缩放结束后正确即可，无需逐帧同步。
+const WINDOW_STATE_RESYNC_DEBOUNCE_MS = 200;
 
 const props = withDefaults(
   defineProps<{
@@ -92,6 +97,7 @@ const isMaximized = ref(false);
 let isLayoutUnmounted = false;
 let unlistenWindowResized: (() => void) | null = null;
 let windowStateSyncTimer: ReturnType<typeof globalThis.setTimeout> | null = null;
+let windowStateResyncTimer: ReturnType<typeof globalThis.setTimeout> | null = null;
 
 const resizeHandles: Array<{ direction: TWindowResizeDirection; className: string }> = [
   { direction: 'North', className: 'is-top' },
@@ -145,6 +151,18 @@ const syncWindowState = async (): Promise<void> => {
   isMaximized.value = maximized;
 };
 
+// onResized 在缩放期间逐帧触发；这里只登记一个去抖计时器，等 resize 真正停下来
+// 之后才回读一次最大化态，从而把拖拽全程的 isMaximized() IPC 往返压成 0 次。
+const scheduleWindowStateResync = (): void => {
+  if (windowStateResyncTimer !== null) {
+    globalThis.clearTimeout(windowStateResyncTimer);
+  }
+  windowStateResyncTimer = globalThis.setTimeout(() => {
+    windowStateResyncTimer = null;
+    void syncWindowState();
+  }, WINDOW_STATE_RESYNC_DEBOUNCE_MS);
+};
+
 const handleMinimize = (): Promise<void> => windowChromeService.minimize();
 
 const handleToggleMaximize = async (): Promise<void> => {
@@ -177,7 +195,7 @@ const bindNativeWindowStateListeners = async (): Promise<void> => {
 
   await syncWindowState();
   const unlisten = await windowChromeService.onResized(() => {
-    void syncWindowState();
+    scheduleWindowStateResync();
   });
 
   if (!unlisten) {
@@ -207,6 +225,10 @@ onBeforeUnmount(() => {
   if (windowStateSyncTimer !== null) {
     globalThis.clearTimeout(windowStateSyncTimer);
     windowStateSyncTimer = null;
+  }
+  if (windowStateResyncTimer !== null) {
+    globalThis.clearTimeout(windowStateResyncTimer);
+    windowStateResyncTimer = null;
   }
   unlistenWindowResized?.();
   unlistenWindowResized = null;
