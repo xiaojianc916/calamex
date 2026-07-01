@@ -158,21 +158,8 @@ export const useShellWorkbenchViewportState = (options: IUseShellWorkbenchViewpo
     queueEditorViewportResize(snapshot.width, snapshot.height);
   };
 
-  const handleShellWindowResizeStart = (): void => {
-    diagnosticsTransitionsEnabled.value = false;
-    if (diagnosticsResizeSettleTimerId !== null) {
-      window.clearTimeout(diagnosticsResizeSettleTimerId);
-      diagnosticsResizeSettleTimerId = null;
-    }
-    queueCurrentViewportSize();
-  };
-
   const handleShellWindowResizeFrame = (): void => {
     diagnosticsTransitionsEnabled.value = false;
-    queueCurrentViewportSize();
-  };
-
-  const handleShellWindowResizeEnd = (): void => {
     queueCurrentViewportSize();
   };
 
@@ -230,9 +217,7 @@ export const useShellWorkbenchViewportState = (options: IUseShellWorkbenchViewpo
     diagnosticsTransitionsEnabled,
     diagnosticsPanelMotionClass,
     diagnosticsPanelStyle,
-    handleShellWindowResizeStart,
     handleShellWindowResizeFrame,
-    handleShellWindowResizeEnd,
     handleShellWindowResizeSettled,
     mount,
     cleanup,

@@ -1,92 +1,91 @@
-// fix-fjall-batch.mjs —— fjall 3.1.4: 批次类型 Batch 已更名为 WriteBatch（db.batch() -> WriteBatch）
-import { readFileSync, writeFileSync, existsSync, copyFileSync } from 'node:fs';
-import { resolve } from 'node:path';
+// scripts/unify-window-resize-pipeline.mjs
+// 统一窗口 resize 管线：移除悬空的 START/END 幽灵事件与其死代码，
+// 全仓只保留 FRAME/SETTLED。纯死代码清理，运行时行为不变。
+import { readFileSync, writeFileSync, existsSync } from 'node:fs';
 
-const EDITS = [
+const edits = [
   {
-    file: 'src-tauri/src/ai/edit/history/blob_store.rs',
-    replacements: [
-      {
-        from: 'use fjall::{Batch, Database, Keyspace, KeyspaceCreateOptions};',
-        to: 'use fjall::{Database, Keyspace, KeyspaceCreateOptions, WriteBatch};',
-      },
-      {
-        from: 'pub fn store_blob(batch: &mut Batch, blobs: &Keyspace, content: &[u8]) -> String {',
-        to: 'pub fn store_blob(batch: &mut WriteBatch, blobs: &Keyspace, content: &[u8]) -> String {',
-      },
-      {
-        from: 'pub fn remove_blob(blobs: &Keyspace, batch: &mut Batch, blob_key: &str) -> Result<u64, String> {',
-        to: 'pub fn remove_blob(blobs: &Keyspace, batch: &mut WriteBatch, blob_key: &str) -> Result<u64, String> {',
-      },
-      // 顶部文档注释里的一处说明，改了更准确；缺失不报错
-      { from: 'fjall::Batch', to: 'fjall::WriteBatch', optional: true },
+    file: 'src/app/composables/useShellWorkbenchView.ts',
+    patches: [
+      [`import {
+  SHELL_WINDOW_RESIZE_END_EVENT,
+  SHELL_WINDOW_RESIZE_FRAME_EVENT,
+  SHELL_WINDOW_RESIZE_SETTLED_EVENT,
+  SHELL_WINDOW_RESIZE_START_EVENT,
+} from '@/utils/window/window-resize-events';`,
+       `import {
+  SHELL_WINDOW_RESIZE_FRAME_EVENT,
+  SHELL_WINDOW_RESIZE_SETTLED_EVENT,
+} from '@/utils/window/window-resize-events';`],
+      [`    handleShellWindowResizeStart,
+    handleShellWindowResizeFrame,
+    handleShellWindowResizeEnd,
+    handleShellWindowResizeSettled,`,
+       `    handleShellWindowResizeFrame,
+    handleShellWindowResizeSettled,`],
+      [`    window.addEventListener(SHELL_WINDOW_RESIZE_START_EVENT, handleShellWindowResizeStart);
+    window.addEventListener(SHELL_WINDOW_RESIZE_FRAME_EVENT, handleShellWindowResizeFrameEvent);
+    window.addEventListener(SHELL_WINDOW_RESIZE_END_EVENT, handleShellWindowResizeEnd);
+    window.addEventListener(SHELL_WINDOW_RESIZE_SETTLED_EVENT, handleShellWindowResizeSettled);`,
+       `    window.addEventListener(SHELL_WINDOW_RESIZE_FRAME_EVENT, handleShellWindowResizeFrameEvent);
+    window.addEventListener(SHELL_WINDOW_RESIZE_SETTLED_EVENT, handleShellWindowResizeSettled);`],
+      [`    window.removeEventListener(SHELL_WINDOW_RESIZE_START_EVENT, handleShellWindowResizeStart);
+    window.removeEventListener(SHELL_WINDOW_RESIZE_FRAME_EVENT, handleShellWindowResizeFrameEvent);
+    window.removeEventListener(SHELL_WINDOW_RESIZE_END_EVENT, handleShellWindowResizeEnd);
+    window.removeEventListener(SHELL_WINDOW_RESIZE_SETTLED_EVENT, handleShellWindowResizeSettled);`,
+       `    window.removeEventListener(SHELL_WINDOW_RESIZE_FRAME_EVENT, handleShellWindowResizeFrameEvent);
+    window.removeEventListener(SHELL_WINDOW_RESIZE_SETTLED_EVENT, handleShellWindowResizeSettled);`],
     ],
   },
   {
-    file: 'src-tauri/src/ai/edit/history/snapshot.rs',
-    replacements: [
-      {
-        from: 'use fjall::{Batch, Database, Keyspace, KeyspaceCreateOptions, PersistMode};',
-        to: 'use fjall::{Database, Keyspace, KeyspaceCreateOptions, PersistMode, WriteBatch};',
-      },
-      {
-        from: 'batch: &mut Batch,',
-        to: 'batch: &mut WriteBatch,',
-      },
+    file: 'src/app/composables/useShellWorkbenchViewportState.ts',
+    patches: [
+      [`  const handleShellWindowResizeStart = (): void => {
+    diagnosticsTransitionsEnabled.value = false;
+    if (diagnosticsResizeSettleTimerId !== null) {
+      window.clearTimeout(diagnosticsResizeSettleTimerId);
+      diagnosticsResizeSettleTimerId = null;
+    }
+    queueCurrentViewportSize();
+  };
+
+  const handleShellWindowResizeFrame = (): void => {`,
+       `  const handleShellWindowResizeFrame = (): void => {`],
+      [`  const handleShellWindowResizeEnd = (): void => {
+    queueCurrentViewportSize();
+  };
+
+  const handleShellWindowResizeSettled = (): void => {`,
+       `  const handleShellWindowResizeSettled = (): void => {`],
+      [`    handleShellWindowResizeStart,
+    handleShellWindowResizeFrame,
+    handleShellWindowResizeEnd,
+    handleShellWindowResizeSettled,`,
+       `    handleShellWindowResizeFrame,
+    handleShellWindowResizeSettled,`],
     ],
   },
 ];
 
-let hadError = false;
+// useShellResizeFrameScheduler.ts：若确认无人 import，则整文件删除；否则去掉 START/END 分支。
+const SCHEDULER = 'src/app/composables/useShellResizeFrameScheduler.ts';
 
-for (const edit of EDITS) {
-  const target = resolve(edit.file);
-  if (!existsSync(target)) {
-    console.error('[fix-fjall-batch] 找不到文件:', target);
-    hadError = true;
-    continue;
+let failed = false;
+for (const { file, patches } of edits) {
+  if (!existsSync(file)) { console.error(`✗ 缺文件: ${file}`); failed = true; continue; }
+  let src = readFileSync(file, 'utf8');
+  for (const [find, replace] of patches) {
+    if (!src.includes(find)) { console.error(`✗ 锚点未命中: ${file}\n---\n${find}\n---`); failed = true; continue; }
+    src = src.replace(find, replace);
   }
-
-  const original = readFileSync(target, 'utf8');
-  if (!original.includes('fjall')) {
-    console.error('[fix-fjall-batch] 缺少 fjall 锚点，跳过（未改动）:', edit.file);
-    hadError = true;
-    continue;
-  }
-
-  let content = original;
-  let applied = 0;
-  let skipped = 0;
-  let aborted = false;
-
-  for (const { from, to, optional } of edit.replacements) {
-    if (content.includes(from)) {
-      content = content.split(from).join(to);
-      applied += 1;
-    } else if (content.includes(to)) {
-      skipped += 1; // 已是目标态，幂等跳过
-    } else if (!optional) {
-      console.error(
-        `[fix-fjall-batch] ${edit.file} 未找到预期片段、且目标也不存在，已中止该文件：\n    ${from}`,
-      );
-      hadError = true;
-      aborted = true;
-      break;
-    }
-  }
-
-  if (aborted || content === original) {
-    if (!aborted) console.log(`[fix-fjall-batch] ${edit.file}: 无需改动（幂等跳过 ${skipped} 处）`);
-    continue;
-  }
-
-  const bak = target + '.bak';
-  if (!existsSync(bak)) {
-    copyFileSync(target, bak);
-    console.log('[fix-fjall-batch] 已备份 ->', bak);
-  }
-  writeFileSync(target, content, 'utf8');
-  console.log(`[fix-fjall-batch] ${edit.file}: 已改 ${applied} 处 Batch -> WriteBatch`);
+  if (!failed) { writeFileSync(file, src); console.log(`✓ 已更新 ${file}`); }
 }
 
-process.exit(hadError ? 1 : 0);
+if (existsSync(SCHEDULER)) {
+  console.warn(`⚠ 请全仓搜索 "useShellResizeFrameScheduler" 的 import：`);
+  console.warn(`  · 若无任何引用 → 直接 rm ${SCHEDULER}（P2 死文件）；`);
+  console.warn(`  · 若有引用 → 手动去掉其 onStart/onEnd 与 START/END 两个 useEventListener，仅留 FRAME/SETTLED。`);
+}
+
+if (failed) { console.error('\n有锚点未命中，未写入对应文件；请核对源码后重跑。'); process.exit(1); }
+console.log('\n✅ resize 管线已统一为 FRAME/SETTLED，幽灵事件与死代码已清除。');

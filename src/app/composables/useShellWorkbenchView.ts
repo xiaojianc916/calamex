@@ -16,10 +16,8 @@ import { waitForDesktopRuntime } from '@/utils/platform/desktop-runtime';
 import { markStartup } from '@/utils/platform/startup-profiler';
 import { consumeProgrammaticWindowCloseAllowance } from '@/utils/window/window-close';
 import {
-  SHELL_WINDOW_RESIZE_END_EVENT,
   SHELL_WINDOW_RESIZE_FRAME_EVENT,
   SHELL_WINDOW_RESIZE_SETTLED_EVENT,
-  SHELL_WINDOW_RESIZE_START_EVENT,
 } from '@/utils/window/window-resize-events';
 
 export type TEditorExpose = {
@@ -284,9 +282,7 @@ export const useShellWorkbenchView = (onReady: () => void) => {
     diagnosticsTransitionsEnabled,
     diagnosticsPanelMotionClass,
     diagnosticsPanelStyle,
-    handleShellWindowResizeStart,
     handleShellWindowResizeFrame,
-    handleShellWindowResizeEnd,
     handleShellWindowResizeSettled,
     mount: mountViewportState,
     cleanup: cleanupViewportState,
@@ -670,9 +666,7 @@ export const useShellWorkbenchView = (onReady: () => void) => {
   onMounted(() => {
     isUnmounted = false;
     markStartup('shell-workbench-mounted');
-    window.addEventListener(SHELL_WINDOW_RESIZE_START_EVENT, handleShellWindowResizeStart);
     window.addEventListener(SHELL_WINDOW_RESIZE_FRAME_EVENT, handleShellWindowResizeFrameEvent);
-    window.addEventListener(SHELL_WINDOW_RESIZE_END_EVENT, handleShellWindowResizeEnd);
     window.addEventListener(SHELL_WINDOW_RESIZE_SETTLED_EVENT, handleShellWindowResizeSettled);
 
     mountViewportState();
@@ -686,9 +680,7 @@ export const useShellWorkbenchView = (onReady: () => void) => {
 
   onBeforeUnmount(() => {
     isUnmounted = true;
-    window.removeEventListener(SHELL_WINDOW_RESIZE_START_EVENT, handleShellWindowResizeStart);
     window.removeEventListener(SHELL_WINDOW_RESIZE_FRAME_EVENT, handleShellWindowResizeFrameEvent);
-    window.removeEventListener(SHELL_WINDOW_RESIZE_END_EVENT, handleShellWindowResizeEnd);
     window.removeEventListener(SHELL_WINDOW_RESIZE_SETTLED_EVENT, handleShellWindowResizeSettled);
     globalKeydownCleanup?.();
     nativeCloseRequestedUnlisten?.();
