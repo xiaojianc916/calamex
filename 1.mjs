@@ -1,54 +1,118 @@
 #!/usr/bin/env node
-// codemod-refresh-rename-within-test.mjs
-// 用途：脚本 5 删掉了 builtin-agent.token/.log 的死迁移，但单测
-//       rename_within_normalizes_file_name 仍拿这对死名当夹具（doc-rot）：
-//       grep auth.token 仍命中、且这条单测在“测一个已不存在的迁移场景”。
-//       把夹具改指到仍在用的 .node-compile-cache -> node-compile-cache，
-//       保持对 rename_within helper 的覆盖，同时清干净死名。
-// 设计：单行锚点、逐条唯一性校验、幂等、任一冲突整体不写盘、dry-run 默认。
-// 用法：node scripts/codemod-refresh-rename-within-test.mjs [repoRoot] [--write]
-import { readFileSync, writeFileSync, existsSync } from 'node:fs';
-import { join, resolve } from 'node:path';
+// scripts/fix-terminal-pty-resize-debounce.mjs
+// 拖拽期把对 WSL 的 PTY resize IPC 去抖：xterm 视觉 fit() 每帧照常（终端实时回流不变），
+// 仅 resizeTerminalSession 系统调用改为尺寸停稳后发一次终值。零 UI/行为取舍。
+// 六处锚点：字段 / 常量 / 新增方法 / _syncTerminalLayout 调用点 / onResize 调用点 / detach 清理。
+import { readFile, writeFile } from 'node:fs/promises';
 
-const WRITE = process.argv.includes('--write');
-const posArgs = process.argv.slice(2).filter((a) => a !== '--write');
-const ROOT = posArgs[0] ? resolve(posArgs[0]) : process.cwd();
-const rel = 'src-tauri/src/storage_paths.rs';
-const abs = join(ROOT, rel);
-if (!existsSync(abs)) { console.error('✗ 找不到 ' + rel); process.exit(1); }
+const FILE = 'src/domains/terminal/core/session.ts';
 
-let src = readFileSync(abs, 'utf8');
-const before = src;
-let hadError = false;
+const edits = [
+  [
+`  private _scrollRecoveryTimeoutId: number | null = null;
+  private _layoutScrollGuardTimeoutId: number | null = null;`,
+`  private _scrollRecoveryTimeoutId: number | null = null;
+  private _layoutScrollGuardTimeoutId: number | null = null;
+  private _ptySizeSyncTimeoutId: number | null = null;
+  private _pendingPtySize: { cols: number; rows: number } | null = null;`,
+    '字段声明',
+  ],
+  [
+`const TERMINAL_MIN_ROWS = 1;
+const TERMINAL_MAX_ROWS = 3000;`,
+`const TERMINAL_MIN_ROWS = 1;
+const TERMINAL_MAX_ROWS = 3000;
 
-// 单行替换：needle 不含换行，CRLF/LF 通吃；已是新写法则跳过；要求唯一命中。
-function replaceLine(name, needle, replacement) {
-  if (src.includes(replacement) && !src.includes(needle)) {
-    console.log('· ' + name + '：已是新写法，跳过。');
-    return;
+// 拖拽期把 PTY resize 系统调用去抖：xterm 视觉网格每帧照常 fit()，但对 WSL 的
+// resize IPC 只在尺寸停稳后发一次终值，避免快速拖拽向 PTY 洪泛中间尺寸。
+const TERMINAL_PTY_RESIZE_DEBOUNCE_MS = 120;`,
+    '常量',
+  ],
+  [
+`  private _syncPtySize(cols: number, rows: number): void {
+    if (!this.session.value) return;
+    void this._tauri.resizeTerminalSession({ sessionId: this.id, cols, rows }).catch((error) => {
+      terminalLogger.warn('终端 PTY 尺寸同步失败', { sessionId: this.id, cols, rows, error });
+    });
+  }`,
+`  private _syncPtySize(cols: number, rows: number): void {
+    if (!this.session.value) return;
+    void this._tauri.resizeTerminalSession({ sessionId: this.id, cols, rows }).catch((error) => {
+      terminalLogger.warn('终端 PTY 尺寸同步失败', { sessionId: this.id, cols, rows, error });
+    });
   }
-  const i = src.indexOf(needle);
-  if (i === -1) { console.error('✗ ' + name + '：未命中锚点，文件已漂移，拒改。'); hadError = true; return; }
-  if (src.indexOf(needle, i + needle.length) !== -1) { console.error('✗ ' + name + '：锚点不唯一，拒改。'); hadError = true; return; }
-  src = src.slice(0, i) + replacement + src.slice(i + needle.length);
-  console.log('✓ ' + name + '：已更新。');
+
+  // 拖拽期去抖：视觉 fit() 每帧照常，只把对 WSL 的 resize 系统调用推迟到尺寸停稳后
+  // 发一次终值（对 alt-screen 程序如 vim/htop 尤其友好，避免逐帧 SIGWINCH 重绘）。
+  private _schedulePtySizeSync(cols: number, rows: number): void {
+    this._pendingPtySize = { cols, rows };
+    this._clearPtySizeSyncTimeout();
+    this._ptySizeSyncTimeoutId = window.setTimeout(() => {
+      this._ptySizeSyncTimeoutId = null;
+      const pending = this._pendingPtySize;
+      this._pendingPtySize = null;
+      if (pending) this._syncPtySize(pending.cols, pending.rows);
+    }, TERMINAL_PTY_RESIZE_DEBOUNCE_MS);
+  }
+
+  private _clearPtySizeSyncTimeout(): void {
+    if (this._ptySizeSyncTimeoutId !== null) {
+      window.clearTimeout(this._ptySizeSyncTimeoutId);
+      this._ptySizeSyncTimeoutId = null;
+    }
+  }`,
+    '新增去抖方法',
+  ],
+  [
+`      this._scheduleViewportSync({ scrollToBottom: shouldKeepViewportAtBottom });
+      this._markInteractiveResizeRepaintSuppression();
+      this._syncPtySize(terminal.cols, terminal.rows);`,
+`      this._scheduleViewportSync({ scrollToBottom: shouldKeepViewportAtBottom });
+      this._markInteractiveResizeRepaintSuppression();
+      this._schedulePtySizeSync(terminal.cols, terminal.rows);`,
+    '_syncTerminalLayout 调用点',
+  ],
+  [
+`      terminal.onResize(({ cols, rows }) => {
+        if (!this._didTerminalSizeChange(cols, rows)) return;
+        this._markInteractiveResizeRepaintSuppression();
+        this._scheduleViewportSync({ scrollToBottom: true });
+        this._syncPtySize(cols, rows);
+      });`,
+`      terminal.onResize(({ cols, rows }) => {
+        if (!this._didTerminalSizeChange(cols, rows)) return;
+        this._markInteractiveResizeRepaintSuppression();
+        this._scheduleViewportSync({ scrollToBottom: true });
+        this._schedulePtySizeSync(cols, rows);
+      });`,
+    'onResize 调用点',
+  ],
+  [
+`    this._clearLayoutFrame();
+    this._clearLayoutSettleTimeout();
+    this._clearViewportFrame();
+    this._clearProgrammaticScrollReleaseFrame();
+    this._clearScrollRecoveryTimeout();
+    this._clearLayoutScrollGuardTimeout();`,
+`    this._clearLayoutFrame();
+    this._clearLayoutSettleTimeout();
+    this._clearViewportFrame();
+    this._clearProgrammaticScrollReleaseFrame();
+    this._clearScrollRecoveryTimeout();
+    this._clearLayoutScrollGuardTimeout();
+    this._clearPtySizeSyncTimeout();
+    this._pendingPtySize = null;`,
+    'detach 清理',
+  ],
+];
+
+let src = await readFile(FILE, 'utf8');
+for (const [anchor, replacement, label] of edits) {
+  if (!src.includes(anchor)) {
+    console.error(`[abort] 锚点未命中（${label}），文件可能已改动：${FILE}`);
+    process.exit(1);
+  }
+  src = src.replace(anchor, replacement);
 }
-
-replaceLine('夹具写入',
-  'fs::write(dir.join("builtin-agent.token"), b"tok").unwrap();',
-  'fs::write(dir.join(".node-compile-cache"), b"cache").unwrap();');
-replaceLine('改名调用',
-  'rename_within(&dir, "builtin-agent.token", "auth.token");',
-  'rename_within(&dir, ".node-compile-cache", "node-compile-cache");');
-replaceLine('断言-新名存在',
-  'assert!(dir.join("auth.token").exists());',
-  'assert!(dir.join("node-compile-cache").exists());');
-replaceLine('断言-旧名消失',
-  'assert!(!dir.join("builtin-agent.token").exists());',
-  'assert!(!dir.join(".node-compile-cache").exists());');
-
-if (hadError) { console.error('\n⚠ 有锚点未命中/不唯一，未写入。请人工核对。'); process.exit(2); }
-if (src === before) { console.log('\n无改动（可能已全部更新）。'); process.exit(0); }
-if (!WRITE) { console.log('\n[dry-run] 预览完成，未写盘。确认后加 --write 落盘。'); process.exit(0); }
-writeFileSync(abs, src, 'utf8');
-console.log('✓ 已写入 ' + rel + '。必做自检：cd src-tauri && cargo test storage_paths');
+await writeFile(FILE, src);
+console.log(`[ok] 已为拖拽期 PTY resize 加去抖：${FILE}`);
