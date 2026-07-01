@@ -1,14 +1,4 @@
 #!/usr/bin/env node
-// apply-p1.mjs —— 一次性补丁工具：生成/改写项目文件后即可删除。运行：node apply-p1.mjs
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
-import { dirname, join } from 'node:path';
-import { fileURLToPath } from 'node:url';
-
-const repoRoot = dirname(fileURLToPath(import.meta.url));
-const scriptsDir = join(repoRoot, 'scripts');
-
-// ============ 生成 scripts/provision.ts（长期脚本，tsx 运行）============
-const provisionTs = String.raw`#!/usr/bin/env node
 // scripts/provision.ts
 //
 // P1 可复现「外部产物准备」。把所有联网/安装从打包期(beforeBundleCommand)
@@ -31,7 +21,15 @@ const provisionTs = String.raw`#!/usr/bin/env node
 import { Buffer } from 'node:buffer';
 import { execFileSync, execSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { copyFileSync, cpSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import {
+  copyFileSync,
+  cpSync,
+  existsSync,
+  mkdirSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import process from 'node:process';
 import { fileURLToPath } from 'node:url';
@@ -70,7 +68,10 @@ function run(command: string, args: string[], options: { cwd?: string } = {}): v
   const needsShell = isWindows && /\.(cmd|bat)$/i.test(command);
   if (needsShell) {
     const quote = (s: string): string => (/\s/.test(s) ? '"' + s + '"' : s);
-    execSync([quote(command)].concat(args.map(quote)).join(' '), Object.assign({ stdio: 'inherit' }, options));
+    execSync(
+      [quote(command)].concat(args.map(quote)).join(' '),
+      Object.assign({ stdio: 'inherit' }, options),
+    );
     return;
   }
   execFileSync(command, args, Object.assign({ stdio: 'inherit' }, options));
@@ -96,7 +97,12 @@ async function download(url: string, dest: string): Promise<void> {
 function expandZip(zip: string, out: string): void {
   execFileSync(
     'powershell',
-    ['-NoProfile', '-NonInteractive', '-Command', "Expand-Archive -Path '" + zip + "' -DestinationPath '" + out + "' -Force"],
+    [
+      '-NoProfile',
+      '-NonInteractive',
+      '-Command',
+      "Expand-Archive -Path '" + zip + "' -DestinationPath '" + out + "' -Force",
+    ],
     { stdio: 'inherit' },
   );
 }
@@ -104,7 +110,13 @@ function expandZip(zip: string, out: string): void {
 // ---- 1) Node（pinned + SHA256）----
 async function provisionNode(lock: any): Promise<void> {
   const dest = join(provisionRoot, 'node', nodeExeName);
-  if (!force && existsSync(dest) && lock.node && lock.node.exeSha256 && sha256File(dest) === lock.node.exeSha256) {
+  if (
+    !force &&
+    existsSync(dest) &&
+    lock.node &&
+    lock.node.exeSha256 &&
+    sha256File(dest) === lock.node.exeSha256
+  ) {
     log('Node 缓存命中，跳过');
     return;
   }
@@ -139,7 +151,12 @@ async function provisionNode(lock: any): Promise<void> {
   mkdirSync(dirname(dest), { recursive: true });
   copyFileSync(inner, dest);
   rmSync(tmp, { recursive: true, force: true });
-  lock.node = { version: NODE_VERSION, platform: NODE_PLATFORM, zipSha256: expected, exeSha256: sha256File(dest) };
+  lock.node = {
+    version: NODE_VERSION,
+    platform: NODE_PLATFORM,
+    zipSha256: expected,
+    exeSha256: sha256File(dest),
+  };
   log('已内置 Node（pinned ' + NODE_VERSION + '）: ' + dest);
 }
 
@@ -165,13 +182,19 @@ async function provisionShfmt(lock: any): Promise<void> {
   const vend = join(vendorDir, shfmtExeName);
   if (existsSync(vend)) {
     const sha = sha256File(vend);
-    if (lock.shfmt && lock.shfmt.sha256 && lock.shfmt.sha256 !== sha) fail('shfmt 校验和与锁不一致');
+    if (lock.shfmt && lock.shfmt.sha256 && lock.shfmt.sha256 !== sha)
+      fail('shfmt 校验和与锁不一致');
     copyFileSync(vend, dest);
     lock.shfmt = { source: 'vendor', sha256: sha };
     log('已内置 shfmt（vendored）');
     return;
   }
-  const url = 'https://github.com/mvdan/sh/releases/download/' + SHFMT_VERSION + '/shfmt_' + SHFMT_VERSION + '_windows_amd64.exe';
+  const url =
+    'https://github.com/mvdan/sh/releases/download/' +
+    SHFMT_VERSION +
+    '/shfmt_' +
+    SHFMT_VERSION +
+    '_windows_amd64.exe';
   try {
     await download(url, dest);
     lock.shfmt = { source: 'download', version: SHFMT_VERSION, sha256: sha256File(dest) };
@@ -187,7 +210,8 @@ function provisionSidecar(manifest: any): void {
   const dest = join(provisionRoot, 'builtin-agent');
   if (!existsSync(srcDir)) fail('未找到 builtin-agent：' + srcDir);
   const pkgHash = sha256File(join(srcDir, 'package.json'));
-  const cached = !force && existsSync(join(dest, 'node_modules')) && manifest.builtinAgentPkgHash === pkgHash;
+  const cached =
+    !force && existsSync(join(dest, 'node_modules')) && manifest.builtinAgentPkgHash === pkgHash;
 
   mkdirSync(dest, { recursive: true });
   copyFileSync(join(srcDir, 'package.json'), join(dest, 'package.json'));
@@ -223,7 +247,15 @@ function provisionLsp(manifest: any): void {
   }
   rmSync(dest, { recursive: true, force: true });
   mkdirSync(dest, { recursive: true });
-  run(npmBin(), ['install', '--no-save', '--no-audit', '--no-fund', '--prefix', dest, 'bash-language-server@' + BASH_LS_VERSION]);
+  run(npmBin(), [
+    'install',
+    '--no-save',
+    '--no-audit',
+    '--no-fund',
+    '--prefix',
+    dest,
+    'bash-language-server@' + BASH_LS_VERSION,
+  ]);
   if (!existsSync(cli)) fail('bash-language-server 安装后未找到 CLI：' + cli);
   manifest.bashLanguageServer = BASH_LS_VERSION;
   log('已准备 bash-language-server（' + BASH_LS_VERSION + '）');
@@ -252,128 +284,3 @@ async function main(): Promise<void> {
 }
 
 main().catch((e) => fail('未捕获异常：' + (e && e.stack ? e.stack : e)));
-`;
-
-// ============ 改写 scripts/prepare-bundle-resources.ts（纯复制）============
-const prepareTs = String.raw`#!/usr/bin/env node
-
-// scripts/prepare-bundle-resources.ts
-//
-// 打包前置（beforeBundleCommand）：【纯复制、零联网、零安装】。
-// 把 provision 产好的 .provision/ 镜像到 src-tauri/resources-bundle/。
-// 缺产物直接报错并提示先跑 pnpm provision。
-//
-// 产物布局（必须与 Rust bundled_resource_roots() 对齐）：
-//   resources-bundle/node/node.exe
-//   resources-bundle/builtin-agent/{package.json,src,dist,node_modules}
-//   resources-bundle/lsp/node_modules/bash-language-server/out/cli.js
-//   resources-bundle/shellcheck.exe
-//   resources-bundle/shfmt.exe  （可选）
-
-import { copyFileSync, cpSync, existsSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
-import { dirname, join, resolve } from 'node:path';
-import process from 'node:process';
-import { fileURLToPath } from 'node:url';
-
-const here = dirname(fileURLToPath(import.meta.url));
-const repoRoot = resolve(here, '..');
-const provisionRoot = join(repoRoot, '.provision');
-const stageRoot = join(repoRoot, 'src-tauri', 'resources-bundle');
-
-const isWindows = process.platform === 'win32';
-const nodeExeName = isWindows ? 'node.exe' : 'node';
-const shellcheckExeName = isWindows ? 'shellcheck.exe' : 'shellcheck';
-const shfmtExeName = isWindows ? 'shfmt.exe' : 'shfmt';
-
-function log(message: string): void {
-  console.log('[prepare-bundle-resources] ' + message);
-}
-function fail(message: string): never {
-  console.error('[prepare-bundle-resources] FAILED: ' + message);
-  process.exit(1);
-}
-function requireArtifact(path: string): void {
-  if (!existsSync(path)) fail('缺少 provision 产物：' + path + '\n请先运行：pnpm provision');
-}
-function resetStage(): void {
-  rmSync(stageRoot, { recursive: true, force: true });
-  mkdirSync(stageRoot, { recursive: true });
-  writeFileSync(join(stageRoot, '.gitignore'), '*\n!.gitignore\n');
-}
-function copyTree(name: string): void {
-  cpSync(join(provisionRoot, name), join(stageRoot, name), { recursive: true });
-}
-function main(): void {
-  if (!existsSync(provisionRoot)) fail('未找到 .provision/。请先运行：pnpm provision');
-  log('staging 根目录：' + stageRoot);
-  resetStage();
-
-  requireArtifact(join(provisionRoot, 'node', nodeExeName));
-  copyTree('node');
-  log('已复制 Node 运行时');
-
-  requireArtifact(join(provisionRoot, 'builtin-agent', 'package.json'));
-  requireArtifact(join(provisionRoot, 'builtin-agent', 'node_modules'));
-  requireArtifact(join(provisionRoot, 'builtin-agent', 'dist', 'acp', 'stdio-entry.js'));
-  copyTree('builtin-agent');
-  log('已复制 builtin-agent（含 dist 与生产依赖）');
-
-  requireArtifact(join(provisionRoot, 'lsp', 'node_modules', 'bash-language-server', 'out', 'cli.js'));
-  copyTree('lsp');
-  log('已复制 bash-language-server');
-
-  requireArtifact(join(provisionRoot, 'bin', shellcheckExeName));
-  copyFileSync(join(provisionRoot, 'bin', shellcheckExeName), join(stageRoot, shellcheckExeName));
-  log('已复制 shellcheck');
-
-  const shfmtSrc = join(provisionRoot, 'bin', shfmtExeName);
-  if (existsSync(shfmtSrc)) {
-    copyFileSync(shfmtSrc, join(stageRoot, shfmtExeName));
-    log('已复制 shfmt');
-  } else {
-    log('WARN 未见 shfmt 产物（非致命，运行时退回系统/WSL）');
-  }
-
-  log('OK 资源 staging 完成（纯复制）');
-}
-
-main();
-`;
-
-// ============ 写文件 ============
-mkdirSync(scriptsDir, { recursive: true });
-
-writeFileSync(join(scriptsDir, 'provision.ts'), provisionTs);
-console.log('[apply-p1] 写入 scripts/provision.ts');
-
-const prepPath = join(scriptsDir, 'prepare-bundle-resources.ts');
-if (existsSync(prepPath) && !existsSync(prepPath + '.bak')) {
-  writeFileSync(prepPath + '.bak', readFileSync(prepPath));
-}
-writeFileSync(prepPath, prepareTs);
-console.log('[apply-p1] 改写 scripts/prepare-bundle-resources.ts（旧文件备份 .bak）');
-
-// ============ package.json ============
-const pkgPath = join(repoRoot, 'package.json');
-const pkg = JSON.parse(readFileSync(pkgPath, 'utf8'));
-if (!existsSync(pkgPath + '.bak')) writeFileSync(pkgPath + '.bak', readFileSync(pkgPath));
-pkg.scripts = pkg.scripts || {};
-pkg.scripts.provision = 'tsx scripts/provision.ts';
-pkg.scripts['tauri:build'] = 'pnpm run provision && tsx scripts/run-tauri.ts build && node scripts/verify-bundle.mjs';
-writeFileSync(pkgPath, JSON.stringify(pkg, null, 2) + '\n');
-console.log('[apply-p1] package.json 已更新：provision / tauri:build');
-
-// ============ .gitignore ============
-const giPath = join(repoRoot, '.gitignore');
-let gi = existsSync(giPath) ? readFileSync(giPath, 'utf8') : '';
-const has = gi.split(/\r?\n/).some((l) => l.trim() === '.provision' || l.trim() === '.provision/');
-if (!has) {
-  if (gi.length && !gi.endsWith('\n')) gi += '\n';
-  gi += '\n# P1: provision 缓存（可复现构建产物，勿提交）\n.provision/\n';
-  writeFileSync(giPath, gi);
-  console.log('[apply-p1] .gitignore 追加 .provision/');
-} else {
-  console.log('[apply-p1] .gitignore 已含 .provision/，跳过');
-}
-
-console.log('[apply-p1] 完成。下一步：pnpm provision && pnpm tauri:build');

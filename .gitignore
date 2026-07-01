@@ -39,3 +39,6 @@ builtin-agent/src/**/*.js
 
 # 运行时 SQLite 产物（绝不提交）
 builtin-agent/.agent-sidecar/
+
+# P1: provision 缓存（可复现构建产物，勿提交）
+.provision/

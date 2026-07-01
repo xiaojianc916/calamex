@@ -32,8 +32,9 @@
     "guard": "tsx scripts/run-all-guards.ts",
     "tauri": "tsx scripts/run-tauri.ts",
     "tauri:dev": "tsx scripts/run-tauri.ts dev",
-    "tauri:build": "tsx scripts/run-tauri.ts build && node scripts/verify-bundle.mjs",
-    "prepare": "lefthook install"
+    "tauri:build": "pnpm run provision && tsx scripts/run-tauri.ts build && node scripts/verify-bundle.mjs",
+    "prepare": "lefthook install",
+    "provision": "tsx scripts/provision.ts"
   },
   "dependencies": {
     "@agentclientprotocol/sdk": "^1.1.0",
