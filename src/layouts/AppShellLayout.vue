@@ -5,7 +5,7 @@
                 <div
 v-for="handle in resizeHandles" :key="handle.direction" class="window-resize-handle"
                     :class="handle.className" @mousedown.prevent.stop="startWindowResize(handle.direction, $event)" />
-                <div class="app-window-drag-region" @mousedown.prevent="startWindowDrag" />
+                <div class="app-window-drag-region" data-tauri-drag-region />
             </template>
 
             <div v-if="isDesktopRuntime" class="app-titlebar-github-auth" data-no-window-drag>
@@ -190,19 +190,6 @@ const handleToggleMaximize = async (): Promise<void> => {
 
   await appWindow.toggleMaximize();
   await syncWindowState();
-};
-
-const startWindowDrag = async (event: MouseEvent): Promise<void> => {
-  if (!props.isDesktopRuntime || event.button !== 0) {
-    return;
-  }
-
-  try {
-    const appWindow = await getAppWindow();
-    await appWindow?.startDragging();
-  } catch (error) {
-    console.warn('窗口拖动失败', error);
-  }
 };
 
 // 保证交互式 resize 的 START 一定配对 END：派发 END 并解绑收尾监听。

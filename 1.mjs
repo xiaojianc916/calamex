@@ -1,67 +1,72 @@
 #!/usr/bin/env node
-// apply-p2.mjs —— P2 第一步：把 builtin-agent/build.mjs 改为「打包进程内导入图」。运行后可删。
-import { existsSync, readFileSync, writeFileSync } from 'node:fs';
-import { dirname, join } from 'node:path';
-import { fileURLToPath } from 'node:url';
-
-const repoRoot = dirname(fileURLToPath(import.meta.url));
-const buildMjsPath = join(repoRoot, 'builtin-agent', 'build.mjs');
-
-const buildMjs = String.raw`// builtin-agent/build.mjs
+// scripts/fix-window-drag-region.mjs
 //
-// P2：用 esbuild 把「进程内」导入图打成单文件 dist/acp/stdio-entry.js。
-// 目的：从随包 node_modules 中剔除纯进程内依赖，缩小安装包 / 加速 NSIS 压缩。
+// 目的：把 AppShellLayout.vue 里手写的 mousedown -> IPC startDragging() 拖拽路径，
+// 换成 Tauri 官方声明式 data-tauri-drag-region 属性，消除拖拽发起阶段本可避免的
+// JS 事件循环 + IPC 往返延迟（这是"拖拽跟手性/漏底"变差的可复现因素之一）。
 //
-// 外置（不可/不应打包）：
-//   - 原生插件（.node）：@ast-grep/napi、@libsql/client（及依赖它的 @mastra/libsql）
-//   - 以子进程/bin 启动的包：typescript-language-server、各 MCP server
-//     （运行时要执行它们的 bin，必须以真实 node_modules 形式随包）
-// 说明：类型检查仍由 pnpm typecheck 负责；单测仍从 src 经 tsx 运行，不受影响。
+// 用法：
+//   node scripts/fix-window-drag-region.mjs            # 预览 diff，不写文件
+//   node scripts/fix-window-drag-region.mjs --write    # 实际写入文件
+//
+// 安全性：
+// - 纯字符串级替换，不做语义改写。
+// - 找不到期望的旧写法就直接报错退出，绝不静默跳过或猜测性修改。
+// - 幂等：已经是新写法时会提示"无需改动"并正常退出。
 
-import { build } from 'esbuild';
+import { readFileSync, writeFileSync } from "node:fs"
+import { resolve } from "node:path"
 
-const external = [
-  '@ast-grep/napi',
-  '@libsql/client',
-  '@mastra/libsql',
-  'typescript-language-server',
-  '@modelcontextprotocol/server-memory',
-  '@modelcontextprotocol/server-sequential-thinking',
-  '@upstash/context7-mcp',
-  'tavily-mcp',
-];
+const TARGET = resolve(process.cwd(), "src/layouts/AppShellLayout.vue")
+const WRITE = process.argv.includes("--write")
 
-// ESM 输出里补齐 require/__dirname/__filename：不少 CJS 依赖被打包后仍会在运行时用到。
-const banner = [
-  "import { createRequire as __createRequire } from 'node:module';",
-  "import { fileURLToPath as __fileURLToPath } from 'node:url';",
-  "import { dirname as __pathDirname } from 'node:path';",
-  'const require = __createRequire(import.meta.url);',
-  'const __filename = __fileURLToPath(import.meta.url);',
-  'const __dirname = __pathDirname(__filename);',
-].join('\n');
+const source = readFileSync(TARGET, "utf8")
 
-await build({
-  entryPoints: ['src/acp/stdio-entry.ts'],
-  outfile: 'dist/acp/stdio-entry.js',
-  platform: 'node',
-  format: 'esm',
-  target: 'node26',
-  bundle: true,
-  sourcemap: true,
-  external,
-  banner: { js: banner },
-  logLevel: 'info',
-});
-`;
+const ALREADY_FIXED_RE =
+	/<div\s+class="app-window-drag-region"\s+data-tauri-drag-region\s*\/>/
 
-if (!existsSync(buildMjsPath)) {
-  console.error('[apply-p2] 未找到 ' + buildMjsPath);
-  process.exit(1);
+if (ALREADY_FIXED_RE.test(source)) {
+	console.log("[skip] 拖拽区域已经是 data-tauri-drag-region，无需改动。")
+	process.exit(0)
 }
-if (!existsSync(buildMjsPath + '.bak')) {
-  writeFileSync(buildMjsPath + '.bak', readFileSync(buildMjsPath));
+
+const DRAG_DIV_RE =
+	/<div\s+class="app-window-drag-region"\s+@mousedown\.prevent="startWindowDrag"\s*\/>/
+
+if (!DRAG_DIV_RE.test(source)) {
+	console.error(
+		"[abort] 没有找到预期的 " +
+			'<div class="app-window-drag-region" @mousedown.prevent="startWindowDrag" />。\n' +
+			"文件可能已被改动，为避免误改，脚本已停止，请人工确认后再运行。",
+	)
+	process.exit(1)
 }
-writeFileSync(buildMjsPath, buildMjs);
-console.log('[apply-p2] 已改写 builtin-agent/build.mjs（旧文件备份 build.mjs.bak）');
-console.log('[apply-p2] 下一步：cd builtin-agent && node build.mjs   把输出贴回');
+
+let next = source.replace(
+	DRAG_DIV_RE,
+	'<div class="app-window-drag-region" data-tauri-drag-region />',
+)
+
+// 删除现在已经死掉的 startWindowDrag 函数定义。
+const START_DRAG_FN_RE =
+	/\n[ \t]*const startWindowDrag = async \(event: MouseEvent\): Promise<void> => \{[\s\S]*?\n[ \t]*\};\n/
+
+if (!START_DRAG_FN_RE.test(next)) {
+	console.error(
+		"[abort] 拖拽区域属性已替换，但没找到预期的 startWindowDrag 函数体，\n" +
+			"为避免误删其它代码，脚本已停止且未写盘。请人工删除已经死掉的 startWindowDrag 函数后再确认。",
+	)
+	process.exit(1)
+}
+
+next = next.replace(START_DRAG_FN_RE, "\n")
+
+if (WRITE) {
+	writeFileSync(TARGET, next, "utf8")
+	console.log(`[write] 已更新 ${TARGET}`)
+	console.log("请本地跑一遍拖拽窗口，确认标题栏拖动/双击最大化行为正常。")
+} else {
+	console.log("--- 预览：未写入文件，确认无误后加 --write 重跑 ---")
+	const idx = next.indexOf("data-tauri-drag-region")
+	console.log(next.slice(Math.max(0, idx - 200), idx + 200))
+}
