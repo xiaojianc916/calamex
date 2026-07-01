@@ -16,17 +16,12 @@ import MarkdownRender, {
   setCustomComponents,
   setDefaultI18nMap,
 } from 'markstream-vue';
-import { computed, inject, onBeforeUnmount, onMounted, ref, watch } from 'vue';
+import { computed, inject, onBeforeUnmount, ref, watch } from 'vue';
 import AiMarkdownCodeBlock from '@/components/business/ai/chat/AiMarkdownCodeBlock.vue';
 import AiMarkdownTable from '@/components/business/ai/chat/AiMarkdownTable.vue';
 import { AI_MARKDOWN_VIRTUAL_SCROLL_KEY } from '@/components/business/ai/chat/markstream-virtual-scroll';
 import { normalizeAiMath } from '@/components/business/ai/chat/normalize-math';
 import type { IAiChatStreamRenderState } from '@/types/ai';
-import {
-  SHELL_WINDOW_RESIZE_END_EVENT,
-  SHELL_WINDOW_RESIZE_SETTLED_EVENT,
-  SHELL_WINDOW_RESIZE_START_EVENT,
-} from '@/utils/window/window-resize-events';
 
 type TI18nMap = Parameters<typeof setDefaultI18nMap>[0];
 
@@ -150,7 +145,6 @@ const emit = defineEmits<{
 
 const virtualScrollContext = inject(AI_MARKDOWN_VIRTUAL_SCROLL_KEY, null);
 const virtualState = ref<MarkstreamVirtualState | null>(null);
-const isShellWindowResizing = ref(false);
 const isLiveStream = computed(
   () => props.streamStatus === 'streaming' || props.streamStatus === 'waiting-confirmation',
 );
@@ -169,13 +163,7 @@ const renderContent = ref(normalizedContent.value);
 //  - typewriter=false 只关闭光标；平滑揭示由 smooth streaming + max-live-nodes=0 负责。
 //  - smooth-streaming-options 固定 { startDelayMs: 0, flushOnFinish: false }：首屏即开始揭示，
 //    final 不立即 flush，等 visible 追上 source 再定型，避免一块一块的 catch-up 突发。
-const smoothStreaming = computed(() => {
-  if (isShellWindowResizing.value) {
-    return false;
-  }
-
-  return hasSeenLiveStream.value;
-});
+const smoothStreaming = computed(() => hasSeenLiveStream.value);
 const typewriter = false as const;
 // 流式 pacing 选项：startDelayMs=0 让首屏即开始揭示；flushOnFinish=false 让 final 阶段等
 // visible 追上 source 再定型（与 smooth-streaming=true 的 catch-up 行为配套）。
@@ -207,7 +195,6 @@ const virtualScroll = computed<MarkstreamVirtualScrollOptions>(() => {
 });
 let pendingRenderContent: string | null = null;
 let pendingRenderContentTimer: ReturnType<typeof window.setTimeout> | null = null;
-let resizeLifecycleCleanup: (() => void) | null = null;
 
 watch(
   isLiveStream,
@@ -261,11 +248,6 @@ const scheduleStreamingRenderContent = (nextContent: string): void => {
 watch(
   normalizedContent,
   (nextContent) => {
-    if (isShellWindowResizing.value) {
-      pendingRenderContent = nextContent;
-      return;
-    }
-
     if (isFinal.value) {
       pendingRenderContent = nextContent;
       flushPendingRenderContent();
@@ -308,26 +290,6 @@ const handleVirtualStateChange = (state: MarkstreamVirtualState): void => {
   emit('virtualStateChange', state);
 };
 
-const bindResizeLifecycle = (): void => {
-  const handleResizeStart = (): void => {
-    isShellWindowResizing.value = true;
-  };
-  const handleResizeEnd = (): void => {
-    isShellWindowResizing.value = false;
-    window.requestAnimationFrame(flushPendingRenderContent);
-  };
-
-  window.addEventListener(SHELL_WINDOW_RESIZE_START_EVENT, handleResizeStart);
-  window.addEventListener(SHELL_WINDOW_RESIZE_END_EVENT, handleResizeEnd);
-  window.addEventListener(SHELL_WINDOW_RESIZE_SETTLED_EVENT, handleResizeEnd);
-  resizeLifecycleCleanup = () => {
-    window.removeEventListener(SHELL_WINDOW_RESIZE_START_EVENT, handleResizeStart);
-    window.removeEventListener(SHELL_WINDOW_RESIZE_END_EVENT, handleResizeEnd);
-    window.removeEventListener(SHELL_WINDOW_RESIZE_SETTLED_EVENT, handleResizeEnd);
-    resizeLifecycleCleanup = null;
-  };
-};
-
 const stopCodeBlockMapping = watch(
   rendererId,
   (customId, previousCustomId) => {
@@ -340,13 +302,8 @@ const stopCodeBlockMapping = watch(
   { immediate: true },
 );
 
-onMounted(() => {
-  bindResizeLifecycle();
-});
-
 onBeforeUnmount(() => {
   clearPendingRenderContentTimer();
-  resizeLifecycleCleanup?.();
   stopCodeBlockMapping();
   removeCustomComponents(rendererId.value);
 });

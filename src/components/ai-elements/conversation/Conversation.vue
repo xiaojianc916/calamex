@@ -1,14 +1,9 @@
 <script setup lang="ts">
 import { reactiveOmit, useDebounceFn, useTimeoutFn } from '@vueuse/core';
 import type { HTMLAttributes } from 'vue';
-import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue';
+import { nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import { StickToBottom } from 'vue-stick-to-bottom';
 import { cn } from '@/lib/utils';
-import {
-  SHELL_WINDOW_RESIZE_END_EVENT,
-  SHELL_WINDOW_RESIZE_SETTLED_EVENT,
-  SHELL_WINDOW_RESIZE_START_EVENT,
-} from '@/utils/window/window-resize-events';
 
 interface Props {
   ariaLabel?: string;
@@ -61,13 +56,10 @@ const delegatedProps = reactiveOmit(
   'initialDistanceFromBottom',
   'resize',
 );
-const isShellWindowResizing = ref(false);
 const isScrollbarActive = ref(false);
-const resolvedResize = computed(() => (isShellWindowResizing.value ? 'instant' : props.resize));
 let scrollListenerCleanup: (() => void) | null = null;
 let scrollbarPointerCleanup: (() => void) | null = null;
 let restoreFrame: number | null = null;
-let resizeLifecycleCleanup: (() => void) | null = null;
 
 const cancelRestoreFrame = (): void => {
   if (restoreFrame !== null && typeof cancelAnimationFrame === 'function') {
@@ -212,27 +204,7 @@ const bindScrollListener = (): void => {
   };
 };
 
-const bindResizeLifecycle = (): void => {
-  const handleResizeStart = (): void => {
-    isShellWindowResizing.value = true;
-  };
-  const handleResizeEnd = (): void => {
-    isShellWindowResizing.value = false;
-  };
-
-  window.addEventListener(SHELL_WINDOW_RESIZE_START_EVENT, handleResizeStart);
-  window.addEventListener(SHELL_WINDOW_RESIZE_END_EVENT, handleResizeEnd);
-  window.addEventListener(SHELL_WINDOW_RESIZE_SETTLED_EVENT, handleResizeEnd);
-  resizeLifecycleCleanup = () => {
-    window.removeEventListener(SHELL_WINDOW_RESIZE_START_EVENT, handleResizeStart);
-    window.removeEventListener(SHELL_WINDOW_RESIZE_END_EVENT, handleResizeEnd);
-    window.removeEventListener(SHELL_WINDOW_RESIZE_SETTLED_EVENT, handleResizeEnd);
-    resizeLifecycleCleanup = null;
-  };
-};
-
 onMounted(() => {
-  bindResizeLifecycle();
   void nextTick(() => {
     bindScrollListener();
     void restoreScrollPosition();
@@ -255,7 +227,6 @@ onBeforeUnmount(() => {
 
   scrollListenerCleanup?.();
   scrollbarPointerCleanup?.();
-  resizeLifecycleCleanup?.();
   cancelRestoreFrame();
 });
 </script>
@@ -264,7 +235,7 @@ onBeforeUnmount(() => {
   <StickToBottom
     ref="stickToBottomRef"
     v-bind="delegatedProps"
-    :resize="resolvedResize"
+    :resize="props.resize"
     :class="cn('relative flex-1 overflow-y-hidden', { 'is-scrollbar-active': isScrollbarActive }, props.class)"
     role="log"
   >
