@@ -255,43 +255,12 @@ impl AcpHost {
         });
     }
 
-    /// 用纯文本驱动一轮**标准 ACP 回合**（`session/prompt`）：把单段文本包成一个 `text`
-    /// `ContentBlock` 后委托 `prompt_with_stream_key`，返回回合终止原因 `StopReason`。这是
-    /// **外部 ACP 编码 agent**（Kimi Code / Codex 等，见 ADR-0015）主聊天回合的唯一入口——
-    /// 它们只实现标准 `session/prompt`，不认识 `calamex.dev/*` 扩展方法；过程增量经
-    /// `session/update` 帧由 `EventSink` 转发（投影见 `ui_event`），本方法仅返回终态原因。
-    ///
-    /// `stream_key` 为前端预生成的流式关联键（形如 sidecar:assistantMessageId）：外部 agent
-    /// 发出的 session/update 帧以 ACP 会话 UUID 标记，透传给 `prompt_with_stream_key` 在回合
-    /// 期间登记重写，使前端按预生成键即可实时收帧（详见 `prompt_with_stream_key`）；`None`/
-    /// 空白时 sink 原样透传。
-    ///
-    /// `ContentBlock` 经其线上 wire 形态（`{ "type": "text", "text": ... }`，与
-    /// `session/update` 下发的 content 同形，见 `ui_event::text_from_content_block`）反序列化
-    /// 构造，避免在宿主侧硬编码 SDK 具体构造路径；序列化我们自己的文本几乎不会失败，失败时
-    /// 归为 `Protocol` 错误上抛。
-    pub async fn prompt_text(
-        &self,
-        thread_id: &str,
-        workspace_root_path: Option<&str>,
-        text: &str,
-        stream_key: Option<&str>,
-    ) -> Result<StopReason, AcpClientError> {
-        self.prompt_with_stream_key(
-            thread_id,
-            workspace_root_path,
-            vec![text_content_block(text)?],
-            stream_key,
-        )
-        .await
-    }
-
     /// 用「正文文本 + 若干上下文附件」驱动一轮标准 ACP 回合（`session/prompt`）：正文包成一个
     /// `text` 内容块，每个附件包成一个 ACP embedded `resource` 内容块（协议首选的上下文注入方式，
     /// 见 agent-client-protocol `ContentBlock::Resource`；内置边车入站投影 to-runtime-input.ts 会把
     /// 带内联 text 的 resource 块并入用户消息正文，外部 agent 按协议原生消费）。附件作为独立结构化块
     /// 送达而非拼进正文字符串——避免分隔符冲突/提示注入，并保留 uri/mimeType 语义。ContentBlock 经
-    /// 其线上 wire 形态 JSON 反序列化构造（与 `prompt_text` 同源），不在宿主侧硬编码 SDK 构造路径。
+    /// 其线上 wire 形态 JSON 反序列化构造（见 `text_content_block` / `resource_content_block`），不在宿主侧硬编码 SDK 构造路径。
     pub async fn prompt_with_attachments(
         &self,
         thread_id: &str,
