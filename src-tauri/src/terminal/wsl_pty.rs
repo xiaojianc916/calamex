@@ -27,7 +27,6 @@ use super::local_wsl_protocol::{
     LocalWslTerminalInteractiveMark, LocalWslTerminalOpenInteractiveRequest,
     LocalWslTerminalServerPayload, LocalWslUtf8ChunkDecoder,
 };
-use super::wsl::bash_quote;
 
 const TERMINAL_READ_BUFFER_BYTES: usize = 8192;
 
@@ -383,7 +382,12 @@ fn wait_child_with_timeout(
     }
 }
 
-/// 把脚本内容写入 WSL 侧的 execution_path（通过 `bash -c 'cat > <path>'` + stdin）。
+/// 把脚本内容写入 WSL 侧的 execution_path。
+///
+/// 用 `wsl.exe -- tee <path>` 的 argv 直传：命令与路径各是独立 argv，不经 shell 解析、
+/// 不 fork bash、无需手搓 quoting（对照旧的 `bash -c "cat > <quoted>"`，消除注入面与多余
+/// 进程）。tee 从 stdin 读内容写入该文件（O_TRUNC 覆盖），stdout 回显重定向到 null。
+/// 与仓库既有 `wsl.exe -- shfmt --version`（shell_tools）同范式。参见地基审查 S3。
 pub(crate) fn materialize_wsl_script(
     execution_path: &str,
     content: &str,
@@ -391,9 +395,8 @@ pub(crate) fn materialize_wsl_script(
     let mut command = std::process::Command::new("wsl.exe");
     command
         .arg("--")
-        .arg("bash")
-        .arg("-c")
-        .arg(format!("cat > {}", bash_quote(execution_path)))
+        .arg("tee")
+        .arg(execution_path)
         .stdin(std::process::Stdio::piped())
         .stdout(std::process::Stdio::null())
         .stderr(std::process::Stdio::piped())
@@ -439,14 +442,15 @@ pub(crate) fn materialize_wsl_script(
 }
 
 /// 清理某会话遗留在 WSL 侧的 Shell Integration 集成脚本（在读线程收尾、交互 shell 结束后调用）。
-/// 通过 wsl.exe 执行 bash 的 rm -f 删除；尽力而为，失败仅记录告警，不影响关闭流程。
+/// 用 `wsl.exe -- rm -f <path>` argv 直传删除（不经 bash -c、无需 quoting）；尽力而为，
+/// 失败仅记录告警，不影响关闭流程。
 fn cleanup_wsl_script(execution_path: &str) -> Result<(), LocalWslPtyError> {
     let mut command = std::process::Command::new("wsl.exe");
     command
         .arg("--")
-        .arg("bash")
-        .arg("-c")
-        .arg(format!("rm -f {}", bash_quote(execution_path)))
+        .arg("rm")
+        .arg("-f")
+        .arg(execution_path)
         .stdin(std::process::Stdio::null())
         .stdout(std::process::Stdio::null())
         .stderr(std::process::Stdio::null())
