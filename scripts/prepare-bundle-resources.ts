@@ -164,6 +164,13 @@ function stageBashLanguageServer(): void {
 //    API 把二进制直接下载到随包目录。
 function stageShellcheck(): void {
   const dest = join(stageRoot, shellcheckExeName);
+  // [vendor-first:shellcheck] 仓库自带二进制优先：离线、可复现，不依赖 GitHub / node_modules。
+  const vendoredShellcheck = join(srcTauri, 'vendor', shellcheckExeName);
+  if (existsSync(vendoredShellcheck)) {
+    copyFileSync(vendoredShellcheck, dest);
+    log(`已内置 shellcheck（vendored）：${vendoredShellcheck} -> ${dest}`);
+    return;
+  }
   const fromRoot = join(rootNodeModules, 'shellcheck', 'bin', shellcheckExeName);
   if (existsSync(fromRoot)) {
     copyFileSync(fromRoot, dest);
@@ -214,6 +221,13 @@ async function stageShfmt(): Promise<void> {
     return;
   }
   const dest = join(stageRoot, shfmtExeName);
+  // [vendor-first:shfmt] 仓库自带二进制优先。
+  const vendoredShfmt = join(srcTauri, 'vendor', shfmtExeName);
+  if (existsSync(vendoredShfmt)) {
+    copyFileSync(vendoredShfmt, dest);
+    log(`已内置 shfmt（vendored）：${vendoredShfmt} -> ${dest}`);
+    return;
+  }
   const base = 'https://github.com/mvdan/sh/releases/download';
   const url = `${base}/${SHFMT_VERSION}/shfmt_${SHFMT_VERSION}_windows_amd64.exe`;
   try {
