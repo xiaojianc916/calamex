@@ -204,37 +204,74 @@ async function provisionShfmt(lock: any): Promise<void> {
   }
 }
 
-// ---- 4) sidecar（builtin-agent：deps + dist）----
+// ---- 4) sidecar（builtin-agent：最小运行时依赖 + 单文件 dist）----
+// P2：dist 已由 esbuild 打成单文件 bundle，进程内依赖全部内联；
+// 这里只安装“external 直接依赖 + 其传递依赖”的最小集，大幅缩减 node_modules 体积。
+// 注意：playwright / playwright-core / chromium-bidi 是 @mastra/agent-browser 的传递
+// 依赖，会被自动带出，无需显式列出。此清单必须与 builtin-agent/build.mjs 的 external 一致。
 function provisionSidecar(manifest: any): void {
   const srcDir = join(repoRoot, 'builtin-agent');
   const dest = join(provisionRoot, 'builtin-agent');
   if (!existsSync(srcDir)) fail('未找到 builtin-agent：' + srcDir);
-  const pkgHash = sha256File(join(srcDir, 'package.json'));
+
+  const RUNTIME_DEPS = [
+    '@ast-grep/napi',
+    '@libsql/client',
+    '@mastra/libsql',
+    '@mastra/agent-browser',
+    'typescript-language-server',
+    '@modelcontextprotocol/server-memory',
+    '@modelcontextprotocol/server-sequential-thinking',
+    '@upstash/context7-mcp',
+    'tavily-mcp',
+  ];
+
+  const srcPkg = JSON.parse(readFileSync(join(srcDir, 'package.json'), 'utf8'));
+  const runtimeDeps: Record<string, string> = {};
+  for (const name of RUNTIME_DEPS) {
+    const ver = srcPkg.dependencies && srcPkg.dependencies[name];
+    if (!ver) fail('runtime 依赖缺少版本声明：' + name);
+    runtimeDeps[name] = ver;
+  }
+  const minimalPkg = {
+    name: String(srcPkg.name) + '-runtime',
+    private: true,
+    version: srcPkg.version,
+    type: 'module',
+    dependencies: runtimeDeps,
+  };
+  const minimalPkgJson = JSON.stringify(minimalPkg, null, 2);
+  const pkgHash = createHash('sha256').update(minimalPkgJson).digest('hex');
   const cached =
     !force && existsSync(join(dest, 'node_modules')) && manifest.builtinAgentPkgHash === pkgHash;
 
-  mkdirSync(dest, { recursive: true });
-  copyFileSync(join(srcDir, 'package.json'), join(dest, 'package.json'));
-  rmSync(join(dest, 'src'), { recursive: true, force: true });
-  cpSync(join(srcDir, 'src'), join(dest, 'src'), { recursive: true });
-
-  if (cached) {
-    log('sidecar 依赖缓存命中，跳过 npm install');
-  } else {
-    rmSync(join(dest, 'node_modules'), { recursive: true, force: true });
-    run(npmBin(), ['install', '--no-audit', '--no-fund', '--prefix', dest], { cwd: dest });
-  }
-  const tsxCli = join(dest, 'node_modules', 'tsx', 'dist', 'cli.mjs');
-  if (!existsSync(tsxCli)) fail('sidecar 缺少 tsx 启动器：' + tsxCli);
-
+  // 先用源目录（含 dev 依赖：esbuild）产出单文件 dist
   run(npmBin(), ['run', 'build'], { cwd: srcDir });
   const compiled = join(srcDir, 'dist', 'acp', 'stdio-entry.js');
   if (!existsSync(compiled)) fail('sidecar 预编译未找到入口：' + compiled);
+
+  // dest：写最小清单 + 拷 dist（剔除 .map，不再拷 src）
+  mkdirSync(dest, { recursive: true });
+  writeFileSync(join(dest, 'package.json'), minimalPkgJson + '\n');
+  rmSync(join(dest, 'src'), { recursive: true, force: true });
   rmSync(join(dest, 'dist'), { recursive: true, force: true });
-  cpSync(join(srcDir, 'dist'), join(dest, 'dist'), { recursive: true });
+  cpSync(join(srcDir, 'dist'), join(dest, 'dist'), {
+    recursive: true,
+    filter: (p: string) => !p.endsWith('.map'),
+  });
+
+  // 安装最小运行时依赖（external + 传递依赖；仅生产依赖）
+  if (cached) {
+    log('sidecar 运行时依赖缓存命中，跳过 npm install');
+  } else {
+    rmSync(join(dest, 'node_modules'), { recursive: true, force: true });
+    run(npmBin(), ['install', '--omit=dev', '--no-audit', '--no-fund', '--prefix', dest], {
+      cwd: dest,
+    });
+  }
 
   manifest.builtinAgentPkgHash = pkgHash;
-  log('已准备 builtin-agent（deps + dist）');
+  log('已准备 builtin-agent（最小运行时依赖 + 单文件 dist）');
 }
 
 // ---- 5) bash-language-server ----
