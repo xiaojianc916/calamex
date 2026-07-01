@@ -12,10 +12,11 @@ use std::{
     sync::{
         Arc, Mutex,
         atomic::{AtomicBool, Ordering},
-        mpsc::{self, Receiver, RecvTimeoutError, Sender},
     },
     time::Duration,
 };
+
+use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender};
 
 use portable_pty::{Child, ChildKiller, CommandBuilder, MasterPty, PtySize, native_pty_system};
 use thiserror::Error;
@@ -61,8 +62,8 @@ pub enum LocalWslPtyError {
 #[derive(Clone)]
 pub struct LocalWslPtyHandle {
     writer: Arc<Mutex<Box<dyn Write + Send>>>,
-    /// resize 合批通道发送端：所有 resize 经此投递给该会话独占的合批线程串行应用（见 spawn_resize_worker）。
-    resize_tx: Sender<(u16, u16)>,
+    /// resize 合批通道发送端：所有 resize 经此投递给该会话独占的合批任务串行应用（见 spawn_resize_worker）。
+    resize_tx: UnboundedSender<(u16, u16)>,
     killer: Arc<Mutex<Box<dyn ChildKiller + Send + Sync>>>,
     /// 读线程在交互 shell 结束（child.wait 返回）后置位。供关闭看门狗确证「读线程确已收尾」：
     /// 若 kill 后 wsl.exe 仍卡死、child.wait() 永久阻塞，则该标志持续为 false，看门狗据此升级
@@ -224,8 +225,8 @@ where
         let _ = cleanup_killer.kill();
     })?;
 
-    let (resize_tx, resize_rx) = mpsc::channel::<(u16, u16)>();
-    // 为该会话挂一条独占的 resize 合批线程，移交 MasterPty 所有权并串行化全部尺寸调整。
+    let (resize_tx, resize_rx) = tokio::sync::mpsc::unbounded_channel::<(u16, u16)>();
+    // 为该会话挂一条独占的 resize 合批任务（tokio 运行时，不再占用独占 OS 线程），移交 MasterPty 所有权并串行化全部尺寸调整。
     spawn_resize_worker(session_id.clone(), pair.master, resize_rx);
 
     Ok(LocalWslPtyHandle {
@@ -496,36 +497,30 @@ pub(crate) fn spawn_wsl_script_cleanup(paths: Vec<String>) {
 fn spawn_resize_worker(
     session_id: String,
     master: Box<dyn MasterPty + Send>,
-    resize_rx: Receiver<(u16, u16)>,
+    mut resize_rx: UnboundedReceiver<(u16, u16)>,
 ) {
-    // 把 session_id 克隆给合批线程闭包持有；原值留给下方 spawn 失败时的告警日志，
-    // 避免「move 进闭包后又借用」(E0382)。
-    let worker_session_id = session_id.clone();
-    let spawn_result = std::thread::Builder::new()
-        .name(format!("wsl-pty-resize-{session_id}"))
-        .spawn(move || {
-            let session_id = worker_session_id;
-            // 阻塞等待第一条 resize；所有发送端释放后通道断开，recv 返回 Err，线程退出。
-            while let Ok(mut latest) = resize_rx.recv() {
-                // 合批：静默窗口内持续吸收后续 resize，只保留最后一次；窗口内无新 resize 即安定。
-                loop {
-                    match resize_rx.recv_timeout(TERMINAL_RESIZE_DEBOUNCE) {
-                        Ok(next) => latest = next,
-                        Err(RecvTimeoutError::Timeout) => break,
-                        Err(RecvTimeoutError::Disconnected) => {
-                            apply_pty_resize(&session_id, &*master, latest);
-                            return;
-                        }
+    // 该会话独占的 resize 合批任务，跑在共享 tokio 运行时上（不再为每会话占用一条独占 OS 线程）：
+    // 移交 MasterPty 所有权并串行化全部尺寸调整；静默窗口内合并一串快速 resize，仅把最后一次应用到
+    // ConPTY。所有发送端释放（会话销毁、句柄全部 drop）后通道关闭，recv 返回 None，任务自然退出。
+    tauri::async_runtime::spawn(async move {
+        // 等待第一条 resize；通道关闭（发送端全部释放）时 recv 返回 None，任务退出。
+        while let Some(mut latest) = resize_rx.recv().await {
+            // 合批：静默窗口内持续吸收后续 resize，只保留最后一次；窗口内无新 resize 即安定。
+            loop {
+                match tokio::time::timeout(TERMINAL_RESIZE_DEBOUNCE, resize_rx.recv()).await {
+                    Ok(Some(next)) => latest = next,
+                    // 通道关闭：应用最后一次尺寸后退出任务。
+                    Ok(None) => {
+                        apply_pty_resize(&session_id, &*master, latest);
+                        return;
                     }
+                    // 静默窗口到期（尺寸已安定）：应用并回到外层等待下一串 resize。
+                    Err(_) => break,
                 }
-                apply_pty_resize(&session_id, &*master, latest);
             }
-        });
-    if let Err(error) = spawn_result {
-        // 合批线程创建失败极罕见（资源耗尽）；此时通道无接收端，后续 resize 的 send 将返回错误，
-        // 由命令层按尽力而为处理，不阻断会话创建。
-        log::warn!("WSL 交互终端 resize 合批线程创建失败（session_id={session_id}）：{error}");
-    }
+            apply_pty_resize(&session_id, &*master, latest);
+        }
+    });
 }
 
 /// 把一次尺寸应用到底层 ConPTY；失败仅记录告警（resize 为尽力而为，不应阻断交互）。
