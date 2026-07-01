@@ -294,3 +294,7 @@ html.is-resizing .cm-tooltip-hover {
 .window-resize-handle {
   pointer-events: none !important;
 }
+
+.app-window-shell {
+  box-shadow: none !important;
+}
