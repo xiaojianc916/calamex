@@ -213,14 +213,19 @@ export const commands = {
 	configOptions: unknown,
 } | null>("ai_set_session_config_option", { payload }),
 	/**
-	 *  握手并复用/建立某线程在指定后端上的 ACP 会话（v3 · 唯一标准管线）。
+	 *  握手并复用/建立某线程在指定后端上的 ACP 会话，并回传 agent 在 session/new 响应公示的可用配置项
+	 *  全集（v3 · 唯一标准管线）。
 	 * 
-	 *  取代 ai_get_session_config_options：配置项发现统一走事件通道，握手不再返回快照。经
-	 *  get_or_spawn_backend 懒建立目标后端宿主后 ensure_session 建立/复用会话——这会触发外部 agent
-	 *  （如 Kimi）在 session/new 之后下发一次性 config_option_update 通知（宿主缓存、回合发起时以
-	 *  前端键重放），前端据此填充选择器。thread_id / backend 先行校验；未知 backend 报错。
+	 *  配置项发现的唯一来源即此握手返回值：经 get_or_spawn_backend 懒建立目标后端宿主后 ensure_session
+	 *  建立/复用会话，agent 在 session/new 响应里以 config_options 公示「模型 / 模式 / 思考强度等」可切换
+	 *  配置项全集（含 currentValue 当前选中项），宿主据 thread_id 登记后由本命令原样回传前端选择器。会话
+	 *  复用回合（已存在映射）不重发 session/new，则回退到宿主缓存的同一快照；agent 未公示任何配置项时
+	 *  返回 None。后续 agent 主动发起的 config_option_update（标准回合内通知）经流式投影由前端增量并入，
+	 *  不在此通道。thread_id / backend 先行校验；未知 backend 报错。
 	 */
-	aiEnsureAcpSession: (payload: AiEnsureAcpSessionRequest) => __TAURI_INVOKE<null>("ai_ensure_acp_session", { payload }),
+	aiEnsureAcpSession: (payload: AiEnsureAcpSessionRequest) => __TAURI_INVOKE<{
+	configOptions: unknown,
+} | null>("ai_ensure_acp_session", { payload }),
 	aiInlineComplete: (payload: AiInlineCompletionRequest) => __TAURI_INVOKE<AiInlineCompletionResult>("ai_inline_complete", { payload }),
 	aiAgentClassifyTask: (payload: AiAgentClassifyTaskRequest) => __TAURI_INVOKE<AiAgentClassifyTaskPayload>("ai_agent_classify_task", { payload }),
 	aiAgentSetNetworkPermission: (payload: AiAgentSetNetworkPermissionRequest) => __TAURI_INVOKE<AiAgentNetworkPermissionPayload>("ai_agent_set_network_permission", { payload }),
@@ -248,6 +253,7 @@ export const commands = {
 	lspHover: (filePath: string, line: number, column: number) => __TAURI_INVOKE<{
 	contents: string,
 } | null>("lsp_hover", { filePath, line, column }),
+	/**  前端就绪后主动拉取冷启动待打开文件（pull）；返回后队列清空，重复调用安全（幂等）。 */
 	drainPendingOpenFiles: () => __TAURI_INVOKE<string[]>("drain_pending_open_files"),
 };
 
@@ -739,8 +745,9 @@ export type AiEditUndoOperationRequest = {
  *  ACP 会话握手请求（契约层，v3 · 唯一标准管线）。
  * 
  *  对齐 ai_ensure_acp_session：thread_id 定位/复用会话；backend 指定后端（builtin/kimi/codex）；
- *  workspace_root_path 为新建会话的 cwd。握手仅建立/复用会话（触发外部 agent 在 session/new
- *  之后下发一次性 config_option_update 通知），不返回快照——配置项发现统一走事件通道。
+ *  workspace_root_path 为新建会话的 cwd。握手建立/复用会话后，直接回传 agent 在 session/new 响应
+ *  公示的可用配置项全集（AiSessionConfigOptionsPayload）——这是配置项初始发现的唯一来源；后续 agent
+ *  主动发起的 config_option_update 经标准回合流式投影由前端增量并入。
  */
 export type AiEnsureAcpSessionRequest = {
 	threadId: string,

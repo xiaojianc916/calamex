@@ -15,22 +15,22 @@
     0 8px 20px -16px color-mix(in srgb, var(--text-quaternary) 42%, transparent);
 }
 
+/* 窗口 resize 冻结：在 html.is-resizing 存续期间用一条通用规则关掉所有
+ * transition/animation（该 class 由 useWindowResizeState 在每次 ResizeObserver
+ * 回调时加上，resize 停稳 160ms 后移除）。取代此前手工维护的 ~50 选择器名单——
+ * 新增组件自动被冻结，不再有“忘了往名单里加”的维护陷阱；开销仅限拖拽那一小段。 */
+html.is-resizing *,
+html.is-resizing *::before,
+html.is-resizing *::after {
+  transition: none !important;
+  animation: none !important;
+}
+
 html.is-resizing .app-window-shell,
 html.is-resizing .app-shell-pane,
 html.is-resizing .workbench-content-card,
 html.is-resizing .editor-surface {
   background: #fafafa !important;
-  transition: none !important;
-}
-
-html.is-resizing .app-shell-pane,
-html.is-resizing .workbench-editor-viewport,
-html.is-resizing .workbench-content-stage,
-html.is-resizing .workbench-content-dock,
-html.is-resizing .workbench-content-card,
-html.is-resizing .editor-surface {
-  animation: none !important;
-  transition: none !important;
 }
 
 html.is-resizing .workbench-content-stage,
@@ -44,47 +44,6 @@ html.is-resizing [data-shell-resize-responder] {
   contain: layout paint;
   transform: translateZ(0);
   backface-visibility: hidden;
-}
-
-html.is-resizing .ai-workspace-right-sidebar,
-html.is-resizing .ai-icon-button,
-html.is-resizing .ai-suggestion-empty :is(button),
-html.is-resizing .ai-chat-scroll-button,
-html.is-resizing .ai-message,
-html.is-resizing .ai-message-bubble,
-html.is-resizing .ai-message-option-button,
-html.is-resizing .ai-message-copy-button,
-html.is-resizing .ai-tool-call,
-html.is-resizing .ai-runtime-timeline,
-html.is-resizing .ai-runtime-chain-header,
-html.is-resizing .ai-runtime-terminal-toggle,
-html.is-resizing .ai-runtime-terminal,
-html.is-resizing .ai-markdown,
-html.is-resizing .markstream-vue,
-html.is-resizing .markdown-renderer,
-html.is-resizing .cm-editor,
-html.is-resizing .cm-scroller,
-html.is-resizing .cm-gutters,
-html.is-resizing .cm-tooltip,
-html.is-resizing .cm-mergeView,
-html.is-resizing .codemirror-editor-surface,
-html.is-resizing .shell-editor-surface,
-html.is-resizing .image-asset-preview,
-html.is-resizing .image-asset-preview-scroll,
-html.is-resizing .image-preview-stage,
-html.is-resizing .image-preview-frame,
-html.is-resizing .image-preview-asset,
-html.is-resizing .ai-panel-frame,
-html.is-resizing .ai-panel-frame__body,
-html.is-resizing .ai-panel-frame__composer,
-html.is-resizing .embedded-terminal-shell,
-html.is-resizing .embedded-terminal-host,
-html.is-resizing .xterm,
-html.is-resizing .xterm-viewport,
-html.is-resizing .git-diff-viewer,
-html.is-resizing .git-diff-viewer-surface {
-  animation: none !important;
-  transition: none !important;
 }
 
 html.is-resizing .ai-panel-frame,
