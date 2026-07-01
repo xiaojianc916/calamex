@@ -133,10 +133,6 @@ pub fn migrate_legacy_storage() {
             &identifier_dir.join(".notion-ide-ai").join("edits"),
             &root.join("ai-edits"),
         );
-        migrate_path(
-            &identifier_dir.join("session.json"),
-            &root.join("config").join("session.json"),
-        );
     }
 
     // 本地 AI 服务运行时：%LOCALAPPDATA%\com.xiaojianc.Calamex\builtin-agent -> ai-service
