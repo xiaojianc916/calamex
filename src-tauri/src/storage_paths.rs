@@ -94,12 +94,24 @@ pub fn migrate_legacy_storage() {
 
     // 迁移水位：已到当前 schema 版本则整体短路，省去每次启动的多次磁盘探测。
     const STORAGE_SCHEMA_VERSION: u32 = 1;
-    let marker = root.join(".storage-schema");
-    if fs::read_to_string(&marker)
-        .ok()
-        .and_then(|text| text.trim().parse::<u32>().ok())
-        .is_some_and(|version| version >= STORAGE_SCHEMA_VERSION)
+    // schema.json 记录已完成迁移的 schema 版本；兼容读取上一代裸整数标记 .storage-schema。
+    let marker = root.join("schema.json");
+    let legacy_marker = root.join(".storage-schema");
+    let read_schema_version = |path: &Path| -> Option<u32> {
+        let text = fs::read_to_string(path).ok()?;
+        // 容忍两种格式：裸整数 "1" 与 {"version":1}
+        let digits: String = text.chars().filter(|c| c.is_ascii_digit()).collect();
+        digits.parse::<u32>().ok()
+    };
+    if let Some(version) =
+        read_schema_version(&marker).or_else(|| read_schema_version(&legacy_marker))
+        && version >= STORAGE_SCHEMA_VERSION
     {
+        // 若仍是上一代 .storage-schema，顺手升级为 schema.json 并清理旧文件（幂等）。
+        if !marker.exists() {
+            let _ = fs::write(&marker, format!(r#"{{"version":{}}}"#, STORAGE_SCHEMA_VERSION));
+        }
+        let _ = fs::remove_file(&legacy_marker);
         return;
     }
 
@@ -149,9 +161,9 @@ pub fn migrate_legacy_storage() {
         rename_within(&new_service, ".node-compile-cache", "node-compile-cache");
     }
 
-    // 迁移完成：落 schema 水位标记，下次启动直接短路。
+    // 迁移完成：落 schema.json 水位标记（带字段名，便于扩展），下次启动直接短路。
     if let Err(error) = fs::create_dir_all(&root)
-        .and_then(|_| fs::write(&marker, STORAGE_SCHEMA_VERSION.to_string()))
+        .and_then(|_| fs::write(&marker, format!(r#"{{"version":{}}}"#, STORAGE_SCHEMA_VERSION)))
     {
         log_migration_warn("schema-marker-write-failed", &marker, &error.to_string());
     }
