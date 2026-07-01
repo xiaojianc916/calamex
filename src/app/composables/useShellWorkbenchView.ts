@@ -15,10 +15,6 @@ import type { ITerminalRunCompletedPayload } from '@/types/terminal';
 import { waitForDesktopRuntime } from '@/utils/platform/desktop-runtime';
 import { markStartup } from '@/utils/platform/startup-profiler';
 import { consumeProgrammaticWindowCloseAllowance } from '@/utils/window/window-close';
-import {
-  SHELL_WINDOW_RESIZE_FRAME_EVENT,
-  SHELL_WINDOW_RESIZE_SETTLED_EVENT,
-} from '@/utils/window/window-resize-events';
 
 export type TEditorExpose = {
   focusEditor: () => void;
@@ -105,7 +101,6 @@ export const useShellWorkbenchView = (onReady: () => void) => {
   let nativeCloseRequestedUnlisten: (() => void) | null = null;
   let isUnmounted = false;
   let editorLayoutAfterSidebarFrameId: number | null = null;
-  let editorLiveResizeFrameId: number | null = null;
   let globalKeydownCleanup: (() => void) | null = null;
 
   // 缓存上一次的文档 ID 集合，用于在 watch 回调中做 diff，
@@ -282,27 +277,9 @@ export const useShellWorkbenchView = (onReady: () => void) => {
     diagnosticsTransitionsEnabled,
     diagnosticsPanelMotionClass,
     diagnosticsPanelStyle,
-    handleShellWindowResizeFrame,
-    handleShellWindowResizeSettled,
     mount: mountViewportState,
     cleanup: cleanupViewportState,
   } = useShellWorkbenchViewportState({ editorViewportRef });
-
-  const scheduleEditorLayoutDuringWindowResize = (): void => {
-    if (editorLiveResizeFrameId !== null) {
-      return;
-    }
-
-    editorLiveResizeFrameId = window.requestAnimationFrame(() => {
-      editorLiveResizeFrameId = null;
-      editorRef.value?.layoutEditor();
-    });
-  };
-
-  const handleShellWindowResizeFrameEvent = (): void => {
-    handleShellWindowResizeFrame();
-    scheduleEditorLayoutDuringWindowResize();
-  };
 
   const handleInsertTemplate = (template: ICommandTemplate): void => {
     editorRef.value?.insertSnippet(template.snippet);
@@ -666,8 +643,6 @@ export const useShellWorkbenchView = (onReady: () => void) => {
   onMounted(() => {
     isUnmounted = false;
     markStartup('shell-workbench-mounted');
-    window.addEventListener(SHELL_WINDOW_RESIZE_FRAME_EVENT, handleShellWindowResizeFrameEvent);
-    window.addEventListener(SHELL_WINDOW_RESIZE_SETTLED_EVENT, handleShellWindowResizeSettled);
 
     mountViewportState();
 
@@ -680,8 +655,6 @@ export const useShellWorkbenchView = (onReady: () => void) => {
 
   onBeforeUnmount(() => {
     isUnmounted = true;
-    window.removeEventListener(SHELL_WINDOW_RESIZE_FRAME_EVENT, handleShellWindowResizeFrameEvent);
-    window.removeEventListener(SHELL_WINDOW_RESIZE_SETTLED_EVENT, handleShellWindowResizeSettled);
     globalKeydownCleanup?.();
     nativeCloseRequestedUnlisten?.();
     nativeCloseRequestedUnlisten = null;
@@ -690,11 +663,6 @@ export const useShellWorkbenchView = (onReady: () => void) => {
     if (editorLayoutAfterSidebarFrameId !== null) {
       window.cancelAnimationFrame(editorLayoutAfterSidebarFrameId);
       editorLayoutAfterSidebarFrameId = null;
-    }
-
-    if (editorLiveResizeFrameId !== null) {
-      window.cancelAnimationFrame(editorLiveResizeFrameId);
-      editorLiveResizeFrameId = null;
     }
   });
 

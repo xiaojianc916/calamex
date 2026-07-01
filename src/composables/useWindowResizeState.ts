@@ -2,10 +2,6 @@ import { useResizeObserver } from '@vueuse/core';
 import { onScopeDispose } from 'vue';
 import { createMutableDisposable } from '@/utils/core/disposable';
 import { requestDisposableTimeout } from '@/utils/platform/dom-lifecycle';
-import {
-  SHELL_WINDOW_RESIZE_FRAME_EVENT,
-  SHELL_WINDOW_RESIZE_SETTLED_EVENT,
-} from '@/utils/window/window-resize-events';
 
 /**
  * 窗口 resize 期间的全局 `is-resizing` 态：由浏览器原生 ResizeObserver 直接驱动，
@@ -35,14 +31,12 @@ export const useWindowResizeState = (): void => {
       requestDisposableTimeout(() => {
         settleTimer.clear();
         html.classList.remove('is-resizing');
-        window.dispatchEvent(new Event(SHELL_WINDOW_RESIZE_SETTLED_EVENT));
       }, RESIZE_SETTLE_DELAY_MS),
     );
   };
 
   useResizeObserver(html, () => {
     html.classList.add('is-resizing');
-    window.dispatchEvent(new Event(SHELL_WINDOW_RESIZE_FRAME_EVENT));
     scheduleSettle();
   });
 
