@@ -445,7 +445,17 @@ pub fn spawn_acp_client(
                 }
 
                 while let Some(command) = cmd_rx.recv().await {
-                    match command {
+                    // Shutdown 必须在派生任务前处理：break 只能作用于本 while 循环。
+                    if matches!(command, Command::Shutdown) {
+                        break;
+                    }
+                    // 每条命令派生到连接自身的任务（cx.spawn，SDK 认可、派发循环后台继续跑），命令循环
+                    // 立刻处理下一条 → 消除命令间头阻塞；同会话依赖顺序仍由调用方 await 各自 oneshot 保证。
+                    // task_cx 移入任务后重绑为 cx，下方各 match arm 主体无需改动。
+                    let task_cx = cx.clone();
+                    let spawn_result = cx.spawn(async move {
+                        let cx = task_cx;
+                        match command {
                         Command::NewSession { cwd, meta, reply } => {
                             // 仅 builtin 携带 _meta（模型目录 + 凭据，命令层组装）；外部 agent
                             // meta 为 None，构造与旧行为一致的请求。NewSessionRequest 为
@@ -527,7 +537,12 @@ pub fn spawn_acp_client(
                             let res = cx.send_request(request).block_task().await;
                             let _ = reply.send(res.map_err(|e| e.to_string()));
                         }
-                        Command::Shutdown => break,
+                        Command::Shutdown => {}
+                    }
+                        Ok::<(), agent_client_protocol::Error>(())
+                    });
+                    if let Err(error) = spawn_result {
+                        log::warn!("acp: 派生命令任务失败：{error}");
                     }
                 }
 

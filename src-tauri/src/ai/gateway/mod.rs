@@ -38,9 +38,9 @@ const MAX_TITLE_SOURCE_CHARS: usize = 1_200;
 const MIN_GENERATED_TITLE_CHARS: usize = 5;
 const MAX_GENERATED_TITLE_CHARS: usize = 10;
 
-// 默认主模型：与 sidecar 的 models/config.ts `DEFAULT_MODEL_ID` 保持单一来源对齐
-// （DeepSeek 是本项目默认网关）。二者必须同步修改，否则\"Rust 默认\"与\"sidecar 默认\"
-// 会漂移成两个不同模型。
+// 默认主模型：与 sidecar 的 models/config.ts `DEFAULT_MODEL_ID` 同值(DeepSeek 是默认网关)。
+// 二者跨 Rust/Node 进程边界,无法共享同一字面量;其一致性由
+// `scripts/check-ai-defaults-sync.mjs` 在 CI/pre-commit 机械校验,任一侧漂移即报错。
 const DEFAULT_MASTRA_MODEL: &str = "deepseek/deepseek-v4-pro";
 const DEFAULT_NARRATOR_MODEL: &str = "zhipuai/glm-4.7-flash";
 
