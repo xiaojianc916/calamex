@@ -1,46 +1,48 @@
-// builtin-agent/build.mjs
-//
-// P2：用 esbuild 把「进程内」导入图打成单文件 dist/acp/stdio-entry.js。
-// 目的：从随包 node_modules 中剔除纯进程内依赖，缩小安装包 / 加速 NSIS 压缩。
-//
-// 外置（不可/不应打包）：
-//   - 原生插件（.node）：@ast-grep/napi、@libsql/client（及依赖它的 @mastra/libsql）
-//   - 以子进程/bin 启动的包：typescript-language-server、各 MCP server
-//     （运行时要执行它们的 bin，必须以真实 node_modules 形式随包）
-// 说明：类型检查仍由 pnpm typecheck 负责；单测仍从 src 经 tsx 运行，不受影响。
-
 import { build } from 'esbuild';
 
+// external 分三类，全部保持为真实 node_modules 包，不进 bundle：
+//  1) 原生 .node 插件
+//  2) 拉起子进程 / bin 的包
+//  3) 浏览器自动化栈（playwright 预打包，含条件可选 require，不可打包）
 const external = [
+  // 原生插件
   '@ast-grep/napi',
   '@libsql/client',
   '@mastra/libsql',
+  // 子进程 / bin
   'typescript-language-server',
   '@modelcontextprotocol/server-memory',
   '@modelcontextprotocol/server-sequential-thinking',
   '@upstash/context7-mcp',
   'tavily-mcp',
+  // 浏览器栈（本轮新增）
+  '@mastra/agent-browser',
+  'playwright',
+  'playwright-core',
+  'chromium-bidi',
 ];
 
-// ESM 输出里补齐 require/__dirname/__filename：不少 CJS 依赖被打包后仍会在运行时用到。
-const banner = [
-  "import { createRequire as __createRequire } from 'node:module';",
-  "import { fileURLToPath as __fileURLToPath } from 'node:url';",
-  "import { dirname as __pathDirname } from 'node:path';",
-  'const require = __createRequire(import.meta.url);',
-  'const __filename = __fileURLToPath(import.meta.url);',
-  'const __dirname = __pathDirname(__filename);',
-].join('\n');
+// ESM 输出下补齐 require/__filename/__dirname（被打进来的 CJS 依赖会用到）
+const bannerLines = [
+  "import { createRequire as __cr } from 'node:module';",
+  "import { fileURLToPath as __fu } from 'node:url';",
+  "import { dirname as __dn } from 'node:path';",
+  "const require = __cr(import.meta.url);",
+  "const __filename = __fu(import.meta.url);",
+  "const __dirname = __dn(__filename);",
+];
 
 await build({
   entryPoints: ['src/acp/stdio-entry.ts'],
   outfile: 'dist/acp/stdio-entry.js',
+  bundle: true,
   platform: 'node',
   format: 'esm',
   target: 'node26',
-  bundle: true,
   sourcemap: true,
   external,
-  banner: { js: banner },
+  banner: { js: bannerLines.join('\n') },
   logLevel: 'info',
 });
+
+console.log('[build] done -> dist/acp/stdio-entry.js');
