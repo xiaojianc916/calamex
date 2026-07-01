@@ -170,12 +170,6 @@ const bootstrap = async (): Promise<void> => {
     app.use(VueQueryPlugin, { queryClient });
     markStartup('vue-plugins-installed');
 
-    // 恢复 vue-query 持久化缓存(PR 列表/详情、commit stats)，等价于原 git store
-    // 的 readPersisted* 预读；persister 读取开销与原来一次 localStorage 读取相当，
-    // 放在挂载前以保证首屏能读到快照。
-    await setupQueryPersistence();
-    markStartup('vue-query-persistence-ready');
-
     app.config.errorHandler = (error) => {
       reportRuntimeError(MESSAGES.vueErrorLabel, error);
     };
@@ -207,6 +201,14 @@ const bootstrap = async (): Promise<void> => {
     markStartup('vue-mounted');
 
     initEditorScrollbarActivity();
+
+    // vue-query 持久化缓存不是首屏必需：挂载后 idle 恢复，把一次 IndexedDB 读移出
+    // 窗口显示关键路径。恢复前触发的查询会正常走网络，语义不变。
+    scheduleIdle(() => {
+      void setupQueryPersistence()
+        .then(() => markStartup('vue-query-persistence-ready'))
+        .catch((error) => console.warn('vue-query 持久化恢复失败', error));
+    });
 
     // 关联文件打开监听：监听 Rust 端 calamex://open-file 事件，挂载后按需打开脚本。
     void import('@/services/ipc/launch-open.service').then(({ installLaunchFileOpener }) => {

@@ -80,8 +80,16 @@ const tryWriteV1Payload = (
  *
  * 迁移版本:1 (migration version 1)
  */
+const MIGRATION_DONE_FLAG = 'shell-ide.migrated.v1';
+
 function migrateV0toV1(): void {
   if (typeof window === 'undefined') return;
+  // 已迁移过：一次布尔判断即返回，省去多次旧 key 探测。
+  try {
+    if (window.localStorage.getItem(MIGRATION_DONE_FLAG) === '1') return;
+  } catch {
+    return;
+  }
 
   let storage: Storage;
   try {
@@ -136,6 +144,11 @@ function migrateV0toV1(): void {
 
 // 迁移同步执行,必须在 Pinia 初始化前完成
 migrateV0toV1();
+try {
+  window.localStorage.setItem('shell-ide.migrated.v1', '1');
+} catch {
+  /* 受限环境:无视,下次再探测 */
+}
 
 export const pinia = createPinia();
 pinia.use(piniaPluginPersistedstate);
