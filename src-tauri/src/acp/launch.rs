@@ -273,45 +273,22 @@ fn non_empty_string(value: String) -> Option<String> {
 
 #[cfg(windows)]
 fn read_user_environment_value(key: &str) -> Option<String> {
-    use std::process::{Command, Stdio};
+    // 直接读注册表 HKCU\\Environment，取代起 reg.exe 子进程 + 文本解析 stdout 的手搓做法
+    // （后者对 REG_EXPAND_SZ / 含多空格值 / 本地化输出都脆弱，且每次 fork 一个进程）。
+    // winreg 的 get_value::<String> 原生处理 REG_SZ / REG_EXPAND_SZ；去空白由调用方
+    // env_or_user_env 的 non_empty_string 兑。参见地基审查 H1。
+    use winreg::RegKey;
+    use winreg::enums::HKEY_CURRENT_USER;
 
-    let mut command = Command::new("reg.exe");
-    command
-        .args(["query", "HKCU\\Environment", "/v", key])
-        .stdin(Stdio::null())
-        .stderr(Stdio::null());
-    // 与其它后台子进程一致设 CREATE_NO_WINDOW，避免读取用户环境变量时闪出控制台窗口。
-    crate::commands::configure_std_command_for_background(&mut command);
-    let output = command.output().ok()?;
-
-    if !output.status.success() {
-        return None;
-    }
-
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    parse_reg_query_value(&stdout, key)
+    let environment = RegKey::predef(HKEY_CURRENT_USER)
+        .open_subkey("Environment")
+        .ok()?;
+    environment.get_value::<String, _>(key).ok()
 }
 
 #[cfg(not(windows))]
 fn read_user_environment_value(_key: &str) -> Option<String> {
     None
-}
-
-#[cfg(windows)]
-fn parse_reg_query_value(output: &str, key: &str) -> Option<String> {
-    output.lines().find_map(|line| {
-        let trimmed = line.trim();
-        if !trimmed.starts_with(key) {
-            return None;
-        }
-
-        let mut parts = trimmed.split_whitespace();
-        let name = parts.next()?;
-        let _kind = parts.next()?;
-        let value = parts.collect::<Vec<_>>().join(" ");
-
-        (name == key).then_some(value).and_then(non_empty_string)
-    })
 }
 
 /// 路径 → String（lossy）。ACP 入口 / node 路径在目标平台上均可 UTF-8 表示。
@@ -337,16 +314,5 @@ mod tests {
     fn path_to_string_roundtrips_simple_path() {
         let path = PathBuf::from("dist").join("acp").join("stdio-entry.js");
         assert_eq!(path_to_string(&path), path.to_string_lossy().into_owned());
-    }
-
-    #[cfg(windows)]
-    #[test]
-    fn parse_reg_query_value_extracts_value_with_spaces() {
-        let output = "\r\nHKEY_CURRENT_USER\\Environment\r\n    TAVILY_API_KEY    REG_SZ    tvly with spaces\r\n";
-        assert_eq!(
-            parse_reg_query_value(output, "TAVILY_API_KEY").as_deref(),
-            Some("tvly with spaces")
-        );
-        assert_eq!(parse_reg_query_value(output, "MISSING"), None);
     }
 }

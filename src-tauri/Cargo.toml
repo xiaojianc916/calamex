@@ -143,6 +143,8 @@ tracing-appender = { version = "0.2", optional = true }
 windows-sys = { version = "0.61.2", features = ["Win32_Foundation", "Win32_Networking_WinSock", "Win32_System_Hypervisor", "Win32_System_JobObjects", "Win32_System_Threading"] }
 webview2-com = "=0.38.2"
 windows-core = "=0.61.2"
+# 读取 HKCU\Environment 用户环境变量：替代起 reg.exe 子进程 + 文本解析 stdout 的手搓做法（见地基审查 H1）。
+winreg = "0.55"
 
 [dev-dependencies]
 tower = { version = "0.5", features = ["util"] }
