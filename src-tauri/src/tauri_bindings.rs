@@ -39,7 +39,7 @@ pub fn builder() -> Builder<tauri::Wry> {
             workspace_fs::load_script,
             workspace_fs::rename_workspace_path,
             workspace_fs::save_script,
-            attachment::read_attachment_file,
+            attachment::pick_attachment_files,
             workspace_watcher::start_workspace_watching,
             workspace_watcher::stop_workspace_watching,
             terminal_commands::ensure_terminal_session,
