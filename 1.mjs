@@ -1,158 +1,96 @@
-// r3-acp-evict-thread-backend.mjs
-// 用法：node r3-acp-evict-thread-backend.mjs [--write]
-// 作用：新增「删除对话即驱逐该线程 ACP 会话态」的后端能力，根治 AcpHost 三张按 thread/session
-//       键的表（sessions / config_options_by_thread / available_commands_by_session）随会话数
-//       单调增长的泄漏。host.evict_thread → runtime.evict_thread(广播) → ai_evict_thread 命令 + 注册。
-import { readFileSync, writeFileSync } from "node:fs";
+// fix-narrow-acp-host-deadcode-allow.mjs
+// 作用：去掉 acp/host.rs 文件级 #![allow(dead_code)]，改为对 10 个「已实现未接线」方法
+//       逐个精确标注 #[allow(dead_code)]（含移除触发说明），使其余部分恢复死代码检测。
+// 幂等；CRLF 安全；锚点命中数必须为 1，否则中止且不写盘。
+import { readFileSync, writeFileSync, existsSync, readdirSync } from "node:fs";
+import { join, sep } from "node:path";
 
-const WRITE = process.argv.includes("--write");
-const HOST = "src-tauri/src/acp/host.rs";
-const RUNTIME = "src-tauri/src/acp/runtime.rs";
-const GATEWAY = "src-tauri/src/commands/ai/gateway.rs";
-const BINDINGS = "src-tauri/src/tauri_bindings.rs";
+const ROOT = process.cwd();
 
-const PLAN = {
-	[HOST]: [
-		{
-			before: `    /// 请求优雅关停：清空挂起审批并令常驻连接任务结束（子进程随之回收）。
-    pub fn shutdown(&self) {`,
-			after: `    /// 驱逐某线程的全部会话态：从 \`thread_id ↔ SessionId\`、\`config_options_by_thread\`、
-    /// \`available_commands_by_session\` 三张表移除该线程/会话条目。对齐 Zed「线程实体 drop 即释放其
-    /// 连接与 per-thread 状态」——前端删除对话时经命令层调用，根治这三张按 thread/session 键的表随
-    /// 会话数单调增长的泄漏。幂等：未绑定该线程时为安全空操作。删除≠取消回合，故不下发 session/cancel。
-    pub fn evict_thread(&self, thread_id: &str) {
-        let thread_key = thread_id.trim();
-        if thread_key.is_empty() {
-            return;
-        }
-        let removed_session = self.sessions.lock().remove(thread_key);
-        self.config_options_by_thread.lock().remove(thread_key);
-        if let Some(session_id) = removed_session {
-            self.available_commands_by_session
-                .lock()
-                .remove(&session_id.to_string());
-        }
+function findFile(relParts) {
+  const direct = join(ROOT, ...relParts);
+  if (existsSync(direct)) return direct;
+  const target = relParts.join("/");
+  const stack = [ROOT];
+  while (stack.length) {
+    const dir = stack.pop();
+    let entries;
+    try { entries = readdirSync(dir, { withFileTypes: true }); } catch { continue; }
+    for (const e of entries) {
+      const full = join(dir, e.name);
+      if (e.isDirectory()) {
+        if (e.name === "node_modules" || e.name === ".git" || e.name === "target") continue;
+        stack.push(full);
+      } else if (full.split(sep).join("/").endsWith(target)) {
+        return full;
+      }
     }
-
-    /// 请求优雅关停：清空挂起审批并令常驻连接任务结束（子进程随之回收）。
-    pub fn shutdown(&self) {`,
-		},
-	],
-	[RUNTIME]: [
-		{
-			before: `    pub fn cancel_thread(&self, thread_id: &str) {
-        // 先取出 Arc 列表并释放锁，避免在广播取消期间持有 runtime 锁。
-        let hosts = self.hosts.lock().all();
-        for host in hosts {
-            host.cancel_thread(thread_id);
-        }
-    }`,
-			after: `    pub fn cancel_thread(&self, thread_id: &str) {
-        // 先取出 Arc 列表并释放锁，避免在广播取消期间持有 runtime 锁。
-        let hosts = self.hosts.lock().all();
-        for host in hosts {
-            host.cancel_thread(thread_id);
-        }
-    }
-
-    /// 驱逐某线程在全部**已建立**后端宿主上的会话态（thread↔session / config_options /
-    /// available_commands）。前端删除对话时经命令层调用；线程绑定的会话可能落在任一后端，故广播。
-    /// 缺省（无任何宿主）为安全空操作——驱逐绝不应触发 node 子进程派生。
-    pub fn evict_thread(&self, thread_id: &str) {
-        // 先取出 Arc 列表并释放锁，避免在广播期间持有 runtime 锁。
-        let hosts = self.hosts.lock().all();
-        for host in hosts {
-            host.evict_thread(thread_id);
-        }
-    }`,
-		},
-	],
-	[GATEWAY]: [
-		{
-			before: `#[tauri::command]
-#[specta::specta]
-pub fn ai_cancel(app: AppHandle, payload: AiCancelRequest) -> Result<(), String> {
-    let thread_id = payload
-        .thread_id
-        .as_deref()
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-        .ok_or_else(|| "AI_REQUEST_CANCELLED: threadId 不能为空。".to_string())?;
-
-    use tauri::Manager as _;
-    app.state::<crate::acp::AcpRuntime>()
-        .cancel_thread(thread_id);
-    Ok(())
-}`,
-			after: `#[tauri::command]
-#[specta::specta]
-pub fn ai_cancel(app: AppHandle, payload: AiCancelRequest) -> Result<(), String> {
-    let thread_id = payload
-        .thread_id
-        .as_deref()
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-        .ok_or_else(|| "AI_REQUEST_CANCELLED: threadId 不能为空。".to_string())?;
-
-    use tauri::Manager as _;
-    app.state::<crate::acp::AcpRuntime>()
-        .cancel_thread(thread_id);
-    Ok(())
+  }
+  return null;
 }
 
-/// 驱逐某线程的 ACP 会话态（删除对话时调用）：委托 AcpRuntime 向全部已建立宿主广播移除该线程的
-/// thread↔session / config_options / available_commands 条目，根治这些按 thread/session 键的表随
-/// 会话数单调增长的泄漏。threadId 空白视作无操作（对齐「删除本就不存在的对话」的良性调用）。
-#[tauri::command]
-#[specta::specta]
-pub fn ai_evict_thread(app: AppHandle, thread_id: String) -> Result<(), String> {
-    let thread_id = thread_id.trim();
-    if thread_id.is_empty() {
-        return Ok(());
-    }
-    use tauri::Manager as _;
-    app.state::<crate::acp::AcpRuntime>().evict_thread(thread_id);
-    Ok(())
-}`,
-		},
-	],
-	[BINDINGS]: [
-		{
-			before: `            ai::gateway::ai_cancel,`,
-			after: `            ai::gateway::ai_cancel,
-            ai::gateway::ai_evict_thread,`,
-		},
-	],
-};
+const hostPath = findFile(["src-tauri", "src", "acp", "host.rs"]);
+if (!hostPath) { console.error("✗ 未找到 src-tauri/src/acp/host.rs（请在仓库根目录运行）"); process.exit(1); }
+console.log("• host.rs → " + hostPath);
 
-const files = {};
-for (const path of Object.keys(PLAN)) {
-	const raw = readFileSync(path, "utf8");
-	files[path] = { isCRLF: raw.includes("\r\n"), src: raw.replace(/\r\n/g, "\n") };
+const original = readFileSync(hostPath, "utf8");
+const eol = original.includes("\r\n") ? "\r\n" : "\n";
+let text = original.split("\r\n").join("\n");
+
+function replaceOnce(oldStr, newStr, label) {
+  const parts = text.split(oldStr);
+  const hits = parts.length - 1;
+  if (hits !== 1) {
+    throw new Error("锚点[" + label + "]命中 " + hits + " 次（应为 1）——已中止，未写入任何改动。");
+  }
+  text = parts.join(newStr);
 }
-if (files[HOST].src.includes("pub fn evict_thread") && files[BINDINGS].src.includes("ai::gateway::ai_evict_thread")) {
-	console.log("[skip] 已应用过，幂等退出。");
-	process.exit(0);
-}
-const errors = [];
-for (const [path, hunks] of Object.entries(PLAN)) {
-	for (const [i, h] of hunks.entries()) {
-		const n = files[path].src.split(h.before).length - 1;
-		if (n !== 1) errors.push(`${path} 第 ${i + 1} 个锚点命中 ${n} 次（需 1 次）`);
-	}
-}
-if (errors.length) {
-	console.error("[abort] 锚点核对失败，未写入任何文件：\n  - " + errors.join("\n  - "));
-	process.exit(1);
-}
-for (const [path, hunks] of Object.entries(PLAN)) {
-	let src = files[path].src;
-	for (const h of hunks) src = src.split(h.before).join(h.after);
-	files[path].out = files[path].isCRLF ? src.replace(/\n/g, "\r\n") : src;
-}
-if (WRITE) {
-	for (const path of Object.keys(PLAN)) writeFileSync(path, files[path].out, "utf8");
-	console.log("[written] host.rs + runtime.rs + gateway.rs + tauri_bindings.rs 已更新。请跑 cargo fmt → cargo clippy → cargo test。");
+
+// ── 1) 去掉文件级 blanket allow（含其上两行说明注释）────────────────────────────
+const blanketBlock =
+  "// 过渡期：本模块部分薄宿主方法（web_search / web_fetch / restore_checkpoint 等）尚未\n" +
+  "// 全部接线到宿主命令，crate 外暂无调用点；接线后移除该 allow。\n" +
+  "#![allow(dead_code)]\n\n" +
+  "use parking_lot::Mutex;";
+let didBlanket = false;
+if (text.includes("#![allow(dead_code)]")) {
+  replaceOnce(blanketBlock, "use parking_lot::Mutex;", "移除文件级 #![allow(dead_code)]");
+  didBlanket = true;
+  console.log("✓ 已移除文件级 #![allow(dead_code)]");
 } else {
-	console.log("[dry-run] 4 文件锚点各命中 1 次。加 --write 落盘。");
+  console.log("· 跳过：文件级 #![allow(dead_code)] 已不存在");
 }
+
+// ── 2) 对 10 个「已实现未接线」项逐个精确标注 #[allow(dead_code)] ────────────────
+// [锚点(每行起始，含缩进), 说明, 标签]
+const DEAD = [
+  ["    pub async fn prompt(",                 "Layer6 主回合(session/prompt)尚未接线到命令，接线后删本行", "prompt"],
+  ["    pub async fn prompt_with_stream_key(", "Layer6 主回合(session/prompt)尚未接线到命令，接线后删本行", "prompt_with_stream_key"],
+  ["    fn replay_available_commands(",        "随 Layer6 主回合接线，接线后删本行", "replay_available_commands"],
+  ["    pub async fn prompt_text(",            "Layer6 主回合(session/prompt)尚未接线到命令，接线后删本行", "prompt_text"],
+  ["    pub async fn restore_checkpoint(",     "calamex.dev/checkpoint/restore 未接线到命令，接线后删本行", "restore_checkpoint"],
+  ["    pub async fn web_search(",             "calamex.dev/web/search 未接线到命令，接线后删本行", "web_search"],
+  ["    pub async fn web_fetch(",              "calamex.dev/web/fetch 未接线到命令，接线后删本行", "web_fetch"],
+  ["    pub async fn warmup(",                 "calamex.dev/warmup 未接线到命令，接线后删本行", "warmup"],
+  ["    pub async fn health(",                 "calamex.dev/health 未接线到命令，接线后删本行", "health"],
+  ["fn build_available_commands_event(",       "仅随 Layer6 主回合调用，接线后删本行", "build_available_commands_event"],
+];
+
+let added = 0;
+for (const [anchor, reason, label] of DEAD) {
+  const indent = (anchor.match(/^(\s*)/) || ["", ""])[1];
+  const attrLine = indent + "#[allow(dead_code)] // " + reason;
+  if (text.includes(attrLine + "\n" + anchor)) { console.log("· 跳过(已标注)：" + label); continue; }
+  replaceOnce(anchor, attrLine + "\n" + anchor, label);
+  console.log("✓ 标注 dead_code：" + label);
+  added++;
+}
+
+if (!didBlanket && added === 0) {
+  console.log("✓ 已是目标状态，无需改动。");
+  process.exit(0);
+}
+
+writeFileSync(hostPath, text.split("\n").join(eol), "utf8");
+console.log("✓ 已写入 " + hostPath + "（eol=" + (eol === "\r\n" ? "CRLF" : "LF") + "）");
+console.log("请运行：cargo build && cargo test");

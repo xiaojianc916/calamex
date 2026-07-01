@@ -1,6 +1,6 @@
 use crate::ai::audit::{self, AiAuditEventKind};
 use crate::ai::security::network_permission::{self, validate_public_http_url};
-use crate::ai::security::redaction::redact_text;
+use crate::ai::security::redaction::redact_secrets;
 use crate::commands::contracts::{
     AiWebFetchInput, AiWebFetchPayload, AiWebSearchInput, AiWebSearchPayload,
 };
@@ -13,7 +13,7 @@ pub async fn ai_web_search(
     payload: AiWebSearchInput,
 ) -> Result<AiWebSearchPayload, String> {
     audit::emit(AiAuditEventKind::AgentWebSearchRequested);
-    if redact_text(payload.query.trim()).blocked {
+    if redact_secrets(payload.query.trim()).is_redacted() {
         audit::emit(AiAuditEventKind::AgentWebSearchDenied);
         return Err(crate::ai::errors::error(
             "AI_AGENT_WEB_SOURCE_BLOCKED",
