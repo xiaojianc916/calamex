@@ -1,7 +1,7 @@
 import { desktopRuntimeReady } from '@/utils/platform/desktop-runtime';
 
 /**
- * 窗口 chrome（缩放拖拽 / 最小化 / 最大化 / 原生状态变化监听）唯一的
+ * 窗口 chrome（最小化 / 最大化 / 原生状态变化监听）唯一的
  * @tauri-apps/api/window 出口。
  *
  * - 标题栏拖拽区域已改用声明式 `data-tauri-drag-region`（见 AppShellLayout.vue

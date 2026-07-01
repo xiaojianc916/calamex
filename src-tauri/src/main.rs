@@ -275,8 +275,8 @@ fn main() {
     // show() 之后或一次 resize 之后——于是暂停合成器与计时器(rAF 归零)、停止向“隐藏”
     // 页面派发输入；而 :hover 走合成器缓存、拖窗/缩放走 OS 层故仍有反应，主线程未被
     // 占住故探针测得“线程空闲”，全程不走 JS 错误通道故控制台干净、warnHandler 不触发。
-    // 本工程窗口正是 visible:false 延迟显示（见下方 setup 内 fallback-reveal 注释，
-    // 作者已记录 WebView2 在不可见窗口下挂起渲染/计时），最易触发该误判。
+    // 本工程窗口正是 visible:false、由 Rust 在 setup 内建窗后立即 show()（见下方 setup 内
+    // native-reveal 注释，作者已记录 WebView2 在不可见窗口下挂起渲染/计时），最易触发该误判。
     //
     // 修复：在任何 WebView2 环境创建之前关闭该特性。必须在 app.build() 之前设置，
     // wry 创建 WebView2 环境时会读取该环境变量。零行为副作用，仅 Windows 生效。
@@ -403,34 +403,19 @@ fn main() {
                 spawn_orphan_terminal_session_reaper(reaper_app, reaper_state);
             }
 
-            // 兜底显示：窗口配置 visible:false，正常路径由前端 App.vue 挂载后调用
-            // apply_window_stage 显示窗口。但若前端在隐藏态停滞（如 WebView2 在不可见
-            // 窗口下挂起渲染/计时，导致 reveal 始终不执行），窗口会永远滞留系统托盘、
-            // 从托盘强制打开则是白屏。此处兜底：约 2.5s 后若主窗口仍不可见，则由 Rust
-            // 主动显示，打破“Rust 等前端、前端隐藏态又跑不动”的死锁。show 幂等，前端
-            // 正常路径提前显示时此处自动跳过。
-            {
-                let app_handle = app.handle().clone();
-                std::thread::spawn(move || {
-                    std::thread::sleep(std::time::Duration::from_millis(2500));
-                    let Some(window) = app_handle.get_webview_window(MAIN_WINDOW_LABEL) else {
-                        return;
-                    };
-                    if window.is_visible().unwrap_or(false) {
-                        return;
-                    };
-                    tracing::warn!(
-                        scope = "startup",
-                        event = "tauri.window.fallback-reveal",
-                        "main window still hidden ~2500ms after setup; revealing from native side"
-                    );
-                    // 兜底前先把原生底色同步为应用底色(#fafafa)，尽量减小首帧纯白。
+            // 原生秒显（对齐 VS Code / Zed / Electron backgroundColor 范式）：窗口配置
+            // visible:false，由 Rust 在 setup 阶段直接把原生底色设为应用底色 #fafafa 后立即
+            // show()——首帧即一块纯色原生窗口，不依赖前端跑到哪一步、也绝不画任何假骨架。真实
+            // UI 壳由 Vue 挂载后作为第一个内容帧无缝接管。这样彻底移除了旧「Rust 等前端 reveal、
+            // 前端隐藏态又跑不动」的死锁与 2.5s 兜底轮询。
+            timed_step!("tauri.setup.window-revealed", app_started_at, {
+                if let Some(window) = app.get_webview_window(MAIN_WINDOW_LABEL) {
                     let _ =
                         window.set_background_color(Some(tauri::window::Color(250, 250, 250, 255)));
                     let _ = window.show();
                     let _ = window.set_focus();
-                });
-            }
+                }
+            });
 
             // 冷启动关联文件打开：进程首次启动（非二次实例）时，关联文件路径在 argv 中。
             // 前端监听器要等 Vue 挂载后才注册，存在竞态——此处不再「定时重发猜时序」，而是把待

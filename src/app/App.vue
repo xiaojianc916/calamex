@@ -1,18 +1,13 @@
 <script setup lang="ts">
-import { defineAsyncComponent, onMounted, watch } from 'vue';
+import { defineAsyncComponent } from 'vue';
 import AppDialogHost from '@/components/common/AppDialogHost.vue';
 import BrowserContextMenuHost from '@/components/common/BrowserContextMenuHost.vue';
 import { Toaster } from '@/components/ui/sonner';
 import { TooltipProvider } from '@/components/ui/tooltip';
 import { useWindowResizeState } from '@/composables/useWindowResizeState';
-import { applyWindowStage, setWindowBackground } from '@/services/ipc/window.service';
 import { runtimeErrorState } from '@/utils/platform/runtime-diagnostics';
 import { markStartup, reportStartupTimings } from '@/utils/platform/startup-profiler';
 import 'vue-sonner/style.css';
-
-interface ITauriInternals {
-  invoke?: unknown;
-}
 
 // 致命错误界面受 runtimeErrorState 控制,仅在出错时挂载;异步加载让它(及其 lucide
 // 图标、ErrorDetails、Button 等依赖)退出首屏 chunk。出错本就罕见,异步加载的延迟可接受。
@@ -20,100 +15,16 @@ const FatalErrorScreen = defineAsyncComponent(
   () => import('@/components/common/FatalErrorScreen.vue'),
 );
 
-let hasAppliedMainWindowStage = false;
-let hasSyncedNativeWindowBackground = false;
-let isApplyingMainWindowStage = false;
-
 useWindowResizeState();
 
-const canUseNativeWindowIpc = (): boolean => {
-  if (typeof window === 'undefined') {
-    return false;
-  }
-
-  const internals = (window as Window & { __TAURI_INTERNALS__?: ITauriInternals })
-    .__TAURI_INTERNALS__;
-  return typeof internals?.invoke === 'function';
-};
-
-const syncNativeWindowBackground = async (): Promise<void> => {
-  if (hasSyncedNativeWindowBackground || !canUseNativeWindowIpc()) {
-    return;
-  }
-
-  try {
-    await setWindowBackground({ r: 250, g: 250, b: 250, a: 255 });
-    hasSyncedNativeWindowBackground = true;
-  } catch (error) {
-    console.warn('同步原生窗口底色失败', error);
-  }
-};
-
-const revealMainWindow = async (): Promise<void> => {
-  if (hasAppliedMainWindowStage || isApplyingMainWindowStage) {
-    return;
-  }
-
-  if (!canUseNativeWindowIpc()) {
-    markStartup('window-stage-main-skipped');
-    reportStartupTimings();
-    return;
-  }
-
-  isApplyingMainWindowStage = true;
-  markStartup('window-stage-main-start');
-  try {
-    await syncNativeWindowBackground();
-    await applyWindowStage({ stage: 'main' });
-    markStartup('window-stage-main-done');
-    hasAppliedMainWindowStage = true;
-  } catch (error) {
-    markStartup('window-stage-main-failed');
-    console.error('主窗口显示阶段应用失败', error);
-  } finally {
-    reportStartupTimings();
-    isApplyingMainWindowStage = false;
-  }
-};
-
-// 首帧绘制后尽早显示窗口：窗口默认 visible:false，用以根除「透明窗口先于 WebView2
-// 首帧合成」造成的透明边框闪烁；双 requestAnimationFrame 确保首帧已绘制后再显示。
-const scheduleInitialWindowReveal = (): void => {
-  if (typeof window === 'undefined') {
-    return;
-  }
-
-  window.requestAnimationFrame(() => {
-    window.requestAnimationFrame(() => {
-      void revealMainWindow();
-    });
-  });
-
-  // 兜底：当 rAF 长时间不触发(例如窗口/标签页不可见)时，仍保证窗口最终会显示。
-  window.setTimeout(() => {
-    void revealMainWindow();
-  }, 1200);
-};
-
+// 窗口显示已彻底移出前端：窗口默认 visible:false，由 Rust 在 setup 阶段建窗后立即 show()
+// （见 src-tauri/src/main.rs 的 native-reveal），真实壳 chrome 随 Vue 挂载作为第一个内容帧
+// 无缝接管。此处不再做任何窗口 reveal 编排 / 原生底色同步 / rAF 兜底 —— 那套「隐藏态等前端
+// reveal」正是旧首帧卡顿与白屏的根源。仅保留壳就绪埋点，用于度量真实 UI 首帧时点。
 const handleWorkbenchReady = (): void => {
   markStartup('workbench-ready-event');
-  void revealMainWindow();
+  reportStartupTimings();
 };
-
-watch(
-  runtimeErrorState,
-  (state) => {
-    if (state) {
-      void revealMainWindow();
-    }
-  },
-  { flush: 'post' },
-);
-
-onMounted(() => {
-  void syncNativeWindowBackground();
-  scheduleInitialWindowReveal();
-});
 </script>
 
 <template>

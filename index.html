@@ -7,9 +7,9 @@
   <meta name="color-scheme" content="light" />
   <title>Calamex</title>
   <style>
-    /* 基础重置：窗口默认 visible:false，挂载后才显示（见 App.vue）；
-     * 此处仅铺底色与布局，避免万一早期可见时出现白屏。
-     * 最终透明背景交由 styles.css 统一接管。 */
+    /* 基础重置：窗口默认 visible:false，由 Rust 在 setup 阶段建窗后立即显示（见 main.rs）；
+     * 此处铺与原生窗口一致的 #fafafa 底色与布局，杜绝首帧白屏。
+     * 最终背景由 styles.css 统一接管。不画任何假骨架——真实 UI 由 Vue 壳挂载后作为首帧渲染。 */
     html,
     body,
     #app {
@@ -38,12 +38,7 @@
 </head>
 
 <body>
-  <div id="app">
-    <div data-skeleton-root style="position:fixed;inset:0;display:flex;background:#fafafa">
-      <div style="width:260px;height:100%;border-right:1px solid #ececec;background:#f6f6f6"></div>
-      <div style="flex:1;height:100%;background:#fafafa"></div>
-    </div>
-  </div>
+  <div id="app"></div>
   <script type="module" src="/src/app/main.ts"></script>
 </body>
 
