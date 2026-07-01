@@ -14,3 +14,13 @@ lto = "thin"
 codegen-units = 1
 panic = "abort"
 strip = "debuginfo"
+
+# 降低 dev(debug) 构建的内存/时间开销（profile 必须放 workspace 根，否则被 cargo 忽略）。
+# 默认 debug=2 会让 calamex 二进制 LLVM 代码生成占大量内存，tauri dev 下易 OOM；
+# line-tables-only 仍保留 panic 栈行号。
+[profile.dev]
+debug = "line-tables-only"
+
+# 依赖不需要调试信息，进一步降低峰值内存与磁盘占用。
+[profile.dev.package."*"]
+debug = false
