@@ -72,7 +72,6 @@ import {
 } from '@codemirror/view';
 import { useEventListener, useResizeObserver } from '@vueuse/core';
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue';
-import { useShellResizeFrameScheduler } from '@/app/composables/useShellResizeFrameScheduler';
 import EditorContextMenu from '@/components/editor/EditorContextMenu.vue';
 import type { IEditorContextMenuItem } from '@/components/editor/editor-context-menu.types';
 import { buildCodeMirrorSettingsExtensions } from '@/services/editor/codemirror-config';
@@ -589,31 +588,6 @@ const scheduleEditorLayout = (): void => {
     layoutEditor();
   });
 };
-
-const updatePreviousContainerSize = (): void => {
-  if (!containerRef.value) return;
-  previousContainerSize = {
-    width: Math.round(containerRef.value.clientWidth),
-    height: Math.round(containerRef.value.clientHeight),
-  };
-};
-
-const handleShellWindowResizeStart = (): void => {
-  updatePreviousContainerSize();
-};
-
-const handleShellWindowResizeSettled = (): void => {
-  updatePreviousContainerSize();
-  // editorView 为 null 时 layout 是 no-op，因此直接以「是否存在编辑器」决定是否重排。
-  if (editorView !== null) scheduleEditorLayout();
-};
-
-useShellResizeFrameScheduler({
-  onStart: handleShellWindowResizeStart,
-  onFrame: scheduleEditorLayout,
-  onSettled: handleShellWindowResizeSettled,
-  settledFrames: 3,
-});
 
 // ──────────────────────────────
 // Context menu
