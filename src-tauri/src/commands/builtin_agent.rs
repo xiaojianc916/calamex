@@ -4,7 +4,6 @@ use crate::commands::contracts::{
     AgentSidecarModelConfigPayload, AgentSidecarResponsePayload,
     AgentSidecarRollbackStepPath, AgentSidecarWarmupPayload,
 };
-use agent_client_protocol::schema::{ContentBlock, TextContent};
 use tauri::{AppHandle, Manager};
 
 /// 取常驻 ACP 宿主：未建立时经 `AcpRuntime::get_or_spawn` 懒派生 stdio 子进程并缓存。
@@ -211,10 +210,10 @@ pub async fn builtin_agent_external_chat(
             .unwrap_or_else(|| acp_session_id.to_string());
 
         let stop_reason = host
-            .prompt_with_stream_key(
+            .prompt_text(
                 thread_id,
                 workspace_root_path,
-                vec![ContentBlock::Text(TextContent::new(text))],
+                &text,
                 Some(stream_session_id.as_str()),
             )
             .await?;

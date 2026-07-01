@@ -51,7 +51,6 @@ import { logger } from '@/utils/platform/logger';
 // Public types
 // ---------------------------------------------------------------------------
 
-import { extractDocumentText, isDocumentAttachment } from './attachment-document-text';
 // [auto-split imports]
 import { buildLiveThreadFromSidecarEvents } from './live-thread-from-sidecar';
 import {
@@ -158,7 +157,6 @@ export interface IUseAiAssistantOptions {
 
 const MAX_CONTEXT_CHARS = 12_000;
 const MAX_TEXT_ATTACHMENT_BYTES = 128 * 1024;
-const MAX_DOCUMENT_ATTACHMENT_BYTES = 20 * 1024 * 1024;
 const MAX_IMAGE_ATTACHMENT_BYTES = 5 * 1024 * 1024;
 const MSG_CALL_FAILED = 'AI 调用失败';
 
@@ -725,56 +723,6 @@ export const useAiAssistant = (options: IUseAiAssistantOptions) => {
   const attachFile = async (file: File): Promise<boolean> => {
     const normalizedName = normalizeAttachmentName(file);
 
-    if (isDocumentAttachment(file)) {
-      if (file.size > MAX_DOCUMENT_ATTACHMENT_BYTES) {
-        errorMessage.value = `文档超过 ${formatBytes(MAX_DOCUMENT_ATTACHMENT_BYTES)}，请压缩或拆分后再试。`;
-        return false;
-      }
-
-      const documentText = await extractDocumentText(file).catch((): null => null);
-
-      if (documentText === null) {
-        errorMessage.value = '解析文档失败，请确认文件未损坏后重试。';
-        return false;
-      }
-
-      const trimmedText = documentText.trim();
-
-      if (!trimmedText) {
-        errorMessage.value = '未能从该文档中提取到文本（可能是扫描件或纯图片内容）。';
-        return false;
-      }
-
-      const id = `attachment:${normalizedName}:${file.lastModified}:${file.size}`;
-      const reference: IAiContextReference = {
-        id,
-        kind: 'search-result',
-        label: `附件 · ${normalizedName}`,
-        path: normalizedName,
-        range: null,
-        contentPreview: [
-          `文件名：${normalizedName}`,
-          `大小：${formatBytes(file.size)}`,
-          '内容（已从文档提取为纯文本）：',
-          clipText(trimmedText, MAX_CONTEXT_CHARS),
-        ].join('\n'),
-        redacted: false,
-      };
-
-      replaceAttachedFile({
-        id,
-        name: normalizedName,
-        sizeLabel: formatBytes(file.size),
-        kind: 'text',
-        reference,
-      });
-
-      currentReferences.value = await buildReferences();
-      errorMessage.value = '';
-
-      return true;
-    }
-
     if (isTextAttachment(file)) {
       if (file.size > MAX_TEXT_ATTACHMENT_BYTES) {
         errorMessage.value = `附件超过 ${formatBytes(MAX_TEXT_ATTACHMENT_BYTES)}，请先拆分或只粘贴关键片段。`;
@@ -800,7 +748,7 @@ export const useAiAssistant = (options: IUseAiAssistantOptions) => {
           `文件名：${normalizedName}`,
           `大小：${formatBytes(file.size)}`,
           '内容：',
-          clipText(content, MAX_CONTEXT_CHARS),
+          content,
         ].join('\n'),
         redacted: false,
       };
@@ -878,7 +826,8 @@ export const useAiAssistant = (options: IUseAiAssistantOptions) => {
       return true;
     }
 
-    errorMessage.value = '当前只支持文本文件和图片作为 AI 上下文附件。';
+    errorMessage.value =
+      'AI 附件仅支持文本/代码文件与图片；PDF、Word、Excel 等二进制文档的解析已下线，请粘贴文本或另存为纯文本后再添加。';
     return false;
   };
 
@@ -1139,6 +1088,19 @@ export const useAiAssistant = (options: IUseAiAssistantOptions) => {
 
     currentReferences.value = references;
 
+    // 修复断链：把附件全文随标准 ACP session/prompt 一并送达模型。
+    // references.contentPreview 已含文本附件全文；图片仍只作 UI 预览、不并入文本 prompt。
+    const attachmentContextBlocks = references
+      .filter((reference) => reference.kind !== 'image-attachment')
+      .map((reference) =>
+        ['<附件 ' + reference.path + '>', reference.contentPreview, '</附件>'].join('\n'),
+      )
+      .join('\n\n');
+    const promptText =
+      attachmentContextBlocks.length > 0
+        ? messageContent + '\n\n' + attachmentContextBlocks
+        : messageContent;
+
     aiThreadStore.patchActiveThreadEntries((entries) =>
       entries.map((entry) =>
         entry.type === 'user_message' && entry.id === userEntry.id
@@ -1159,7 +1121,7 @@ export const useAiAssistant = (options: IUseAiAssistantOptions) => {
         ? BUILTIN_MODE_CONFIG_VALUE_BY_ASSISTANT_MODE[activeMode.value]
         : undefined;
 
-    await executeExternalAgentRequest(backend, messageContent, titleThreadId, modeConfigValue);
+    await executeExternalAgentRequest(backend, promptText, titleThreadId, modeConfigValue);
 
     if (!errorMessage.value) {
       void maybeGenerateConversationTitle(titleThreadId);

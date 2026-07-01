@@ -25,6 +25,13 @@ export const commands = {
 	renameWorkspacePath: (payload: WorkspacePathRenameRequest) => __TAURI_INVOKE<WorkspacePathRenamePayload>("rename_workspace_path", { payload }),
 	saveScript: (payload: SaveScriptRequest) => __TAURI_INVOKE<ScriptFilePayload>("save_script", { payload }),
 	/**
+	 *  弹出原生文件对话框（Rust 可信侧）并把所选附件读回。
+	 * 
+	 *  `default_dir` 仅作对话框初始目录提示，不是读取目标；真正被读的只有用户在对话框
+	 *  里选中的文件。用户取消则返回空列表（与旧前端 open() 取消返回 [] 的语义一致）。
+	 */
+	pickAttachmentFiles: (defaultDir: string | null) => __TAURI_INVOKE<PickAttachmentFilesPayload>("pick_attachment_files", { defaultDir }),
+	/**
 	 *  启动（或重启）工作区文件监听
 	 * 
 	 *  真正的目录遍历与监听在后台线程完成，本命令仅做根目录校验与 watcher 构造后
@@ -192,6 +199,12 @@ export const commands = {
 } | null>("ai_get_suggestion_pool_cache"),
 	aiGenerateSuggestionPool: (payload: AiSuggestionPoolRequest) => __TAURI_INVOKE<AiSuggestionPoolPayload>("ai_generate_suggestion_pool", { payload }),
 	aiCancel: (payload: AiCancelRequest) => __TAURI_INVOKE<null>("ai_cancel", { payload }),
+	/**
+	 *  驱逐某线程的 ACP 会话态（删除对话时调用）：委托 AcpRuntime 向全部已建立宿主广播移除该线程的
+	 *  thread↔session / config_options / available_commands 条目，根治这些按 thread/session 键的表随
+	 *  会话数单调增长的泄漏。threadId 空白视作无操作（对齐「删除本就不存在的对话」的良性调用）。
+	 */
+	aiEvictThread: (threadId: string) => __TAURI_INVOKE<null>("ai_evict_thread", { threadId }),
 	/**
 	 *  投递 ACP 反向权限请求（`session/request_permission`）的审批决策，唤醒回合内挂起的工具调用。
 	 * 
@@ -1003,6 +1016,16 @@ export type AiWebSearchResultPayload = {
 	fetchedAt: string,
 };
 
+/**
+ *  单个附件的读取结果：文件名 + base64 编码内容。
+ * 
+ *  base64 传输避免二进制经 IPC 序列化成 number[] 膨胀；附件属低频操作，编码开销可接受。
+ */
+export type AttachmentFilePayload = {
+	name: string,
+	base64: string,
+};
+
 export type CancelTerminalRunRequest = {
 	runId: string,
 };
@@ -1506,6 +1529,12 @@ export type LspPosition = {
 export type LspRange = {
 	start: LspPosition,
 	end: LspPosition,
+};
+
+/**  一次附件选择的汇总结果：所选文件 + 首个文件所在目录（供前端记忆为下次初始目录）。 */
+export type PickAttachmentFilesPayload = {
+	files: AttachmentFilePayload[],
+	pickedDir: string | null,
 };
 
 export type SaveScriptRequest = {

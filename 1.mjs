@@ -1,96 +1,160 @@
-// fix-narrow-acp-host-deadcode-allow.mjs
-// 作用：去掉 acp/host.rs 文件级 #![allow(dead_code)]，改为对 10 个「已实现未接线」方法
-//       逐个精确标注 #[allow(dead_code)]（含移除触发说明），使其余部分恢复死代码检测。
-// 幂等；CRLF 安全；锚点命中数必须为 1，否则中止且不写盘。
-import { readFileSync, writeFileSync, existsSync, readdirSync } from "node:fs";
-import { join, sep } from "node:path";
+// 1.mjs — R4-B: 让附件内容真正进入 ACP prompt + 删除三个前端解析依赖
+// 用法：置于仓库根目录，node 1.mjs
+import { readFileSync, writeFileSync, existsSync, rmSync } from 'node:fs';
+import { join } from 'node:path';
 
 const ROOT = process.cwd();
+const j = (...a) => a.join('\n');
 
-function findFile(relParts) {
-  const direct = join(ROOT, ...relParts);
-  if (existsSync(direct)) return direct;
-  const target = relParts.join("/");
-  const stack = [ROOT];
-  while (stack.length) {
-    const dir = stack.pop();
-    let entries;
-    try { entries = readdirSync(dir, { withFileTypes: true }); } catch { continue; }
-    for (const e of entries) {
-      const full = join(dir, e.name);
-      if (e.isDirectory()) {
-        if (e.name === "node_modules" || e.name === ".git" || e.name === "target") continue;
-        stack.push(full);
-      } else if (full.split(sep).join("/").endsWith(target)) {
-        return full;
-      }
+function patch(rel, edits) {
+  const p = join(ROOT, rel);
+  if (!existsSync(p)) throw new Error('缺文件: ' + rel);
+  const raw = readFileSync(p, 'utf8');
+  const crlf = raw.includes('\r\n');
+  let s = raw.replace(/\r\n/g, '\n');
+  for (const [find, replace, label] of edits) {
+    if (!s.includes(find)) throw new Error('❌ 匹配失败 [' + rel + ']: ' + label);
+    s = s.replace(find, replace);
+  }
+  writeFileSync(p, crlf ? s.replace(/\n/g, '\r\n') : s, 'utf8');
+  console.log('✓ 改写 ' + rel + '（' + edits.length + ' 处）');
+}
+
+// ── 1) useAiAssistant.ts：去解析化 + 附件全文并入 prompt ──
+patch('src/composables/ai/useAiAssistant.ts', [
+  [
+    "import { extractDocumentText, isDocumentAttachment } from './attachment-document-text';\n",
+    "",
+    '删除 attachment-document-text 导入',
+  ],
+  [
+    "const MAX_DOCUMENT_ATTACHMENT_BYTES = 20 * 1024 * 1024;\n",
+    "",
+    '删除 MAX_DOCUMENT_ATTACHMENT_BYTES 常量',
+  ],
+  [
+    j(
+      "    if (isDocumentAttachment(file)) {",
+      "      if (file.size > MAX_DOCUMENT_ATTACHMENT_BYTES) {",
+      "        errorMessage.value = `文档超过 ${formatBytes(MAX_DOCUMENT_ATTACHMENT_BYTES)}，请压缩或拆分后再试。`;",
+      "        return false;",
+      "      }",
+      "",
+      "      const documentText = await extractDocumentText(file).catch((): null => null);",
+      "",
+      "      if (documentText === null) {",
+      "        errorMessage.value = '解析文档失败，请确认文件未损坏后重试。';",
+      "        return false;",
+      "      }",
+      "",
+      "      const trimmedText = documentText.trim();",
+      "",
+      "      if (!trimmedText) {",
+      "        errorMessage.value = '未能从该文档中提取到文本（可能是扫描件或纯图片内容）。';",
+      "        return false;",
+      "      }",
+      "",
+      "      const id = `attachment:${normalizedName}:${file.lastModified}:${file.size}`;",
+      "      const reference: IAiContextReference = {",
+      "        id,",
+      "        kind: 'search-result',",
+      "        label: `附件 · ${normalizedName}`,",
+      "        path: normalizedName,",
+      "        range: null,",
+      "        contentPreview: [",
+      "          `文件名：${normalizedName}`,",
+      "          `大小：${formatBytes(file.size)}`,",
+      "          '内容（已从文档提取为纯文本）：',",
+      "          clipText(trimmedText, MAX_CONTEXT_CHARS),",
+      "        ].join('\\n'),",
+      "        redacted: false,",
+      "      };",
+      "",
+      "      replaceAttachedFile({",
+      "        id,",
+      "        name: normalizedName,",
+      "        sizeLabel: formatBytes(file.size),",
+      "        kind: 'text',",
+      "        reference,",
+      "      });",
+      "",
+      "      currentReferences.value = await buildReferences();",
+      "      errorMessage.value = '';",
+      "",
+      "      return true;",
+      "    }",
+      "",
+      "    if (isTextAttachment(file)) {",
+    ),
+    "    if (isTextAttachment(file)) {",
+    '移除前端文档解析分支（pdf/docx/xlsx 不再前端解析）',
+  ],
+  [
+    "          clipText(content, MAX_CONTEXT_CHARS),",
+    "          content,",
+    '文本附件不再截断到 12K（送全文）',
+  ],
+  [
+    j(
+      "    currentReferences.value = references;",
+      "",
+      "    aiThreadStore.patchActiveThreadEntries((entries) =>",
+    ),
+    j(
+      "    currentReferences.value = references;",
+      "",
+      "    // 修复断链：把附件全文随标准 ACP session/prompt 一并送达模型。",
+      "    // references.contentPreview 已含文本附件全文；图片仍只作 UI 预览、不并入文本 prompt。",
+      "    const attachmentContextBlocks = references",
+      "      .filter((reference) => reference.kind !== 'image-attachment')",
+      "      .map((reference) =>",
+      "        ['<附件 ' + reference.path + '>', reference.contentPreview, '</附件>'].join('\\n'),",
+      "      )",
+      "      .join('\\n\\n');",
+      "    const promptText =",
+      "      attachmentContextBlocks.length > 0",
+      "        ? messageContent + '\\n\\n' + attachmentContextBlocks",
+      "        : messageContent;",
+      "",
+      "    aiThreadStore.patchActiveThreadEntries((entries) =>",
+    ),
+    '发送前把附件内容折入 promptText（用户气泡仍只显示 messageContent）',
+  ],
+  [
+    "    await executeExternalAgentRequest(backend, messageContent, titleThreadId, modeConfigValue);",
+    "    await executeExternalAgentRequest(backend, promptText, titleThreadId, modeConfigValue);",
+    '标准发送链路改用 promptText',
+  ],
+  [
+    "    errorMessage.value = '当前只支持文本文件和图片作为 AI 上下文附件。';",
+    "    errorMessage.value = 'AI 附件仅支持文本/代码文件与图片；PDF、Word、Excel 等二进制文档的解析已下线，请粘贴文本或另存为纯文本后再添加。';",
+    '二进制文档改为诚实拒绝提示',
+  ],
+]);
+
+// ── 2) 删除已无消费方的前端解析模块 ──
+const dead = join(ROOT, 'src/composables/ai/attachment-document-text.ts');
+if (existsSync(dead)) {
+  rmSync(dead);
+  console.log('✓ 删除 src/composables/ai/attachment-document-text.ts');
+}
+
+// ── 3) package.json：移除三个重解析依赖 ──
+{
+  const p = join(ROOT, 'package.json');
+  const pkg = JSON.parse(readFileSync(p, 'utf8'));
+  const targets = ['pdfjs-dist', 'mammoth', 'read-excel-file'];
+  const removed = [];
+  for (const dep of targets) {
+    if (pkg.dependencies && dep in pkg.dependencies) {
+      delete pkg.dependencies[dep];
+      removed.push(dep);
     }
   }
-  return null;
+  writeFileSync(p, JSON.stringify(pkg, null, 2) + '\n', 'utf8');
+  console.log('✓ package.json 移除依赖: ' + (removed.join(', ') || '（无，可能已删）'));
 }
 
-const hostPath = findFile(["src-tauri", "src", "acp", "host.rs"]);
-if (!hostPath) { console.error("✗ 未找到 src-tauri/src/acp/host.rs（请在仓库根目录运行）"); process.exit(1); }
-console.log("• host.rs → " + hostPath);
-
-const original = readFileSync(hostPath, "utf8");
-const eol = original.includes("\r\n") ? "\r\n" : "\n";
-let text = original.split("\r\n").join("\n");
-
-function replaceOnce(oldStr, newStr, label) {
-  const parts = text.split(oldStr);
-  const hits = parts.length - 1;
-  if (hits !== 1) {
-    throw new Error("锚点[" + label + "]命中 " + hits + " 次（应为 1）——已中止，未写入任何改动。");
-  }
-  text = parts.join(newStr);
-}
-
-// ── 1) 去掉文件级 blanket allow（含其上两行说明注释）────────────────────────────
-const blanketBlock =
-  "// 过渡期：本模块部分薄宿主方法（web_search / web_fetch / restore_checkpoint 等）尚未\n" +
-  "// 全部接线到宿主命令，crate 外暂无调用点；接线后移除该 allow。\n" +
-  "#![allow(dead_code)]\n\n" +
-  "use parking_lot::Mutex;";
-let didBlanket = false;
-if (text.includes("#![allow(dead_code)]")) {
-  replaceOnce(blanketBlock, "use parking_lot::Mutex;", "移除文件级 #![allow(dead_code)]");
-  didBlanket = true;
-  console.log("✓ 已移除文件级 #![allow(dead_code)]");
-} else {
-  console.log("· 跳过：文件级 #![allow(dead_code)] 已不存在");
-}
-
-// ── 2) 对 10 个「已实现未接线」项逐个精确标注 #[allow(dead_code)] ────────────────
-// [锚点(每行起始，含缩进), 说明, 标签]
-const DEAD = [
-  ["    pub async fn prompt(",                 "Layer6 主回合(session/prompt)尚未接线到命令，接线后删本行", "prompt"],
-  ["    pub async fn prompt_with_stream_key(", "Layer6 主回合(session/prompt)尚未接线到命令，接线后删本行", "prompt_with_stream_key"],
-  ["    fn replay_available_commands(",        "随 Layer6 主回合接线，接线后删本行", "replay_available_commands"],
-  ["    pub async fn prompt_text(",            "Layer6 主回合(session/prompt)尚未接线到命令，接线后删本行", "prompt_text"],
-  ["    pub async fn restore_checkpoint(",     "calamex.dev/checkpoint/restore 未接线到命令，接线后删本行", "restore_checkpoint"],
-  ["    pub async fn web_search(",             "calamex.dev/web/search 未接线到命令，接线后删本行", "web_search"],
-  ["    pub async fn web_fetch(",              "calamex.dev/web/fetch 未接线到命令，接线后删本行", "web_fetch"],
-  ["    pub async fn warmup(",                 "calamex.dev/warmup 未接线到命令，接线后删本行", "warmup"],
-  ["    pub async fn health(",                 "calamex.dev/health 未接线到命令，接线后删本行", "health"],
-  ["fn build_available_commands_event(",       "仅随 Layer6 主回合调用，接线后删本行", "build_available_commands_event"],
-];
-
-let added = 0;
-for (const [anchor, reason, label] of DEAD) {
-  const indent = (anchor.match(/^(\s*)/) || ["", ""])[1];
-  const attrLine = indent + "#[allow(dead_code)] // " + reason;
-  if (text.includes(attrLine + "\n" + anchor)) { console.log("· 跳过(已标注)：" + label); continue; }
-  replaceOnce(anchor, attrLine + "\n" + anchor, label);
-  console.log("✓ 标注 dead_code：" + label);
-  added++;
-}
-
-if (!didBlanket && added === 0) {
-  console.log("✓ 已是目标状态，无需改动。");
-  process.exit(0);
-}
-
-writeFileSync(hostPath, text.split("\n").join(eol), "utf8");
-console.log("✓ 已写入 " + hostPath + "（eol=" + (eol === "\r\n" ? "CRLF" : "LF") + "）");
-console.log("请运行：cargo build && cargo test");
+console.log('\n完成。接下来手动执行：');
+console.log('  1) pnpm install            # 落实依赖删除，刷新 lockfile');
+console.log('  2) pnpm typecheck && pnpm lint && pnpm test');
