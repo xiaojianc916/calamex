@@ -10,9 +10,6 @@
 
 .app-window-shell {
   background: var(--app-bg);
-  box-shadow:
-    0 0 0 1px color-mix(in srgb, var(--shell-divider) 46%, transparent),
-    0 8px 20px -16px color-mix(in srgb, var(--text-quaternary) 42%, transparent);
 }
 
 /* 窗口 resize 冻结：在 html.is-resizing 存续期间用一条通用规则关掉所有
@@ -289,12 +286,4 @@ html.is-resizing .cm-tooltip-hover {
   border-color: var(--border-subtle);
   background: var(--surface-soft);
   color: var(--text-secondary);
-}
-
-.window-resize-handle {
-  pointer-events: none !important;
-}
-
-.app-window-shell {
-  box-shadow: none !important;
 }

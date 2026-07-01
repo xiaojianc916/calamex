@@ -2,9 +2,6 @@
     <div class="app-surface h-screen" :style="shellThemeStyle">
         <div class="app-window-shell relative flex h-full flex-col overflow-hidden border border-(--shell-divider)">
             <template v-if="isDesktopRuntime">
-                <div
-                    v-for="handle in resizeHandles" :key="handle.direction" class="window-resize-handle"
-                    :class="handle.className" @mousedown.prevent.stop="startWindowResize(handle.direction, $event)" />
                 <div class="app-window-drag-region" data-tauri-drag-region />
             </template>
 
@@ -65,7 +62,7 @@
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue';
 import GitHubAuthPill from '@/components/workbench/GitHubAuthPill.vue';
 import { useGitStore } from '@/domains/git/state/git';
-import { type TWindowResizeDirection, windowChromeService } from '@/services/tauri/window';
+import { windowChromeService } from '@/services/tauri/window';
 
 const SIDEBAR_MIN_WIDTH = 240;
 // 原生 onResized 会在拖拽缩放期间对每一个 WM_SIZE 帧持续触发；把最大化态回读
@@ -98,17 +95,6 @@ let isLayoutUnmounted = false;
 let unlistenWindowResized: (() => void) | null = null;
 let windowStateSyncTimer: ReturnType<typeof globalThis.setTimeout> | null = null;
 let windowStateResyncTimer: ReturnType<typeof globalThis.setTimeout> | null = null;
-
-const resizeHandles: Array<{ direction: TWindowResizeDirection; className: string }> = [
-  { direction: 'North', className: 'is-top' },
-  { direction: 'South', className: 'is-bottom' },
-  { direction: 'East', className: 'is-right' },
-  { direction: 'West', className: 'is-left' },
-  { direction: 'NorthEast', className: 'is-top-right' },
-  { direction: 'NorthWest', className: 'is-top-left' },
-  { direction: 'SouthEast', className: 'is-bottom-right' },
-  { direction: 'SouthWest', className: 'is-bottom-left' },
-];
 
 const resolvedSidebarWidth = computed(() =>
   props.sidebarVisible ? Math.max(SIDEBAR_MIN_WIDTH, Math.round(props.sidebarWidth)) : 0,
@@ -168,24 +154,6 @@ const handleMinimize = (): Promise<void> => windowChromeService.minimize();
 const handleToggleMaximize = async (): Promise<void> => {
   await windowChromeService.toggleMaximize();
   await syncWindowState();
-};
-
-// useWindowResizeState 已改由 ResizeObserver 直接响应 <html> 的渲染尺寸变化，
-// 不再需要这里手动派发 START/END 事件、也不需要用 mouseup 给它们“强行配对”
-// ——那一整套配对逻辑的唯一目的就是喂给已被移除的手写 resize 状态机。
-const startWindowResize = async (
-  direction: TWindowResizeDirection,
-  event: MouseEvent,
-): Promise<void> => {
-  if (!props.isDesktopRuntime || event.button !== 0) {
-    return;
-  }
-
-  try {
-    await windowChromeService.startResizeDragging(direction);
-  } catch (error) {
-    console.warn('窗口边缘拉伸失败', error);
-  }
 };
 
 const bindNativeWindowStateListeners = async (): Promise<void> => {

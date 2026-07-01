@@ -14,16 +14,6 @@ import { desktopRuntimeReady } from '@/utils/platform/desktop-runtime';
  *   不再各处各写一份 `__TAURI_INTERNALS__` 探测逻辑。
  */
 
-export type TWindowResizeDirection =
-  | 'North'
-  | 'South'
-  | 'East'
-  | 'West'
-  | 'NorthEast'
-  | 'NorthWest'
-  | 'SouthEast'
-  | 'SouthWest';
-
 type TAppWindowModule = typeof import('@tauri-apps/api/window');
 type TAppWindow = ReturnType<TAppWindowModule['getCurrentWindow']>;
 
@@ -63,12 +53,6 @@ export const windowChromeService = {
   toggleMaximize: async (): Promise<void> => {
     const appWindow = await getMainWindow();
     await appWindow?.toggleMaximize();
-  },
-
-  /** 从指定边缘/角落开始一次原生交互式缩放拖拽；非桌面运行时为 no-op。 */
-  startResizeDragging: async (direction: TWindowResizeDirection): Promise<void> => {
-    const appWindow = await getMainWindow();
-    await appWindow?.startResizeDragging(direction);
   },
 
   /**
