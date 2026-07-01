@@ -37,13 +37,24 @@ test("resource_link 投影为可读引用行", () => {
 	)
 })
 
-test("resource：有内联 text 用 text，无则用 uri", () => {
+test("resource：内联 text 投影为带附件抬头的正文，无 text 用 uri", () => {
 	assert.equal(
 		contentBlockToText({
 			type: "resource",
-			resource: { uri: "file:///b.ts", text: "内联内容" },
+			resource: { uri: "attachment:///b.ts", text: "内联内容" },
 		} as ContentBlock),
-		"内联内容",
+		"附件 b.ts：\n内联内容",
+	)
+	assert.equal(
+		contentBlockToText({
+			type: "resource",
+			resource: {
+				uri: "attachment:///b.ts",
+				text: "内联内容",
+				mimeType: "text/x-typescript",
+			},
+		} as ContentBlock),
+		"附件 b.ts（text/x-typescript）：\n内联内容",
 	)
 	assert.equal(
 		contentBlockToText({

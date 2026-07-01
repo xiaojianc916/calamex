@@ -562,6 +562,35 @@ describe('useAiAssistant · ACP-native 单一发送管线', () => {
     expect(userReferences(activeEntries()[0])[0]?.kind).toBe('image-attachment');
   });
 
+  it('发送文本附件时以 ACP embedded resource 原文与真实 mimeType 送达且不带 name', async () => {
+    const assistant = createAssistantHarness();
+    const attachment = new File(['export const answer = 42;'], 'answer.ts', {
+      type: 'text/plain',
+    });
+
+    await assistant.attachFile(attachment);
+
+    expect(assistant.attachedFiles.value).toHaveLength(1);
+    expect(assistant.attachedFiles.value[0]?.kind).toBe('text');
+
+    assistant.activeMode.value = 'chat';
+    assistant.draft.value = '看看这个文件';
+    await assistant.sendMessage();
+
+    const lastCall = aiServiceMock.sidecarExternalChat.mock.calls.at(-1)?.[0] as unknown as {
+      attachments?: Array<Record<string, unknown>>;
+    };
+    expect(lastCall.attachments).toEqual([
+      {
+        uri: 'attachment:///answer.ts',
+        text: 'export const answer = 42;',
+        mimeType: 'text/x-typescript',
+      },
+    ]);
+    expect(lastCall.attachments?.[0]).not.toHaveProperty('name');
+    expect(assistant.attachedFiles.value).toHaveLength(0);
+  });
+
   // -------------------------------------------------------------------------
   // 会话标题
   // -------------------------------------------------------------------------

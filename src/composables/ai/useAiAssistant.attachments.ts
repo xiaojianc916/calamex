@@ -47,6 +47,58 @@ export const isTextAttachment = (file: File): boolean =>
 export const isImageAttachment = (file: File): boolean =>
   IMAGE_ATTACHMENT_PATTERN.test(file.type) || IMAGE_ATTACHMENT_EXTENSION_PATTERN.test(file.name);
 
+// 文本类附件的规范 MIME（扩展名优先）：浏览器 File.type 对 .ts/.vue/.rs 等常给空或错值，故以
+// 扩展名为准，未命中再回退到形似文本的 File.type，最后兜底 text/plain。用作 ACP embedded resource
+// 的 mimeType 槽位，供 agent 侧识别语言类型（见 acp/to-runtime-input.ts 渲染抬头）。
+const TEXT_ATTACHMENT_MIME_BY_EXTENSION: Record<string, string> = {
+  ts: 'text/x-typescript',
+  tsx: 'text/x-typescript',
+  mts: 'text/x-typescript',
+  cts: 'text/x-typescript',
+  js: 'text/javascript',
+  mjs: 'text/javascript',
+  cjs: 'text/javascript',
+  jsx: 'text/javascript',
+  py: 'text/x-python',
+  rs: 'text/x-rust',
+  vue: 'text/x-vue',
+  json: 'application/json',
+  md: 'text/markdown',
+  yaml: 'application/yaml',
+  yml: 'application/yaml',
+  sql: 'application/sql',
+  toml: 'application/toml',
+  css: 'text/css',
+  csv: 'text/csv',
+  xml: 'application/xml',
+  html: 'text/html',
+  sh: 'text/x-sh',
+  bash: 'text/x-sh',
+  zsh: 'text/x-sh',
+  txt: 'text/plain',
+  log: 'text/plain',
+  env: 'text/plain',
+  conf: 'text/plain',
+  ps1: 'text/plain',
+};
+
+export const resolveTextAttachmentMimeType = (file: File): string => {
+  const match = /\.([^.]+)$/.exec(file.name.trim().toLowerCase());
+  const byExtension = match ? TEXT_ATTACHMENT_MIME_BY_EXTENSION[match[1]] : undefined;
+
+  if (byExtension) {
+    return byExtension;
+  }
+
+  const declared = file.type.trim().toLowerCase();
+
+  if (declared && TEXT_ATTACHMENT_PATTERN.test(declared)) {
+    return declared;
+  }
+
+  return 'text/plain';
+};
+
 const inferImageExtension = (mimeType: string): string => {
   const normalized = mimeType.toLowerCase();
 

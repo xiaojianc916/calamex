@@ -888,7 +888,6 @@ export type TAgentBackendKind = 'builtin' | 'kimi' | 'codex';
  * （协议首选的上下文注入方式），与用户正文并列送达，而非拼进正文字符串。
  */
 export interface IAgentPromptAttachment {
-  name: string;
   uri: string;
   text: string;
   mimeType?: string;

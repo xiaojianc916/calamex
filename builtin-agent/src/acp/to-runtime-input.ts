@@ -12,7 +12,7 @@
  * 内容块取舍（忠实于 protocol.ts 的稳定 ContentBlock 形状）：
  * - text          → 拼接进 user 消息正文（模型可读的唯一内联文本）；
  * - resource_link → 追加一行「引用：<name>（<uri>）」，保留可见的上下文线索；
- * - resource      → passthrough 若携带内联 text 则并入正文，否则按 uri 追加引用行；
+ * - resource      → 携带内联 text 则投影为「附件 <名>（<mime>）：<原文>」并入正文，否则按 uri 追加引用行；
  * - image / audio → 稳定面无内联文本，跳过（多模态注入由 promptCapabilities 协商，
  *                   属后续单元，不在文本投影内臆造）。
  */
@@ -27,6 +27,27 @@ import type { ContentBlock } from "@agentclientprotocol/sdk"
 /** prompt 文本为空时的 goal 兑底，与 http.ts toAgentInput 的语义保持一致。 */
 const EMPTY_PROMPT_GOAL = "继续当前任务"
 
+/** 从 attachment:/// 资源 uri 取展示用文件名（末段）；无末段时回退整段 uri。 */
+const attachmentDisplayName = (uri: string): string => {
+	const withoutScheme = uri.replace(/^attachment:\/\/+/, "")
+	const lastSegment = withoutScheme.split("/").pop()
+	return lastSegment && lastSegment.length > 0 ? lastSegment : uri
+}
+
+/**
+ * 把携带内联 text 的 embedded resource 投影为可读正文：以「附件 <名>（<mime>）：」抬头 + 换行 + 原文。
+ * 抬头让模型明确这是随附文件及其类型，取代旧「裸 text 直拼」的无标注做法；mime 缺省时省略括号段。
+ */
+const attachmentResourceToText = (
+	uri: string,
+	text: string,
+	mimeType?: string,
+): string => {
+	const name = attachmentDisplayName(uri)
+	const header = mimeType ? `附件 ${name}（${mimeType}）` : `附件 ${name}`
+	return `${header}：\n${text}`
+}
+
 /**
  * 把单个内容块投影为可并入 user 消息的纯文本片段；无文本可投影时返回 null。
  */
@@ -37,9 +58,17 @@ export const contentBlockToText = (block: ContentBlock): string | null => {
 		case "resource_link":
 			return `引用：${block.name}（${block.uri}）`
 		case "resource": {
-			const embedded = block.resource as { uri: string; text?: unknown }
+			const embedded = block.resource as {
+				uri: string
+				text?: unknown
+				mimeType?: unknown
+			}
 			if (typeof embedded.text === "string" && embedded.text.length > 0) {
-				return embedded.text
+				return attachmentResourceToText(
+					embedded.uri,
+					embedded.text,
+					typeof embedded.mimeType === "string" ? embedded.mimeType : undefined,
+				)
 			}
 			return `引用：${embedded.uri}`
 		}

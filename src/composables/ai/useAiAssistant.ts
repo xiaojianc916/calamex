@@ -69,6 +69,7 @@ import {
   isTextAttachment,
   normalizeAttachmentName,
   readImageDimensions,
+  resolveTextAttachmentMimeType,
 } from './useAiAssistant.attachments';
 import { useAiConversationTitles } from './useAiAssistant.conversation-titles';
 import {
@@ -763,6 +764,8 @@ export const useAiAssistant = (options: IUseAiAssistantOptions) => {
         name: normalizedName,
         sizeLabel: formatBytes(file.size),
         kind: 'text',
+        textContent: content,
+        mimeType: resolveTextAttachmentMimeType(file),
         reference,
       });
 
@@ -1095,18 +1098,23 @@ export const useAiAssistant = (options: IUseAiAssistantOptions) => {
 
     currentReferences.value = references;
 
-    // 正规范式（替代旧的 <附件> 字符串折叠）：把文本类附件作为独立的 ACP embedded resource 内容块
-    // 随标准 session/prompt 送达（见 Rust host.prompt_with_attachments / agent-client-protocol
-    // ContentBlock::Resource——协议首选的上下文注入方式）。这样保留 name/uri/mimeType 语义、避免正文
-    // 分隔符冲突与提示注入；图片附件仍只作 UI 预览、不并入（多模态注入待 promptCapabilities 协商）。
-    const promptAttachments: IAgentPromptAttachment[] = references
-      .filter((reference) => reference.kind !== 'image-attachment')
-      .map((reference) => ({
-        name: reference.label,
-        uri: `attachment:///${reference.path ?? reference.id}`,
-        text: reference.contentPreview,
-        mimeType: 'text/plain',
-      }));
+    // 正规范式：文本类附件作为独立的 ACP embedded resource 内容块随标准 session/prompt 送达
+    // （见 Rust host.prompt_with_attachments / agent-client-protocol ContentBlock::Resource——协议
+    // 首选的上下文注入方式）。resource 的 uri 即身份、mimeType 标注语言类型、text 直接承载附件原文；
+    // 不再把内容折进「文件名/大小/内容」这类人读散文（旧字符串时代残留），也不臆造 ACP
+    // TextResourceContents 没有的 name 槽位。图片附件仍只作 UI 预览、不并入（多模态注入待
+    // promptCapabilities 协商）。直接读 attachedFiles（在 clearAttachedFiles 之前），不绕经 references。
+    const promptAttachments: IAgentPromptAttachment[] = attachedFiles.value.flatMap((file) =>
+      file.kind === 'text' && typeof file.textContent === 'string'
+        ? [
+            {
+              uri: `attachment:///${file.name}`,
+              text: file.textContent,
+              ...(file.mimeType ? { mimeType: file.mimeType } : {}),
+            },
+          ]
+        : [],
+    );
 
     aiThreadStore.patchActiveThreadEntries((entries) =>
       entries.map((entry) =>

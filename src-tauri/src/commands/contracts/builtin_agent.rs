@@ -147,11 +147,10 @@ pub enum AgentBackendKind {
 ///
 /// 每个附件在宿主侧被投影为一个 ACP embedded resource 内容块（协议首选的上下文注入方式，见
 /// agent-client-protocol content.rs：`ContentBlock::Resource`），与用户正文 text 块并列送达，
-/// 而非拼进正文字符串——避免正文分隔符冲突/提示注入，并保留 name/uri/mimeType 语义。
+/// 而非拼进正文字符串——避免正文分隔符冲突/提示注入；uri 即资源身份、mimeType 标注类型、text 承载原文（ACP TextResourceContents 无 name 槽位）。
 #[derive(Debug, Clone, Serialize, Deserialize, Type)]
 #[serde(rename_all = "camelCase")]
 pub struct AgentPromptAttachment {
-    pub(crate) name: String,
     pub(crate) uri: String,
     pub(crate) text: String,
     #[serde(skip_serializing_if = "is_blank_optional_string")]
@@ -202,9 +201,9 @@ mod builtin_agent_contract_tests {
     use serde_json::{Map, Value};
 
     use super::{
-        AgentBackendKind, AgentExternalChatRequest, AgentSidecarChatRequest,
-        AgentSidecarCheckpointRestoreRequest, AgentSidecarMessagePayload,
-        AgentSidecarRollbackStepPath,
+        AgentBackendKind, AgentExternalChatRequest, AgentPromptAttachment,
+        AgentSidecarChatRequest, AgentSidecarCheckpointRestoreRequest,
+        AgentSidecarMessagePayload, AgentSidecarRollbackStepPath,
     };
 
     fn sidecar_message() -> AgentSidecarMessagePayload {
@@ -367,6 +366,48 @@ mod builtin_agent_contract_tests {
         assert_eq!(
             present_object.get("threadId"),
             Some(&Value::String("thread-external-1".to_string()))
+        );
+    }
+
+    #[test]
+    fn prompt_attachment_serializes_protocol_slots_without_name() {
+        let attachment = AgentPromptAttachment {
+            uri: "attachment:///answer.ts".to_string(),
+            text: "export const answer = 42;".to_string(),
+            mime_type: Some("text/x-typescript".to_string()),
+        };
+
+        let object = serialize_object(&attachment);
+
+        assert_eq!(
+            object.get("uri"),
+            Some(&Value::String("attachment:///answer.ts".to_string()))
+        );
+        assert_eq!(
+            object.get("text"),
+            Some(&Value::String("export const answer = 42;".to_string()))
+        );
+        assert_eq!(
+            object.get("mimeType"),
+            Some(&Value::String("text/x-typescript".to_string()))
+        );
+        assert!(!object.contains_key("name"));
+    }
+
+    #[test]
+    fn prompt_attachment_omits_blank_mime_type() {
+        let attachment = AgentPromptAttachment {
+            uri: "attachment:///notes.txt".to_string(),
+            text: "hello".to_string(),
+            mime_type: None,
+        };
+
+        let object = serialize_object(&attachment);
+
+        assert!(!object.contains_key("mimeType"));
+        assert_eq!(
+            object.get("uri"),
+            Some(&Value::String("attachment:///notes.txt".to_string()))
         );
     }
 }

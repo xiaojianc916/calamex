@@ -248,6 +248,10 @@ export interface IAiAttachedFile {
   errorMessage?: string;
   detailLabel?: string;
   preview?: IAiImageAttachmentPreview;
+  /** 文本类附件（kind==='text'）的原始文件内容，作为 ACP embedded resource 的 text 槽位原样送达。 */
+  textContent?: string;
+  /** 文本类附件的规范 MIME（由扩展名解析），作为 ACP embedded resource 的 mimeType 槽位。 */
+  mimeType?: string;
   reference: IAiContextReference;
 }
 
