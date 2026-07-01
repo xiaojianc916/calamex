@@ -88,6 +88,8 @@ type TSession = {
   // tokenizeRange 取 (blockStartLine, startLine] 内行号最大的检查点起切以缩短导入行；
   // 语法 token 是「起始态+文本」的确定函数，故与块首起切结果完全一致。编辑时按行失效。
   resumeCheckpoints: Map<number, unknown>;
+  // 与 resumeCheckpoints 同步维护的升序行号数组，供二分查找（O(log n)）。
+  resumeCheckpointLines: number[];
 };
 
 let highlighterPromise: Promise<HighlighterCore> | null = null;
@@ -296,12 +298,45 @@ const applyEdit = (req: TEditRequest): void => {
   }
   // 编辑使 fromLine 之后所有行的起始语法态与行号失效（splice 同时位移行号）；
   // fromLine 及之前的检查点仍精确有效，按行删除其后的检查点即可。
-  for (const line of session.resumeCheckpoints.keys()) {
-    if (line > req.fromLine) {
-      session.resumeCheckpoints.delete(line);
+  {
+    const lines = session.resumeCheckpointLines;
+    const cut = lowerBound(lines, req.fromLine + 1);
+    for (let i = cut; i < lines.length; i += 1) {
+      session.resumeCheckpoints.delete(lines[i]);
     }
+    lines.length = cut;
   }
   scheduleBackground();
+};
+
+// 升序数组二分：返回第一个 >= target 的下标（lower bound）。
+const lowerBound = (sorted: number[], target: number): number => {
+  let lo = 0;
+  let hi = sorted.length;
+  while (lo < hi) {
+    const mid = (lo + hi) >> 1;
+    if (sorted[mid] < target) {
+      lo = mid + 1;
+    } else {
+      hi = mid;
+    }
+  }
+  return lo;
+};
+
+const insertSortedUnique = (sorted: number[], value: number): void => {
+  const index = lowerBound(sorted, value);
+  if (sorted[index] === value) {
+    return;
+  }
+  sorted.splice(index, 0, value);
+};
+
+const removeSorted = (sorted: number[], value: number): void => {
+  const index = lowerBound(sorted, value);
+  if (sorted[index] === value) {
+    sorted.splice(index, 1);
+  }
 };
 
 const setResumeCheckpoint = (session: TSession, line: number, state: unknown): void => {
@@ -309,15 +344,20 @@ const setResumeCheckpoint = (session: TSession, line: number, state: unknown): v
     return;
   }
   if (session.resumeCheckpoints.has(line)) {
+    // 已存在：仅刷新 LRU 新近度（Map 重新入队尾），有序行数组无需变动。
     session.resumeCheckpoints.delete(line);
+    session.resumeCheckpoints.set(line, state);
+    return;
   }
   session.resumeCheckpoints.set(line, state);
+  insertSortedUnique(session.resumeCheckpointLines, line);
   while (session.resumeCheckpoints.size > MAX_RESUME_CHECKPOINTS) {
     const oldest = session.resumeCheckpoints.keys().next().value;
     if (oldest === undefined) {
       break;
     }
     session.resumeCheckpoints.delete(oldest);
+    removeSorted(session.resumeCheckpointLines, oldest);
   }
 };
 
@@ -328,14 +368,18 @@ const nearestResumeCheckpoint = (
   afterLine: number,
   startLine: number,
 ): { line: number; state: unknown } | null => {
-  let bestLine = afterLine;
-  let bestState: unknown = null;
-  for (const [line, state] of session.resumeCheckpoints) {
-    if (line > bestLine && line <= startLine && state != null) {
-      bestLine = line;
-      bestState = state;
-    }
+  // 有序行数组取 <= startLine 的最大行（lowerBound(startLine+1)-1），再校验 > afterLine。
+  // 所有已存状态非空，故与原线性扫描结果等价。
+  const lines = session.resumeCheckpointLines;
+  const index = lowerBound(lines, startLine + 1) - 1;
+  if (index < 0) {
+    return null;
   }
+  const bestLine = lines[index];
+  if (bestLine <= afterLine) {
+    return null;
+  }
+  const bestState = session.resumeCheckpoints.get(bestLine);
   return bestState == null ? null : { line: bestLine, state: bestState };
 };
 
@@ -411,6 +455,7 @@ workerSelf.addEventListener('message', (event) => {
       blockEndState: new Map(),
       bgCursor: 0,
       resumeCheckpoints: new Map(),
+      resumeCheckpointLines: [],
     };
     sessions.set(data.sessionKey, session);
     if (sessions.size > MAX_SESSIONS) {

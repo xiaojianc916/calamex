@@ -10,7 +10,7 @@
 //! 现统一归到用户主目录下的单一品牌根 `~/.calamex`（Windows 即
 //! `%USERPROFILE%\.calamex`，例如 `C:\Users\陈小建\.calamex`），按功能分子目录：
 //! - `config/`：AI 配置（`settings.json`）与会话快照（`session.json`）
-//! - `ai-edits/`：AI 编辑历史
+//! - `data/ai-edit-history/`：AI 编辑历史
 //! - `ai-service/`：本地 AI 服务运行时（令牌 / 日志 / Node 编译缓存）
 //!
 //! 主目录路径不写死、跨平台动态解析，且始终可写，便于集中备份与排查。
@@ -93,7 +93,7 @@ pub fn migrate_legacy_storage() {
     };
 
     // 迁移水位：已到当前 schema 版本则整体短路，省去每次启动的多次磁盘探测。
-    const STORAGE_SCHEMA_VERSION: u32 = 2;
+    const STORAGE_SCHEMA_VERSION: u32 = 3;
     // schema.json 记录已完成迁移的 schema 版本；兼容读取上一代裸整数标记 .storage-schema。
     let marker = root.join("schema.json");
     let legacy_marker = root.join(".storage-schema");
@@ -120,7 +120,7 @@ pub fn migrate_legacy_storage() {
         let prev_roaming = appdata.join(APP_STORAGE_DIR_NAME);
         if prev_roaming != root {
             migrate_path(&prev_roaming.join("config"), &root.join("config"));
-            migrate_path(&prev_roaming.join("ai-edits"), &root.join("ai-edits"));
+            migrate_path(&prev_roaming.join("ai-edits"), &root.join("data").join("ai-edit-history"));
         }
     }
     if let Some(local_app_data) = std::env::var_os("LOCALAPPDATA").map(PathBuf::from) {
@@ -143,7 +143,7 @@ pub fn migrate_legacy_storage() {
         let identifier_dir = appdata.join("com.xiaojianc.Calamex");
         migrate_path(
             &identifier_dir.join(".notion-ide-ai").join("edits"),
-            &root.join("ai-edits"),
+            &root.join("data").join("ai-edit-history"),
         );
     }
 
@@ -153,17 +153,20 @@ pub fn migrate_legacy_storage() {
             .join("com.xiaojianc.Calamex")
             .join("builtin-agent");
         let new_service = root.join("ai-service");
-        // 整目录迁移后，把仍在用的 node 编译缓存目录名规整为按功能命名。
+        // 整目录迁移：把旧 builtin-agent 运行时目录搬到 ai-service（node 编译缓存已改落 cache/node-compile，见 launch.rs）。
         // 注：原先还把 builtin-agent.token/.log 规整为 auth.token/service.log，但那些是旧 HTTP
         // 服务遗物；现行 ACP stdio 边车不写 token（stdio 无鉴权）、日志走 stderr（见 stdio-entry.ts），
         // 故删除那几条僵尸改名，避免给死文件维护更好听的名字。
         migrate_path(&legacy_service, &new_service);
-        rename_within(&new_service, ".node-compile-cache", "node-compile-cache");
     }
 
     // config/ai.json -> config/settings.json：文件名由「按 feature(ai)」改为「按类别(应用设置)」，
     // 与 storage_paths 单一事实源一致；对既有安装做同卷改名，幂等（改过即跳过）。
     rename_within(&root.join("config"), "ai.json", "settings.json");
+
+    // ai-edits -> data/ai-edit-history：把「按 feature 命名的历史数据」归入 data 类别目录，
+    // 与 storage_paths 单一事实源一致；对既有安装做同卷移动，migrate_path 幂等（目标在则跳过）。
+    migrate_path(&root.join("ai-edits"), &root.join("data").join("ai-edit-history"));
 
     // 迁移完成：落 schema.json 水位标记（带字段名，便于扩展），下次启动直接短路。
     if let Err(error) = fs::create_dir_all(&root)

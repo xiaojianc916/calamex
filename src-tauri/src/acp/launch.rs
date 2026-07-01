@@ -110,7 +110,7 @@ fn resolve_entry_args(sidecar_root: &Path) -> Result<Vec<String>, String> {
 }
 
 /// 构造子进程环境变量。仅含 stdio 入口真正需要的项：
-///   * `NODE_COMPILE_CACHE`：复用编译缓存，缩短冷启动（与旧路径一致）；
+///   * `NODE_COMPILE_CACHE`：复用编译缓存，缩短冷启动（落 cache/node-compile）；
 ///   * `TAVILY_API_KEY`：web 工具所需，统一从 OS keyring 读取（与其它 AI 凭证同源）；
 ///   * `AGENT_MCP_UVX_PATH`：MCP 工具拉起 uvx 所需（Windows 解析）。
 fn build_builtin_agent_env() -> Vec<(String, String)> {
@@ -118,7 +118,7 @@ fn build_builtin_agent_env() -> Vec<(String, String)> {
 
     env.push((
         "NODE_COMPILE_CACHE".to_string(),
-        path_to_string(&builtin_agent_runtime_dir().join("node-compile-cache")),
+        path_to_string(&crate::storage_paths::local_root().join("cache").join("node-compile")),
     ));
 
     // Tavily（web 工具）Key 由 Rust 宿主从 OS keyring 读出后注入子进程环境，子进程据此读
@@ -139,11 +139,6 @@ fn build_builtin_agent_env() -> Vec<(String, String)> {
     }
 
     env
-}
-
-/// 运行时可写目录：统一落到品牌根 `.calamex/ai-service`（与 `storage_paths` 一致）。
-fn builtin_agent_runtime_dir() -> PathBuf {
-    crate::storage_paths::local_root().join("ai-service")
 }
 
 fn resolve_builtin_agent_root() -> Result<PathBuf, String> {
