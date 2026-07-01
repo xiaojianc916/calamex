@@ -377,10 +377,10 @@ mod tests {
     #[test]
     fn rename_within_normalizes_file_name() {
         let dir = unique_temp_dir("rename");
-        fs::write(dir.join("builtin-agent.token"), b"tok").unwrap();
-        rename_within(&dir, "builtin-agent.token", "auth.token");
-        assert!(dir.join("auth.token").exists());
-        assert!(!dir.join("builtin-agent.token").exists());
+        fs::write(dir.join(".node-compile-cache"), b"cache").unwrap();
+        rename_within(&dir, ".node-compile-cache", "node-compile-cache");
+        assert!(dir.join("node-compile-cache").exists());
+        assert!(!dir.join(".node-compile-cache").exists());
         let _ = fs::remove_dir_all(&dir);
     }
 }
