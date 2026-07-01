@@ -10,12 +10,15 @@
 //!
 //! # 有意的不兼容
 //! 只认 `"git:<40 位十六进制 oid>"` 一种 blob key 格式。旧的 `"fjall:<hash>"` /
-//! `"cas:<relative path>"` key 不再能被读取——`read_blob` 对它们硬报错。但
-//! `remove_blob`（GC 路径使用）对无法识别的 key 格式故意宽容（视为无操作），
-//! 因为它们本来就不是本存储写过的对象——否则单个迁移前的旧快照会让整个 GC 批次
-//! 因一次解析失败而整体中断。这是一次干净的存储底座替换：旧的临时（未 pin）
-//! 快照全文会随之失效，等价于一次保留策略意义上的“提前过期”；快照清单
-//! （manifest）本身不受影响，仍可正常列出。
+//! `"cas:<relative path>"` key 不再能被读取或删除——`read_blob`/`remove_blob`
+//! 对它们都是硬报错，本模块不做任何新旧兼容判断。真正过滤迁移前遗留 key 的
+//! 唯一位置在上游 `snapshot::SnapshotManifest::has_live_blob`（基于本模块导出的
+//! `is_valid_blob_key`）：只有全部文件都持有合法新格式 key 的快照，才会被认定
+//! 为“内容仍然存活”，从而进入保留策略的裁剪/删除路径。换句话说，`remove_blob`
+//! 在正常运行时永远不会收到旧格式 key——如果收到了，说明上游过滤逻辑本身有
+//! bug，理应直接报错暴露问题，而不是在这里静默吞掉。这是一次干净的存储底座
+//! 替换：旧的临时（未 pin）快照全文会随之失效，等价于一次保留策略意义上的
+//! “提前过期”；快照清单（manifest）本身不受影响，仍可正常列出。
 //!
 //! # 并发
 //! 本模块自身不加锁；调用方（`snapshot.rs`）必须已经持有
@@ -91,20 +94,17 @@ pub fn read_blob(repo: &gix::Repository, blob_key: &str) -> Result<Vec<u8>, Stri
 
 /// 删除一个 blob 对象的 loose object 文件，返回释放的磁盘字节数。
 ///
-/// 对无法识别的 blob_key 格式（包括迁移前留下的 `"fjall:"`/`"cas:"` 前缀）故意
-/// 返回 `Ok(0)` 而不是报错：这些 key 本来就不是本存储写过的对象，对它们而言
-/// “删除”本身就是一个无意义的操作。若这里硬报错，保留策略 GC（
-/// `snapshot::apply_snapshot_retention`）会因为扰到任何一个迁移前的旧快照而
-/// 整批中断。
+/// 只接受合法的 `"git:<oid>"` key，格式不对直接报错。调用方
+/// （`snapshot::apply_snapshot_retention`）在调用本函数之前，已经通过
+/// `is_valid_blob_key`/`has_live_blob` 把所有迁移前遗留的旧格式 key 过滤在外，
+/// 正常运行时不会有旧格式 key 传到这里——过滤只在一个地方做，本函数不重复
+/// 实现一遍兼容判断。
 ///
-/// `write_blob` 只会产出 loose object（本模块从不 `git gc`/repack），因此对确实
-/// 是 `git:` 格式的 key，可以按 git 标准 loose object 布局（
-/// `objects/<前2位>/<后38位>`）直接定位文件并删除，无需通过 gix 的高层 API 做
-/// 对象级 GC。
+/// `write_blob` 只会产出 loose object（本模块从不 `git gc`/repack），因此可以按
+/// git 标准 loose object 布局（`objects/<前2位>/<后38位>`）直接定位文件并删除，
+/// 无需通过 gix 的高层 API 做对象级 GC。
 pub fn remove_blob(storage_root: &Path, blob_key: &str) -> Result<u64, String> {
-    let Some(oid) = try_parse_blob_key(blob_key) else {
-        return Ok(0);
-    };
+    let oid = parse_blob_key(blob_key)?;
     let hex = oid.to_string();
     let (prefix, suffix) = hex.split_at(2);
     let object_path = storage_root
@@ -116,9 +116,9 @@ pub fn remove_blob(storage_root: &Path, blob_key: &str) -> Result<u64, String> {
     remove_file_reporting_size(&object_path)
 }
 
-/// 是否是本模块当前会写入 / 认可的 blob key 格式（用于 `content_available`
-/// 之类需要区分“可恢复”与“历史遗留、已不可读”的判定，而不是仅看 key 是否
-/// 存在）。
+/// 是否是本模块当前会写入 / 认可的 blob key 格式。上游（`snapshot.rs`）用它来
+/// 判定一个快照清单里的引用是否仍然“存活”——这是区分旧格式遗留与当前有效
+/// 引用的唯一入口，不应在其他地方重复写同样的判断。
 pub fn is_valid_blob_key(blob_key: &str) -> bool {
     try_parse_blob_key(blob_key).is_some()
 }
@@ -229,33 +229,18 @@ mod tests {
     }
 
     #[test]
-    fn read_blob_rejects_malformed_keys() {
+    fn read_and_remove_reject_malformed_or_legacy_keys() {
         let temp_dir = temp_dir("aed-blob-store-malformed");
         fs::create_dir_all(&temp_dir).expect("temp directory should be created");
         let repo = open_blob_repo(&temp_dir).expect("blob repo should open");
 
-        assert!(read_blob(&repo, "fjall:legacy-hash").is_err());
-        assert!(read_blob(&repo, "cas:blobs/ab/cdef").is_err());
-        assert!(read_blob(&repo, "git:not-a-valid-oid").is_err());
-
-        let _ = fs::remove_dir_all(&temp_dir);
-    }
-
-    #[test]
-    fn remove_blob_is_a_no_op_for_legacy_key_formats() {
-        let temp_dir = temp_dir("aed-blob-store-legacy-remove");
-        fs::create_dir_all(&temp_dir).expect("temp directory should be created");
-
-        // v3 之前的 manifest 可能残留 "fjall:"/"cas:" 前缀的 blob_key；GC 遇到
-        // 这些历史 key 时必须整体不中断，而不是让 remove_blob 报错拖垮整批裁剪。
-        assert_eq!(
-            remove_blob(&temp_dir, "fjall:legacy-hash").expect("legacy key removal should no-op"),
-            0
-        );
-        assert_eq!(
-            remove_blob(&temp_dir, "cas:blobs/ab/cdef").expect("legacy key removal should no-op"),
-            0
-        );
+        // "fjall:"/"cas:" 是迁移前遗留的旧格式前缀，"git:not-a-valid-oid" 是前缀正确
+        // 但内容非法的新格式 key；两类都必须被拒绝，且 read_blob 与 4remove_blob 的
+        // 判定逻辑必须一致（都基于同一个 parse_blob_key）。
+        for bad_key in ["fjall:legacy-hash", "cas:blobs/ab/cdef", "git:not-a-valid-oid"] {
+            assert!(read_blob(&repo, bad_key).is_err());
+            assert!(remove_blob(&temp_dir, bad_key).is_err());
+        }
 
         let _ = fs::remove_dir_all(&temp_dir);
     }
