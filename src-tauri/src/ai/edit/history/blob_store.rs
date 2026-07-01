@@ -10,15 +10,19 @@
 //!
 //! # 有意的不兼容
 //! 只认 `"git:<40 位十六进制 oid>"` 一种 blob key 格式。旧的 `"fjall:<hash>"` /
-//! `"cas:<relative path>"` key 一律视为格式无效——本模块不做、也不打算做新旧双读
-//! 兼容层。这是一次干净的存储底座替换：旧的临时（未 pin）快照全文会随之失效，
-//! 等价于一次保留策略意义上的“提前过期”；快照清单（manifest）本身不受影响，
-//! 仍可正常列出。
+//! `"cas:<relative path>"` key 不再能被读取——`read_blob` 对它们硬报错。但
+//! `remove_blob`（GC 路径使用）对无法识别的 key 格式故意宽容（视为无操作），
+//! 因为它们本来就不是本存储写过的对象——否则单个迁移前的旧快照会让整个 GC 批次
+//! 因一次解析失败而整体中断。这是一次干净的存储底座替换：旧的临时（未 pin）
+//! 快照全文会随之失效，等价于一次保留策略意义上的“提前过期”；快照清单
+//! （manifest）本身不受影响，仍可正常列出。
 //!
 //! # 并发
 //! 本模块自身不加锁；调用方（`snapshot.rs`）必须已经持有
-//! `io::storage_lock::with_storage_write_lock` / `with_storage_read_lock`，
-//! 与 fjall `Database` 共享同一把 `journal.lock`，避免并发初始化/写入裸仓库。
+//! `io::storage_lock::with_storage_write_lock` / `with_storage_read_lock`。注意
+//! 后者是真实的共享锁（`try_lock_shared`），多个只读调用可以并发进入；
+//! `open_blob_repo` 因此对首次初始化路径做了显式的竞争回退处理（见下文），
+//! 不依赖调用方总是先写后读。
 
 use crate::ai::edit::errors;
 use std::path::Path;
@@ -28,22 +32,39 @@ const BLOB_KEY_PREFIX: &str = "git:";
 
 /// 打开（或按需初始化）AED blob 对象库。
 ///
-/// 通过检测 `HEAD` 文件是否存在来判断“已初始化”，而不是尝试 `open` 后按错误
-/// 类型回退——避免对 gix 内部错误枚举做脆弱的模式匹配。
+/// 通过检测 `HEAD` 文件是否存在来判断“已初始化”。`with_storage_read_lock`
+/// 允许多个调用方并发持有共享锁，因此这里存在竞争窗口：两个并发的首次
+/// 初始化调用都可能看到 `HEAD` 不存在并同时走到 `init_bare`。对此做显式
+/// 回退：若 `init_bare` 失败但 `HEAD` 现已存在（说明输掉了竞争），改为直接
+/// `open`而不是把竞争当成真正的初始化失败。
 pub fn open_blob_repo(storage_root: &Path) -> Result<gix::Repository, String> {
     let git_dir = storage_root.join(BLOB_STORE_DIR);
 
     if git_dir.join("HEAD").is_file() {
-        return gix::open(git_dir.as_path()).map_err(|error| {
-            errors::snapshot_store_failed(format!("打开 blob 对象库失败：{error}"))
-        });
+        return open_existing_bare_repo(&git_dir);
     }
 
     std::fs::create_dir_all(&git_dir).map_err(|error| {
         errors::snapshot_store_failed(format!("创建 blob 对象库目录失败：{error}"))
     })?;
-    gix::init_bare(git_dir.as_path())
-        .map_err(|error| errors::snapshot_store_failed(format!("初始化 blob 对象库失败：{error}")))
+
+    match gix::init_bare(git_dir.as_path()) {
+        Ok(repo) => Ok(repo),
+        Err(init_error) => {
+            if git_dir.join("HEAD").is_file() {
+                open_existing_bare_repo(&git_dir)
+            } else {
+                Err(errors::snapshot_store_failed(format!(
+                    "初始化 blob 对象库失败：{init_error}"
+                )))
+            }
+        }
+    }
+}
+
+fn open_existing_bare_repo(git_dir: &Path) -> Result<gix::Repository, String> {
+    gix::open(git_dir)
+        .map_err(|error| errors::snapshot_store_failed(format!("打开 blob 对象库失败：{error}")))
 }
 
 /// 写入一份文件内容，返回 `"git:<oid>"` 形式的 blob key。
@@ -57,7 +78,9 @@ pub fn store_blob(repo: &gix::Repository, content: &[u8]) -> Result<String, Stri
     Ok(format!("{BLOB_KEY_PREFIX}{id}"))
 }
 
-/// 按 blob key 读取内容的原始字节。仅接受本模块写入的 `"git:<oid>"` key。
+/// 按 blob key 读取内容的原始字节。仅接受本模块写入的 `"git:<oid>"` key；
+/// 格式不匹配（包括迁移前的 legacy key）时硬报错——这是有意的，因为调用方
+/// 确实无法拿到这份内容了。
 pub fn read_blob(repo: &gix::Repository, blob_key: &str) -> Result<Vec<u8>, String> {
     let oid = parse_blob_key(blob_key)?;
     let blob = repo
@@ -68,11 +91,20 @@ pub fn read_blob(repo: &gix::Repository, blob_key: &str) -> Result<Vec<u8>, Stri
 
 /// 删除一个 blob 对象的 loose object 文件，返回释放的磁盘字节数。
 ///
-/// `write_blob` 只会产出 loose object（本模块从不 `git gc`/repack），因此可以
-/// 按 git 标准 loose object 布局（`objects/<前2位>/<后38位>`）直接定位文件并
-/// 删除，无需通过 gix 的高层 API 做对象级 GC。
+/// 对无法识别的 blob_key 格式（包括迁移前留下的 `"fjall:"`/`"cas:"` 前缀）故意
+/// 返回 `Ok(0)` 而不是报错：这些 key 本来就不是本存储写过的对象，对它们而言
+/// “删除”本身就是一个无意义的操作。若这里硬报错，保留策略 GC（
+/// `snapshot::apply_snapshot_retention`）会因为扰到任何一个迁移前的旧快照而
+/// 整批中断。
+///
+/// `write_blob` 只会产出 loose object（本模块从不 `git gc`/repack），因此对确实
+/// 是 `git:` 格式的 key，可以按 git 标准 loose object 布局（
+/// `objects/<前2位>/<后38位>`）直接定位文件并删除，无需通过 gix 的高层 API 做
+/// 对象级 GC。
 pub fn remove_blob(storage_root: &Path, blob_key: &str) -> Result<u64, String> {
-    let oid = parse_blob_key(blob_key)?;
+    let Some(oid) = try_parse_blob_key(blob_key) else {
+        return Ok(0);
+    };
     let hex = oid.to_string();
     let (prefix, suffix) = hex.split_at(2);
     let object_path = storage_root
@@ -84,12 +116,23 @@ pub fn remove_blob(storage_root: &Path, blob_key: &str) -> Result<u64, String> {
     remove_file_reporting_size(&object_path)
 }
 
+/// 是否是本模块当前会写入 / 认可的 blob key 格式（用于 `content_available`
+/// 之类需要区分“可恢复”与“历史遗留、已不可读”的判定，而不是仅看 key 是否
+/// 存在）。
+pub fn is_valid_blob_key(blob_key: &str) -> bool {
+    try_parse_blob_key(blob_key).is_some()
+}
+
 fn parse_blob_key(blob_key: &str) -> Result<gix::ObjectId, String> {
-    let hex = blob_key.strip_prefix(BLOB_KEY_PREFIX).ok_or_else(|| {
-        errors::snapshot_store_failed("快照 blob key 格式无效（缺少 git: 前缀）。")
-    })?;
-    hex.parse::<gix::ObjectId>()
-        .map_err(|error| errors::snapshot_store_failed(format!("解析 blob 对象 id 失败：{error}")))
+    try_parse_blob_key(blob_key)
+        .ok_or_else(|| errors::snapshot_store_failed("快照 blob key 格式无效或已是历史遗留格式。"))
+}
+
+fn try_parse_blob_key(blob_key: &str) -> Option<gix::ObjectId> {
+    blob_key
+        .strip_prefix(BLOB_KEY_PREFIX)?
+        .parse::<gix::ObjectId>()
+        .ok()
 }
 
 fn remove_file_reporting_size(path: &Path) -> Result<u64, String> {
@@ -113,7 +156,7 @@ fn remove_file_reporting_size(path: &Path) -> Result<u64, String> {
 
 #[cfg(test)]
 mod tests {
-    use super::{open_blob_repo, read_blob, remove_blob, store_blob};
+    use super::{is_valid_blob_key, open_blob_repo, read_blob, remove_blob, store_blob};
     use std::fs;
     use std::path::PathBuf;
 
@@ -194,6 +237,60 @@ mod tests {
         assert!(read_blob(&repo, "fjall:legacy-hash").is_err());
         assert!(read_blob(&repo, "cas:blobs/ab/cdef").is_err());
         assert!(read_blob(&repo, "git:not-a-valid-oid").is_err());
+
+        let _ = fs::remove_dir_all(&temp_dir);
+    }
+
+    #[test]
+    fn remove_blob_is_a_no_op_for_legacy_key_formats() {
+        let temp_dir = temp_dir("aed-blob-store-legacy-remove");
+        fs::create_dir_all(&temp_dir).expect("temp directory should be created");
+
+        // v3 之前的 manifest 可能残留 "fjall:"/"cas:" 前缀的 blob_key；GC 遇到
+        // 这些历史 key 时必须整体不中断，而不是让 remove_blob 报错拖垮整批裁剪。
+        assert_eq!(
+            remove_blob(&temp_dir, "fjall:legacy-hash").expect("legacy key removal should no-op"),
+            0
+        );
+        assert_eq!(
+            remove_blob(&temp_dir, "cas:blobs/ab/cdef").expect("legacy key removal should no-op"),
+            0
+        );
+
+        let _ = fs::remove_dir_all(&temp_dir);
+    }
+
+    #[test]
+    fn is_valid_blob_key_only_accepts_current_prefix() {
+        assert!(is_valid_blob_key("git:abcd"));
+        assert!(!is_valid_blob_key("fjall:abcd"));
+        assert!(!is_valid_blob_key("cas:blobs/ab/cdef"));
+    }
+
+    #[test]
+    fn concurrent_first_time_open_does_not_fail() {
+        let temp_dir = temp_dir("aed-blob-store-concurrent-init");
+        fs::create_dir_all(&temp_dir).expect("temp directory should be created");
+
+        let mut handles = Vec::new();
+        for _ in 0..8 {
+            let root = temp_dir.clone();
+            handles.push(std::thread::spawn(move || open_blob_repo(&root)));
+        }
+
+        for handle in handles {
+            let result = handle.join().expect("thread should not panic");
+            assert!(
+                result.is_ok(),
+                "concurrent first-time open must not fail: {:?}",
+                result.err()
+            );
+        }
+
+        let repo = open_blob_repo(&temp_dir).expect("blob repo should still be usable afterwards");
+        let key = store_blob(&repo, b"post-race content").expect("blob should be written");
+        let restored = read_blob(&repo, &key).expect("blob should read back");
+        assert_eq!(restored, b"post-race content");
 
         let _ = fs::remove_dir_all(&temp_dir);
     }

@@ -20,7 +20,8 @@ const SNAPSHOT_SCOPE_REVERT: &str = "revert";
 /// v2 -> v3：快照文件内容的物理存储从 fjall keyspace + 手写 CAS 目录切换到
 /// gix 对象库（见 `history::blob_store`），blob_key 前缀从 `fjall:`/`cas:`
 /// 变为唯一的 `git:`。不做双读兼容：v3 之前写入的快照清单里的 blob_key 在新
-/// 代码下一律读取失败（清单本身仍可正常列出）。
+/// 代码下一律读取失败（清单本身仍可正常列出，`content_available` 会如实
+/// 报告为 false，见 `has_live_blob`）。
 const SNAPSHOT_MANIFEST_VERSION: u32 = 3;
 pub const FULL_BLOB_TTL_DAYS: i64 = 14;
 pub const PINNED_FULL_BLOB_TTL_DAYS: i64 = 30;
@@ -772,8 +773,17 @@ impl SnapshotManifest {
         })
     }
 
+    /// 是否存在“新格式且理论上可读”的 blob 引用。区分：
+    /// - 保留策略主动清理（`blob_key` 被设为 `None`）
+    /// - 迁移前遗留的旧格式 key（`blob_key` 是 `Some`，但不是 `git:` 前缀）
+    /// 两者对最终用户而言都等价于“内容已不可恢复”，`content_available` 必须
+    /// 对两者都如实报告为 `false`，而不是只看 `blob_key` 是否存在。
     fn has_live_blob(&self) -> bool {
-        self.files.iter().all(|file| file.blob_key.is_some())
+        self.files.iter().all(|file| {
+            file.blob_key
+                .as_deref()
+                .is_some_and(blob_store::is_valid_blob_key)
+        })
     }
 }
 
