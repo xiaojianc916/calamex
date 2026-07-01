@@ -9,7 +9,7 @@
 //!
 //! 现统一归到用户主目录下的单一品牌根 `~/.calamex`（Windows 即
 //! `%USERPROFILE%\.calamex`，例如 `C:\Users\陈小建\.calamex`），按功能分子目录：
-//! - `config/`：AI 配置（`ai.json`）与会话快照（`session.json`）
+//! - `config/`：AI 配置（`settings.json`）与会话快照（`session.json`）
 //! - `ai-edits/`：AI 编辑历史
 //! - `ai-service/`：本地 AI 服务运行时（令牌 / 日志 / Node 编译缓存）
 //!
@@ -93,7 +93,7 @@ pub fn migrate_legacy_storage() {
     };
 
     // 迁移水位：已到当前 schema 版本则整体短路，省去每次启动的多次磁盘探测。
-    const STORAGE_SCHEMA_VERSION: u32 = 1;
+    const STORAGE_SCHEMA_VERSION: u32 = 2;
     // schema.json 记录已完成迁移的 schema 版本；兼容读取上一代裸整数标记 .storage-schema。
     let marker = root.join("schema.json");
     let legacy_marker = root.join(".storage-schema");
@@ -136,7 +136,7 @@ pub fn migrate_legacy_storage() {
         // AI 配置：%APPDATA%\Calamex\ai-config.json -> config\ai.json
         migrate_path(
             &appdata.join("Calamex").join("ai-config.json"),
-            &root.join("config").join("ai.json"),
+            &root.join("config").join("settings.json"),
         );
 
         // AI 编辑历史 / 会话快照位于 Tauri 标识目录 %APPDATA%\com.xiaojianc.Calamex 下。
@@ -153,13 +153,17 @@ pub fn migrate_legacy_storage() {
             .join("com.xiaojianc.Calamex")
             .join("builtin-agent");
         let new_service = root.join("ai-service");
-        // 整目录迁移后，再把目录内的旧文件名规整为按功能命名。
+        // 整目录迁移后，把仍在用的 node 编译缓存目录名规整为按功能命名。
+        // 注：原先还把 builtin-agent.token/.log 规整为 auth.token/service.log，但那些是旧 HTTP
+        // 服务遗物；现行 ACP stdio 边车不写 token（stdio 无鉴权）、日志走 stderr（见 stdio-entry.ts），
+        // 故删除那几条僵尸改名，避免给死文件维护更好听的名字。
         migrate_path(&legacy_service, &new_service);
-        rename_within(&new_service, "builtin-agent.token", "auth.token");
-        rename_within(&new_service, "builtin-agent.log", "service.log");
-        rename_within(&new_service, "builtin-agent.log.old", "service.log.old");
         rename_within(&new_service, ".node-compile-cache", "node-compile-cache");
     }
+
+    // config/ai.json -> config/settings.json：文件名由「按 feature(ai)」改为「按类别(应用设置)」，
+    // 与 storage_paths 单一事实源一致；对既有安装做同卷改名，幂等（改过即跳过）。
+    rename_within(&root.join("config"), "ai.json", "settings.json");
 
     // 迁移完成：落 schema.json 水位标记（带字段名，便于扩展），下次启动直接短路。
     if let Err(error) = fs::create_dir_all(&root)

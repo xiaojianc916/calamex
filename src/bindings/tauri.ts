@@ -295,7 +295,7 @@ export type AgentBackendKind = "builtin" | "kimi" | "codex";
  * 
  *  与自家边车的带外 `agent_chat` 扩展回合不同：外部 agent 只实现标准 `prompt`、不认识
  *  `calamex.dev/*` 扩展方法，也不接收逐请求 `model_config`（凭据由其自身 CLI 自管，见
- *  ADR-0015 / `acp/launch.rs`），故仅携带后端类型、纯文本提示与会话定位字段。
+ *  ADR-0015 / `acp/launch.rs`），故仅携带后端类型、纯文本提示、上下文附件与会话定位字段。
  */
 export type AgentExternalChatRequest = AgentExternalChatRequest_Serialize | AgentExternalChatRequest_Deserialize;
 
@@ -304,7 +304,7 @@ export type AgentExternalChatRequest = AgentExternalChatRequest_Serialize | Agen
  * 
  *  与自家边车的带外 `agent_chat` 扩展回合不同：外部 agent 只实现标准 `prompt`、不认识
  *  `calamex.dev/*` 扩展方法，也不接收逐请求 `model_config`（凭据由其自身 CLI 自管，见
- *  ADR-0015 / `acp/launch.rs`），故仅携带后端类型、纯文本提示与会话定位字段。
+ *  ADR-0015 / `acp/launch.rs`），故仅携带后端类型、纯文本提示、上下文附件与会话定位字段。
  */
 export type AgentExternalChatRequest_Deserialize = {
 	backend: AgentBackendKind,
@@ -319,6 +319,11 @@ export type AgentExternalChatRequest_Deserialize = {
 	 *  prompt_with_stream_key），实现真正的逐 token 流式。缺省/空白时回退到 ACP 会话 id。
 	 */
 	sessionId: string | null,
+	/**
+	 *  本回合随附的上下文附件（文本类）。宿主为每个附件构造一个 ACP embedded resource 块并与
+	 *  正文 text 块并列送达（见 acp/host.rs prompt_with_attachments）。缺省为空。
+	 */
+	attachments?: AgentPromptAttachment_Deserialize[],
 };
 
 /**
@@ -326,7 +331,7 @@ export type AgentExternalChatRequest_Deserialize = {
  * 
  *  与自家边车的带外 `agent_chat` 扩展回合不同：外部 agent 只实现标准 `prompt`、不认识
  *  `calamex.dev/*` 扩展方法，也不接收逐请求 `model_config`（凭据由其自身 CLI 自管，见
- *  ADR-0015 / `acp/launch.rs`），故仅携带后端类型、纯文本提示与会话定位字段。
+ *  ADR-0015 / `acp/launch.rs`），故仅携带后端类型、纯文本提示、上下文附件与会话定位字段。
  */
 export type AgentExternalChatRequest_Serialize = {
 	backend: AgentBackendKind,
@@ -341,6 +346,11 @@ export type AgentExternalChatRequest_Serialize = {
 	 *  prompt_with_stream_key），实现真正的逐 token 流式。缺省/空白时回退到 ACP 会话 id。
 	 */
 	sessionId?: string | null,
+	/**
+	 *  本回合随附的上下文附件（文本类）。宿主为每个附件构造一个 ACP embedded resource 块并与
+	 *  正文 text 块并列送达（见 acp/host.rs prompt_with_attachments）。缺省为空。
+	 */
+	attachments?: AgentPromptAttachment_Serialize[],
 };
 
 /**
@@ -352,6 +362,43 @@ export type AgentExternalChatRequest_Serialize = {
 export type AgentExternalChatResultPayload = {
 	sessionId: string,
 	stopReason: string,
+};
+
+/**
+ *  随标准 session/prompt 一并送达的上下文附件（契约层）。
+ * 
+ *  每个附件在宿主侧被投影为一个 ACP embedded resource 内容块（协议首选的上下文注入方式，见
+ *  agent-client-protocol content.rs：`ContentBlock::Resource`），与用户正文 text 块并列送达，
+ *  而非拼进正文字符串——避免正文分隔符冲突/提示注入，并保留 name/uri/mimeType 语义。
+ */
+export type AgentPromptAttachment = AgentPromptAttachment_Serialize | AgentPromptAttachment_Deserialize;
+
+/**
+ *  随标准 session/prompt 一并送达的上下文附件（契约层）。
+ * 
+ *  每个附件在宿主侧被投影为一个 ACP embedded resource 内容块（协议首选的上下文注入方式，见
+ *  agent-client-protocol content.rs：`ContentBlock::Resource`），与用户正文 text 块并列送达，
+ *  而非拼进正文字符串——避免正文分隔符冲突/提示注入，并保留 name/uri/mimeType 语义。
+ */
+export type AgentPromptAttachment_Deserialize = {
+	name: string,
+	uri: string,
+	text: string,
+	mimeType: string | null,
+};
+
+/**
+ *  随标准 session/prompt 一并送达的上下文附件（契约层）。
+ * 
+ *  每个附件在宿主侧被投影为一个 ACP embedded resource 内容块（协议首选的上下文注入方式，见
+ *  agent-client-protocol content.rs：`ContentBlock::Resource`），与用户正文 text 块并列送达，
+ *  而非拼进正文字符串——避免正文分隔符冲突/提示注入，并保留 name/uri/mimeType 语义。
+ */
+export type AgentPromptAttachment_Serialize = {
+	name: string,
+	uri: string,
+	text: string,
+	mimeType?: string | null,
 };
 
 export type AgentSidecarCheckpointRestoreRequest = AgentSidecarCheckpointRestoreRequest_Serialize | AgentSidecarCheckpointRestoreRequest_Deserialize;

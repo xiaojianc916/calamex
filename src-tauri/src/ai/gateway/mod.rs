@@ -390,7 +390,7 @@ fn config_file_path() -> Option<PathBuf> {
     Some(
         crate::storage_paths::roaming_root()?
             .join("config")
-            .join("ai.json"),
+            .join("settings.json"),
     )
 }
 
