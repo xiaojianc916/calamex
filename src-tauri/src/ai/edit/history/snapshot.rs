@@ -3,8 +3,7 @@ use crate::ai::edit::history::blob_store;
 use crate::ai::edit::history::pins::PinIndex;
 use crate::ai::edit::io::storage_lock;
 use crate::commands::contracts::{AiApplyPatchMetadataRequest, AiSnapshotPayload};
-use fjall::batch::WriteBatch;
-use fjall::{Database, Keyspace, KeyspaceCreateOptions, PersistMode};
+use fjall::{Database, Keyspace, KeyspaceCreateOptions, OwnedWriteBatch, PersistMode};
 use jiff::{SignedDuration, Timestamp};
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
@@ -697,7 +696,7 @@ fn parse_rfc3339_utc(value: &str) -> Option<Timestamp> {
 
 fn strip_manifest_blobs(
     blobs: &Keyspace,
-    batch: &mut WriteBatch,
+    batch: &mut OwnedWriteBatch,
     manifest: &mut SnapshotManifest,
     blob_ref_counts: &mut HashMap<String, usize>,
     active_blob_bytes: &mut HashMap<String, u64>,
