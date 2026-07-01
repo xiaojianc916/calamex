@@ -170,10 +170,20 @@ fn run_exit_cleanup<R: tauri::Runtime>(app_handle: &tauri::AppHandle<R>) {
     //    避免遗留 bash-language-server / SSH 子进程与连接）
     let lsp_manager = app_handle.state::<LspManager>();
     tauri::async_runtime::block_on(async move {
-        if let Err(error) = commands::lsp_stop(lsp_manager).await {
-            tracing::error!("failed to stop LSP server: {error}");
+        // 关停清理加总超时兜底：任一子系统优雅关停卡住（wsl.exe / LSP / SSH 挂起）也绝不把退出
+        // 路径永久阻塞在此；超时后退回 process_guard 的 Job Object 由 OS 连带回收进程树。
+        let cleanup = async move {
+            if let Err(error) = commands::lsp_stop(lsp_manager).await {
+                tracing::error!("failed to stop LSP server: {error}");
+            }
+            commands::shutdown_ssh_pool().await;
+        };
+        if tokio::time::timeout(std::time::Duration::from_secs(5), cleanup)
+            .await
+            .is_err()
+        {
+            tracing::warn!("exit cleanup timed out after 5s; relying on OS job-object teardown");
         }
-        commands::shutdown_ssh_pool().await;
     });
 
     // 3) ACP 宿主连接（feature `acp_client`）：关停常驻 stdio 连接，子进程随之回收。
