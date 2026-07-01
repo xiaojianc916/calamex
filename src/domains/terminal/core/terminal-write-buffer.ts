@@ -10,7 +10,7 @@
  * 设计说明：
  *   纯逻辑模块，不持有 xterm Terminal 实例引用。通过构造参数注入：
  *   - getTerminal(): Terminal | null — 惰性获取当前 xterm 实例
- *   - 外部状态访问器（visible、isShellWindowResizing 等）
+ *   - 外部状态访问器（visible 等）
  *   - 副作用回调（onWriteBefore、onWriteAfter、onViewportSync 等）
  */
 
@@ -36,8 +36,6 @@ export interface ITerminalWriteBufferDeps {
   getTerminal: () => Terminal | null;
   /** 当前会话是否可见（tab 激活） */
   isVisible: () => boolean;
-  /** shell 窗口是否正在 resize */
-  isShellWindowResizing: () => boolean;
   /** 当前主题模式，用于 ANSI 规范化 */
   getThemeMode: () => 'dark' | 'light';
   /** 是否显示 run 分隔符 */
@@ -163,9 +161,6 @@ export class TerminalWriteBuffer {
       if (!this._isTerminalWriteInFlight) this._drainCallbacks();
       return;
     }
-    if (this._deps.isShellWindowResizing() && this._deps.isVisible()) {
-      return;
-    }
     if (!this._deps.isVisible()) {
       const bufferedWrite = this._drainBuffer();
       if (bufferedWrite) {
@@ -284,7 +279,6 @@ export class TerminalWriteBuffer {
   }
 
   private _scheduleFlush(): void {
-    if (this._deps.isShellWindowResizing() && this._deps.isVisible()) return;
     if (this._terminalWriteFrameId === null) {
       this._terminalWriteFrameId = requestAnimationFrame(() => {
         this._terminalWriteFrameId = null;
