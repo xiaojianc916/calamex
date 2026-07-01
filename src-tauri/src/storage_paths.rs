@@ -92,6 +92,17 @@ pub fn migrate_legacy_storage() {
         return;
     };
 
+    // 迁移水位：已到当前 schema 版本则整体短路，省去每次启动的多次磁盘探测。
+    const STORAGE_SCHEMA_VERSION: u32 = 1;
+    let marker = root.join(".storage-schema");
+    if fs::read_to_string(&marker)
+        .ok()
+        .and_then(|text| text.trim().parse::<u32>().ok())
+        .is_some_and(|version| version >= STORAGE_SCHEMA_VERSION)
+    {
+        return;
+    }
+
     // --- 上一版“漫游/本地分区”方案：%APPDATA%\.calamex、%LOCALAPPDATA%\.calamex ---
     if let Some(appdata) = std::env::var_os("APPDATA").map(PathBuf::from) {
         let prev_roaming = appdata.join(APP_STORAGE_DIR_NAME);
@@ -140,6 +151,13 @@ pub fn migrate_legacy_storage() {
         rename_within(&new_service, "builtin-agent.log", "service.log");
         rename_within(&new_service, "builtin-agent.log.old", "service.log.old");
         rename_within(&new_service, ".node-compile-cache", "node-compile-cache");
+    }
+
+    // 迁移完成：落 schema 水位标记，下次启动直接短路。
+    if let Err(error) = fs::create_dir_all(&root)
+        .and_then(|_| fs::write(&marker, STORAGE_SCHEMA_VERSION.to_string()))
+    {
+        log_migration_warn("schema-marker-write-failed", &marker, &error.to_string());
     }
 }
 

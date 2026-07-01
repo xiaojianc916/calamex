@@ -39,15 +39,16 @@ const getIdbStore = (): UseStore => {
   return idbStore;
 };
 
-const createAttachmentPreviewStorageId = (value: string): string => {
-  let hash = 0x811c9dc5;
-
-  for (let index = 0; index < value.length; index += 1) {
-    hash ^= value.charCodeAt(index);
-    hash = Math.imul(hash, 0x01000193) >>> 0;
-  }
-
-  return `${value.length.toString(36)}-${hash.toString(36).padStart(7, '0')}`;
+const createAttachmentPreviewStorageId = async (value: string): Promise<string> => {
+  // 官方 Web Crypto SHA-256 做内容寻址，替代手搓 32 位 FNV-1a。
+  // 32 位散列在 `${length}-` 前缀下仍有生日碰撞（同长不同图 → 串图）；SHA-256 全长十六进制实际杜绝碰撞。
+  // crypto.subtle 在 Tauri WebView 的安全上下文可用。
+  const bytes = new TextEncoder().encode(value);
+  const digest = await crypto.subtle.digest('SHA-256', bytes);
+  const hex = Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, '0')).join(
+    '',
+  );
+  return `${value.length.toString(36)}-${hex}`;
 };
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
@@ -86,7 +87,7 @@ const extractAttachmentPreviewPayloads = async (value: unknown): Promise<void> =
 
   for (const [key, child] of Object.entries(value)) {
     if (key === 'src' && typeof child === 'string' && isDataImageUrl(child)) {
-      const id = createAttachmentPreviewStorageId(child);
+      const id = await createAttachmentPreviewStorageId(child);
       await set(toAttachmentPreviewKey(id), child, getIdbStore());
       value[key] = toAttachmentPreviewPointer(id);
       continue;
