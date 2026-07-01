@@ -146,3 +146,13 @@ windows-core = "=0.61.2"
 
 [dev-dependencies]
 tower = { version = "0.5", features = ["util"] }
+
+# 降低 dev(debug)构建的内存/时间开销：
+# 默认 debug=2(完整调试信息)会让最终 calamex 二进制的 LLVM 代码生成占用大量内存，
+# 在 vite+node+cargo 并发的 tauri dev 下容易 OOM。line-tables-only 保留 panic 栈行号。
+[profile.dev]
+debug = "line-tables-only"
+
+# 依赖不需要调试信息，进一步降低峰值内存与磁盘占用。
+[profile.dev.package."*"]
+debug = false
