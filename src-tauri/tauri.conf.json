@@ -22,6 +22,7 @@
         "minHeight": 760,
         "decorations": false,
         "transparent": true,
+        "backgroundColor": "#fafafa",
         "shadow": true,
         "resizable": true,
         "center": true,
