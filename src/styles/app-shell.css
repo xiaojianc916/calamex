@@ -290,3 +290,7 @@ html.is-resizing .cm-tooltip-hover {
   background: var(--surface-soft);
   color: var(--text-secondary);
 }
+
+.window-resize-handle {
+  pointer-events: none !important;
+}
