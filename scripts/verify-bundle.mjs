@@ -5,15 +5,26 @@ import { existsSync, readdirSync, statSync } from "node:fs";
 import { join, resolve } from "node:path";
 import process from "node:process";
 
-const nsisDir = resolve(process.cwd(), "target", "release", "bundle", "nsis");
+// tauri build 的产物可能在默认 target/release，也可能因 .cargo/config.toml 的
+// build.target 落到 target/<triple>/release。两种布局都探测，保证校验可复现。
+const targetRoot = resolve(process.cwd(), "target");
+const candidateNsisDirs = [join(targetRoot, "release", "bundle", "nsis")];
+if (existsSync(targetRoot)) {
+  for (const entry of readdirSync(targetRoot, { withFileTypes: true })) {
+    if (entry.isDirectory() && entry.name !== "release") {
+      candidateNsisDirs.push(join(targetRoot, entry.name, "release", "bundle", "nsis"));
+    }
+  }
+}
+const nsisDir = candidateNsisDirs.find((dir) => existsSync(dir));
+
 const fail = (m) => {
   console.error("[verify-bundle] x " + m);
   process.exit(1);
 };
 
-if (!existsSync(nsisDir))
-  fail("未找到 NSIS 产物目录（tauri build 可能未进入打包阶段）：" + nsisDir);
-
+if (!nsisDir)
+  fail("未找到 NSIS 产物目录（tauri build 可能未进入打包阶段）。已探测：\n  " + candidateNsisDirs.join("\n  "));
 const setups = readdirSync(nsisDir).filter((f) => f.toLowerCase().endsWith("-setup.exe"));
 if (setups.length === 0) fail("NSIS 目录下没有 -setup.exe：" + nsisDir);
 
