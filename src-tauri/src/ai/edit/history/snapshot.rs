@@ -1,25 +1,27 @@
 use crate::ai::edit::errors;
+use crate::ai::edit::history::blob_store;
 use crate::ai::edit::history::pins::PinIndex;
-use crate::ai::edit::io::{atomic_write, storage_lock};
+use crate::ai::edit::io::storage_lock;
 use crate::commands::contracts::{AiApplyPatchMetadataRequest, AiSnapshotPayload};
 use fjall::{Database, Keyspace, KeyspaceCreateOptions, PersistMode};
-use fs_err as fs;
 use jiff::{SignedDuration, Timestamp};
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
 const AED_DB_DIR: &str = "fjall";
 const SNAPSHOTS_KEYSPACE: &str = "snapshots";
-const SNAPSHOT_BLOBS_KEYSPACE: &str = "snapshot_blobs";
 const SNAPSHOT_SCOPE_PRE_TOOL: &str = "pre-tool";
 const SNAPSHOT_SCOPE_TASK_START: &str = "task-start";
 const SNAPSHOT_SCOPE_TURN_START: &str = "turn-start";
 const SNAPSHOT_SCOPE_MANUAL: &str = "manual";
 const SNAPSHOT_SCOPE_PRE_REVERT: &str = "pre-revert";
 const SNAPSHOT_SCOPE_REVERT: &str = "revert";
-const SNAPSHOT_MANIFEST_VERSION: u32 = 2;
-const SMALL_BLOB_MAX_BYTES: usize = 256 * 1024;
+/// v2 -> v3：快照文件内容的物理存储从 fjall keyspace + 手写 CAS 目录切换到
+/// gix 对象库（见 `history::blob_store`），blob_key 前缀从 `fjall:`/`cas:`
+/// 变为唯一的 `git:`。不做双读兼容：v3 之前写入的快照清单里的 blob_key 在新
+/// 代码下一律读取失败（清单本身仍可正常列出）。
+const SNAPSHOT_MANIFEST_VERSION: u32 = 3;
 pub const FULL_BLOB_TTL_DAYS: i64 = 14;
 pub const PINNED_FULL_BLOB_TTL_DAYS: i64 = 30;
 pub const DEFAULT_TOTAL_BLOB_QUOTA_BYTES: u64 = 1024 * 1024 * 1024;
@@ -301,7 +303,7 @@ fn load_stored_snapshot_locked(
     let store = open_store(storage_root)?;
     let manifest = load_manifest(&store.snapshots, snapshot_id)?
         .ok_or_else(|| errors::snapshot_not_found(snapshot_id))?;
-    manifest.into_stored_snapshot(storage_root, &store)
+    manifest.into_stored_snapshot(&store)
 }
 
 pub fn list_stored_snapshots(storage_root: &Path) -> Result<Vec<AiSnapshotPayload>, String> {
@@ -337,7 +339,8 @@ fn list_stored_snapshots_locked(storage_root: &Path) -> Result<Vec<AiSnapshotPay
 /// 执行快照 GC（唯一句柄 API）。
 ///
 /// 调用方须先通过 io::with_aed_database_write 持有 journal.lock 写锁并打开同一存储
-/// 目录上唯一的 Database；本函数只做 keyspace / CAS 级裁剪，不再自获取锁或重新开库。
+/// 目录上唯一的 Database；本函数只做 fjall 快照清单更新与 gix blob 对象库裁剪，
+/// 不再自获取锁或重新开库。
 pub fn apply_snapshot_retention(
     db: &Database,
     storage_root: &Path,
@@ -348,11 +351,6 @@ pub fn apply_snapshot_retention(
         .keyspace(SNAPSHOTS_KEYSPACE, KeyspaceCreateOptions::default)
         .map_err(|error| {
             errors::snapshot_store_failed(format!("打开 snapshots keyspace 失败：{error}"))
-        })?;
-    let snapshot_blobs = db
-        .keyspace(SNAPSHOT_BLOBS_KEYSPACE, KeyspaceCreateOptions::default)
-        .map_err(|error| {
-            errors::snapshot_store_failed(format!("打开 snapshot_blobs keyspace 失败：{error}"))
         })?;
 
     let mut manifests = list_manifests(&snapshots)?;
@@ -375,8 +373,6 @@ pub fn apply_snapshot_retention(
 
         strip_manifest_blobs(
             storage_root,
-            &snapshot_blobs,
-            &mut batch,
             manifest,
             &mut blob_ref_counts,
             &mut active_blob_bytes,
@@ -398,8 +394,6 @@ pub fn apply_snapshot_retention(
             let before_total = current_total;
             strip_manifest_blobs(
                 storage_root,
-                &snapshot_blobs,
-                &mut batch,
                 manifest,
                 &mut blob_ref_counts,
                 &mut active_blob_bytes,
@@ -479,7 +473,7 @@ fn store_snapshot_with_store(
     let mut batch = store.db.batch();
 
     for file in files {
-        let blob_key = store_blob(storage_root, &store.snapshot_blobs, file, &mut batch)?;
+        let blob_key = blob_store::store_blob(&store.blob_repo, file.content.as_bytes())?;
         let byte_size = file.content.len() as u64;
         size_bytes += byte_size;
         file_refs.push(file.path.to_string());
@@ -527,37 +521,6 @@ fn store_snapshot_with_store(
     })
 }
 
-fn store_blob(
-    storage_root: &Path,
-    snapshot_blobs: &Keyspace,
-    file: &SnapshotSourceFile<'_>,
-    batch: &mut fjall::OwnedWriteBatch,
-) -> Result<String, String> {
-    if file.content.len() <= SMALL_BLOB_MAX_BYTES {
-        batch.insert(
-            snapshot_blobs,
-            file.content_hash.as_bytes().to_vec(),
-            file.content.as_bytes().to_vec(),
-        );
-        return Ok(format!("fjall:{}", file.content_hash));
-    }
-
-    let relative_key = build_cas_blob_key(file.content_hash);
-    let blob_path = join_storage_path(storage_root, &relative_key);
-    if !blob_path.exists() {
-        if let Some(parent) = blob_path.parent() {
-            fs::create_dir_all(parent).map_err(|error| {
-                errors::snapshot_store_failed(format!("创建 CAS blob 目录失败：{error}"))
-            })?;
-        }
-        atomic_write::write_bytes(&blob_path, file.content.as_bytes()).map_err(|error| {
-            errors::snapshot_store_failed(format!("写入 CAS blob 失败：{error}"))
-        })?;
-    }
-
-    Ok(format!("cas:{relative_key}"))
-}
-
 fn resolve_task_id(metadata: Option<&AiApplyPatchMetadataRequest>) -> String {
     metadata
         .and_then(|value| value.task_id.as_deref())
@@ -587,7 +550,7 @@ fn resolve_label(
 struct SnapshotStore {
     db: Database,
     snapshots: Keyspace,
-    snapshot_blobs: Keyspace,
+    blob_repo: gix::Repository,
 }
 
 fn open_store(storage_root: &Path) -> Result<SnapshotStore, String> {
@@ -601,15 +564,11 @@ fn open_store(storage_root: &Path) -> Result<SnapshotStore, String> {
         .map_err(|error| {
             errors::snapshot_store_failed(format!("打开 snapshots keyspace 失败：{error}"))
         })?;
-    let snapshot_blobs = db
-        .keyspace(SNAPSHOT_BLOBS_KEYSPACE, KeyspaceCreateOptions::default)
-        .map_err(|error| {
-            errors::snapshot_store_failed(format!("打开 snapshot_blobs keyspace 失败：{error}"))
-        })?;
+    let blob_repo = blob_store::open_blob_repo(storage_root)?;
     Ok(SnapshotStore {
         db,
         snapshots,
-        snapshot_blobs,
+        blob_repo,
     })
 }
 
@@ -725,8 +684,6 @@ fn parse_rfc3339_utc(value: &str) -> Option<Timestamp> {
 
 fn strip_manifest_blobs(
     storage_root: &Path,
-    snapshot_blobs: &Keyspace,
-    batch: &mut fjall::OwnedWriteBatch,
     manifest: &mut SnapshotManifest,
     blob_ref_counts: &mut HashMap<String, usize>,
     active_blob_bytes: &mut HashMap<String, u64>,
@@ -758,7 +715,7 @@ fn strip_manifest_blobs(
 
         blob_ref_counts.remove(&blob_key);
         active_blob_bytes.remove(&blob_key);
-        let removed_bytes = remove_blob(storage_root, snapshot_blobs, batch, &blob_key)?;
+        let removed_bytes = blob_store::remove_blob(storage_root, &blob_key)?;
         if removed_bytes > 0 {
             outcome.removed_blob_count += 1;
             outcome.reclaimed_bytes += removed_bytes;
@@ -768,70 +725,6 @@ fn strip_manifest_blobs(
     outcome.downgraded_snapshot_count += 1;
     outcome.downgraded_snapshot_ids.insert(manifest.id.clone());
     Ok(())
-}
-
-fn remove_blob(
-    storage_root: &Path,
-    snapshot_blobs: &Keyspace,
-    batch: &mut fjall::OwnedWriteBatch,
-    blob_key: &str,
-) -> Result<u64, String> {
-    if let Some(fjall_key) = blob_key.strip_prefix("fjall:") {
-        let removed_bytes = snapshot_blobs
-            .size_of(fjall_key)
-            .map_err(|error| {
-                errors::snapshot_store_failed(format!("读取 fjall blob 大小失败：{error}"))
-            })?
-            .unwrap_or_default() as u64;
-        batch.remove(snapshot_blobs, fjall_key.as_bytes().to_vec());
-        return Ok(removed_bytes);
-    }
-
-    let Some(relative_key) = blob_key.strip_prefix("cas:") else {
-        return Err(errors::snapshot_store_failed("快照 blob key 格式无效。"));
-    };
-    remove_storage_file(
-        &join_storage_path(storage_root, relative_key),
-        "删除 CAS blob 失败",
-    )
-}
-
-fn build_cas_blob_key(content_hash: &str) -> String {
-    let digest = content_hash
-        .split_once(':')
-        .map(|(_, value)| value)
-        .unwrap_or(content_hash);
-    let prefix = digest.chars().take(2).collect::<String>();
-    let suffix = digest.chars().skip(2).collect::<String>();
-    let suffix = if suffix.is_empty() { "blob" } else { &suffix };
-    format!("blobs/{prefix}/{suffix}")
-}
-
-fn join_storage_path(storage_root: &Path, relative_key: &str) -> PathBuf {
-    relative_key
-        .split('/')
-        .fold(storage_root.to_path_buf(), |path, segment| {
-            path.join(segment)
-        })
-}
-
-fn remove_storage_file(path: &Path, action: &str) -> Result<u64, String> {
-    let removed_bytes = match fs::metadata(path) {
-        Ok(metadata) => metadata.len(),
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(0),
-        Err(error) => {
-            return Err(errors::snapshot_store_failed(format!(
-                "{action}（{}）：{error}",
-                path.display()
-            )));
-        }
-    };
-
-    fs::remove_file(path).map_err(|error| {
-        errors::snapshot_store_failed(format!("{action}（{}）：{error}", path.display()))
-    })?;
-
-    Ok(removed_bytes)
 }
 
 impl SnapshotManifest {
@@ -856,11 +749,7 @@ impl SnapshotManifest {
         }
     }
 
-    fn into_stored_snapshot(
-        self,
-        storage_root: &Path,
-        store: &SnapshotStore,
-    ) -> Result<StoredSnapshot, String> {
+    fn into_stored_snapshot(self, store: &SnapshotStore) -> Result<StoredSnapshot, String> {
         let mut files = Vec::with_capacity(self.files.len());
         for file in &self.files {
             let Some(blob_key) = file.blob_key.as_deref() else {
@@ -869,7 +758,7 @@ impl SnapshotManifest {
                     self.id
                 )));
             };
-            let content = read_blob(storage_root, &store.snapshot_blobs, blob_key)?;
+            let content = read_blob(&store.blob_repo, blob_key)?;
             files.push(StoredSnapshotFile {
                 path: file.path.clone(),
                 content_hash: file.content_hash.clone(),
@@ -888,28 +777,10 @@ impl SnapshotManifest {
     }
 }
 
-fn read_blob(
-    storage_root: &Path,
-    snapshot_blobs: &Keyspace,
-    blob_key: &str,
-) -> Result<String, String> {
-    if let Some(fjall_key) = blob_key.strip_prefix("fjall:") {
-        let value = snapshot_blobs
-            .get(fjall_key)
-            .map_err(|error| {
-                errors::snapshot_store_failed(format!("读取 fjall blob 失败：{error}"))
-            })?
-            .ok_or_else(|| errors::snapshot_store_failed("快照 blob 不存在。"))?;
-        return String::from_utf8(value.to_vec()).map_err(|error| {
-            errors::snapshot_store_failed(format!("快照 blob 不是 UTF-8：{error}"))
-        });
-    }
-
-    let Some(relative_key) = blob_key.strip_prefix("cas:") else {
-        return Err(errors::snapshot_store_failed("快照 blob key 格式无效。"));
-    };
-    fs::read_to_string(join_storage_path(storage_root, relative_key))
-        .map_err(|error| errors::snapshot_store_failed(format!("读取 CAS blob 失败：{error}")))
+fn read_blob(blob_repo: &gix::Repository, blob_key: &str) -> Result<String, String> {
+    let bytes = blob_store::read_blob(blob_repo, blob_key)?;
+    String::from_utf8(bytes)
+        .map_err(|error| errors::snapshot_store_failed(format!("快照 blob 不是 UTF-8：{error}")))
 }
 
 #[cfg(test)]
@@ -925,7 +796,7 @@ mod tests {
     use std::fs;
 
     #[test]
-    fn store_checkpoint_pre_tool_snapshot_writes_manifest_and_dedupes_small_blobs_in_fjall() {
+    fn store_checkpoint_pre_tool_snapshot_writes_manifest_and_dedupes_identical_content() {
         let temp_dir = temp_dir("aed-snapshot");
         fs::create_dir_all(&temp_dir).expect("temp directory should be created");
 
@@ -1015,10 +886,12 @@ mod tests {
     }
 
     #[test]
-    fn large_snapshot_blob_uses_cas_directory() {
+    fn large_snapshot_blob_round_trips_via_git_object_store() {
         let temp_dir = temp_dir("aed-large-snapshot");
         fs::create_dir_all(&temp_dir).expect("temp directory should be created");
-        let large_content = "x".repeat(super::SMALL_BLOB_MAX_BYTES + 1);
+        // 旧实现按 SMALL_BLOB_MAX_BYTES 阈值在此切到 CAS 目录；gix 对象库不区分
+        // 大小，这里只需验证「足够大」的内容依然完整往返。
+        let large_content = "x".repeat(512 * 1024);
 
         let snapshot = store_manual_snapshot(
             &temp_dir,
@@ -1034,7 +907,7 @@ mod tests {
 
         let stored = load_stored_snapshot(&temp_dir, &snapshot.id).expect("snapshot should load");
         assert_eq!(stored.files[0].content, large_content);
-        assert!(temp_dir.join("blobs").is_dir());
+        assert!(temp_dir.join("blobstore.git").is_dir());
 
         let _ = fs::remove_dir_all(&temp_dir);
     }
