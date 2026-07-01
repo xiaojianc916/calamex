@@ -119,6 +119,12 @@ const AI_COMMAND_META = {
     timeoutMs: 15_000,
     measureInput: buildPayloadMetrics,
   },
+  aiEvictThread: {
+    command: 'ai_evict_thread',
+    guardHint: '驱逐已删除对话的 ACP 会话态',
+    audit: 'info',
+    timeoutMs: 15_000,
+  },
   aiResolveApproval: {
     command: 'ai_resolve_approval',
     guardHint: '回投 ACP 工具调用审批决策',
@@ -208,6 +214,7 @@ type TAiTauriService = Pick<
   | 'aiGenerateSuggestionPool'
   | 'aiChatStream'
   | 'aiCancel'
+  | 'aiEvictThread'
   | 'aiResolveApproval'
   | 'aiEnsureAcpSession'
   | 'aiSetSessionConfigOption'
@@ -292,6 +299,10 @@ export const aiTauriService: TAiTauriService = {
 
   aiCancel: payloadCommand(AI_COMMAND_META.aiCancel, async (payload) => {
     await commands.aiCancel(payload);
+  }),
+
+  aiEvictThread: payloadCommand(AI_COMMAND_META.aiEvictThread, async (threadId: string) => {
+    await commands.aiEvictThread(threadId);
   }),
 
   aiResolveApproval: payloadCommand(AI_COMMAND_META.aiResolveApproval, (payload) =>

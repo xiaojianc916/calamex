@@ -391,6 +391,7 @@ export interface ITauriService {
   aiGenerateSuggestionPool(payload: IAiSuggestionPoolRequest): Promise<IAiSuggestionPoolPayload>;
   aiChatStream(payload: IAiChatRequest): Promise<AiChatStreamPayload>;
   aiCancel(payload: IAiCancelRequest): Promise<void>;
+  aiEvictThread(threadId: string): Promise<void>;
   aiResolveApproval(payload: IAiResolveApprovalRequest): Promise<boolean>;
   aiEnsureAcpSession(
     payload: IAiEnsureAcpSessionRequest,

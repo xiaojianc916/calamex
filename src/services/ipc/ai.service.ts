@@ -138,6 +138,13 @@ export const aiService = {
   cancel(payload: IAiCancelRequest): Promise<void> {
     return tauriService.aiCancel(payload);
   },
+  /**
+   * 驱逐某线程的 ACP 会话态（删除对话时调用）：令后端从 thread↔session / config_options /
+   * available_commands 三张表移除该线程条目，根治其随会话数单调增长的内存泄漏。fire-and-forget。
+   */
+  evictThread(threadId: string): Promise<void> {
+    return tauriService.aiEvictThread(threadId);
+  },
   inlineComplete(payload: IAiInlineCompletionRequest): Promise<AiInlineCompletionResult> {
     return tauriService.aiInlineComplete(payload);
   },

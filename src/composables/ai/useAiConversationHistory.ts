@@ -3,6 +3,7 @@ import { computed, ref } from 'vue';
 
 import { formatHistoryTimestamp } from '@/components/business/ai/shell/history-format';
 import type { useAiAssistant } from '@/composables/ai/useAiAssistant';
+import { aiService } from '@/services/ipc/ai.service';
 import type { IAiThread } from '@/types/ai/thread';
 
 type AiAssistantApi = ReturnType<typeof useAiAssistant>;
@@ -175,6 +176,9 @@ export const useAiConversationHistory = (assistant: AiAssistantApi) => {
     }
 
     assistant.deleteConversation(threadId);
+    // R3：删除对话即驱逐其后端 ACP 会话态（thread↔session / config_options / available_commands），
+    // 根治这些按 thread/session 键的表随会话数单调增长的泄漏。fire-and-forget，不阻塞 UI。
+    void aiService.evictThread(threadId);
   };
 
   useEventListener(document, 'pointerdown', handleHistoryPointerDown);
