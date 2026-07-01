@@ -48,7 +48,7 @@ const createSnapshot = (workspaceRoot: string | null = '/tmp/workspace') => ({
   savedAt: new Date().toISOString(),
 });
 
-describe('sessionStore (localStorage 权威)', () => {
+describe('sessionStore (localStorage 权威, 同步核心)', () => {
   let storage: Storage;
 
   beforeEach(() => {
@@ -63,28 +63,34 @@ describe('sessionStore (localStorage 权威)', () => {
     vi.restoreAllMocks();
   });
 
-  it('无快照时 loadSession 返回 null', async () => {
-    const { loadSession } = await import('@/services/session/store');
-    await expect(loadSession()).resolves.toBeNull();
+  it('无快照时 readSessionSnapshot 返回 null', async () => {
+    const { readSessionSnapshot } = await import('@/services/session/store');
+    expect(readSessionSnapshot()).toBeNull();
   });
 
-  it('saveSession 写入后 loadSession 读回同一快照', async () => {
-    const { saveSession, loadSession } = await import('@/services/session/store');
-    await saveSession(createSnapshot('/tmp/roundtrip'));
-    await expect(loadSession()).resolves.toMatchObject({ workspaceRoot: '/tmp/roundtrip' });
+  it('writeSessionSnapshot 写入后 readSessionSnapshot 读回同一快照', async () => {
+    const { writeSessionSnapshot, readSessionSnapshot } = await import('@/services/session/store');
+    writeSessionSnapshot(createSnapshot('/tmp/roundtrip'));
+    expect(readSessionSnapshot()).toMatchObject({ workspaceRoot: '/tmp/roundtrip' });
     expect(storage.getItem(SESSION_KEY)).not.toBeNull();
   });
 
-  it('saveSession 入参非法时抛 AppError(SESSION_VALIDATION_FAILED) 且不写盘', async () => {
-    const { saveSession } = await import('@/services/session/store');
-    await expect(saveSession({} as never)).rejects.toMatchObject<AppError>({
+  it('writeSessionSnapshot 入参非法时抛 AppError(SESSION_VALIDATION_FAILED) 且不写盘', async () => {
+    const { writeSessionSnapshot } = await import('@/services/session/store');
+    let caught: AppError | null = null;
+    try {
+      writeSessionSnapshot({} as never);
+    } catch (error) {
+      caught = error as AppError;
+    }
+    expect(caught).toMatchObject<AppError>({
       code: 'SESSION_VALIDATION_FAILED',
       scope: 'ipc',
     });
     expect(storage.getItem(SESSION_KEY)).toBeNull();
   });
 
-  it('schema 校验失败时 loadSession 返回 null 并 warn', async () => {
+  it('schema 校验失败时 readSessionSnapshot 返回 null 并 warn', async () => {
     storage.setItem(
       SESSION_KEY,
       JSON.stringify({
@@ -98,30 +104,32 @@ describe('sessionStore (localStorage 权威)', () => {
         savedAt: new Date().toISOString(),
       }),
     );
-    const { loadSession } = await import('@/services/session/store');
-    await expect(loadSession()).resolves.toBeNull();
+    const { readSessionSnapshot } = await import('@/services/session/store');
+    expect(readSessionSnapshot()).toBeNull();
     expect(warnMock).toHaveBeenCalled();
   });
 
-  it('坏 JSON 时 loadSession 返回 null 且不抛', async () => {
+  it('坏 JSON 时 readSessionSnapshot 返回 null 且不抛', async () => {
     storage.setItem(SESSION_KEY, '{ not json');
-    const { loadSession } = await import('@/services/session/store');
-    await expect(loadSession()).resolves.toBeNull();
+    const { readSessionSnapshot } = await import('@/services/session/store');
+    expect(readSessionSnapshot()).toBeNull();
     expect(warnMock).toHaveBeenCalled();
   });
 
-  it('clearSession 清除快照', async () => {
-    const { saveSession, clearSession, loadSession } = await import('@/services/session/store');
-    await saveSession(createSnapshot());
-    await clearSession();
+  it('clearSessionSnapshot 清除快照', async () => {
+    const { writeSessionSnapshot, clearSessionSnapshot, readSessionSnapshot } = await import(
+      '@/services/session/store'
+    );
+    writeSessionSnapshot(createSnapshot());
+    clearSessionSnapshot();
     expect(storage.getItem(SESSION_KEY)).toBeNull();
-    await expect(loadSession()).resolves.toBeNull();
+    expect(readSessionSnapshot()).toBeNull();
   });
 
   it('首次读取时把旧版键迁移到新键', async () => {
     storage.setItem(LEGACY_KEY, JSON.stringify(createSnapshot('/tmp/legacy')));
-    const { loadSession } = await import('@/services/session/store');
-    await expect(loadSession()).resolves.toMatchObject({ workspaceRoot: '/tmp/legacy' });
+    const { readSessionSnapshot } = await import('@/services/session/store');
+    expect(readSessionSnapshot()).toMatchObject({ workspaceRoot: '/tmp/legacy' });
     expect(storage.getItem(SESSION_KEY)).not.toBeNull();
     expect(storage.getItem(LEGACY_KEY)).toBeNull();
   });

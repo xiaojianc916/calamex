@@ -78,7 +78,7 @@ vi.mock('@/composables/useWorkbenchDocumentIO', () => ({
 }));
 
 vi.mock('@/services/session/store', () => ({
-  saveSession: vi.fn(() => Promise.resolve()),
+  writeSessionSnapshot: vi.fn(),
 }));
 
 const createDeferred = <T>() => {

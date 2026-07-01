@@ -56,7 +56,7 @@ const {
   },
   mockAppWindow: { close: vi.fn(() => Promise.resolve()) },
   mockSessionStore: {
-    saveSession: vi.fn(() => Promise.resolve()),
+    writeSessionSnapshot: vi.fn(),
   },
   mockWindowService: {
     setWindowBackground: vi.fn(() => Promise.resolve()),
@@ -89,7 +89,7 @@ vi.mock('@/services/tauri', () => ({
 vi.mock('@/services/ipc/window.service', () => mockWindowService);
 
 vi.mock('@/services/session/store', () => ({
-  saveSession: mockSessionStore.saveSession,
+  writeSessionSnapshot: mockSessionStore.writeSessionSnapshot,
 }));
 
 vi.mock('@tauri-apps/api/event', () => ({

@@ -178,27 +178,3 @@ export const clearSessionSnapshot = (): void => {
     sessionLogger.warn({ event: 'snapshot-clear-failed', err: cause });
   }
 };
-
-// ---------------------------------------------------------------------------
-// 兼容异步 API (保持既有调用方签名不变)
-// ---------------------------------------------------------------------------
-
-/** 读取会话快照(Promise 包装,兼容既有调用方)。 */
-export const loadSession = (): Promise<TSessionSnapshot | null> =>
-  Promise.resolve(readSessionSnapshot());
-
-/** 保存会话快照;校验失败返回 rejected Promise(SESSION_VALIDATION_FAILED)。 */
-export const saveSession = (snapshot: TSessionSnapshot): Promise<void> => {
-  try {
-    writeSessionSnapshot(snapshot);
-    return Promise.resolve();
-  } catch (cause) {
-    return Promise.reject(cause);
-  }
-};
-
-/** 清除会话快照。 */
-export const clearSession = (): Promise<void> => {
-  clearSessionSnapshot();
-  return Promise.resolve();
-};

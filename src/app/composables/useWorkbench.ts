@@ -7,7 +7,7 @@ import { useWindowResizeState } from '@/composables/useWindowResizeState';
 import { useWorkbenchDocumentIO } from '@/composables/useWorkbenchDocumentIO';
 import { useGitStore } from '@/domains/git/state/git';
 import { useTerminalRun } from '@/domains/terminal/composables/useTerminalRun';
-import { saveSession } from '@/services/session/store';
+import { writeSessionSnapshot } from '@/services/session/store';
 import { tauriService } from '@/services/tauri';
 import { useAppStore } from '@/store/app';
 import { useEditorStore } from '@/store/editor';
@@ -148,7 +148,7 @@ export const useWorkbench = () => {
   );
 
   const flushSession = async (): Promise<void> => {
-    await saveSession(editorStore.sessionSnapshot);
+    writeSessionSnapshot(editorStore.sessionSnapshot);
   };
 
   const runGitRepositoryStatusRefresh = async (workspaceRootPath: string): Promise<void> => {
