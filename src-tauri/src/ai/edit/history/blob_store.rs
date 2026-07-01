@@ -35,7 +35,8 @@
 //! 一次快照的全部 blob 内容与 manifest 更新现在共享同一次原子批量提交。
 
 use crate::ai::edit::errors;
-use fjall::{Database, Keyspace, KeyspaceCreateOptions, WriteBatch};
+use fjall::batch::WriteBatch;
+use fjall::{Database, Keyspace, KeyspaceCreateOptions};
 
 const BLOBS_KEYSPACE: &str = "blobs";
 const BLOB_KEY_PREFIX: &str = "blake3:";
