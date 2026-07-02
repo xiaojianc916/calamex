@@ -2,6 +2,7 @@ import { foldService, indentService } from '@codemirror/language';
 import { EditorState, type Extension, StateEffect, StateField } from '@codemirror/state';
 import { type EditorView, ViewPlugin, type ViewUpdate } from '@codemirror/view';
 import { logger } from '@/utils/platform/logger';
+import { computeGenericFoldByRow } from './codemirror-tree-sitter-structure';
 import {
   byteOffsetToCharIndex,
   ensureBashParser,
@@ -26,57 +27,10 @@ interface IBashAnalysis {
   foldEndByRow: ReadonlyMap<number, number>;
 }
 
-// 可折叠的 bash 节点类型:函数体、复合语句、子 shell、循环体、条件/分支、case 分支、heredoc。
-const BASH_FOLDABLE_NODE_TYPES: readonly string[] = [
-  'function_definition',
-  'compound_statement',
-  'subshell',
-  'do_group',
-  'if_statement',
-  'case_statement',
-  'case_item',
-  'heredoc_body',
-];
-
 // 计算缩进层级的"块体"节点类型:仅取由成对定界符包围、无分支歧义的块,使缩进对
 // {}/()/do..done 精确;if/case 的分支体回退到 CodeMirror 默认(沿用上一行缩进),不产生
 // 回退。分支关键字(else/elif/fi/esac)的语法级对齐需后续引入 indent 查询再补。
 const BASH_INDENT_BODY_TYPES: readonly string[] = ['compound_statement', 'subshell', 'do_group'];
-
-interface IFoldSourceNode {
-  startPosition: { row: number };
-  endPosition: { row: number };
-  endIndex: number;
-}
-
-interface IFoldSourceRoot {
-  descendantsOfType: (type: string) => IFoldSourceNode[];
-}
-
-/**
- * 纯函数:由语法树根节点构建"起始行 -> 最远折叠字符位置"表。
- * 同一起始行存在多个可折叠节点时取最外层(折叠终点最大者);单行节点不折叠。
- */
-export const computeBashFoldByRow = (
-  rootNode: IFoldSourceRoot,
-  source: string,
-): Map<number, number> => {
-  const foldEndByRow = new Map<number, number>();
-  for (const type of BASH_FOLDABLE_NODE_TYPES) {
-    for (const node of rootNode.descendantsOfType(type)) {
-      const startRow = node.startPosition.row;
-      if (node.endPosition.row <= startRow) {
-        continue;
-      }
-      const endChar = byteOffsetToCharIndex(source, node.endIndex);
-      const existing = foldEndByRow.get(startRow);
-      if (existing === undefined || endChar > existing) {
-        foldEndByRow.set(startRow, endChar);
-      }
-    }
-  }
-  return foldEndByRow;
-};
 
 interface IClimbNode {
   startIndex: number;
@@ -183,7 +137,7 @@ const bashParsePlugin = ViewPlugin.fromClass(
             tree.delete();
             return;
           }
-          const foldEndByRow = computeBashFoldByRow(tree.rootNode, source);
+          const foldEndByRow = computeGenericFoldByRow(tree.rootNode, source);
           view.dispatch({ effects: setBashAnalysis.of({ tree, foldEndByRow }) });
         })
         .catch((error) => {

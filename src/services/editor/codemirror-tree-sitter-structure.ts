@@ -31,7 +31,7 @@ interface IStructureAnalysis {
 }
 
 /** 通用折叠表：任意跨行节点都是候选，根节点除外；同起始行取覆盖范围最大者。 */
-function computeGenericFoldByRow(rootNode: Node, source: string): Map<number, number> {
+export function computeGenericFoldByRow(rootNode: Node, source: string): Map<number, number> {
   const foldEndByRow = new Map<number, number>();
   const stack: Node[] = [rootNode];
   while (stack.length > 0) {
