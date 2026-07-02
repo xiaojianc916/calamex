@@ -24,7 +24,7 @@ use agent_client_protocol::schema::{
     SetSessionConfigOptionRequest, StopReason,
 };
 use agent_client_protocol::{
-    AcpAgent, Agent, BoxFuture, Client, ConnectionTo, JsonRpcRequest, Responder,
+    ByteStreams, Agent, BoxFuture, Client, ConnectionTo, JsonRpcRequest, Responder,
     on_receive_notification, on_receive_request,
 };
 
@@ -360,9 +360,6 @@ pub fn spawn_acp_client(
     sink: EventSink,
     resolver: PermissionResolver,
 ) -> Result<AcpClientHandle, AcpClientError> {
-    let transport = AcpAgent::from_args(build_agent_args(&config))
-        .map_err(|e| AcpClientError::Transport(e.to_string()))?;
-
     let (cmd_tx, mut cmd_rx) = mpsc::unbounded_channel::<Command>();
     let seq = Arc::new(AtomicU64::new(0));
 
@@ -374,6 +371,48 @@ pub fn spawn_acp_client(
     let notif_seq = seq.clone();
 
     tauri::async_runtime::spawn(async move {
+        // === 自行 spawn AI 子进程（替换 AcpAgent::spawn_process），设 CREATE_NO_WINDOW ===
+        // 方案A：不 fork SDK；Calamex 侧控制 creation_flags，消除 Windows 控制台弹框。
+        let mut command = tokio::process::Command::new(&config.program);
+        command
+            .args(&config.args)
+            .stdin(std::process::Stdio::piped())
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::piped())
+            .kill_on_drop(true);
+        for (k, v) in &config.env {
+            command.env(k, v);
+        }
+        // Windows 上设 CREATE_NO_WINDOW（0x0800_0000）；非 Windows 为 no-op。
+        crate::commands::configure_tokio_command_for_background(&mut command);
+        let mut child = match command.spawn() {
+            Ok(c) => c,
+            Err(e) => {
+                log::warn!("acp: 子进程启动失败：{e}");
+                return;
+            }
+        };
+        let child_stdin  = child.stdin.take().expect("stdin piped");
+        let child_stdout = child.stdout.take().expect("stdout piped");
+        let child_stderr = child.stderr.take().expect("stderr piped");
+        // 排干 stderr，防止管道填满阻塞子进程；错误信息仍记入 debug 日志。
+        tauri::async_runtime::spawn(async move {
+            use tokio::io::AsyncReadExt;
+            let mut buf = [0u8; 1024];
+            let mut stderr = child_stderr;
+            loop {
+                match stderr.read(&mut buf).await {
+                    Ok(0) | Err(_) => break,
+                    Ok(n) => {
+                        log::debug!("acp-stderr: {}", String::from_utf8_lossy(&buf[..n]).trim_end_matches('\n'));
+                    }
+                }
+            }
+        });
+        use tokio_util::compat::{TokioAsyncReadCompatExt, TokioAsyncWriteCompatExt};
+        let transport = ByteStreams::new(child_stdin.compat_write(), child_stdout.compat());
+        // === END ===
+
         let result = Client
             .builder()
             .name("calamex")
@@ -435,6 +474,8 @@ pub fn spawn_acp_client(
                 on_receive_request!(),
             )
             .connect_with(transport, async move |cx| {
+                // 持有子进程句柄（kill_on_drop），连接断开时自动终止 AI 进程。
+                let _child_guard = child;
                 cx.send_request(InitializeRequest::new(ProtocolVersion::V1))
                     .block_task()
                     .await?;

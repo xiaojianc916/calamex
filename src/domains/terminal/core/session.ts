@@ -1221,7 +1221,9 @@ export class TerminalSession {
     if (!terminal || !host) return;
     if (!terminal.element) {
       terminal.open(host);
-      this._activateWebglRenderer(terminal);
+      // [WebGL 诊断实验] 暂时禁用 WebGL 渲染器，确认空白终端根因；确认后用 --restore 恢复
+      // this._activateWebglRenderer(terminal);
+      terminalLogger.warn('[WebGL 诊断] 已禁用 WebGL 渲染器，使用 DOM 回退渲染器');
     } else if (terminal.element.parentElement !== host) {
       host.replaceChildren(terminal.element);
     }

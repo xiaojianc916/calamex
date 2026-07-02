@@ -226,10 +226,18 @@ export class CalamexAcpAgent implements Agent {
 	}
 
 	async initialize(
-		_params: InitializeRequest,
+		params: InitializeRequest,
 	): Promise<InitializeResponse> {
+		// 协议版本协商(ACP initialize 约定)：客户端声明其支持的最高协议版本，
+		// Agent 必须回其所支持的、不高于客户端声明值的最高版本——即
+		// min(客户端声明值, 本 Agent 最高支持版本 PROTOCOL_VERSION)。恒回 PROTOCOL_VERSION
+		// 会在本 Agent 的 SDK 版本高于客户端时，向只识旧版的客户端谎报新版本(不合规)。
+		const negotiatedProtocolVersion = Math.min(
+			params.protocolVersion,
+			PROTOCOL_VERSION,
+		)
 		return {
-			protocolVersion: PROTOCOL_VERSION,
+			protocolVersion: negotiatedProtocolVersion,
 			agentCapabilities: {
 				loadSession: false,
 				// 带外能力(检查点回滚 / 模型透传 / web 检索抓取 / 预热 / 健康探活 / 计划编排 / agent 对话回合 / ask_user 反向提问恢复)以命名空间扩展方法公示；见 ext-methods.ts。
