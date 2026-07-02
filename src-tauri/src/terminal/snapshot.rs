@@ -1,5 +1,3 @@
-use std::time::Instant;
-
 /// 终端快照保留的**字节**上限（不是字符数）。160 KiB。
 pub const TERMINAL_SNAPSHOT_MAX_LENGTH: usize = 160 * 1024;
 
@@ -10,12 +8,6 @@ pub const TERMINAL_SNAPSHOT_MAX_LENGTH: usize = 160 * 1024;
 /// 才发生一次，把 `String::drain` 的均摊成本从 O(n)/次追加 降到 O(1)/次追加
 /// （详见 docs/performance-budget.md）。
 const TERMINAL_SNAPSHOT_TRIM_TARGET: usize = TERMINAL_SNAPSHOT_MAX_LENGTH * 3 / 4;
-
-#[derive(Clone, Copy, Default)]
-pub struct TerminalInteractiveVisualState {
-    pub resize_repaint_suppress_until: Option<Instant>,
-    pub alt_screen_active: bool,
-}
 
 /// 将快照裁剪到 [`TERMINAL_SNAPSHOT_MAX_LENGTH`] 以内。
 ///
@@ -63,16 +55,6 @@ fn advance_char_boundary(value: &str, index: usize) -> usize {
         boundary += 1;
     }
     boundary
-}
-
-
-/// 整屏交互式 resize 重绘帧判定。
-///
-/// 旧实现用 .contains("\x1b[H") 裸字节匹配叠加英文文案启发式，依赖英文 locale，
-/// 中文 Windows 或改过 UAC 文案即失效。现委托 vte_detect 用标准 VT 状态机按 CSI 指令语义
-/// （光标归位 + 整屏/多行擦除）判定，与 scan_ansi_csi_events 同源，locale 无关。
-pub fn is_likely_interactive_resize_repaint_frame(data: &str) -> bool {
-    super::vte_detect::is_full_screen_repaint_frame(data)
 }
 
 #[cfg(test)]

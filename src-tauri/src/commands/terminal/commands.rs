@@ -36,9 +36,9 @@ use super::state::{
     clear_active_terminal_run, collect_idle_orphan_session_ids,
     get_active_run_snapshot_for_session, get_active_terminal_run_input_target,
     get_active_terminal_run_session, get_flow_controller, get_session_state, get_terminal_session,
-    get_terminal_snapshot, lock_terminal_sessions, mark_terminal_resize_repaint_suppression,
+    get_terminal_snapshot, lock_terminal_sessions,
     remove_flow_controller, remove_interactive_terminal_after_exit, remove_pending_switch_input,
-    remove_session_geometry, remove_session_liveness, remove_terminal_interactive_visual_state,
+    remove_session_geometry, remove_session_liveness,
     remove_terminal_session, remove_terminal_snapshot, reset_flow_controller,
     resolve_terminal_start_directory, set_session_geometry, set_terminal_snapshot,
     should_recreate_terminal_session, take_and_prepend_pending_switch_input,
@@ -133,7 +133,6 @@ pub async fn ensure_terminal_session(
                     .handle
                     .resize(payload.cols, payload.rows)
                     .map_err(|error| error.to_string())?;
-                mark_terminal_resize_repaint_suppression(&terminal_state, &payload.session_id);
                 let initial_output = get_terminal_snapshot(&terminal_state, &payload.session_id)?;
                 // 重载恢复：复用既有会话时带回该会话当前活动运行快照与会话态，让前端在
                 // 页面重载、运行态镜像被重置后仍能复原「运行中 / 取消」UI。
@@ -225,7 +224,6 @@ pub async fn ensure_terminal_session(
         };
         sessions.insert(payload.session_id.clone(), Arc::clone(&session));
         set_terminal_snapshot(&terminal_state, &payload.session_id, String::new())?;
-        remove_terminal_interactive_visual_state(&terminal_state, &payload.session_id)?;
 
         (terminal_cwd, true)
     };
@@ -311,7 +309,6 @@ pub fn resize_terminal_session(
         .handle
         .resize(payload.cols, payload.rows)
         .map_err(|error| error.to_string())?;
-    mark_terminal_resize_repaint_suppression(&terminal_state, &payload.session_id);
     Ok(())
 }
 
@@ -331,7 +328,6 @@ pub fn close_terminal_session(
         .map_err(|_| "终端会话创建锁已损坏。".to_string())?;
     let removed_session = remove_terminal_session(&terminal_state, &payload.session_id)?;
     remove_terminal_snapshot(&terminal_state, &payload.session_id)?;
-    remove_terminal_interactive_visual_state(&terminal_state, &payload.session_id)?;
     remove_pending_switch_input(&terminal_state, &payload.session_id);
     remove_session_geometry(&terminal_state, &payload.session_id);
     // P2：取消并移除该会话的输出流控器，释放任何处于背压暂停态的读线程（使其能读到 EOF）。

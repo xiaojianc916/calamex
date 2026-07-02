@@ -28,7 +28,7 @@ use super::state::{
     TerminalSessionState, append_terminal_snapshot, clear_active_terminal_run,
     complete_session_run_state, get_active_run_snapshot_for_session, get_session_state,
     remove_interactive_terminal_after_exit, set_active_terminal_run_started_meta,
-    set_session_state, should_skip_snapshot_for_interactive_resize_repaint,
+    set_session_state,
 };
 
 static TERMINAL_DATA_SEQUENCE: AtomicU64 = AtomicU64::new(1);
@@ -132,9 +132,9 @@ fn emit_terminal_interactive_output(
     if chunk.is_empty() {
         return;
     }
-    if !should_skip_snapshot_for_interactive_resize_repaint(state, session_id, &chunk) {
-        let _ = append_terminal_snapshot(state, session_id, &chunk);
-    }
+    // 对齐行业标杆（VS Code / Windows Terminal / Alacritty）：交互输出一律原样落入回放快照，
+    // 绝不为「resize 重绘」丢弃 PTY 字节；直播与回放严格同源。
+    let _ = append_terminal_snapshot(state, session_id, &chunk);
     emit_terminal_data(
         app,
         TerminalDataEvent {

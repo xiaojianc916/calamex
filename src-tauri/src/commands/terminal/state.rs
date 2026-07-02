@@ -1,4 +1,4 @@
-//! 集成终端共享状态：会话、快照、交互视觉态、活动运行与切换态输入缓冲。
+//! 集成终端共享状态：会话、快照、活动运行与切换态输入缓冲。
 //!
 //! 本模块只负责状态容器与其存取，不发射事件、不驱动状态机。
 use std::{
@@ -13,18 +13,12 @@ use std::{
 
 use crate::terminal::{
     flow_control::FlowController,
-    snapshot::{
-        TerminalInteractiveVisualState,
-        is_likely_interactive_resize_repaint_frame,
-        trim_terminal_snapshot,
-    },
+    snapshot::trim_terminal_snapshot,
     state_machine::StateMachine,
     types::{Geometry, TerminalState},
-    vte_detect::scan_ansi_csi_events,
     wsl_pty::LocalWslPtyHandle,
 };
 
-const TERMINAL_RESIZE_REPAINT_SUPPRESSION: Duration = Duration::from_millis(240);
 const MAX_PENDING_SWITCH_INPUT_BYTES: usize = 64 * 1024;
 
 pub(super) struct TerminalSession {
@@ -75,8 +69,6 @@ struct PerSessionState {
     geometry: Option<Geometry>,
     /// 该会话状态机的当前状态。`None` 表示尚无记录，以 `Booting` 为基线。
     state: Option<TerminalState>,
-    /// 交互视觉态（alt-screen / resize 重绘抑制）。`None` 表示尚无记录。
-    interactive_visual: Option<TerminalInteractiveVisualState>,
     /// 该会话的输出流控器（P2 ack 背压）。`None` 表示尚未重置过。
     flow_controller: Option<FlowController>,
     /// 该会话最近一次前端心跳时刻。`None` 表示无心跳记录。
@@ -90,7 +82,6 @@ impl PerSessionState {
             && self.pending_switch_input.is_empty()
             && self.geometry.is_none()
             && self.state.is_none()
-            && self.interactive_visual.is_none()
             && self.flow_controller.is_none()
             && self.liveness.is_none()
     }
@@ -99,15 +90,15 @@ impl PerSessionState {
 #[derive(Clone, Default)]
 pub struct TerminalSessionState {
     /// 会话 PTY 句柄。**独立保留**：`ensure_terminal_session` 创建分支会在持有本表锁期间，
-    /// 调用 `set_terminal_snapshot` / `remove_terminal_interactive_visual_state`（二者现取
-    /// `per_session` 锁）。若把 `sessions` 并入 `per_session`，将在同一线程重入同一把锁导致自
+    /// 调用 `set_terminal_snapshot`（取 `per_session` 锁）。若把 `sessions` 并入
+    /// `per_session`，将在同一线程重入同一把锁导致自
     /// 死锁（std `Mutex` 不可重入）。故 `sessions` 必须是独立的一把锁。
     sessions: Arc<Mutex<HashMap<String, Arc<TerminalSession>>>>,
     /// 活动运行。**独立保留**：键为 `run_id`（非 `session_id`），与 `per_session` 键空间不同；
     /// 且 `get_active_terminal_run_input_target` 刻意先取本锁拿到 run_id 后立即释放，再取
     /// `per_session`（会话状态）锁，维持单一加锁顺序。并入会破坏该顺序约束。
     active_runs: Arc<Mutex<HashMap<String, TerminalActiveRun>>>,
-    /// 其余「按 session_id 归集」的叶子状态（快照 / 交互视觉态 / 切换态输入 / geometry /
+    /// 其余「按 session_id 归集」的叶子状态（快照 / 切换态输入 / geometry /
     /// 状态机 / 流控器 / 心跳）合并到单一表，按 session_id 一把锁取用。相比原先 7 张独立 map，
     /// 显著降低 `remove_interactive_terminal_after_exit` 等路径的取锁次数（7 把锁 -> 1 把）。
     per_session: Arc<Mutex<HashMap<String, PerSessionState>>>,
@@ -215,33 +206,6 @@ pub(super) fn append_terminal_snapshot(
     snapshot.push_str(chunk);
     trim_terminal_snapshot(snapshot);
     Ok(())
-}
-
-pub(super) fn remove_terminal_interactive_visual_state(
-    state: &TerminalSessionState,
-    session_id: &str,
-) -> Result<(), String> {
-    let mut per_session = lock_per_session(state, "终端交互视觉状态已损坏。")?;
-    if let Some(entry) = per_session.get_mut(session_id) {
-        entry.interactive_visual = None;
-    }
-    prune_session_entry_if_empty(&mut per_session, session_id);
-    Ok(())
-}
-
-pub(super) fn mark_terminal_resize_repaint_suppression(
-    state: &TerminalSessionState,
-    session_id: &str,
-) {
-    let Ok(mut per_session) = state.per_session.lock() else {
-        return;
-    };
-    let visual_state = per_session
-        .entry(session_id.to_string())
-        .or_default()
-        .interactive_visual
-        .get_or_insert_with(TerminalInteractiveVisualState::default);
-    visual_state.resize_repaint_suppress_until = Some(Instant::now() + TERMINAL_RESIZE_REPAINT_SUPPRESSION);
 }
 
 /// 每会话 geometry：作为「单一 SessionRegistry」绞杀式重构的第一步，让会话各自持有自己的
@@ -683,48 +647,6 @@ pub(super) fn remove_pending_switch_input(state: &TerminalSessionState, session_
         entry.pending_switch_input.clear();
     }
     prune_session_entry_if_empty(&mut per_session, session_id);
-}
-
-pub(super) fn should_skip_snapshot_for_interactive_resize_repaint(
-    state: &TerminalSessionState,
-    session_id: &str,
-    chunk: &str,
-) -> bool {
-    if chunk.is_empty() {
-        return false;
-    }
-    let Ok(mut per_session) = state.per_session.lock() else {
-        return false;
-    };
-    let visual_state = per_session
-        .entry(session_id.to_string())
-        .or_default()
-        .interactive_visual
-        .get_or_insert_with(TerminalInteractiveVisualState::default);
-    let was_alt_screen_active = visual_state.alt_screen_active;
-
-    // 单次 vte 扫描同时得出「本段是否含 alt-screen 切换」与「应用后最终 alt-screen 状态」，
-    // 避免对同一段数据解析两遍（原先分别调用 contains_alt_screen_switch 与
-    // resolve_alt_screen_state_after_data，各做一次完整 vte 解析）。
-    let ansi_events = scan_ansi_csi_events(chunk);
-    let has_alt_screen_control = ansi_events.alt_screen_switched;
-    if ansi_events.alt_screen_switched {
-        visual_state.alt_screen_active = ansi_events.alt_screen_active;
-    }
-
-    if was_alt_screen_active || visual_state.alt_screen_active || has_alt_screen_control {
-        return false;
-    }
-
-    let Some(suppress_until) = visual_state.resize_repaint_suppress_until else {
-        return false;
-    };
-    if Instant::now() > suppress_until {
-        visual_state.resize_repaint_suppress_until = None;
-        return false;
-    }
-
-    is_likely_interactive_resize_repaint_frame(chunk)
 }
 
 pub(super) fn should_recreate_terminal_session(session: &TerminalSession) -> bool {

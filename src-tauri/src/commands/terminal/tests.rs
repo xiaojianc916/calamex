@@ -15,9 +15,7 @@ use super::events::next_terminal_data_seq;
 use super::state::{
     ActiveRunInputTarget, TerminalSessionState, active_terminal_run_count,
     buffer_pending_switch_input, clear_active_terminal_run, complete_session_run_state,
-    get_active_terminal_run_input_target, get_session_state,
-    mark_terminal_resize_repaint_suppression, set_session_state,
-    should_skip_snapshot_for_interactive_resize_repaint,
+    get_active_terminal_run_input_target, get_session_state, set_session_state,
     take_and_prepend_pending_switch_input, try_mark_active_terminal_run,
 };
 use super::to_wsl_path;
@@ -199,41 +197,6 @@ fn terminal_data_seq_is_monotonic() {
     let third = next_terminal_data_seq();
     assert!(first < second);
     assert!(second < third);
-}
-
-#[test]
-fn interactive_resize_repaint_is_excluded_from_snapshot_window() {
-    let state = TerminalSessionState::default();
-    let session_id = "resize-repaint-session";
-    mark_terminal_resize_repaint_suppression(&state, session_id);
-    assert!(should_skip_snapshot_for_interactive_resize_repaint(
-        &state,
-        session_id,
-        "\x1b[?25l\x1b[m\x1b[HTo run a command as administrator\x1b[K\r\n[test@Predator]$\x1b[K"
-    ));
-    assert!(!should_skip_snapshot_for_interactive_resize_repaint(
-        &state,
-        session_id,
-        "normal output after resize\r\n"
-    ));
-}
-
-#[test]
-fn interactive_resize_repaint_keeps_alt_screen_frames() {
-    let state = TerminalSessionState::default();
-    let session_id = "resize-alt-screen-session";
-    mark_terminal_resize_repaint_suppression(&state, session_id);
-    assert!(!should_skip_snapshot_for_interactive_resize_repaint(
-        &state,
-        session_id,
-        "\x1b[?1049h"
-    ));
-    mark_terminal_resize_repaint_suppression(&state, session_id);
-    assert!(!should_skip_snapshot_for_interactive_resize_repaint(
-        &state,
-        session_id,
-        "\x1b[?25l\x1b[Hvim repaint\x1b[K"
-    ));
 }
 
 #[test]
