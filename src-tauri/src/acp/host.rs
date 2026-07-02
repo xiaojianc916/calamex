@@ -39,6 +39,7 @@ use crate::commands::contracts::{
 };
 
 use super::approval::{ApprovalError, ApprovalRegistry, ApprovalRequestInfo};
+use super::bridges::AcpBridges;
 use super::client::{
     AcpClientConfig, AcpClientError, AcpClientHandle, AcpStreamFrame, CheckpointRestoreRequest,
     EventSink, HealthExtRequest, ModelChatExtRequest, WarmupExtRequest, WebFetchExtRequest,
@@ -133,7 +134,8 @@ impl AcpHost {
             emit(frame)
         });
 
-        let handle = spawn_acp_client(config, sink, resolver)?;
+        let bridges = AcpBridges::disk_backed();
+        let handle = spawn_acp_client(config, sink, resolver, bridges)?;
         Ok(Self {
             handle,
             approvals,
