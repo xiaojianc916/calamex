@@ -1,4 +1,4 @@
-import { LanguageSupport, StreamLanguage } from '@codemirror/language';
+import { LanguageSupport } from '@codemirror/language';
 import type { Extension } from '@codemirror/state';
 import { LANGUAGE_DEFINITIONS } from '@/utils/editor/language-registry';
 import { logger } from '@/utils/platform/logger';
@@ -32,48 +32,42 @@ const streamLanguageLoader =
 // 词表 / 别名 / 标签 / 展示名全部来自 language-registry。
 // 共享解析器:javascript 与 jsx 同用 javascript({jsx});css / scss / less 同用 css()。
 const CODEMIRROR_LANGUAGE_LOADERS: Readonly<Record<string, () => Promise<Extension>>> = {
-  shell: () => import('./codemirror-bash-language').then((m) => m.bashLanguageExtensions()),
-  javascript: () => import('@codemirror/lang-javascript').then((m) => m.javascript({ jsx: true })),
-  jsx: () => import('@codemirror/lang-javascript').then((m) => m.javascript({ jsx: true })),
-  typescript: () =>
-    import('@codemirror/lang-javascript').then((m) => m.javascript({ typescript: true })),
-  tsx: () =>
-    import('@codemirror/lang-javascript').then((m) =>
-      m.javascript({ jsx: true, typescript: true }),
-    ),
-  html: () => import('@codemirror/lang-html').then((m) => m.html()),
-  vue: () => import('@codemirror/lang-vue').then((m) => m.vue()),
-  css: () => import('@codemirror/lang-css').then((m) => m.css()),
-  scss: () => import('@codemirror/lang-css').then((m) => m.css()),
-  less: () => import('@codemirror/lang-css').then((m) => m.css()),
-  json: () => import('@codemirror/lang-json').then((m) => m.json()),
-  markdown: () => import('@codemirror/lang-markdown').then((m) => m.markdown()),
+  shell: async () => treeSitterStructureExtensions('shell'),
+  javascript: async () => treeSitterStructureExtensions('javascript'),
+  jsx: async () => treeSitterStructureExtensions('jsx'),
+  typescript: async () => treeSitterStructureExtensions('typescript'),
+  tsx: async () => treeSitterStructureExtensions('tsx'),
+  html: async () => treeSitterStructureExtensions('html'),
+  vue: async () => treeSitterStructureExtensions('vue'),
+  css: async () => treeSitterStructureExtensions('css'),
+  scss: async () => treeSitterStructureExtensions('scss'),
+  less: async () => treeSitterStructureExtensions('less'),
+  json: async () => treeSitterStructureExtensions('json'),
+  markdown: async () => treeSitterStructureExtensions('markdown'),
   dockerfile: async () => treeSitterStructureExtensions('dockerfile'),
   diff: async () => treeSitterStructureExtensions('diff'),
-  c: () => import('@codemirror/lang-cpp').then((m) => m.cpp()),
-  cpp: () => import('@codemirror/lang-cpp').then((m) => m.cpp()),
+  c: async () => treeSitterStructureExtensions('c'),
+  cpp: async () => treeSitterStructureExtensions('cpp'),
   csharp: async () => treeSitterStructureExtensions('csharp'),
   dart: async () => treeSitterStructureExtensions('dart'),
-  go: () => import('@codemirror/lang-go').then((m) => m.go()),
-  java: () => import('@codemirror/lang-java').then((m) => m.java()),
+  go: async () => treeSitterStructureExtensions('go'),
+  java: async () => treeSitterStructureExtensions('java'),
   kotlin: async () => treeSitterStructureExtensions('kotlin'),
   lua: async () => treeSitterStructureExtensions('lua'),
   powershell: async () => treeSitterStructureExtensions('powershell'),
   proto: async () => treeSitterStructureExtensions('proto'),
-  python: () => import('@codemirror/lang-python').then((m) => m.python()),
+  python: async () => treeSitterStructureExtensions('python'),
   r: async () => treeSitterStructureExtensions('r'),
   ruby: async () => treeSitterStructureExtensions('ruby'),
-  rust: () => import('@codemirror/lang-rust').then((m) => m.rust()),
+  rust: async () => treeSitterStructureExtensions('rust'),
   scala: async () => treeSitterStructureExtensions('scala'),
-  sql: () => import('@codemirror/lang-sql').then((m) => m.sql({})),
+  sql: async () => treeSitterStructureExtensions('sql'),
   latex: async () => treeSitterStructureExtensions('latex'),
-  swift: streamLanguageLoader(() =>
-    import('@codemirror/legacy-modes/mode/swift').then((m) => m.swift),
-  ),
+  swift: async () => treeSitterStructureExtensions('swift'),
   toml: async () => treeSitterStructureExtensions('toml'),
   ini: async () => treeSitterStructureExtensions('ini'),
-  xml: () => import('@codemirror/lang-xml').then((m) => m.xml()),
-  yaml: () => import('@codemirror/lang-yaml').then((m) => m.yaml()),
+  xml: async () => treeSitterStructureExtensions('xml'),
+  yaml: async () => treeSitterStructureExtensions('yaml'),
 };
 
 /** 具备 CodeMirror 解析器的规范语言 id(loader 键集合)。 */

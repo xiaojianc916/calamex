@@ -1,101 +1,163 @@
-// 16-generalize-structural-selection.mjs — 结构化选区改用 tree-sitter 树（修复 Lezer 移除后的回归）
-import { readFileSync, writeFileSync } from "node:fs"
+// 17-converge-final.mjs — tree-sitter 唯一核心引擎：全部语言统一，删除 bash 专属模块与 legacy 导入
+import { readFileSync, writeFileSync, existsSync, rmSync, readdirSync, statSync } from "node:fs"
 import { join } from "node:path"
 
 const ROOT = process.cwd()
+const EDITOR_DIR = join(ROOT, "src/services/editor")
 
-// ── 1) structure.ts：新增通用 expandRangeWithTreeSitter（从 structureAnalysisField 的树爬父链）──
+// ── 1) codemirror-language.ts：全部 36 个语言 → 通用结构引擎；移除 stream/legacy 相关 ──
 {
-	const PATH = join(ROOT, "src/services/editor/codemirror-tree-sitter-structure.ts")
+	const PATH = join(EDITOR_DIR, "codemirror-language.ts")
 	let content = readFileSync(PATH, "utf8")
 
-	// 1a) 扩充 bash-runtime 的字节坐标工具 import
-	const importOld = `import { byteOffsetToCharIndex } from './tree-sitter/bash-runtime';`
-	const importNew = `import { byteOffsetToCharIndex, toBytePoint, utf8ByteLengthOfRange } from './tree-sitter/bash-runtime';`
-	if (content.includes(importOld)) {
-		content = content.replace(importOld, importNew)
-	} else {
-		console.log("⚠️ structure.ts import 锚点未命中")
-	}
+	// 1a) import：去掉 StreamLanguage
+	content = content.replace(
+		`import { LanguageSupport, StreamLanguage } from '@codemirror/language';`,
+		`import { LanguageSupport } from '@codemirror/language';`,
+	)
 
-	// 1b) 在 treeSitterStructureExtensions 之前插入通用结构选区函数
-	const anchor = `/** 供 codemirror-language 的 CODEMIRROR_LANGUAGE_LOADERS 使用：替代 legacy-modes 手写词法器。 */`
-	const addition = `/**
- * 供结构化选区使用：基于当前语言的 tree-sitter 树，返回"恰好包含且严格大于"[from, to]
- * 的最近父节点范围（字符坐标）。无分析结果或已在最外层时返回 null。
- */
-export function expandRangeWithTreeSitter(
-  state: EditorState,
-  from: number,
-  to: number,
-): { from: number; to: number } | null {
-  const analysis = state.field(structureAnalysisField, false);
-  if (!analysis) return null;
-  const source = state.doc.toString();
-  const fromByte = utf8ByteLengthOfRange(source, 0, from);
-  const toByte = utf8ByteLengthOfRange(source, 0, to);
-  const point = toBytePoint(source, from);
-  let node: Node | null =
-    analysis.tree.rootNode.namedDescendantForPosition(point) ??
-    analysis.tree.rootNode.descendantForPosition(point) ??
-    null;
-  while (node) {
-    if (
-      node.startIndex <= fromByte &&
-      node.endIndex >= toByte &&
-      (node.startIndex < fromByte || node.endIndex > toByte)
-    ) {
-      return {
-        from: byteOffsetToCharIndex(source, node.startIndex),
-        to: byteOffsetToCharIndex(source, node.endIndex),
-      };
-    }
-    node = node.parent;
-  }
-  return null;
-}
+	// 1b) 删除 streamLanguageLoader 辅助块（含类型与注释）
+	const streamBlock = `// StreamLanguage.define 的参数类型(legacy stream 模式)。
+type CodeMirrorStreamParser = Parameters<typeof StreamLanguage.define>[0];
+
+// 把一个"动态 import legacy stream parser"的 loader 包装成返回 LanguageSupport 的懒加载器。
+// 语法包只有在该语言首次被用到时才会被动态 import(Vite 代码分割)。
+const streamLanguageLoader =
+  (loader: () => Promise<CodeMirrorStreamParser>) => async (): Promise<LanguageSupport> =>
+    new LanguageSupport(StreamLanguage.define(await loader()));
 
 `
-	if (content.includes(anchor)) {
-		content = content.replace(anchor, addition + anchor)
-		writeFileSync(PATH, content, "utf8")
-		console.log("✅ structure.ts 已新增 expandRangeWithTreeSitter")
+	if (content.includes(streamBlock)) {
+		content = content.replace(streamBlock, "")
 	} else {
-		console.log("⚠️ structure.ts 插入锚点未命中")
+		console.log("⚠️ streamLanguageLoader 块未命中")
+	}
+
+	// 1c) 整个 loaders 对象 → 全通用
+	const oldLoaders = content.slice(
+		content.indexOf("const CODEMIRROR_LANGUAGE_LOADERS"),
+		content.indexOf("};", content.indexOf("const CODEMIRROR_LANGUAGE_LOADERS")) + 2,
+	)
+	const ids = [
+		"shell", "javascript", "jsx", "typescript", "tsx", "html", "vue", "css", "scss", "less",
+		"json", "markdown", "dockerfile", "diff", "c", "cpp", "csharp", "dart", "go", "java",
+		"kotlin", "lua", "powershell", "proto", "python", "r", "ruby", "rust", "scala", "sql",
+		"latex", "swift", "toml", "ini", "xml", "yaml",
+	]
+	const newLoaders =
+		`const CODEMIRROR_LANGUAGE_LOADERS: Readonly<Record<string, () => Promise<Extension>>> = {\n` +
+		ids.map((id) => `  ${id}: async () => treeSitterStructureExtensions('${id}'),`).join("\n") +
+		`\n};`
+	if (oldLoaders.startsWith("const CODEMIRROR_LANGUAGE_LOADERS") && oldLoaders.endsWith("};")) {
+		content = content.replace(oldLoaders, newLoaders)
+		console.log("✅ codemirror-language.ts: 36 个语言全部改为通用结构引擎")
+	} else {
+		console.log("⚠️ loaders 对象定位失败")
+	}
+
+	writeFileSync(PATH, content, "utf8")
+}
+
+// ── 2) structure.ts：补全所有语言的行注释 token ──
+{
+	const PATH = join(EDITOR_DIR, "codemirror-tree-sitter-structure.ts")
+	let content = readFileSync(PATH, "utf8")
+	const oldBlock = content.slice(
+		content.indexOf("const LINE_COMMENT_TOKENS"),
+		content.indexOf("};", content.indexOf("const LINE_COMMENT_TOKENS")) + 2,
+	)
+	const newBlock = `const LINE_COMMENT_TOKENS: Readonly<Record<string, string>> = {
+  shell: '#',
+  javascript: '//',
+  jsx: '//',
+  typescript: '//',
+  tsx: '//',
+  c: '//',
+  cpp: '//',
+  csharp: '//',
+  dart: '//',
+  go: '//',
+  java: '//',
+  kotlin: '//',
+  lua: '--',
+  powershell: '#',
+  proto: '//',
+  python: '#',
+  r: '#',
+  ruby: '#',
+  rust: '//',
+  scala: '//',
+  scss: '//',
+  less: '//',
+  sql: '--',
+  swift: '//',
+  toml: '#',
+  ini: ';',
+  latex: '%',
+  yaml: '#',
+  dockerfile: '#',
+};`
+	if (oldBlock.startsWith("const LINE_COMMENT_TOKENS") && oldBlock.endsWith("};")) {
+		content = content.replace(oldBlock, newBlock)
+		writeFileSync(PATH, content, "utf8")
+		console.log("✅ structure.ts: 行注释 token 表已补全")
+	} else {
+		console.log("⚠️ LINE_COMMENT_TOKENS 定位失败")
 	}
 }
 
-// ── 2) structural-selection.ts：把通用 tree-sitter 扩选作为兜底（shell 仍先走 bash 专用路径）──
+// ── 3) structural-selection.ts：去掉 bash 专用分支，统一走通用 tree-sitter ──
 {
-	const PATH = join(ROOT, "src/services/editor/codemirror-structural-selection.ts")
+	const PATH = join(EDITOR_DIR, "codemirror-structural-selection.ts")
 	let content = readFileSync(PATH, "utf8")
-
-	const importOld = `import { expandRangeWithBashTree } from './codemirror-bash-language';`
-	const importNew = `import { expandRangeWithBashTree } from './codemirror-bash-language';\nimport { expandRangeWithTreeSitter } from './codemirror-tree-sitter-structure';`
-	if (content.includes(importOld)) {
-		content = content.replace(importOld, importNew)
-	} else {
-		console.log("⚠️ structural-selection import 锚点未命中")
-	}
-
-	const callOld = `      const bashRange = expandRangeWithBashTree(state, range.from, range.to);
-      if (bashRange) {
-        return EditorSelection.range(bashRange.from, bashRange.to);
-      }`
-	const callNew = `      // shell 走 bash 专用树；其余语言走通用 tree-sitter 结构树；两者都命中不了才回退 Lezer。
+	content = content.replace(
+		`import { expandRangeWithBashTree } from './codemirror-bash-language';\nimport { expandRangeWithTreeSitter } from './codemirror-tree-sitter-structure';`,
+		`import { expandRangeWithTreeSitter } from './codemirror-tree-sitter-structure';`,
+	)
+	content = content.replace(
+		`      // shell 走 bash 专用树；其余语言走通用 tree-sitter 结构树；两者都命中不了才回退 Lezer。
       const tsRange =
         expandRangeWithBashTree(state, range.from, range.to) ??
         expandRangeWithTreeSitter(state, range.from, range.to);
-      if (tsRange) {
-        return EditorSelection.range(tsRange.from, tsRange.to);
-      }`
-	if (content.includes(callOld)) {
-		content = content.replace(callOld, callNew)
-		writeFileSync(PATH, content, "utf8")
-		console.log("✅ structural-selection.ts 已接入通用 tree-sitter 扩选")
+      if (tsRange) {`,
+		`      // 所有语言（含 shell）统一走通用 tree-sitter 结构树。
+      const tsRange = expandRangeWithTreeSitter(state, range.from, range.to);
+      if (tsRange) {`,
+	)
+	writeFileSync(PATH, content, "utf8")
+	console.log("✅ structural-selection.ts: 已去除 bash 专用分支")
+}
+
+// ── 4) 确认无其它引用后，删除 bash 专属模块 ──
+{
+	const targets = ["codemirror-bash-language.ts", "codemirror-bash-language.spec.ts"]
+	const remaining = []
+	const walk = (dir) => {
+		for (const name of readdirSync(dir)) {
+			const full = join(dir, name)
+			if (statSync(full).isDirectory()) {
+				walk(full)
+			} else if (/\.(ts|tsx|vue|mjs|js)$/.test(name) && !targets.includes(name)) {
+				if (readFileSync(full, "utf8").includes("codemirror-bash-language")) {
+					remaining.push(full)
+				}
+			}
+		}
+	}
+	walk(join(ROOT, "src"))
+
+	if (remaining.length > 0) {
+		console.log("⚠️ 仍有文件引用 codemirror-bash-language，未删除。请处理这些引用后再删：")
+		for (const f of remaining) console.log("   - " + f)
 	} else {
-		console.log("⚠️ structural-selection 调用锚点未命中")
+		for (const t of targets) {
+			const p = join(EDITOR_DIR, t)
+			if (existsSync(p)) {
+				rmSync(p)
+				console.log(`✅ 已删除 ${t}`)
+			}
+		}
 	}
 }
 
-console.log("\n完成。重启 dev server，在 .py/.rs/.js/.go 等文件里按 Mod-i 测试逐级扩选（应逐层选中函数/块，而不是直接跳到整篇）。")
+console.log("\n完成。重启 dev server，逐个语言测试高亮/折叠/缩进/结构选区（Mod-i）。")

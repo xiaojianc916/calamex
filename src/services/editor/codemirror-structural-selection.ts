@@ -1,7 +1,6 @@
 import { syntaxTree } from '@codemirror/language';
 import { EditorSelection, type EditorState, StateEffect, StateField } from '@codemirror/state';
 import type { Command } from '@codemirror/view';
-import { expandRangeWithBashTree } from './codemirror-bash-language';
 import { expandRangeWithTreeSitter } from './codemirror-tree-sitter-structure';
 
 /**
@@ -45,10 +44,8 @@ const resolveExpandedSelection = (state: EditorState): EditorSelection => {
   const tree = syntaxTree(state);
   return EditorSelection.create(
     state.selection.ranges.map((range) => {
-      // shell 走 bash 专用树；其余语言走通用 tree-sitter 结构树；两者都命中不了才回退 Lezer。
-      const tsRange =
-        expandRangeWithBashTree(state, range.from, range.to) ??
-        expandRangeWithTreeSitter(state, range.from, range.to);
+      // 所有语言（含 shell）统一走通用 tree-sitter 结构树。
+      const tsRange = expandRangeWithTreeSitter(state, range.from, range.to);
       if (tsRange) {
         return EditorSelection.range(tsRange.from, tsRange.to);
       }

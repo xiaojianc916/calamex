@@ -164,19 +164,35 @@ const structureParsePlugin = (langId: string) =>
 
 // 各语言的行注释前缀（供 toggle-line-comment 等命令使用）。diff 无注释语法，不登记。
 const LINE_COMMENT_TOKENS: Readonly<Record<string, string>> = {
-  dockerfile: '#',
+  shell: '#',
+  javascript: '//',
+  jsx: '//',
+  typescript: '//',
+  tsx: '//',
+  c: '//',
+  cpp: '//',
   csharp: '//',
   dart: '//',
+  go: '//',
+  java: '//',
   kotlin: '//',
   lua: '--',
   powershell: '#',
   proto: '//',
+  python: '#',
   r: '#',
   ruby: '#',
+  rust: '//',
   scala: '//',
-  latex: '%',
+  scss: '//',
+  less: '//',
+  sql: '--',
+  swift: '//',
   toml: '#',
   ini: ';',
+  latex: '%',
+  yaml: '#',
+  dockerfile: '#',
 };
 
 /**
