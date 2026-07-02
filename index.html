@@ -6,7 +6,25 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <meta name="color-scheme" content="light" />
   <title>Calamex</title>
+  <!-- FONT_INLINE_PRELOAD_MARKER: 关键字体在 HTML 解析时即被发现并并行 preload，首帧直接以最终字体渲染，
+       消除 FOUT/字体 swap。字体置于 public/（稳定 URL，Tauri 按 dist 根提供服务）。
+       唯一字体源：不再经 main.ts 的 JS import inter.css。 -->
+  <link rel="preload" href="/fonts/InterVariable.woff2" as="font" type="font/woff2" crossorigin />
   <style>
+    @font-face {
+      font-family: 'Inter';
+      font-weight: 100 900;
+      font-style: normal;
+      font-display: swap;
+      src: url('/fonts/InterVariable.woff2') format('woff2-variations');
+    }
+    @font-face {
+      font-family: 'Inter Variable';
+      font-weight: 100 900;
+      font-style: normal;
+      font-display: swap;
+      src: url('/fonts/InterVariable.woff2') format('woff2-variations');
+    }
     /* 基础重置：窗口默认 visible:false，由 Rust 在 setup 阶段建窗后立即显示（见 main.rs）；
      * 此处铺与原生窗口一致的 #fafafa 底色与布局，杜绝首帧白屏。
      * 最终背景由 styles.css 统一接管。不画任何假骨架——真实 UI 由 Vue 壳挂载后作为首帧渲染。 */
