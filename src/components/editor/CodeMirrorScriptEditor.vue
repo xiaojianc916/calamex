@@ -77,7 +77,7 @@ import type { IEditorContextMenuItem } from '@/components/editor/editor-context-
 import { buildCodeMirrorSettingsExtensions } from '@/services/editor/codemirror-config';
 import { createCodeMirrorInlineCompletionController } from '@/services/editor/codemirror-inline-completion';
 import {
-  loadCodeMirrorLanguageSupport,
+  loadCodeMirrorLanguageExtension,
   resolveCodeMirrorLanguageExtension,
 } from '@/services/editor/codemirror-language';
 import {
@@ -1439,11 +1439,14 @@ const reconfigureLsp = (): void => {
 // 语言语法按需加载：先用已缓存（或空）占位，加载完成后再 reconfigure 进编辑器，
 // 避免把全部语法打进初始 bundle。
 const applyLanguageExtension = (language: string): void => {
-  void loadCodeMirrorLanguageSupport(language).then((support) => {
+  // 必须用 loadCodeMirrorLanguageExtension（内部 withTreeSitterHighlight 包裹）而非裸的
+  // loadCodeMirrorLanguageSupport：后者会把带 tree-sitter 着色的扩展覆盖成不带的，导致
+  // tree-sitter 高亮永不生效（编辑器无色）。
+  void loadCodeMirrorLanguageExtension(language).then((extension) => {
     const view = editorView;
     // 加载期间文档可能已切换语言，过期结果直接丢弃。
     if (!view || getCurrentLanguage() !== language) return;
-    view.dispatch({ effects: languageCompartment.reconfigure(support ?? []) });
+    view.dispatch({ effects: languageCompartment.reconfigure(extension) });
   });
 };
 

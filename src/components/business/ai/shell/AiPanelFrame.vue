@@ -1,11 +1,7 @@
 <script setup lang="ts">
-// 共享 AI 面板外壳：真身(AiAssistantPanel)与启动骨架(StartupAiWorkbenchShell)共用同一套
-// 外壳结构与尺寸（头部 provider 标记 + 操作按钮 + 内容区 + 底部 composer），
-// 从而保证骨架态与真实态像素一致、内容填入时零布局抖动（单一数据源，杜绝“照着模仿”导致的漂移）。
-//
-// 设计要点：本组件刻意保持轻量、不依赖任何 AI 子系统（useAiAssistant / CopilotKit 等），
-// 会话线程、建议气泡、输入框等“重内核”全部通过插槽注入。这样启动骨架可在首帧即时渲染，
-// 不必为了显示骨架而提前挂载重组件，既同源又不拖慢启动。
+// AI 面板外壳：头部 provider 标记 + 操作按钮 + 内容区 + 底部 composer 的通用结构与尺寸，
+// 供 AiAssistantPanel 复用。刻意保持轻量、不依赖任何 AI 子系统（useAiAssistant / CopilotKit 等），
+// 会话线程、建议气泡、输入框等重内核全部通过插槽注入。
 withDefaults(
   defineProps<{
     /** 装饰性（骨架）用途时设为 true：对辅助技术隐藏，不暴露 aria-label。 */

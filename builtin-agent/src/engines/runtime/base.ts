@@ -1,4 +1,3 @@
-import { createMastraModelConfigFromEnv } from '../../models/config.js';
 import type { IMastraResolvedModelConfig } from '../../models/config.js';
 import { createMastraLoggerRef } from '../../tools/log/index.js';
 import type { IMastraLogToolsRef } from '../../tools/log/index.js';
@@ -110,7 +109,7 @@ export class MastraRuntimeBase {
                 const workflowStore = await this.storage.getStore('workflows');
                 return workflowStore?.loadWorkflowSnapshot({ workflowName, runId }) ?? null;
             });
-        this.readModelConfig = deps.readModelConfig ?? createMastraModelConfigFromEnv;
+        this.readModelConfig = deps.readModelConfig ?? (() => null);
         this.createMcpClientBundle = deps.createMcpClientBundle ?? createMastraMcpClientBundle;
         this.mcpGatewayPool = createMcpGatewayWarmPool({
             createBundle: this.createMcpClientBundle,
