@@ -1,6 +1,6 @@
 // 本文件由 setup-tree-sitter-highlight.mjs 生成，请勿手改。
 // wasm 来自 tree-sitter-wasms（预编译）；highlights.scm 来自 nvim-treesitter 或各语法仓库（保留其 OSS 许可）。
-import shell_wasm from 'tree-sitter-wasms/out/tree-sitter-bash.wasm?url';
+import shell_wasm from 'tree-sitter-bash/tree-sitter-bash.wasm?url';
 import c_wasm from 'tree-sitter-wasms/out/tree-sitter-c.wasm?url';
 import csharp_wasm from 'tree-sitter-wasms/out/tree-sitter-c_sharp.wasm?url';
 import cpp_wasm from 'tree-sitter-wasms/out/tree-sitter-cpp.wasm?url';

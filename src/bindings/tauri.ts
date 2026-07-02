@@ -26,21 +26,21 @@ export const commands = {
 	saveScript: (payload: SaveScriptRequest) => __TAURI_INVOKE<ScriptFilePayload>("save_script", { payload }),
 	/**
 	 *  弹出原生文件对话框（Rust 可信侧）并把所选附件读回。
-	 *
+	 * 
 	 *  `default_dir` 仅作对话框初始目录提示，不是读取目标；真正被读的只有用户在对话框
 	 *  里选中的文件。用户取消则返回空列表（与旧前端 open() 取消返回 [] 的语义一致）。
 	 */
 	pickAttachmentFiles: (defaultDir: string | null) => __TAURI_INVOKE<PickAttachmentFilesPayload>("pick_attachment_files", { defaultDir }),
 	/**
 	 *  启动（或重启）工作区文件监听
-	 *
+	 * 
 	 *  真正的目录遍历与监听在后台线程完成，本命令仅做根目录校验与 watcher 构造后
 	 *  立即返回，因此打开超大仓库也不会阻塞前端。监听结果通过 `WorkspaceFsEvent` 推送。
 	 *  若已有监听，会先换入新句柄再通知旧线程退出，旧 watcher 在其线程结束时 Drop。
-	 *
+	 * 
 	 *  # 参数
 	 *  - `root_path`: 工作区根目录的绝对或相对路径，会被 canonicalize
-	 *
+	 * 
 	 *  # 错误
 	 *  路径不存在 / 不是目录、或 watcher 构造失败时返回 `Err(String)`。
 	 *  注意：后台的实际 watch 调用失败只记日志，不再同步抛出（后台化的取舍）。
@@ -48,7 +48,7 @@ export const commands = {
 	startWorkspaceWatching: (rootPath: string) => __TAURI_INVOKE<null>("start_workspace_watching", { rootPath }),
 	/**
 	 *  停止工作区文件监听
-	 *
+	 * 
 	 *  通知后台线程退出；线程在 `DEBOUNCE_DURATION` 内跳出循环并 Drop watcher。
 	 *  重复调用、未启动时调用都是安全的（幂等）。
 	 */
@@ -62,7 +62,7 @@ export const commands = {
 	/**
 	 *  P2 ack 背压：前端每消费约 `CHAR_COUNT_ACK_SIZE` 个字符回一次 ack，未确认字符数回落到
 	 *  低水位以下即解除暂停、唤醒被背压的读线程。会话已关闭 / 无流控器时为安全 no-op。
-	 *
+	 * 
 	 *  对照 VSCode `src/vs/platform/terminal/common/terminalProcess.ts` 的 `acknowledgeDataEvent`：
 	 *  前端 xterm 写入后按累计字符数回 ack，pty 侧据此增减 `_unacknowledgedCharCount`。
 	 */
@@ -141,7 +141,7 @@ export const commands = {
 	builtinAgentWarmup: () => __TAURI_INVOKE<AgentSidecarWarmupPayload>("builtin_agent_warmup"),
 	/**
 	 *  外部 ACP 编码 agent（Kimi Code / Codex 等，ADR-0015）的标准回合命令（`session/prompt`）。
-	 *
+	 * 
 	 *  与 `builtin_agent_chat`（走自家边车的带外 `agent_chat` 扩展回合）不同：按后端类型经
 	 *  `get_or_spawn_backend` 解析/派生对应的独立常驻宿主，解析稳定会话后以纯文本内容块驱动
 	 *  一轮标准 prompt。**不补齐 model_config**——外部 agent 的凭据由其自身 CLI 自管（见
@@ -179,7 +179,7 @@ export const commands = {
 	aiSaveConfig: (payload: AiSaveConfigRequest) => __TAURI_INVOKE<AiConfigPayload>("ai_save_config", { payload }),
 	/**
 	 *  下发「全量可原生切换模型清单」（seeded_models）并即时生效。
-	 *
+	 * 
 	 *  前端把项目内置的可扩展模型目录（MASTRA_PROVIDER_PRESET.models）整体下发，后端落盘 ai.json
 	 *  后，作为 Kimi 启动时 seed 进 config.toml 的候选模型全集——使 Kimi 原生 session/set_config_option
 	 *  的切换候选池覆盖整张清单、零重启切换。与 ai_save_config 同构：清单变更可能新增/移除可切换模型，
@@ -207,7 +207,7 @@ export const commands = {
 	aiEvictThread: (threadId: string) => __TAURI_INVOKE<null>("ai_evict_thread", { threadId }),
 	/**
 	 *  投递 ACP 反向权限请求（`session/request_permission`）的审批决策，唤醒回合内挂起的工具调用。
-	 *
+	 * 
 	 *  与 `ai_cancel` 同构地委托给 Tauri 托管的 `AcpRuntime`：会话归属哪个后端宿主对命令层透明，
 	 *  由 runtime 向全部已建立宿主广播投递。三字段先行空白校验（前端总能从已渲染审批气泡取得）；
 	 *  返回是否命中某挂起审批——`false` 表示无匹配（多为已超时/被取消/重复投递的良性竞态，
@@ -217,7 +217,7 @@ export const commands = {
 	/**
 	 *  切换 ACP 会话的某个配置项值（标准 session/set_config_option），令外部 agent（Kimi Code /
 	 *  Codex 等）在 agent 公示的模型 / 模式 / 思考强度等配置项间切换。
-	 *
+	 * 
 	 *  与 ai_resolve_approval 同构地委托给 Tauri 托管的 AcpRuntime：线程归属哪个后端宿主对命令层
 	 *  透明，由 runtime 向全部已建立宿主广播下发。三字段先行空白校验；返回是否命中某已绑定会话——
 	 *  false 表示无匹配（多为会话尚未建立/已结束的良性竞态，命令层不视作错误）。
@@ -228,7 +228,7 @@ export const commands = {
 	/**
 	 *  握手并复用/建立某线程在指定后端上的 ACP 会话，并回传 agent 在 session/new 响应公示的可用配置项
 	 *  全集（v3 · 唯一标准管线）。
-	 *
+	 * 
 	 *  配置项发现的唯一来源即此握手返回值：经 get_or_spawn_backend 懒建立目标后端宿主后 ensure_session
 	 *  建立/复用会话，agent 在 session/new 响应里以 config_options 公示「模型 / 模式 / 思考强度等」可切换
 	 *  配置项全集（含 currentValue 当前选中项），宿主据 thread_id 登记后由本命令原样回传前端选择器。会话
@@ -282,7 +282,7 @@ export const events = {
 /* Types */
 /**
  *  可挂载的外部 ACP 编码 agent 后端类型（ADR-0015）。
- *
+ * 
  *  作为 specta 契约类型导出给前端选择，运行时由命令层映射到 `acp::AcpBackendId`：
  *    * `Builtin` —— 自家 Node Mastra 边车（默认后端，走带外 `agent_chat` 扩展回合）；
  *    * `Kimi`    —— Kimi Code（`kimi acp`，原生 ACP，凭终端 `/login` 自鉴权）；
@@ -292,7 +292,7 @@ export type AgentBackendKind = "builtin" | "kimi" | "codex";
 
 /**
  *  外部 ACP 编码 agent 的标准回合（`session/prompt`）请求（契约层）。
- *
+ * 
  *  与自家边车的带外 `agent_chat` 扩展回合不同：外部 agent 只实现标准 `prompt`、不认识
  *  `calamex.dev/*` 扩展方法，也不接收逐请求 `model_config`（凭据由其自身 CLI 自管，见
  *  ADR-0015 / `acp/launch.rs`），故仅携带后端类型、纯文本提示、上下文附件与会话定位字段。
@@ -301,7 +301,7 @@ export type AgentExternalChatRequest = AgentExternalChatRequest_Serialize | Agen
 
 /**
  *  外部 ACP 编码 agent 的标准回合（`session/prompt`）请求（契约层）。
- *
+ * 
  *  与自家边车的带外 `agent_chat` 扩展回合不同：外部 agent 只实现标准 `prompt`、不认识
  *  `calamex.dev/*` 扩展方法，也不接收逐请求 `model_config`（凭据由其自身 CLI 自管，见
  *  ADR-0015 / `acp/launch.rs`），故仅携带后端类型、纯文本提示、上下文附件与会话定位字段。
@@ -328,7 +328,7 @@ export type AgentExternalChatRequest_Deserialize = {
 
 /**
  *  外部 ACP 编码 agent 的标准回合（`session/prompt`）请求（契约层）。
- *
+ * 
  *  与自家边车的带外 `agent_chat` 扩展回合不同：外部 agent 只实现标准 `prompt`、不认识
  *  `calamex.dev/*` 扩展方法，也不接收逐请求 `model_config`（凭据由其自身 CLI 自管，见
  *  ADR-0015 / `acp/launch.rs`），故仅携带后端类型、纯文本提示、上下文附件与会话定位字段。
@@ -355,7 +355,7 @@ export type AgentExternalChatRequest_Serialize = {
 
 /**
  *  外部 ACP 回合的终态结果（契约层）。
- *
+ * 
  *  外部 agent 无自家富信封：过程增量经 `session/update` 帧由 `EventSink` 转发（投影见
  *  `acp/ui_event.rs`），本结果仅承载会话标识与回合终止原因（`StopReason` 的字符串化）。
  */
@@ -366,7 +366,7 @@ export type AgentExternalChatResultPayload = {
 
 /**
  *  随标准 session/prompt 一并送达的上下文附件（契约层）。
- *
+ * 
  *  每个附件在宿主侧被投影为一个 ACP embedded resource 内容块（协议首选的上下文注入方式，见
  *  agent-client-protocol content.rs：`ContentBlock::Resource`），与用户正文 text 块并列送达，
  *  而非拼进正文字符串——避免正文分隔符冲突/提示注入；uri 即资源身份、mimeType 标注类型、text 承载原文（ACP TextResourceContents 无 name 槽位）。
@@ -375,7 +375,7 @@ export type AgentPromptAttachment = AgentPromptAttachment_Serialize | AgentPromp
 
 /**
  *  随标准 session/prompt 一并送达的上下文附件（契约层）。
- *
+ * 
  *  每个附件在宿主侧被投影为一个 ACP embedded resource 内容块（协议首选的上下文注入方式，见
  *  agent-client-protocol content.rs：`ContentBlock::Resource`），与用户正文 text 块并列送达，
  *  而非拼进正文字符串——避免正文分隔符冲突/提示注入；uri 即资源身份、mimeType 标注类型、text 承载原文（ACP TextResourceContents 无 name 槽位）。
@@ -388,7 +388,7 @@ export type AgentPromptAttachment_Deserialize = {
 
 /**
  *  随标准 session/prompt 一并送达的上下文附件（契约层）。
- *
+ * 
  *  每个附件在宿主侧被投影为一个 ACP embedded resource 内容块（协议首选的上下文注入方式，见
  *  agent-client-protocol content.rs：`ContentBlock::Resource`），与用户正文 text 块并列送达，
  *  而非拼进正文字符串——避免正文分隔符冲突/提示注入；uri 即资源身份、mimeType 标注类型、text 承载原文（ACP TextResourceContents 无 name 槽位）。
@@ -801,7 +801,7 @@ export type AiEditUndoOperationRequest = {
 
 /**
  *  ACP 会话握手请求（契约层，v3 · 唯一标准管线）。
- *
+ * 
  *  对齐 ai_ensure_acp_session：thread_id 定位/复用会话；backend 指定后端（builtin/kimi/codex）；
  *  workspace_root_path 为新建会话的 cwd。握手建立/复用会话后，直接回传 agent 在 session/new 响应
  *  公示的可用配置项全集（AiSessionConfigOptionsPayload）——这是配置项初始发现的唯一来源；后续 agent
@@ -864,7 +864,7 @@ export type AiPatchHunkPayload = {
 	 *  - `'+'`：新增行
 	 *  - `'-'`：删除行
 	 *  - `"\\ No newline at end of file"`：标准 unified diff 无末尾换行标记
-	 *
+	 * 
 	 *  普通行内不含末尾换行符；应用端按 unified diff 语义补齐。
 	 */
 	lines: string[],
@@ -893,7 +893,7 @@ export type AiProviderConnectionPayload = {
 
 /**
  *  用于“测试连接 / 开始连接”的草稿配置。
- *
+ * 
  *  `api_key` 允许为空：为空时后端只会尝试读取当前 Provider 已保存的凭证；
  *  若也不存在已保存凭证，连接测试必须失败，不能伪造成功。
  */
@@ -918,12 +918,12 @@ export type AiProviderTestPayload = {
 
 /**
  *  ACP 反向 `session/request_permission` 的审批投递请求（契约层）。
- *
+ * 
  *  对齐 `acp::AcpRuntime::resolve_approval(session_id, tool_call_id, decision)`：
  *    * `session_id` / `tool_call_id` —— 定位挂起审批所属的会话与工具调用（ACP 原值，逐字透传）；
  *    * `decision` —— 选中项 `optionId`（ACP `RequestPermissionRequest.options[].optionId` 原值，
  *      逐字回填，绝不本地映射，对齐 `approval.rs` 的逐字匹配）。
- *
+ * 
  *  三者均必填且非空（前端总能从已渲染的审批气泡取得），空白校验由接线层负责。
  */
 export type AiResolveApprovalRequest = {
@@ -943,7 +943,7 @@ export type AiSaveConfigRequest = {
 };
 
 /**
- *  ! `api_key` 已包装在 `SecretString` 中，Debug 输出会被遮蔽为 `***`。
+ *  ⚠️ `api_key` 已包装在 `SecretString` 中，Debug 输出会被遮蔽为 `***`。
  *  调用方读取明文请使用 `request.api_key.expose()` 显式取出。
  */
 export type AiSaveCredentialsRequest = {
@@ -954,7 +954,7 @@ export type AiSaveCredentialsRequest = {
 
 /**
  *  ACP 会话可用配置项清单的响应载荷（契约层）。
- *
+ * 
  *  config_options 为 agent 在 NewSessionResponse 公示的可用配置项清单原样 JSON
  *  （Vec SessionConfigOption：id + name + description + category + kind 等）。最小透传，宿主侧
  *  不重建 SDK 类型，交前端 ACL 解释（最小透传整体 JSON）。用
@@ -967,7 +967,7 @@ export type AiSessionConfigOptionsPayload = {
 
 /**
  *  「全量可原生切换模型清单」的下发请求。
- *
+ * 
  *  前端把项目内置的可扩展模型目录（MASTRA_PROVIDER_PRESET.models）整体下发，后端落盘
  *  ai.json 的 seeded_models，供 Kimi 启动时把整张清单 seed 进 config.toml——使原生
  *  session/set_config_option 的候选池覆盖全清单（详见 gateway::set_seeded_models /
@@ -979,12 +979,12 @@ export type AiSetSeededModelsRequest = {
 
 /**
  *  ACP 标准 session/set_config_option 的会话级配置项切换请求（契约层）。
- *
+ * 
  *  对齐 acp::AcpRuntime::set_session_config_option(thread_id, config_id, value_id)：
  *    * thread_id —— 定位目标会话（宿主持有 thread_id ↔ SessionId 映射，跨回合复用）；
  *    * config_id —— 目标配置项的 ACP SessionConfigOption.id 原值，逐字透传，绝不本地映射；
  *    * value_id —— 选中值的 ACP SessionConfigValueId 原值，逐字透传，绝不本地映射。
- *
+ * 
  *  三者均必填且非空（前端总能从已渲染的配置项选择器取得），空白校验由接线层负责。
  */
 export type AiSetSessionConfigOptionRequest = {
@@ -1063,7 +1063,7 @@ export type AiWebSearchResultPayload = {
 
 /**
  *  单个附件的读取结果：文件名 + base64 编码内容。
- *
+ * 
  *  base64 传输避免二进制经 IPC 序列化成 number[] 膨胀；附件属低频操作，编码开销可接受。
  */
 export type AttachmentFilePayload = {
@@ -1893,7 +1893,7 @@ export type WorkspaceEntry = {
 
 /**
  *  工作区文件系统事件
- *
+ * 
  *  derive `tauri_specta::Event` 让此类型同时：
  *  - 出现在生成的 TS 绑定 `events.workspaceFsEvent.listen(...)` 中
  *  - 提供类型化的 `.emit(app)` 方法（事件名自动为 `workspace-fs-event`）
@@ -1901,7 +1901,7 @@ export type WorkspaceEntry = {
 export type WorkspaceFsEvent = {
 	/**
 	 *  本批次的变更列表
-	 *
+	 * 
 	 *  已按路径去重，同一路径保留 severity 最高的 kind
 	 *  (Removed > Renamed > Created > Modified)
 	 */
@@ -2067,7 +2067,7 @@ export type WorkspaceSearchScope = "all" | "file-name" | "symbol" | "content";
 
 /**
  *  内容搜索流式推送事件。
- *
+ * 
  *  仿照 workspace_watcher::WorkspaceFsEvent，通过官方 derive tauri_specta::Event 让该类型
  *  既出现在生成的 TS 绑定 events.workspaceSearchStreamEvent 中，又提供类型化的 .emit(app)。
  *  派生宏默认把 NAME 取为结构体名的 kebab-case，即 workspace-search-stream。
@@ -2102,3 +2102,4 @@ function makeEvent<T>(name: string, serialize?: (payload: T) => unknown, deseria
 
     return Object.assign(fn, base);
 }
+
