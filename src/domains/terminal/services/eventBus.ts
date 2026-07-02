@@ -218,18 +218,23 @@ export const createTerminalEventBus = (
    * terminal:data 专用监听:解包校验 + 分发后,额外做 ack 累计。ack 不依赖订阅者存在,
    * 见 accumulateAndAck 说明。
    */
+  // 热路径：terminal:data 是全应用最高频的事件，逐帧 Zod schema 遍历是纯开销且随
+  // 输出速率线性增长。契约由 tauri-specta 生成类型保证，这里只做 O(1) 手写窄化守卫
+  // （形状不对直接丢弃并告警），不做 schema 校验。低频控制事件仍走 Zod。
+  const isTerminalDataEventShape = (value: unknown): value is ITerminalDataEvent => {
+    if (typeof value !== 'object' || value === null) return false;
+    const record = value as Record<string, unknown>;
+    return typeof record.sessionId === 'string' && typeof record.data === 'string';
+  };
+
   const wireTerminalDataListener = (): Promise<UnlistenFn> =>
     listenFn<unknown>(TERMINAL_DATA_EVENT, ({ payload }) => {
-      const parsed = terminalDataEventSchema.safeParse(payload);
-      if (!parsed.success) {
-        console.warn(
-          `[terminal-event] ${TERMINAL_DATA_EVENT} payload 校验失败`,
-          z.treeifyError(parsed.error),
-        );
+      if (!isTerminalDataEventShape(payload)) {
+        console.warn(`[terminal-event] ${TERMINAL_DATA_EVENT} payload 形状非法，已丢弃`);
         return;
       }
-      emitToHandlers(terminalDataHandlers, parsed.data);
-      accumulateAndAck(parsed.data);
+      emitToHandlers(terminalDataHandlers, payload);
+      accumulateAndAck(payload);
     });
 
   /** 无 payload 的事件 (当前仅 interactive-ready)。 */
