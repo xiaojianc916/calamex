@@ -1,153 +1,63 @@
-// 13-fix-and-wire.mjs — 修复 core-runtime 缺失导出 + 完成 14 个语言的结构引擎接线
-import { readFileSync, writeFileSync } from "node:fs"
-import { join } from "node:path"
+// scripts/point-frontend-to-acp.mjs — 在仓库根运行
+import { readFileSync, writeFileSync } from 'node:fs';
 
-const ROOT = process.cwd()
-
-// ── 1) core-runtime.ts：补上 ensureTreeSitterParser ──
-{
-	const PATH = join(ROOT, "src/services/editor/tree-sitter/core-runtime.ts")
-	let content = readFileSync(PATH, "utf8")
-	const anchor = `export function ensureTreeSitterLanguage(cacheKey: string, wasmUrl: string): Promise<Language> {
-  let promise = languagePromises.get(cacheKey);
-  if (!promise) {
-    promise = (async () => {
-      await ensureTreeSitterCore();
-      return Language.load(wasmUrl);
-    })().catch((error) => {
-      languagePromises.delete(cacheKey);
-      throw error;
-    });
-    languagePromises.set(cacheKey, promise);
-  }
-  return promise;
-}`
-	const addition = `
-
-const parserPromises = new Map<string, Promise<Parser>>();
-
-/** 按 cacheKey 缓存已绑定语言的 Parser 实例；同一 cacheKey 的所有消费者共用同一个 Parser。 */
-export function ensureTreeSitterParser(cacheKey: string, wasmUrl: string): Promise<Parser> {
-  let promise = parserPromises.get(cacheKey);
-  if (!promise) {
-    promise = (async () => {
-      const language = await ensureTreeSitterLanguage(cacheKey, wasmUrl);
-      const parser = new Parser();
-      parser.setLanguage(language);
-      return parser;
-    })().catch((error) => {
-      parserPromises.delete(cacheKey);
-      throw error;
-    });
-    parserPromises.set(cacheKey, promise);
-  }
-  return promise;
-}`
-	if (!content.includes(anchor)) {
-		console.log("❌ core-runtime.ts 锚点仍未命中！请把该文件完整内容发我")
-	} else {
-		content = content.replace(anchor, anchor + addition)
-		writeFileSync(PATH, content, "utf8")
-		console.log("✅ core-runtime.ts 已补上 ensureTreeSitterParser")
-	}
+// 1) sidecar.ts：删 3 个幽灵方法（对应 Rust 命令从未注册）+ META 条目 + Pick 成员 + 死 import
+const SIDECAR = 'src/services/tauri/sidecar.ts';
+let s = readFileSync(SIDECAR, 'utf8');
+const deadBlocks = [
+  `  agentSidecarChat(payload, options?: IIpcCallOptions) {\n    return runCommand(SIDECAR_COMMAND_META.agentSidecarChat, payload, options, () =>\n      commands.agentSidecarChat(payload as unknown as AgentSidecarChatRequest_Deserialize),\n    ) as Promise<IAgentSidecarResponsePayload>;\n  },\n\n`,
+  `  agentSidecarResolveApproval(payload, options?: IIpcCallOptions) {\n    return runCommand(SIDECAR_COMMAND_META.agentSidecarResolveApproval, payload, options, () =>\n      commands.agentSidecarResolveApproval(\n        payload as unknown as AgentSidecarApprovalResolveRequest_Deserialize,\n      ),\n    ) as Promise<IAgentSidecarResponsePayload>;\n  },\n\n`,
+  `  agentSidecarResolveAskUser(payload, options?: IIpcCallOptions) {\n    return runCommand(SIDECAR_COMMAND_META.agentSidecarResolveAskUser, payload, options, () =>\n      commands.agentSidecarResolveAskUser(\n        payload as unknown as AgentSidecarAskUserResumeRequest_Deserialize,\n      ),\n    ) as Promise<IAgentSidecarResponsePayload>;\n  },\n\n`,
+  `  agentSidecarChat: {\n    command: 'builtin_agent_chat',\n    guardHint: '通过 Node sidecar 执行 Agent Ask',\n    audit: 'sensitive',\n    timeoutMs: BUILTIN_AGENT_TASK_TIMEOUT_MS,\n    measureInput: measureAiChatInput,\n  },\n`,
+  `  agentSidecarResolveApproval: {\n    command: 'builtin_agent_resolve_approval',\n    guardHint: '处理 Agent sidecar 工具审批',\n    audit: 'sensitive',\n    timeoutMs: BUILTIN_AGENT_TASK_TIMEOUT_MS,\n  },\n`,
+  `  agentSidecarResolveAskUser: {\n    command: 'builtin_agent_resolve_ask_user',\n    guardHint: '处理 Agent sidecar 询问用户回合恢复',\n    audit: 'sensitive',\n    timeoutMs: BUILTIN_AGENT_TASK_TIMEOUT_MS,\n  },\n`,
+  `  | 'agentSidecarChat'\n`,
+  `  | 'agentSidecarResolveApproval'\n`,
+  `  | 'agentSidecarResolveAskUser'\n`,
+  `  type AgentSidecarApprovalResolveRequest_Deserialize,\n`,
+  `  type AgentSidecarAskUserResumeRequest_Deserialize,\n`,
+  `  type AgentSidecarChatRequest_Deserialize,\n`,
+];
+for (const b of deadBlocks) {
+  if (s.includes(b)) s = s.replace(b, '');
+  else console.warn(`[skip] sidecar.ts 未命中块: ${b.split('\n')[0].trim()}`);
 }
 
-// ── 2) codemirror-language.ts：14 个语言接入 tree-sitter 结构引擎 ──
-{
-	const PATH = join(ROOT, "src/services/editor/codemirror-language.ts")
-	let content = readFileSync(PATH, "utf8")
-
-	const importAnchor = `import { withTreeSitterHighlight } from './codemirror-tree-sitter-highlight';`
-	if (content.includes(importAnchor)) {
-		content = content.replace(
-			importAnchor,
-			`${importAnchor}\nimport { treeSitterStructureExtensions } from './codemirror-tree-sitter-structure';`,
-		)
-	} else {
-		console.log("⚠️ import 锚点未命中")
-	}
-
-	const REPLACEMENTS = [
-		[
-			`  dockerfile: streamLanguageLoader(() =>
-    import('@codemirror/legacy-modes/mode/dockerfile').then((m) => m.dockerFile),
-  ),
-  diff: streamLanguageLoader(() =>
-    import('@codemirror/legacy-modes/mode/diff').then((m) => m.diff),
-  ),`,
-			`  dockerfile: async () => treeSitterStructureExtensions('dockerfile'),
-  diff: async () => treeSitterStructureExtensions('diff'),`,
-		],
-		[
-			`  csharp: streamLanguageLoader(() =>
-    import('@codemirror/legacy-modes/mode/clike').then((m) => m.csharp),
-  ),
-  dart: streamLanguageLoader(() =>
-    import('@codemirror/legacy-modes/mode/clike').then((m) => m.dart),
-  ),`,
-			`  csharp: async () => treeSitterStructureExtensions('csharp'),
-  dart: async () => treeSitterStructureExtensions('dart'),`,
-		],
-		[
-			`  kotlin: streamLanguageLoader(() =>
-    import('@codemirror/legacy-modes/mode/clike').then((m) => m.kotlin),
-  ),
-  lua: streamLanguageLoader(() => import('@codemirror/legacy-modes/mode/lua').then((m) => m.lua)),
-  powershell: streamLanguageLoader(() =>
-    import('@codemirror/legacy-modes/mode/powershell').then((m) => m.powerShell),
-  ),
-  proto: streamLanguageLoader(() =>
-    import('@codemirror/legacy-modes/mode/protobuf').then((m) => m.protobuf),
-  ),`,
-			`  kotlin: async () => treeSitterStructureExtensions('kotlin'),
-  lua: async () => treeSitterStructureExtensions('lua'),
-  powershell: async () => treeSitterStructureExtensions('powershell'),
-  proto: async () => treeSitterStructureExtensions('proto'),`,
-		],
-		[
-			`  r: streamLanguageLoader(() => import('@codemirror/legacy-modes/mode/r').then((m) => m.r)),
-  ruby: streamLanguageLoader(() =>
-    import('@codemirror/legacy-modes/mode/ruby').then((m) => m.ruby),
-  ),`,
-			`  r: async () => treeSitterStructureExtensions('r'),
-  ruby: async () => treeSitterStructureExtensions('ruby'),`,
-		],
-		[
-			`  scala: streamLanguageLoader(() =>
-    import('@codemirror/legacy-modes/mode/clike').then((m) => m.scala),
-  ),`,
-			`  scala: async () => treeSitterStructureExtensions('scala'),`,
-		],
-		[
-			`  latex: streamLanguageLoader(() =>
-    import('@codemirror/legacy-modes/mode/stex').then((m) => m.stex),
-  ),`,
-			`  latex: async () => treeSitterStructureExtensions('latex'),`,
-		],
-		[
-			`  toml: streamLanguageLoader(() =>
-    import('@codemirror/legacy-modes/mode/toml').then((m) => m.toml),
-  ),
-  ini: streamLanguageLoader(() =>
-    import('@codemirror/legacy-modes/mode/properties').then((m) => m.properties),
-  ),`,
-			`  toml: async () => treeSitterStructureExtensions('toml'),
-  ini: async () => treeSitterStructureExtensions('ini'),`,
-		],
-	]
-
-	let missCount = 0
-	for (const [oldText, newText] of REPLACEMENTS) {
-		if (content.includes(oldText)) {
-			content = content.replace(oldText, newText)
-		} else {
-			missCount += 1
-			console.log(`⚠️ 未命中一处替换（前 40 字符）: ${oldText.slice(0, 40).replace(/\n/g, " ")}...`)
-		}
-	}
-
-	writeFileSync(PATH, content, "utf8")
-	console.log(`✅ codemirror-language.ts: ${REPLACEMENTS.length - missCount}/${REPLACEMENTS.length} 处替换成功`)
+// 2) 5 个存活命令：调用目标 + 审计字符串对齐重生成后的 acp_* 绑定
+const MAP = [
+  ['commands.agentSidecarExternalChat', 'commands.acpPrompt'],
+  ['commands.agentSidecarHealth', 'commands.acpHostHealth'],
+  ['commands.agentSidecarRestart', 'commands.acpHostRestart'],
+  ['commands.agentSidecarWarmup', 'commands.acpHostWarmup'],
+  ['commands.agentSidecarRestoreCheckpoint', 'commands.acpRestoreCheckpoint'],
+  ["command: 'builtin_agent_external_chat'", "command: 'acp_prompt'"],
+  ["command: 'builtin_agent_health'", "command: 'acp_host_health'"],
+  ["command: 'builtin_agent_restart'", "command: 'acp_host_restart'"],
+  ["command: 'builtin_agent_warmup'", "command: 'acp_host_warmup'"],
+  ["command: 'builtin_agent_restore_checkpoint'", "command: 'acp_restore_checkpoint'"],
+];
+for (const [from, to] of MAP) {
+  if (s.includes(from)) s = s.split(from).join(to);
+  else console.warn(`[skip] sidecar.ts 未命中: ${from}`);
 }
+writeFileSync(SIDECAR, s);
+console.log(`[done] ${SIDECAR}`);
 
-console.log("\n完成。重启 dev server。")
+// 3) ITauriService 删 3 条幽灵签名 + 死 import
+const TYPES = 'src/types/tauri/index.ts';
+let t = readFileSync(TYPES, 'utf8');
+const typeBlocks = [
+  `  agentSidecarChat(payload: IAgentSidecarChatRequest): Promise<IAgentSidecarResponsePayload>;\n`,
+  `  agentSidecarResolveApproval(\n    payload: IAgentSidecarApprovalResolveRequest,\n  ): Promise<IAgentSidecarResponsePayload>;\n`,
+  `  agentSidecarResolveAskUser(\n    payload: IAgentSidecarAskUserResumeRequest,\n  ): Promise<IAgentSidecarResponsePayload>;\n`,
+  `  IAgentSidecarApprovalResolveRequest,\n`,
+  `  IAgentSidecarAskUserResumeRequest,\n`,
+  `  IAgentSidecarChatRequest,\n`,
+];
+for (const b of typeBlocks) {
+  if (t.includes(b)) t = t.replace(b, '');
+  else console.warn(`[skip] types/tauri/index.ts 未命中块: ${b.split('\n')[0].trim()}`);
+}
+writeFileSync(TYPES, t);
+console.log(`[done] ${TYPES}`);
+console.log('收尾：pnpm typecheck → pnpm lint --fix && pnpm test。');

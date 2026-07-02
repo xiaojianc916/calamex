@@ -1,8 +1,5 @@
 import {
   type AgentExternalChatRequest_Deserialize,
-  type AgentSidecarApprovalResolveRequest_Deserialize,
-  type AgentSidecarAskUserResumeRequest_Deserialize,
-  type AgentSidecarChatRequest_Deserialize,
   type AgentSidecarCheckpointRestoreRequest_Deserialize,
   commands,
 } from '@/bindings/tauri';
@@ -39,52 +36,33 @@ const BUILTIN_AGENT_TASK_TIMEOUT_MS = 30 * 60 * 1000;
  */
 const SIDECAR_COMMAND_META = {
   agentSidecarHealth: {
-    command: 'builtin_agent_health',
+    command: 'acp_host_health',
     guardHint: '读取 Agent sidecar 健康状态',
     idempotent: true,
     audit: 'sensitive',
     timeoutMs: 10_000,
   },
   agentSidecarRestart: {
-    command: 'builtin_agent_restart',
+    command: 'acp_host_restart',
     guardHint: '重启 Agent sidecar 进程',
     audit: 'sensitive',
     timeoutMs: 30_000,
   },
   agentSidecarWarmup: {
-    command: 'builtin_agent_warmup',
+    command: 'acp_host_warmup',
     guardHint: '预热 Agent sidecar 模型连接',
     audit: 'sensitive',
     timeoutMs: 8_000,
   },
-  agentSidecarChat: {
-    command: 'builtin_agent_chat',
-    guardHint: '通过 Node sidecar 执行 Agent Ask',
-    audit: 'sensitive',
-    timeoutMs: BUILTIN_AGENT_TASK_TIMEOUT_MS,
-    measureInput: measureAiChatInput,
-  },
   agentSidecarExternalChat: {
-    command: 'builtin_agent_external_chat',
+    command: 'acp_prompt',
     guardHint: '通过外部 ACP agent 执行标准回合',
     audit: 'sensitive',
     timeoutMs: BUILTIN_AGENT_TASK_TIMEOUT_MS,
     measureInput: measureAiChatInput,
   },
-  agentSidecarResolveApproval: {
-    command: 'builtin_agent_resolve_approval',
-    guardHint: '处理 Agent sidecar 工具审批',
-    audit: 'sensitive',
-    timeoutMs: BUILTIN_AGENT_TASK_TIMEOUT_MS,
-  },
-  agentSidecarResolveAskUser: {
-    command: 'builtin_agent_resolve_ask_user',
-    guardHint: '处理 Agent sidecar 询问用户回合恢复',
-    audit: 'sensitive',
-    timeoutMs: BUILTIN_AGENT_TASK_TIMEOUT_MS,
-  },
   agentSidecarRestoreCheckpoint: {
-    command: 'builtin_agent_restore_checkpoint',
+    command: 'acp_restore_checkpoint',
     guardHint: '通过 Node sidecar 恢复 Agent 回滚检查点',
     audit: 'sensitive',
     timeoutMs: BUILTIN_AGENT_TASK_TIMEOUT_MS,
@@ -96,10 +74,7 @@ type TSidecarTauriService = Pick<
   | 'agentSidecarHealth'
   | 'agentSidecarRestart'
   | 'agentSidecarWarmup'
-  | 'agentSidecarChat'
   | 'agentSidecarExternalChat'
-  | 'agentSidecarResolveApproval'
-  | 'agentSidecarResolveAskUser'
   | 'agentSidecarRestoreCheckpoint'
   | 'onAgentSidecarStream'
   | 'onAcpApproval'
@@ -133,32 +108,10 @@ export const sidecarTauriService: TSidecarTauriService = {
       commands.builtinAgentWarmup(),
     ),
 
-  agentSidecarChat(payload, options?: IIpcCallOptions) {
-    return runCommand(SIDECAR_COMMAND_META.agentSidecarChat, payload, options, () =>
-      commands.agentSidecarChat(payload as unknown as AgentSidecarChatRequest_Deserialize),
-    ) as Promise<IAgentSidecarResponsePayload>;
-  },
-
   agentSidecarExternalChat(payload, options?: IIpcCallOptions) {
     return runCommand(SIDECAR_COMMAND_META.agentSidecarExternalChat, payload, options, () =>
       commands.builtinAgentExternalChat(payload as unknown as AgentExternalChatRequest_Deserialize),
     ) as Promise<IAgentExternalChatResultPayload>;
-  },
-
-  agentSidecarResolveApproval(payload, options?: IIpcCallOptions) {
-    return runCommand(SIDECAR_COMMAND_META.agentSidecarResolveApproval, payload, options, () =>
-      commands.agentSidecarResolveApproval(
-        payload as unknown as AgentSidecarApprovalResolveRequest_Deserialize,
-      ),
-    ) as Promise<IAgentSidecarResponsePayload>;
-  },
-
-  agentSidecarResolveAskUser(payload, options?: IIpcCallOptions) {
-    return runCommand(SIDECAR_COMMAND_META.agentSidecarResolveAskUser, payload, options, () =>
-      commands.agentSidecarResolveAskUser(
-        payload as unknown as AgentSidecarAskUserResumeRequest_Deserialize,
-      ),
-    ) as Promise<IAgentSidecarResponsePayload>;
   },
 
   agentSidecarRestoreCheckpoint(payload, options?: IIpcCallOptions) {

@@ -136,9 +136,9 @@ export const commands = {
 	deleteSshPath: (payload: SshPathDeleteRequest) => __TAURI_INVOKE<SshPathDeletePayload>("delete_ssh_path", { payload }),
 	renameSshPath: (payload: SshPathRenameRequest) => __TAURI_INVOKE<SshPathRenamePayload>("rename_ssh_path", { payload }),
 	createSshDirectory: (payload: SshDirectoryCreateRequest) => __TAURI_INVOKE<SshDirectoryCreatePayload>("create_ssh_directory", { payload }),
-	builtinAgentHealth: () => __TAURI_INVOKE<AgentSidecarHealthPayload>("builtin_agent_health"),
-	builtinAgentRestart: () => __TAURI_INVOKE<AgentSidecarHealthPayload>("builtin_agent_restart"),
-	builtinAgentWarmup: () => __TAURI_INVOKE<AgentSidecarWarmupPayload>("builtin_agent_warmup"),
+	acpHostHealth: () => __TAURI_INVOKE<AgentSidecarHealthPayload>("acp_host_health"),
+	acpHostRestart: () => __TAURI_INVOKE<AgentSidecarHealthPayload>("acp_host_restart"),
+	acpHostWarmup: () => __TAURI_INVOKE<AgentSidecarWarmupPayload>("acp_host_warmup"),
 	/**
 	 *  外部 ACP 编码 agent（Kimi Code / Codex 等，ADR-0015）的标准回合命令（`session/prompt`）。
 	 * 
@@ -148,8 +148,8 @@ export const commands = {
 	 *  acp/launch.rs；如 Kimi 凭据落 ~/.kimi，登录由其自身流程处理）。过程增量经 session/update 帧转发
 	 *  （投影见 acp/ui_event.rs），本命令仅返回终态：会话标识 + 回合终止原因。
 	 */
-	builtinAgentExternalChat: (payload: AgentExternalChatRequest_Deserialize) => __TAURI_INVOKE<AgentExternalChatResultPayload>("builtin_agent_external_chat", { payload }),
-	builtinAgentRestoreCheckpoint: (payload: AgentSidecarCheckpointRestoreRequest_Deserialize) => __TAURI_INVOKE<AgentSidecarResponsePayload_Serialize>("builtin_agent_restore_checkpoint", { payload }),
+	acpPrompt: (payload: AgentExternalChatRequest_Deserialize) => __TAURI_INVOKE<AgentExternalChatResultPayload>("acp_prompt", { payload }),
+	acpRestoreCheckpoint: (payload: AgentSidecarCheckpointRestoreRequest_Deserialize) => __TAURI_INVOKE<AgentSidecarResponsePayload_Serialize>("acp_restore_checkpoint", { payload }),
 	/**  Create (or reuse) the child webview and start the CDP control plane. Idempotent. */
 	agentWebviewCreate: (input: AgentWebviewCreateInput, traceId: string | null) => __TAURI_INVOKE<null>("agent_webview_create", { input, traceId }),
 	/**  Sync child webview bounds. */

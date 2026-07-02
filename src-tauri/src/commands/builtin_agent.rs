@@ -67,7 +67,7 @@ fn ensure_model_config(cfg: &mut Option<AgentSidecarModelConfigPayload>) -> Resu
 
 #[tauri::command]
 #[specta::specta]
-pub async fn builtin_agent_health(app: AppHandle) -> Result<AgentSidecarHealthPayload, String> {
+pub async fn acp_host_health(app: AppHandle) -> Result<AgentSidecarHealthPayload, String> {
     acp_host(&app)?
         .health()
         .await
@@ -76,7 +76,7 @@ pub async fn builtin_agent_health(app: AppHandle) -> Result<AgentSidecarHealthPa
 
 #[tauri::command]
 #[specta::specta]
-pub async fn builtin_agent_restart(app: AppHandle) -> Result<AgentSidecarHealthPayload, String> {
+pub async fn acp_host_restart(app: AppHandle) -> Result<AgentSidecarHealthPayload, String> {
     // 重启常驻 ACP 宿主：关停旧 stdio 子进程/连接并重新派生，再探测健康作为重启
     // 结果（对齐旧 HTTP restart 返回 health 的契约）。
     let host = app
@@ -88,7 +88,7 @@ pub async fn builtin_agent_restart(app: AppHandle) -> Result<AgentSidecarHealthP
 
 #[tauri::command]
 #[specta::specta]
-pub async fn builtin_agent_warmup(app: AppHandle) -> Result<AgentSidecarWarmupPayload, String> {
+pub async fn acp_host_warmup(app: AppHandle) -> Result<AgentSidecarWarmupPayload, String> {
     // warmup 仅预热提供方连接，不需要真实回合模型，故此处不补齐 model_config。
     // sidecar 端在缺省时尝试从启动期环境解析（launch 层当前有意不注入模型 env，
     // 见 acp/launch.rs），无凭证时优雅跳过。注意：与 chat / resolve 不同——后者经命令层
@@ -108,7 +108,7 @@ pub async fn builtin_agent_warmup(app: AppHandle) -> Result<AgentSidecarWarmupPa
 /// （投影见 acp/ui_event.rs），本命令仅返回终态：会话标识 + 回合终止原因。
 #[tauri::command]
 #[specta::specta]
-pub async fn builtin_agent_external_chat(
+pub async fn acp_prompt(
     app: AppHandle,
     payload: AgentExternalChatRequest,
 ) -> Result<AgentExternalChatResultPayload, String> {
@@ -206,7 +206,7 @@ fn external_backend_label(backend: crate::acp::AcpBackendId) -> &'static str {
 
 #[tauri::command]
 #[specta::specta]
-pub async fn builtin_agent_restore_checkpoint(
+pub async fn acp_restore_checkpoint(
     app: AppHandle,
     mut payload: AgentSidecarCheckpointRestoreRequest,
 ) -> Result<AgentSidecarResponsePayload, String> {
