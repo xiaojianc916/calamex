@@ -17,7 +17,7 @@ import { askUserRequestSchema } from '../../schemas/events.js';
 import { DEFAULT_EXECUTION_AGENT_ID, DEFAULT_EXECUTION_AGENT_NAME } from '../shared/types.js';
 import type { IMastraAgentConfig, IMastraAgentLike, IMastraAgentStreamLike, IMastraApprovalExecutionContext, IMastraExecutionHandle, IMastraMcpBundle, IMastraPendingApproval, IMastraResumableAgentHandle, IMastraRuntimeDeps, IMastraStorageLike, IMastraTextStreamSummary, IMastraWorkflowSnapshotLike, IPlanWorkflowStepTracker, TDoneTokenSnapshot, TMastraStreamChunk, TMastraToolCallApprovalChunk, TMastraToolCallSuspendedChunk, TRuntimeEventFactory } from '../shared/types.js';
 import { createRuntimeEventFactory, createRuntimePreview, createWorkspaceRuntimeInputPreview, createWorkspaceRuntimeResultPreview, isNodeTestProcess, pushUiEvent, toJsonValue } from '../shared/utils.js';
-import { createMastraAgentInputProcessors, createMastraAgentOutputProcessors, destroyMastraBrowser, destroyMastraWorkspace } from '../workspace/workspace.js';
+import { createMastraAgentInputProcessors, createMastraAgentOutputProcessors, destroyMastraBrowser, destroyMastraWorkspace, extractWorkspaceToolPathInput } from '../workspace/workspace.js';
 import { createAgentPlanStore } from '../plan/plan-store.js';
 import type { IAgentPlanStore, TAgentPlanRecord } from '../plan/plan-store.js';
 import { createAgentPlanWorkflowStore } from '../plan/plan-workflow-store.js';
@@ -421,6 +421,7 @@ export class MastraRuntimeBase {
                         chunk.payload.toolName,
                         chunk.payload.args,
                     );
+                    const toolLocationPath = extractWorkspaceToolPathInput(chunk.payload.args);
 
                     pushUiEvent(events, createRuntimeEvent({
                         type: 'agent.tool.started',
@@ -429,6 +430,7 @@ export class MastraRuntimeBase {
                         toolName: chunk.payload.toolName,
                         toolUseId: chunk.payload.toolCallId,
                         ...(inputPreview ? { inputPreview } : {}),
+                        ...(toolLocationPath ? { locations: [{ path: toolLocationPath }] } : {}),
                     }), options);
                 }
                 continue;

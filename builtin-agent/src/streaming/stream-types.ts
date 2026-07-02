@@ -133,11 +133,17 @@ export interface IAgentModelCompletedEvent extends IAgentRuntimeEventBase {
 // Tools
 // -----------------------------------------------------------------------
 
+export interface IAgentToolLocation {
+  path: string;
+  line?: number;
+}
+
 export interface IAgentToolStartedEvent extends IAgentRuntimeEventBase {
   type: 'agent.tool.started';
   toolUseId: string;
   toolName: string;
   inputPreview?: string;
+  locations?: IAgentToolLocation[];
   riskLevel?: TToolRiskLevel;
 }
 

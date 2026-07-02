@@ -1,81 +1,73 @@
-// scripts/fix-p4-tooluseid.mjs   用法：node 1.mjs
-// P4: (1) tool-error 事件补回 toolUseId（从 FIFO 队列恢复，纯附加，且修复原队列泄漏）
-//     (2) IAgentToolStartedEvent.toolUseId 收紧为必填（isToolCallChunk 守卫已保证恒有值）
-// 自动对齐 CRLF/LF 行尾，锚点匹配不上会大声报错、绝不静默改坏。
+// scripts/fix-p5-locations.mjs   用法：node 1.mjs
+// P5（locations 部分）：文件类工具调用向 ACP 上报 locations，客户端可"跟随"AI 正在操作的文件。
+//   路径取自工具输入参数（复用仓库已有 extractWorkspaceToolPathInput），不依赖工具结果结构 —— 全程可取证。
+//   diff 部分不在本脚本：其 old/new 文本依赖 @mastra/core/workspace 的结果 schema（在 node_modules、不在仓库），
+//   不取证不写，避免经验主义。
+// 锚点用 \s 容忍 tab/空格/CRLF；替换按各文件实际 EOL 生成；已应用则幂等跳过；锚点缺失大声报错不静默改坏。
 import { readFile, writeFile } from "node:fs/promises"
 
-const detectEol = (t) => (t.includes("\r\n") ? "\r\n" : "\n")
-const toEol = (s, e) => s.replace(/\n/g, e)
+const nlOf = (t) => (t.includes("\r\n") ? "\r\n" : "\n")
 
-async function patch(path, edits) {
+async function patchFile(path, buildEdits) {
   let text = await readFile(path, "utf8")
-  const eol = detectEol(text)
-  for (const { old, next, label } of edits) {
-    const o = toEol(old, eol)
-    if (!text.includes(o)) {
-      console.error(`❌ 未找到锚点（${label}），请手动核对：`, path)
-      process.exit(1)
-    }
-    text = text.replace(o, toEol(next, eol))
+  const NL = nlOf(text)
+  for (const { regex, replace, marker, label } of buildEdits(NL)) {
+    if (marker && text.includes(marker)) { console.log(`↳ 跳过（已应用）：${label}`); continue }
+    if (!regex.test(text)) { console.error(`❌ 未找到锚点：${label}\n   文件：${path}`); process.exit(1) }
+    text = text.replace(regex, replace)
     console.log(`✅ ${label}`)
   }
   await writeFile(path, text, "utf8")
 }
 
-// ---- (1) base.ts：tool-error 分支从 FIFO 队列恢复 toolUseId ----
-const OLD_ERR = `if (isToolErrorChunk(chunk)) {
-                const errorMessage = normalizeMastraError(chunk.payload.error);
-
-                if (createRuntimeEvent) {
-                    pushUiEvent(events, createRuntimeEvent({
-                        type: 'agent.tool.completed',
-                        visibility: 'user',
-                        level: 'error',
-                        toolName: chunk.payload.toolName,
-                        ok: false,
-                        errorMessage,
-                    }), options);
-                }
-                continue;
-            }`
-
-const NEW_ERR = `if (isToolErrorChunk(chunk)) {
-                const errorMessage = normalizeMastraError(chunk.payload.error);
-                // 与 tool-result 同源：从按名 FIFO 队列出队恢复 toolCallId，使失败状态挂到正确的
-                // tool_call（同名并发也不串台），顺带回收原本永不出队的泄漏条目。
-                const pendingToolErrorIds = pendingToolCallIdsByName.get(chunk.payload.toolName) ?? [];
-                const queuedToolErrorId = pendingToolErrorIds.shift();
-                if (pendingToolErrorIds.length === 0) {
-                    pendingToolCallIdsByName.delete(chunk.payload.toolName);
-                }
-                const toolErrorUseId =
-                    (chunk.payload as { toolCallId?: string }).toolCallId ?? queuedToolErrorId;
-
-                if (createRuntimeEvent) {
-                    pushUiEvent(events, createRuntimeEvent({
-                        type: 'agent.tool.completed',
-                        visibility: 'user',
-                        level: 'error',
-                        toolName: chunk.payload.toolName,
-                        ok: false,
-                        ...(toolErrorUseId ? { toolUseId: toolErrorUseId } : {}),
-                        errorMessage,
-                    }), options);
-                }
-                continue;
-            }`
-
-await patch("builtin-agent/src/engines/runtime/base.ts", [
-  { old: OLD_ERR, next: NEW_ERR, label: "(1) base.ts：tool-error 事件已恢复 toolUseId（FIFO 出队 + 修复队列泄漏）" },
-])
-
-// ---- (2) stream-types.ts：started.toolUseId 收紧为必填 ----
-await patch("builtin-agent/src/streaming/stream-types.ts", [
+// ---- (A/B) base.ts：导入 helper + started 事件从输入参数派生 locations ----
+await patchFile("builtin-agent/src/engines/runtime/base.ts", (NL) => [
   {
-    old: "type: 'agent.tool.started';\n  toolUseId?: string;",
-    next: "type: 'agent.tool.started';\n  toolUseId: string;",
-    label: "(2) stream-types.ts：IAgentToolStartedEvent.toolUseId 收紧为必填 string",
+    label: "base.ts (A) 导入 extractWorkspaceToolPathInput",
+    marker: "destroyMastraWorkspace, extractWorkspaceToolPathInput",
+    regex: /destroyMastraWorkspace(\s*\}\s*from\s*['"]\.\.\/workspace\/workspace\.js['"];)/,
+    replace: `destroyMastraWorkspace, extractWorkspaceToolPathInput$1`,
+  },
+  {
+    label: "base.ts (B1) 从输入参数解析文件路径",
+    marker: "const toolLocationPath = extractWorkspaceToolPathInput",
+    regex: /(const inputPreview = createWorkspaceRuntimeInputPreview\(\s*chunk\.payload\.toolName,\s*chunk\.payload\.args,\s*\);)/,
+    replace: `$1${NL}                    const toolLocationPath = extractWorkspaceToolPathInput(chunk.payload.args);`,
+  },
+  {
+    label: "base.ts (B2) started 事件挂 locations",
+    marker: "locations: [{ path: toolLocationPath }]",
+    regex: /(\.\.\.\(inputPreview\s*\?\s*\{\s*inputPreview\s*\}\s*:\s*\{\}\),)/,
+    replace: `$1${NL}                        ...(toolLocationPath ? { locations: [{ path: toolLocationPath }] } : {}),`,
   },
 ])
 
-console.log("➡️ 跑一遍 `pnpm -C builtin-agent tsc`（或你的构建）确认无回归。")
+// ---- (C) stream-types.ts：新增 IAgentToolLocation 类型 + started 事件 locations 字段 ----
+await patchFile("builtin-agent/src/streaming/stream-types.ts", (NL) => [
+  {
+    label: "stream-types.ts (C1) 新增 IAgentToolLocation 类型",
+    marker: "export interface IAgentToolLocation",
+    regex: /export interface IAgentToolStartedEvent extends IAgentRuntimeEventBase \{/,
+    replace:
+      `export interface IAgentToolLocation {${NL}  path: string;${NL}  line?: number;${NL}}${NL}${NL}` +
+      `export interface IAgentToolStartedEvent extends IAgentRuntimeEventBase {`,
+  },
+  {
+    label: "stream-types.ts (C2) started 事件新增 locations 字段",
+    marker: "locations?: IAgentToolLocation[]",
+    regex: /(export interface IAgentToolStartedEvent extends IAgentRuntimeEventBase \{[\s\S]*?inputPreview\?: string;)/,
+    replace: `$1${NL}  locations?: IAgentToolLocation[];`,
+  },
+])
+
+// ---- (D) from-runtime-event.ts：投影层把 locations 映射到 ACP tool_call（tab 缩进，靠 \s 匹配 + \t 生成）----
+await patchFile("builtin-agent/src/acp/from-runtime-event.ts", (NL) => [
+  {
+    label: "from-runtime-event.ts (D) tool_call 携带 locations",
+    marker: "{ locations: event.locations }",
+    regex: /(status:\s*"in_progress",\s*\.\.\.\(event\.inputPreview\s*!==\s*undefined\s*\?\s*\{\s*rawInput:\s*event\.inputPreview\s*\}\s*:\s*\{\}\),)/,
+    replace: `$1${NL}\t\t\t\t\t...(event.locations && event.locations.length > 0${NL}\t\t\t\t\t\t? { locations: event.locations }${NL}\t\t\t\t\t\t: {}),`,
+  },
+])
+
+console.log("➡️ 跑一遍 `pnpm -C builtin-agent tsc`（尤其确认 ACP SessionUpdate 的 tool_call 接受 locations 字段——按 ACP schema 应当接受）。")

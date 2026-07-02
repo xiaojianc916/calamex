@@ -113,6 +113,9 @@ export const projectRuntimeEventToAcp = (
 					...(event.inputPreview !== undefined
 						? { rawInput: event.inputPreview }
 						: {}),
+					...(event.locations && event.locations.length > 0
+						? { locations: event.locations }
+						: {}),
 				},
 			]
 		}
