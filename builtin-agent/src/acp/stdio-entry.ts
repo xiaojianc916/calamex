@@ -11,7 +11,8 @@ import { AgentSideConnection, ndJsonStream } from "@agentclientprotocol/sdk"
 import { Readable, Writable } from "node:stream"
 
 import { MastraRuntime } from "../engines/runtime/composition.js"
-import { createMastraModelConfigFromEnv } from "../models/config.js"
+import { buildModelCatalogFromEnv } from "./model-catalog-env.js"
+import { resolveCurrentModelId, resolveModelConfigInput } from "./model-config-options.js"
 import {
 	disposeWarmupScheduler,
 	scheduleBackgroundWarmup,
@@ -47,7 +48,10 @@ const connection = new AgentSideConnection(
 // 复用既有后台调度器（setTimeout(0)+unref），纯后台、不阻塞 ACP 握手；日志写 stderr。
 // 模型配置取自进程环境变量（规范解析入口）；无凭证或 env 非法时优雅跳过。
 try {
-	const startupModelConfig = createMastraModelConfigFromEnv()
+	const catalog = buildModelCatalogFromEnv()
+	const startupModelConfig = catalog
+		? resolveModelConfigInput(catalog, resolveCurrentModelId(catalog))
+		: undefined
 	if (startupModelConfig) {
 		scheduleBackgroundWarmup(
 			{

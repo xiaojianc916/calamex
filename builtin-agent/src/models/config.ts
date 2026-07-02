@@ -17,8 +17,6 @@ import {
   createDeepSeekMastraGateway,
 } from './providers/deepseek-mastra-gateway.js';
 
-const MODEL_ID_ENV = 'BUILTIN_AGENT_MODEL';
-const API_KEY_ENV = 'BUILTIN_AGENT_API_KEY';
 const BASE_URL_ENV = 'BUILTIN_AGENT_BASE_URL';
 const OBSERVER_MODEL_ID_ENV = 'BUILTIN_AGENT_OBSERVER_MODEL';
 const REFLECTOR_MODEL_ID_ENV = 'BUILTIN_AGENT_REFLECTOR_MODEL';
@@ -215,21 +213,6 @@ export const createMastraModelConfigFromRequest = (
     modelId,
     apiKey,
     baseUrl: baseUrl && baseUrl.length > 0 ? baseUrl : undefined,
-  });
-};
-
-export const createMastraModelConfigFromEnv = (
-  env: NodeJS.ProcessEnv = process.env,
-): IMastraResolvedModelConfig | null => {
-  const apiKey = readEnv(API_KEY_ENV, env);
-  if (!apiKey) {
-    return null;
-  }
-
-  return createMastraOpenAICompatibleModelConfig({
-    modelId: readEnv(MODEL_ID_ENV, env) ?? DEFAULT_MODEL_ID,
-    apiKey,
-    baseUrl: readEnv(BASE_URL_ENV, env) ?? undefined,
   });
 };
 

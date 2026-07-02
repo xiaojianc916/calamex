@@ -73,21 +73,28 @@ fn verification_to_test_payload(verification: Result<String, String>) -> AiProvi
 /// 未运行则不动：下次按需 `get_or_spawn` 时自然以最新配置 `prepare`，无需为「重新应用配置」
 /// 平白拉起一个本未运行的后端（保持懒派生语义）。重启失败仅记录日志、不影响「配置已保存」这一
 /// 既成结果（配置已落盘，下次拉起仍读取最新值）。
-fn reconfigure_running_external_backends(app: &AppHandle) {
+fn reconfigure_running_backends(app: &AppHandle) {
     use tauri::Manager as _;
     let runtime = app.state::<crate::acp::AcpRuntime>();
-    if !runtime.is_backend_running(crate::acp::AcpBackendId::Kimi) {
-        return;
-    }
-    match runtime.restart_backend(app, crate::acp::AcpBackendId::Kimi) {
-        Ok(_) => log::info!(
-            target: "acp",
-            "AI 配置已保存，已重启运行中的 Kimi 后端以应用最新模型/厂商配置。"
-        ),
-        Err(error) => log::warn!(
-            target: "acp",
-            "AI 配置已保存，但重启运行中的 Kimi 后端失败（下次拉起仍会读取最新配置）：{error}"
-        ),
+    // Builtin 现经启动期 env 注入模型目录（keyring→env），Kimi 经 config.toml；
+    // 两者都在配置变更后需重启方能生效，且都仅在「正在运行」时重启（保持懒派生）。
+    for backend in [
+        crate::acp::AcpBackendId::Builtin,
+        crate::acp::AcpBackendId::Kimi,
+    ] {
+        if !runtime.is_backend_running(backend) {
+            continue;
+        }
+        match runtime.restart_backend(app, backend) {
+            Ok(_) => log::info!(
+                target: "acp",
+                "AI 配置已保存，已重启运行中的 {backend:?} 后端以应用最新配置。"
+            ),
+            Err(error) => log::warn!(
+                target: "acp",
+                "AI 配置已保存，但重启运行中的 {backend:?} 后端失败（下次拉起仍读最新配置）：{error}"
+            ),
+        }
     }
 }
 
@@ -114,7 +121,7 @@ pub fn ai_save_config(
     )?;
 
     // 配置已落盘：让正在运行的外部后端（Kimi）即时应用新模型/厂商（详见函数文档）。
-    reconfigure_running_external_backends(&app);
+    reconfigure_running_backends(&app);
 
     Ok(config)
 }
@@ -134,19 +141,25 @@ pub fn ai_set_seeded_models(
     let config = gateway::set_seeded_models(payload.models)?;
 
     // 候选池变更：让正在运行的 Kimi 重新 seed config.toml 并即时生效（详见 reconfigure 文档）。
-    reconfigure_running_external_backends(&app);
+    reconfigure_running_backends(&app);
 
     Ok(config)
 }
 
 #[tauri::command]
 #[specta::specta]
-pub fn ai_save_credentials(payload: AiSaveCredentialsRequest) -> Result<AiConfigPayload, String> {
-    gateway::save_credentials(
+pub fn ai_save_credentials(
+    app: AppHandle,
+    payload: AiSaveCredentialsRequest,
+) -> Result<AiConfigPayload, String> {
+    let config = gateway::save_credentials(
         &payload.provider_id,
         payload.alias.as_deref(),
         &payload.api_key,
-    )
+    )?;
+    // 新 key 落 keyring 后刷新运行中边车的 env 注入（builtin 走 env、Kimi 走 config.toml）。
+    reconfigure_running_backends(&app);
+    Ok(config)
 }
 
 #[tauri::command]
@@ -195,7 +208,7 @@ pub async fn ai_connect_provider(
     .await?;
 
     // 「开始连接」也会改变所选模型/厂商与凭证；同 ai_save_config，连接成功后让正在运行的 Kimi 即时生效。
-    reconfigure_running_external_backends(&app);
+    reconfigure_running_backends(&app);
 
     Ok(AiProviderConnectionPayload {
         config: outcome.config,
@@ -205,9 +218,10 @@ pub async fn ai_connect_provider(
 
 #[tauri::command]
 #[specta::specta]
-pub fn ai_clear_credentials() -> Result<(), String> {
+pub fn ai_clear_credentials(app: AppHandle) -> Result<(), String> {
     gateway::clear_credentials()?;
     audit::emit(AiAuditEventKind::CredentialCleared);
+    reconfigure_running_backends(&app);
     Ok(())
 }
 
@@ -379,7 +393,7 @@ pub async fn ai_ensure_acp_session(
         .state::<crate::acp::AcpRuntime>()
         .get_or_spawn_backend(&app, backend)
         .map_err(|error| format!("AI_ENSURE_ACP_SESSION_FAILED: {error}"))?;
-    host.ensure_session(thread_id, workspace_root_path, None)
+    host.ensure_session(thread_id, workspace_root_path)
         .await
         .map_err(|error| format!("AI_ENSURE_ACP_SESSION_FAILED: {error}"))?;
     // 配置项发现的唯一来源：回传 agent 在 session/new 响应公示的可用配置项全集（会话复用回合回退到
