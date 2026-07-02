@@ -280,12 +280,15 @@ export const setRuntimeError = (title: string, error: unknown): void => {
   // 全局 handler(window error/unhandledrejection、Vue errorHandler)在卡死前一条都没捕获,
   // 说明 setRuntimeError 是被某段业务代码「直接」调用的。这里在置错误态之前(故意放在去重
   // 提前返回之前,确保每次调用都留痕)打印错误本身与完整调用栈,定位真正的触发源。
-  // [round3] DEV guard: skip console.trace in production to avoid main-thread pressure
+  // 生产环境也必须打印:这是唯一能定位"是谁把应用推进致命错误界面"的诊断信息。
+  // 之前把它整体锁进 DEV guard,导致 release 包里即使修好 F12、打开控制台也看不到
+  // 真正的报错源头。console.trace 的堆栈捕获开销更大,继续只在 DEV 下附加打印;
+  // error 对象与 title 无论生产/开发都必须留痕,否则等价于对用户隐藏了真相。
+  console.error(
+    `[runtime-diagnostics] setRuntimeError 被调用 → 即将置 runtimeErrorState。title=${title}`,
+    error,
+  );
   if (import.meta.env.DEV) {
-    console.error(
-      `[runtime-diagnostics] setRuntimeError 被调用 → 即将置 runtimeErrorState。title=${title}`,
-      error,
-    );
     // eslint-disable-next-line no-console
     console.trace('[runtime-diagnostics] setRuntimeError 调用栈(谁升级了致命错误界面)');
   }

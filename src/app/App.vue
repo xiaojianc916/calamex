@@ -3,6 +3,7 @@ import { defineAsyncComponent } from 'vue';
 import ShellWorkbenchView from '@/app/ShellWorkbenchView.vue';
 import AppDialogHost from '@/components/common/AppDialogHost.vue';
 import BrowserContextMenuHost from '@/components/common/BrowserContextMenuHost.vue';
+import FatalErrorFallback from '@/components/common/FatalErrorFallback.vue';
 import { Toaster } from '@/components/ui/sonner';
 import { TooltipProvider } from '@/components/ui/tooltip';
 import { useWindowResizeState } from '@/composables/useWindowResizeState';
@@ -12,9 +13,28 @@ import 'vue-sonner/style.css';
 
 // 致命错误界面受 runtimeErrorState 控制,仅在出错时挂载;异步加载让它(及其 lucide
 // 图标、ErrorDetails、Button 等依赖)退出首屏 chunk。出错本就罕见,异步加载的延迟可接受。
-const FatalErrorScreen = defineAsyncComponent(
-  () => import('@/components/common/FatalErrorScreen.vue'),
-);
+//
+// 官方 Vue 异步组件容错范式(https://vuejs.org/guide/components/async.html#error-handling):
+// 必须显式提供 errorComponent + onError,否则 loader 失败时组件渲染为空节点——遮罩仍会
+// 挂出(z-index 铺满整个窗口),里面却什么都不显示,表现为"整个工作台/编辑器突然完全
+// 空白"且用户和控制台都拿不到任何错误信息。errorComponent 用零外部依赖、随主 chunk
+// 同步打包的 FatalErrorFallback,保证它不会重蹈同样的加载失败。
+const FatalErrorScreen = defineAsyncComponent({
+  loader: () => import('@/components/common/FatalErrorScreen.vue'),
+  errorComponent: FatalErrorFallback,
+  timeout: 8000,
+  onError(error, retry, fail, attempts) {
+    console.error(
+      `[App] FatalErrorScreen chunk 加载失败(第 ${attempts} 次),降级为内置最小错误界面`,
+      error,
+    );
+    if (attempts <= 2) {
+      retry();
+      return;
+    }
+    fail();
+  },
+});
 
 // RESIZE_STATE_SINGLE_OWNER: 全局窗口 resize 态（<html>.is-resizing，见 assets/css/tailwind.css）的唯一持有点。
 // App.vue 是常驻根组件；不要在下层 composable（如 useWorkbench）重复调用，否则会在 <html> 上
