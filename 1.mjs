@@ -1,75 +1,69 @@
-// fix-p7-protocol-negotiation.mjs
-// 用法(仓库根 D:\com.xiaojianc\my_desktop_app)：node 1.mjs
-// 作用：agent.ts initialize 改为按 ACP 约定协商协议版本 min(客户端声明, PROTOCOL_VERSION)。
-// 幂等、CRLF/Tab 容忍；硬锚点未命中即退出(1)，绝不盲改。
-import { readFileSync, writeFileSync } from "node:fs";
+#!/usr/bin/env node
+// wire-shell-highlight.mjs — 把自编译的 tree-sitter-bash.wasm 接入编辑器着色，端到端验证。
+// 幂等、唯一锚点。用法：node wire-shell-highlight.mjs [--dry-run]
+import { readFileSync, writeFileSync, mkdirSync, copyFileSync, existsSync, appendFileSync } from 'node:fs';
+import { join, dirname } from 'node:path';
 
-const FILE = "builtin-agent/src/acp/agent.ts";
+const DRY = process.argv.includes('--dry-run');
+const ROOT = process.cwd();
+const write = (p, s) => { if (!DRY) writeFileSync(p, s, 'utf8'); };
+const replace = (file, label, from, to) => {
+  let src = readFileSync(file, 'utf8');
+  const n = src.split(from).length - 1;
+  if (n === 0) { console.log(`  [跳过] ${label}（锚点未命中 → 可能已修或已改动，人工确认）`); return; }
+  if (n > 1) throw new Error(`锚点不唯一(${n}处): ${label}`);
+  write(file, src.replace(from, to));
+  if (!DRY) console.log(`  ✔ ${label}`);
+};
 
-// —— 每文件独立探测行尾，保持与源文件一致（Windows 检出为 CRLF）——
-const nlOf = (s) => (s.includes("\r\n") ? "\r\n" : "\n");
+// ── 1. 建 wasm 目录，把编译好的 bash wasm 放进去 ───────────────────────────
+const wasmDir = join(ROOT, 'src/services/editor/tree-sitter/wasm');
+if (!DRY) mkdirSync(wasmDir, { recursive: true });
 
-function patchFile(path, buildEdits) {
-	let text;
-	try {
-		text = readFileSync(path, "utf8");
-	} catch (e) {
-		console.error(`❌ 读不到文件：${path}（在仓库根运行）`, e.message);
-		process.exit(1);
-	}
-	const NL = nlOf(text);
-	const T = "\t";
-	let changed = 0;
-	for (const edit of buildEdits(NL, T)) {
-		if (edit.marker && edit.marker.test(text)) {
-			console.log(`↷ 已是目标态，跳过：${edit.label}`);
-			continue;
-		}
-		if (!edit.regex.test(text)) {
-			if (edit.soft) {
-				console.warn(`⚠ 软锚点未命中(可手动核对)：${edit.label}`);
-				continue;
-			}
-			console.error(`❌ 未找到原文（行文/缩进可能已变），请手动核对：${edit.label}\n   文件：${path}`);
-			process.exit(1);
-		}
-		text = text.replace(edit.regex, edit.replace);
-		changed++;
-		console.log(`✓ ${edit.label}`);
-	}
-	if (changed > 0) {
-		writeFileSync(path, text, "utf8");
-		console.log(`\n💾 已写回 ${path}（${changed} 处）`);
-	} else {
-		console.log(`\n（无改动）${path}`);
-	}
+const compiled = join(ROOT, 'tree-sitter-bash.wasm');       // build --wasm 默认输出到 cwd
+const dest     = join(wasmDir, 'tree-sitter-bash.wasm');
+
+if (!existsSync(compiled)) {
+  console.error('❌ 未找到 tree-sitter-bash.wasm（在项目根目录找）。先跑：tree-sitter build --wasm node_modules/tree-sitter-bash');
+  process.exit(1);
+}
+if (!DRY) copyFileSync(compiled, dest);
+console.log(`1. ${DRY ? '[dry] ' : ''}复制 → src/services/editor/tree-sitter/wasm/tree-sitter-bash.wasm`);
+
+// ── 2. 更新 registry：shell 条目改用本地自编译 wasm ────────────────────────
+const REGISTRY = join(ROOT, 'src/services/editor/tree-sitter/language-registry.generated.ts');
+console.log('2. 更新 registry shell 条目:');
+replace(REGISTRY, 'shell wasm 来源',
+  `import shell_wasm from 'tree-sitter-wasms/out/tree-sitter-bash.wasm?url';`,
+  `import shell_wasm from './wasm/tree-sitter-bash.wasm?url';`);
+
+// ── 3. 修复 applyLanguageExtension 接线（该用 loadCodeMirrorLanguageExtension）──
+const VUE = join(ROOT, 'src/components/editor/CodeMirrorScriptEditor.vue');
+console.log('3. 修复 applyLanguageExtension 接线:');
+
+// 3a. import 换成带 tree-sitter 包裹的加载函数
+const vueAlreadyFixed = readFileSync(VUE, 'utf8').includes('loadCodeMirrorLanguageExtension(language).then');
+if (vueAlreadyFixed) {
+  console.log('  [跳过] applyLanguageExtension 已修过');
+} else {
+  replace(VUE, 'import codemirror-language',
+    `import {\n  loadCodeMirrorLanguageSupport,\n  resolveCodeMirrorLanguageExtension,\n} from '@/services/editor/codemirror-language';`,
+    `import {\n  loadCodeMirrorLanguageExtension,\n  resolveCodeMirrorLanguageExtension,\n} from '@/services/editor/codemirror-language';`);
+
+  replace(VUE, 'applyLanguageExtension 函数体',
+    `const applyLanguageExtension = (language: string): void => {\n  void loadCodeMirrorLanguageSupport(language).then((support) => {\n    const view = editorView;\n    // 加载期间文档可能已切换语言，过期结果直接丢弃。\n    if (!view || getCurrentLanguage() !== language) return;\n    view.dispatch({ effects: languageCompartment.reconfigure(support ?? []) });\n  });\n};`,
+    `const applyLanguageExtension = (language: string): void => {\n  // 必须用 loadCodeMirrorLanguageExtension（内含 withTreeSitterHighlight）而非裸的\n  // loadCodeMirrorLanguageSupport，否则异步加载完成后 tree-sitter 着色会被覆盖掉。\n  void loadCodeMirrorLanguageExtension(language).then((extension) => {\n    const view = editorView;\n    // 加载期间文档可能已切换语言，过期结果直接丢弃。\n    if (!view || getCurrentLanguage() !== language) return;\n    view.dispatch({ effects: languageCompartment.reconfigure(extension) });\n  });\n};`);
 }
 
-patchFile(FILE, (NL, T) => {
-	// 重建 initialize 头部：从签名到 return 的 protocolVersion 行，一并替换；
-	// agentCapabilities 块原样保留（不在匹配区内）。\s* 容忍 Tab/空格/CRLF。
-	const head =
-		`async initialize(${NL}` +
-		`${T}${T}params: InitializeRequest,${NL}` +
-		`${T}): Promise<InitializeResponse> {${NL}` +
-		`${T}${T}// 协议版本协商(ACP initialize 约定)：客户端声明其支持的最高协议版本，${NL}` +
-		`${T}${T}// Agent 必须回其所支持的、不高于客户端声明值的最高版本——即${NL}` +
-		`${T}${T}// min(客户端声明值, 本 Agent 最高支持版本 PROTOCOL_VERSION)。恒回 PROTOCOL_VERSION${NL}` +
-		`${T}${T}// 会在本 Agent 的 SDK 版本高于客户端时，向只识旧版的客户端谎报新版本(不合规)。${NL}` +
-		`${T}${T}const negotiatedProtocolVersion = Math.min(${NL}` +
-		`${T}${T}${T}params.protocolVersion,${NL}` +
-		`${T}${T}${T}PROTOCOL_VERSION,${NL}` +
-		`${T}${T})${NL}` +
-		`${T}${T}return {${NL}` +
-		`${T}${T}${T}protocolVersion: negotiatedProtocolVersion,`;
+// ── 4. .gitignore 追加 wasm 目录（编译产物不入库）─────────────────────────
+const GITIGNORE = join(ROOT, '.gitignore');
+const giContent = readFileSync(GITIGNORE, 'utf8');
+const wasmIgnoreLine = 'src/services/editor/tree-sitter/wasm/';
+if (!giContent.includes(wasmIgnoreLine)) {
+  if (!DRY) appendFileSync(GITIGNORE, `\n# tree-sitter 自编译语法 wasm（provision 产物，不入库）\n${wasmIgnoreLine}\n`);
+  console.log('4. .gitignore 追加 wasm 目录');
+} else {
+  console.log('4. [跳过] .gitignore 已有该条目');
+}
 
-	return [
-		{
-			label: "initialize 协商协议版本(min(客户端, PROTOCOL_VERSION))",
-			marker: /const negotiatedProtocolVersion = Math\.min\(/,
-			regex:
-				/async initialize\(\s*_params: InitializeRequest,\s*\): Promise<InitializeResponse> \{\s*return \{\s*protocolVersion: PROTOCOL_VERSION,/,
-			replace: head,
-		},
-	];
-});
+console.log(DRY ? '\n[dry-run 完成] 未写盘。' : '\n✅ 完成。重启 dev，打开一个 .sh 文件，shell 应有语法高亮。');

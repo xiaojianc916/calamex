@@ -42,3 +42,6 @@ builtin-agent/.agent-sidecar/
 
 # P1: provision 缓存（可复现构建产物，勿提交）
 .provision/
+
+# tree-sitter 自编译语法 wasm（provision 产物，不入库）
+src/services/editor/tree-sitter/wasm/
