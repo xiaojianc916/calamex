@@ -66,6 +66,7 @@ export const buildTerminalOptions = (s: ITerminalSettings, theme: TThemeMode) =>
   fontSize: s.fontSize,
   letterSpacing: 0,
   lineHeight: Number(s.lineHeight),
+  minimumContrastRatio: 4.5,
   rows: DEFAULT_ROWS,
   scrollback: s.scrollback,
   scrollOnUserInput: true,

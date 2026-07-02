@@ -17,10 +17,7 @@
 import type { Terminal } from '@xterm/xterm';
 import type { ITerminalDataEvent, ITerminalVisualWritePayload } from '@/types/terminal';
 import { createHiddenWriteBacklog } from '@/utils/run/hidden-write-backlog';
-import {
-  normalizeTerminalAnsiForTheme,
-  stripInjectedRunSeparatorForTerminalData,
-} from './session-ansi';
+import { stripInjectedRunSeparatorForTerminalData } from './session-ansi';
 import {
   TERMINAL_HIDDEN_WRITE_BACKLOG_CHUNK_CHARS,
   TERMINAL_HIDDEN_WRITE_BACKLOG_MAX_CHARS,
@@ -36,8 +33,6 @@ export interface ITerminalWriteBufferDeps {
   getTerminal: () => Terminal | null;
   /** 当前会话是否可见（tab 激活） */
   isVisible: () => boolean;
-  /** 当前主题模式，用于 ANSI 规范化 */
-  getThemeMode: () => 'dark' | 'light';
   /** 是否显示 run 分隔符 */
   getShowRunSeparator: () => boolean;
   /** 外部布局同步触发器 */
@@ -124,16 +119,15 @@ export class TerminalWriteBuffer {
     }
   }
 
-  /** 排队写入数据（经 ANSI 规范化） */
+  /** 排队写入数据 */
   write(value: string, options?: { scrollToBottom?: boolean }): void {
     if (!value) return;
-    const normalizedValue = normalizeTerminalAnsiForTheme(value, this._deps.getThemeMode());
     if (!this._deps.isVisible()) {
-      this._hiddenWriteBacklog.append(normalizedValue);
+      this._hiddenWriteBacklog.append(value);
       if (options?.scrollToBottom) this._pendingHiddenScrollToBottom = true;
       return;
     }
-    this._appendBuffer(normalizedValue);
+    this._appendBuffer(value);
     if (options?.scrollToBottom) this._pendingScrollToBottomAfterWrite = true;
     this._scheduleFlush();
   }
