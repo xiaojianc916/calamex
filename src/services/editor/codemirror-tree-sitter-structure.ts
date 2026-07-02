@@ -2,7 +2,11 @@ import { foldService, indentService } from '@codemirror/language';
 import { EditorState, type Extension, StateEffect, StateField } from '@codemirror/state';
 import { type EditorView, ViewPlugin, type ViewUpdate } from '@codemirror/view';
 import type { Node, Parser, Tree } from 'web-tree-sitter';
-import { byteOffsetToCharIndex } from './tree-sitter/bash-runtime';
+import {
+  byteOffsetToCharIndex,
+  toBytePoint,
+  utf8ByteLengthOfRange,
+} from './tree-sitter/bash-runtime';
 import { ensureTreeSitterParser } from './tree-sitter/core-runtime';
 import { TREE_SITTER_LANGUAGES } from './tree-sitter/language-registry.generated';
 
@@ -174,6 +178,41 @@ const LINE_COMMENT_TOKENS: Readonly<Record<string, string>> = {
   toml: '#',
   ini: ';',
 };
+
+/**
+ * 供结构化选区使用：基于当前语言的 tree-sitter 树，返回"恰好包含且严格大于"[from, to]
+ * 的最近父节点范围（字符坐标）。无分析结果或已在最外层时返回 null。
+ */
+export function expandRangeWithTreeSitter(
+  state: EditorState,
+  from: number,
+  to: number,
+): { from: number; to: number } | null {
+  const analysis = state.field(structureAnalysisField, false);
+  if (!analysis) return null;
+  const source = state.doc.toString();
+  const fromByte = utf8ByteLengthOfRange(source, 0, from);
+  const toByte = utf8ByteLengthOfRange(source, 0, to);
+  const point = toBytePoint(source, from);
+  let node: Node | null =
+    analysis.tree.rootNode.namedDescendantForPosition(point) ??
+    analysis.tree.rootNode.descendantForPosition(point) ??
+    null;
+  while (node) {
+    if (
+      node.startIndex <= fromByte &&
+      node.endIndex >= toByte &&
+      (node.startIndex < fromByte || node.endIndex > toByte)
+    ) {
+      return {
+        from: byteOffsetToCharIndex(source, node.startIndex),
+        to: byteOffsetToCharIndex(source, node.endIndex),
+      };
+    }
+    node = node.parent;
+  }
+  return null;
+}
 
 /** 供 codemirror-language 的 CODEMIRROR_LANGUAGE_LOADERS 使用：替代 legacy-modes 手写词法器。 */
 export function treeSitterStructureExtensions(langId: string): Extension {

@@ -2,6 +2,7 @@ import { syntaxTree } from '@codemirror/language';
 import { EditorSelection, type EditorState, StateEffect, StateField } from '@codemirror/state';
 import type { Command } from '@codemirror/view';
 import { expandRangeWithBashTree } from './codemirror-bash-language';
+import { expandRangeWithTreeSitter } from './codemirror-tree-sitter-structure';
 
 /**
  * 结构化选区(structural selection)。
@@ -44,9 +45,12 @@ const resolveExpandedSelection = (state: EditorState): EditorSelection => {
   const tree = syntaxTree(state);
   return EditorSelection.create(
     state.selection.ranges.map((range) => {
-      const bashRange = expandRangeWithBashTree(state, range.from, range.to);
-      if (bashRange) {
-        return EditorSelection.range(bashRange.from, bashRange.to);
+      // shell 走 bash 专用树；其余语言走通用 tree-sitter 结构树；两者都命中不了才回退 Lezer。
+      const tsRange =
+        expandRangeWithBashTree(state, range.from, range.to) ??
+        expandRangeWithTreeSitter(state, range.from, range.to);
+      if (tsRange) {
+        return EditorSelection.range(tsRange.from, tsRange.to);
       }
       let node: ReturnType<typeof tree.resolveInner> | null = tree.resolveInner(range.from, 1);
       while (node) {
