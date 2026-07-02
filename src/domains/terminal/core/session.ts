@@ -37,11 +37,7 @@ import { toErrorMessage } from '@/utils/error/error';
 import { readClipboardText, writeClipboardText } from '@/utils/platform/clipboard';
 import { waitForDesktopRuntime } from '@/utils/platform/desktop-runtime';
 import { RunVisualSequencer } from './run-visual-sequencer';
-import {
-  isLikelyInteractiveResizeRepaintFrame,
-  previewTerminalDiagnosticText,
-  scanInteractiveAltScreenSwitch,
-} from './session-ansi';
+import { previewTerminalDiagnosticText } from './session-ansi';
 import {
   DEFAULT_COLS,
   DEFAULT_ROWS,
@@ -54,7 +50,6 @@ import {
   TERMINAL_LAYOUT_SCROLL_GUARD_RELEASE_MS,
   TERMINAL_LAYOUT_SETTLE_DELAY_MS,
   TERMINAL_RENDERABLE_CONTENT_SCAN_ROWS,
-  TERMINAL_RESIZE_REPAINT_SUPPRESSION_MS,
   TERMINAL_RUN_COMPLETED_FLUSH_TIMEOUT_MS,
   type TTerminalLayoutSyncOptions,
 } from './session-constants';
@@ -172,8 +167,6 @@ export class TerminalSession {
   private _isProgrammaticScrollSync = false;
   private _isAutoFollowEnabled = true;
   private _keepViewportAtBottomDuringLayout = false;
-  private _interactiveAltScreenActive = false;
-  private _interactiveResizeRepaintSuppressUntilMs = 0;
 
   // -- Private: run tracking ------------------------------------------------
   private _activeRunId: string | null = null;
@@ -596,7 +589,6 @@ export class TerminalSession {
     this._resetTerminalRunCapture();
 
     this._keepViewportAtBottomDuringLayout = false;
-    this._interactiveResizeRepaintSuppressUntilMs = 0;
     this._previousHostSize = { width: 0, height: 0 };
 
     this._hostEl = null;
@@ -799,7 +791,6 @@ export class TerminalSession {
         return;
       }
       this._scheduleViewportSync({ scrollToBottom: shouldKeepViewportAtBottom });
-      this._markInteractiveResizeRepaintSuppression();
       this._schedulePtySizeSync(terminal.cols, terminal.rows);
     } catch (error) {
       terminalLogger.warn('终端尺寸同步失败', error);
@@ -883,23 +874,6 @@ export class TerminalSession {
       return;
     }
 
-    if (event.payload.source === 'interactive' || !event.payload.source) {
-      const wasAltScreenActive = this._interactiveAltScreenActive;
-      const altScreen = scanInteractiveAltScreenSwitch(
-        this._interactiveAltScreenActive,
-        event.payload.data,
-      );
-      this._interactiveAltScreenActive = altScreen.activeAfter;
-      if (
-        !wasAltScreenActive &&
-        !altScreen.switched &&
-        this._shouldSuppressInteractiveResizeRepaint(event.payload.data, altScreen.switched)
-      ) {
-        this._emitBufferDiagnostic('interactive-resize-repaint-suppressed', event.payload.data);
-        return;
-      }
-    }
-
     if (this._activeRunId && (event.payload.source === 'interactive' || !event.payload.source)) {
       this._emitBufferDiagnostic('interactive-frame-suppressed-during-run', event.payload.data);
       return;
@@ -916,8 +890,6 @@ export class TerminalSession {
   private _handleExitEvent(event: { payload: ITerminalExitEvent }): void {
     if (event.payload.sessionId !== this.id) return;
     this.session.value = null;
-    this._interactiveAltScreenActive = false;
-    this._interactiveResizeRepaintSuppressUntilMs = 0;
     const message =
       event.payload.exitCode === null
         ? 'WSL2 终端已断开。'
@@ -1022,21 +994,6 @@ export class TerminalSession {
       this._keepViewportAtBottomDuringLayout = false;
       this._layoutScrollGuardTimeoutId = null;
     }, TERMINAL_LAYOUT_SCROLL_GUARD_RELEASE_MS);
-  }
-
-  private _markInteractiveResizeRepaintSuppression(): void {
-    this._interactiveResizeRepaintSuppressUntilMs =
-      Date.now() + TERMINAL_RESIZE_REPAINT_SUPPRESSION_MS;
-  }
-
-  private _shouldSuppressInteractiveResizeRepaint(
-    data: string,
-    hasAltScreenControl: boolean,
-  ): boolean {
-    if (this._interactiveAltScreenActive) return false;
-    if (Date.now() > this._interactiveResizeRepaintSuppressUntilMs) return false;
-    if (hasAltScreenControl) return false;
-    return isLikelyInteractiveResizeRepaintFrame(data);
   }
 
   private _hasTerminalRenderableContent(): boolean {
@@ -1239,7 +1196,6 @@ export class TerminalSession {
       });
       terminal.onResize(({ cols, rows }) => {
         if (!this._didTerminalSizeChange(cols, rows)) return;
-        this._markInteractiveResizeRepaintSuppression();
         this._scheduleViewportSync({ scrollToBottom: true });
         this._schedulePtySizeSync(cols, rows);
       });

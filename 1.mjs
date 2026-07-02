@@ -1,219 +1,152 @@
-// scripts/fix-stale-tests-tierA.mjs
-// 一次性 codemod：修复「重构后测试没跟上」的 17 个陈旧测试失败（8 个文件，纯测试改动、可逆）。
-// 每条编辑都以源码实读锚定；锚点缺失即抛错（守卫式，宁可失败也不静默误改）。
-// 用法：node scripts/fix-stale-tests-tierA.mjs   （在仓库根目录）
+// scripts/f3-remove-resize-repaint-suppression-frontend.mjs
+// F3（方案B）：彻底移除「交互 resize 重绘帧丢弃」抑制的前端半边。
+// 对齐行业标杆：终端永不丢 PTY 字节，直播与回放严格同源。
+// 覆盖 3 文件：session.ts / session-ansi.ts / session-constants.ts。
+// 安全：逐字锚点 + 计数校验；3 文件全部改完并通过才落盘（幂等、绝不半改）。
+// 含反斜杠的正则常量（\\[ / \x1b）不逐字重抄，改用「无反斜杠地标区间删除」deleteRange。
 import { readFileSync, writeFileSync } from 'node:fs';
 
-const L = (...lines) => lines.join('\n');
-let changed = 0;
+const toLF = (s) => s.replace(/<br\s*\/?>/gi, '\n').replace(/\r\n/g, '\n');
+const files = {
+  session: 'src/domains/terminal/core/session.ts',
+  ansi: 'src/domains/terminal/core/session-ansi.ts',
+  constants: 'src/domains/terminal/core/session-constants.ts',
+};
+const buf = Object.fromEntries(
+  Object.entries(files).map(([k, p]) => [k, toLF(readFileSync(p, 'utf8'))]),
+);
+const done = [];
+const countOf = (hay, needle) => hay.split(needle).length - 1;
 
-function patch(file, edits) {
-  const original = readFileSync(file, 'utf8');
-  let text = original;
-  for (const { find, replace, count = 1 } of edits) {
-    const occurrences = text.split(find).length - 1;
-    if (occurrences !== count) {
-      throw new Error(
-        `[${file}] 锚点匹配数=${occurrences}，期望=${count}。文件可能已改动或已打过补丁。锚点片段：\n${find.slice(0, 80)}…`,
-      );
-    }
-    text = text.split(find).join(replace);
-  }
-  if (text !== original) {
-    writeFileSync(file, text, 'utf8');
-    changed += 1;
-    console.log(`✓ patched ${file}`);
-  } else {
-    console.log(`= unchanged ${file}`);
-  }
+function once(key, label, oldStr, newStr) {
+  const from = toLF(oldStr);
+  const n = countOf(buf[key], from);
+  if (n !== 1) throw new Error(`[${key}:${label}] 期望恰好 1 处，实际 ${n} 处。`);
+  buf[key] = buf[key].replace(from, toLF(newStr));
+  done.push(`${key}:${label}`);
+}
+// 删 [start, end)：删掉 start 本身、保留 end；两者都必须唯一。用于避开含反斜杠的正文。
+function deleteRange(key, label, startAnchor, endAnchor) {
+  const a = toLF(startAnchor), b = toLF(endAnchor);
+  if (countOf(buf[key], a) !== 1) throw new Error(`[${key}:${label}] 起点地标不唯一。`);
+  if (countOf(buf[key], b) !== 1) throw new Error(`[${key}:${label}] 终点地标不唯一。`);
+  const ai = buf[key].indexOf(a), bi = buf[key].indexOf(b);
+  if (bi <= ai) throw new Error(`[${key}:${label}] 终点在起点之前。`);
+  buf[key] = buf[key].slice(0, ai) + buf[key].slice(bi);
+  done.push(`${key}:${label}`);
 }
 
-// 1) github-auth.store.spec.ts —— mock 路径点写成斜杠
-patch('src/domains/git/state/github-auth.store.spec.ts', [
-  {
-    find: "vi.mock('@/services/tauri.github-auth', () => ({",
-    replace: "vi.mock('@/services/tauri/github-auth', () => ({",
-  },
-]);
+// ── session.ts ──
+once('session', 'import-ansi',
+`import {
+  isLikelyInteractiveResizeRepaintFrame,
+  previewTerminalDiagnosticText,
+  scanInteractiveAltScreenSwitch,
+} from './session-ansi';`,
+`import { previewTerminalDiagnosticText } from './session-ansi';`);
 
-// 2) useWindowResizeState.spec.ts —— 模拟 ResizeObserver observe() 的初始回调
-patch('src/composables/useWindowResizeState.spec.ts', [
-  {
-    find: L('    capturedCallback = callback;', '    return { stop: vi.fn() };'),
-    replace: L(
-      '    capturedCallback = callback;',
-      '    // 真实 ResizeObserver 在 observe() 时立即回调一次初始尺寸，被 composable 用',
-      '    // hasSeenInitialObservation 跳过；mock 必须模拟它，否则首个 fireResize() 会被当初始帧吞掉。',
-      '    callback();',
-      '    return { stop: vi.fn() };',
-    ),
-  },
-]);
+once('session', 'import-const',
+`  TERMINAL_RENDERABLE_CONTENT_SCAN_ROWS,
+  TERMINAL_RESIZE_REPAINT_SUPPRESSION_MS,
+  TERMINAL_RUN_COMPLETED_FLUSH_TIMEOUT_MS,`,
+`  TERMINAL_RENDERABLE_CONTENT_SCAN_ROWS,
+  TERMINAL_RUN_COMPLETED_FLUSH_TIMEOUT_MS,`);
 
-// 3) bash-runtime.spec.ts —— 仅在真实码点边界校验互逆
-patch('src/services/editor/tree-sitter/bash-runtime.spec.ts', [
-  {
-    find: L(
-      "  it('与 getUtf8ByteLength 互为逆运算(字符边界处)', () => {",
-      "    const source = 'a中b😀c';",
-      '    for (let charIndex = 0; charIndex <= source.length; charIndex += 1) {',
-      '      const byteOffset = utf8ByteLengthOfRange(source, 0, charIndex);',
-      '      expect(byteOffsetToCharIndex(source, byteOffset)).toBe(charIndex);',
-      '    }',
-      '  });',
-    ),
-    replace: L(
-      "  it('与 getUtf8ByteLength 互为逆运算(字符边界处)', () => {",
-      "    const source = 'a中b😀c';",
-      '    // 用 for...of 按码点推进，跳过代理对内部的 UTF-16 码元中点（那里孤立高代理按 3 字节计，',
-      '    // 与逆函数吃掉整对的 4 字节本就不互逆，属预期语义而非缺陷）。',
-      '    let charIndex = 0;',
-      '    for (const codePoint of source) {',
-      '      const byteOffset = utf8ByteLengthOfRange(source, 0, charIndex);',
-      '      expect(byteOffsetToCharIndex(source, byteOffset)).toBe(charIndex);',
-      '      charIndex += codePoint.length;',
-      '    }',
-      '    const totalBytes = utf8ByteLengthOfRange(source, 0, source.length);',
-      '    expect(byteOffsetToCharIndex(source, totalBytes)).toBe(source.length);',
-      '  });',
-    ),
-  },
-]);
+once('session', 'fields',
+`  private _keepViewportAtBottomDuringLayout = false;
+  private _interactiveAltScreenActive = false;
+  private _interactiveResizeRepaintSuppressUntilMs = 0;
 
-// 4) shell-completion.spec.ts —— web-tree-sitter mock 补 Edit 导出
-patch('src/domains/terminal/utils/shell-completion.spec.ts', [
-  {
-    find: L(
-      '  return {',
-      '    Parser: MockParser,',
-      '    Language: {',
-      '      load: mocks.languageLoad,',
-      '    },',
-      '  };',
-    ),
-    replace: L(
-      '  class MockEdit {',
-      '    constructor(init: Record<string, unknown>) {',
-      '      Object.assign(this, init);',
-      '    }',
-      '  }',
-      '',
-      '  return {',
-      '    Parser: MockParser,',
-      '    Language: {',
-      '      load: mocks.languageLoad,',
-      '    },',
-      '    Edit: MockEdit,',
-      '  };',
-    ),
-  },
-]);
+  // -- Private: run tracking ------------------------------------------------`,
+`  private _keepViewportAtBottomDuringLayout = false;
 
-// 5) AiChatThread.spec.ts —— after-message 插槽读 message-id（不再是 {message:{id}}）
-patch('src/components/business/ai/chat/AiChatThread.spec.ts', [
-  {
-    count: 2,
-    find: L(
-      "        'after-message': (slotProps: { message: { id: string } }) =>",
-      "          h('div', { class: 'after-msg', 'data-message-id': slotProps.message.id }, 'checkpoint'),",
-    ),
-    replace: L(
-      "        'after-message': (slotProps: { messageId?: string; 'message-id'?: string }) =>",
-      '          h(',
-      "            'div',",
-      '            {',
-      "              class: 'after-msg',",
-      "              'data-message-id': slotProps.messageId ?? slotProps['message-id'],",
-      '            },',
-      "            'checkpoint',",
-      '          ),',
-    ),
-  },
-]);
+  // -- Private: run tracking ------------------------------------------------`);
 
-// 6) AiPromptInput.spec.ts —— sessionConfigOptions 判别联合（kind:'ready'）
-patch('src/components/business/ai/chat/AiPromptInput.spec.ts', [
-  {
-    find: "import type { IAcpSessionConfigOptionsState } from '@/types/ai/sidecar';",
-    replace: "import type { TAcpSessionConfigOptions } from '@/types/ai/sidecar';",
-  },
-  {
-    find: '  sessionConfigOptions?: IAcpSessionConfigOptionsState | null;',
-    replace: '  sessionConfigOptions?: TAcpSessionConfigOptions | null;',
-  },
-  {
-    count: 2,
-    find: L('    const sessionConfigOptions: IAcpSessionConfigOptionsState = {', '      configOptions: ['),
-    replace: L(
-      '    const sessionConfigOptions: TAcpSessionConfigOptions = {',
-      "      kind: 'ready',",
-      '      configOptions: [',
-    ),
-  },
-  {
-    find: 'const wrapper = mountPromptInput({ sessionConfigOptions: null });',
-    replace: "const wrapper = mountPromptInput({ sessionConfigOptions: { kind: 'ready', configOptions: [] } });",
-  },
-]);
+once('session', 'detach-reset',
+`    this._keepViewportAtBottomDuringLayout = false;
+    this._interactiveResizeRepaintSuppressUntilMs = 0;
+    this._previousHostSize = { width: 0, height: 0 };`,
+`    this._keepViewportAtBottomDuringLayout = false;
+    this._previousHostSize = { width: 0, height: 0 };`);
 
-// 7) useAcpSessionConfigOptions.spec.ts —— 先握手建立 activeThreadId，set 回执才会并入
-patch('src/composables/ai/useAcpSessionConfigOptions.spec.ts', [
-  {
-    find: L(
-      '    const vm = withScope(() => useAcpSessionConfigOptions());',
-      '    vm.applyConfigOptionUpdate(buildConfigOptions());',
-      '',
-      "    const ok = await vm.selectConfigOption('thread-1', 'model', 'k1');",
-    ),
-    replace: L(
-      '    ensureAcpSession.mockResolvedValue({ configOptions: buildConfigOptions() });',
-      '    const vm = withScope(() => useAcpSessionConfigOptions());',
-      '    // activeThreadId 仅由 ensureAcpSession 建立；set 回执只在 activeThreadId===threadId 时并入。',
-      '    // 故用握手建立会话，替代仅 applyConfigOptionUpdate 播种（后者不设 activeThreadId）。',
-      "    await vm.ensureAcpSession('thread-1', 'kimi');",
-      '',
-      "    const ok = await vm.selectConfigOption('thread-1', 'model', 'k1');",
-    ),
-  },
-]);
+once('session', 'syncLayout-mark',
+`      this._scheduleViewportSync({ scrollToBottom: shouldKeepViewportAtBottom });
+      this._markInteractiveResizeRepaintSuppression();
+      this._schedulePtySizeSync(terminal.cols, terminal.rows);`,
+`      this._scheduleViewportSync({ scrollToBottom: shouldKeepViewportAtBottom });
+      this._schedulePtySizeSync(terminal.cols, terminal.rows);`);
 
-// 8) useAiConversationHistory.spec.ts —— 夹具/标签改为 entries 模型
-patch('src/composables/ai/useAiConversationHistory.spec.ts', [
-  {
-    find: "import type { IAiChatMessage } from '@/types/ai';",
-    replace: "import type { IAiThread } from '@/types/ai/thread';",
-  },
-  {
-    find: L(
-      'const createThread = (id: string, updatedAt: string, messageCount: number) => ({',
-      '  id,',
-      '  title: `会话 ${id}`,',
-      '  createdAt: updatedAt,',
-      '  updatedAt,',
-      '  messages: Array.from({ length: messageCount }, () => ({}) as IAiChatMessage),',
-      '});',
-    ),
-    replace: L(
-      'const createThread = (id: string, updatedAt: string, messageCount: number): IAiThread =>',
-      '  ({',
-      '    id,',
-      '    title: `会话 ${id}`,',
-      '    createdAt: updatedAt,',
-      '    updatedAt,',
-      '    // entries-native：源码按 entries 里的 user_message/assistant_message 计数，不再读 thread.messages。',
-      "    entries: Array.from({ length: messageCount }, () => ({ type: 'user_message' })),",
-      '  }) as unknown as IAiThread;',
-    ),
-  },
-  {
-    find: "    expect(history.getHistoryMessageCountLabel([{}, {}] as IAiChatMessage[])).toBe('2 条消息');",
-    replace: L(
-      "    expect(history.getHistoryMessageCountLabel(createThread('x', '2026-06-09T10:00:00.000Z', 2))).toBe(",
-      "      '2 条消息',",
-      '    );',
-    ),
-  },
-]);
+once('session', 'handleData-suppress',
+`    if (event.payload.source === 'interactive' || !event.payload.source) {
+      const wasAltScreenActive = this._interactiveAltScreenActive;
+      const altScreen = scanInteractiveAltScreenSwitch(
+        this._interactiveAltScreenActive,
+        event.payload.data,
+      );
+      this._interactiveAltScreenActive = altScreen.activeAfter;
+      if (
+        !wasAltScreenActive &&
+        !altScreen.switched &&
+        this._shouldSuppressInteractiveResizeRepaint(event.payload.data, altScreen.switched)
+      ) {
+        this._emitBufferDiagnostic('interactive-resize-repaint-suppressed', event.payload.data);
+        return;
+      }
+    }
 
-console.log(`\nTier A 完成：改动 ${changed} 个文件（预期 8）。`);
-console.log('接着跑：pnpm vitest run 上述 8 个 spec 验证；tsc 类型检查确保无悬空类型。');
+    if (this._activeRunId && (event.payload.source === 'interactive' || !event.payload.source)) {`,
+`    if (this._activeRunId && (event.payload.source === 'interactive' || !event.payload.source)) {`);
+
+once('session', 'exit-reset',
+`    this.session.value = null;
+    this._interactiveAltScreenActive = false;
+    this._interactiveResizeRepaintSuppressUntilMs = 0;
+    const message =`,
+`    this.session.value = null;
+    const message =`);
+
+once('session', 'methods',
+`  private _markInteractiveResizeRepaintSuppression(): void {
+    this._interactiveResizeRepaintSuppressUntilMs =
+      Date.now() + TERMINAL_RESIZE_REPAINT_SUPPRESSION_MS;
+  }
+
+  private _shouldSuppressInteractiveResizeRepaint(
+    data: string,
+    hasAltScreenControl: boolean,
+  ): boolean {
+    if (this._interactiveAltScreenActive) return false;
+    if (Date.now() > this._interactiveResizeRepaintSuppressUntilMs) return false;
+    if (hasAltScreenControl) return false;
+    return isLikelyInteractiveResizeRepaintFrame(data);
+  }
+
+  private _hasTerminalRenderableContent(): boolean {`,
+`  private _hasTerminalRenderableContent(): boolean {`);
+
+once('session', 'onResize-mark',
+`        if (!this._didTerminalSizeChange(cols, rows)) return;
+        this._markInteractiveResizeRepaintSuppression();
+        this._scheduleViewportSync({ scrollToBottom: true });`,
+`        if (!this._didTerminalSizeChange(cols, rows)) return;
+        this._scheduleViewportSync({ scrollToBottom: true });`);
+
+// ── session-ansi.ts（含反斜杠正则/字符串，用地标区间删除）──
+deleteRange('ansi', 'regex-consts',
+  'const ANSI_CSI_HOME_CURSOR_PATTERN = new RegExp(',
+  '\n// ─── 导出的 ANSI helpers');
+deleteRange('ansi', 'inner-helpers',
+  '// ─── 内部 ANSI helpers',
+  '/** 将 ANSI 转义字符替换为可读的');
+
+// ── session-constants.ts ──
+once('constants', 'suppress-ms',
+`export const TERMINAL_LAYOUT_SCROLL_GUARD_RELEASE_MS = 180;
+export const TERMINAL_RESIZE_REPAINT_SUPPRESSION_MS = 240;
+export const TERMINAL_LIVE_RESIZE_PTY_SYNC_DELAY_MS = 96;`,
+`export const TERMINAL_LAYOUT_SCROLL_GUARD_RELEASE_MS = 180;
+export const TERMINAL_LIVE_RESIZE_PTY_SYNC_DELAY_MS = 96;`);
+
+for (const [k, p] of Object.entries(files)) writeFileSync(p, buf[k]);
+console.log(`✅ 前端 3 文件已改（${done.length} 处）：\n  ` + done.join('\n  '));
+console.log('▶ 守卫：pnpm typecheck && pnpm lint && pnpm test');

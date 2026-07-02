@@ -14,19 +14,6 @@ import {
 
 const ANSI_ESCAPE = String.fromCharCode(27);
 const ANSI_ESCAPE_CHARACTER_PATTERN = new RegExp(ANSI_ESCAPE, 'gu');
-const ANSI_CSI_HOME_CURSOR_PATTERN = new RegExp(
-  `${ANSI_ESCAPE}\\[(?:\\d{0,4}(?:;\\d{0,4})?)?H`,
-  'u',
-);
-const ANSI_CSI_ERASE_PATTERN = new RegExp(
-  `${ANSI_ESCAPE}\\[(?:\\??\\d{0,4}(?:;\\d{0,4})*)?[JK]`,
-  'u',
-);
-const ANSI_CSI_HIDE_CURSOR_PATTERN = new RegExp(`${ANSI_ESCAPE}\\[\\?25l`, 'u');
-const ANSI_ALT_SCREEN_SWITCH_PATTERN = new RegExp(
-  `${ANSI_ESCAPE}\\[\\?(?:47|1047|1049)([hl])`,
-  'gu',
-);
 
 // ─── 导出的 ANSI helpers ──────────────────────────────────────────────────────
 
@@ -42,36 +29,6 @@ export const stripInjectedRunSeparatorForTerminalData = (data: string): string =
 
   return `${data.slice(0, markerIndex)}${data.slice(separatorEndIndex)}`;
 };
-
-// ─── 内部 ANSI helpers ─────────────────────────────────────────────────────────
-
-/**
- * 单次扫描即可同时得出：本段数据是否含 alt-screen 切换序列（switched），
- * 以及在 current 基础上应用所有切换后的最终 alt-screen 状态（activeAfter）。
- */
-export const scanInteractiveAltScreenSwitch = (
-  current: boolean,
-  data: string,
-): { switched: boolean; activeAfter: boolean } => {
-  ANSI_ALT_SCREEN_SWITCH_PATTERN.lastIndex = 0;
-  let switched = false;
-  let activeAfter = current;
-  for (
-    let match = ANSI_ALT_SCREEN_SWITCH_PATTERN.exec(data);
-    match !== null;
-    match = ANSI_ALT_SCREEN_SWITCH_PATTERN.exec(data)
-  ) {
-    switched = true;
-    activeAfter = match[1] === 'h';
-  }
-  return { switched, activeAfter };
-};
-
-/** 检测一段数据是否像交互式程序的 resize-repaint 帧（home cursor + erase + hide cursor）。 */
-export const isLikelyInteractiveResizeRepaintFrame = (data: string): boolean =>
-  ANSI_CSI_HOME_CURSOR_PATTERN.test(data) &&
-  ANSI_CSI_ERASE_PATTERN.test(data) &&
-  (ANSI_CSI_HIDE_CURSOR_PATTERN.test(data) || data.includes('\x1b[H'));
 
 /** 将 ANSI 转义字符替换为可读的 `\x1b` 形式，用于诊断预览。 */
 export const previewTerminalDiagnosticText = (value: string): string =>
