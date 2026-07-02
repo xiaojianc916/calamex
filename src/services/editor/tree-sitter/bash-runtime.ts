@@ -5,7 +5,7 @@ import { TREE_SITTER_LANGUAGES } from './language-registry.generated';
 /**
  * tree-sitter bash 运行时与坐标换算原语。
  *
- * 终端补全(shell-completion)与编辑器语言服务(codemirror-bash-language)共用同一份
+ * 终端补全(shell-completion)与编辑器语言服务共用同一份
  * Parser / Language 单例与同一套 UTF-8 字节坐标换算,避免两套 wasm 初始化与重复实现。
  * tree-sitter 节点以字节为坐标,CodeMirror 位置以字符(UTF-16 码元)为坐标,故两侧映射
  * 必须经由本模块的字节<->字符换算,确保非 ASCII 文本下折叠/缩进/结构选区定位准确。

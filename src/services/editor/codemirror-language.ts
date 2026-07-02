@@ -19,15 +19,6 @@ const PLAIN_TEXT_TAGS: ReadonlySet<string> = new Set([
   'pl',
 ]);
 
-// StreamLanguage.define 的参数类型(legacy stream 模式)。
-type CodeMirrorStreamParser = Parameters<typeof StreamLanguage.define>[0];
-
-// 把一个\"动态 import legacy stream parser\"的 loader 包装成返回 LanguageSupport 的懒加载器。
-// 语法包只有在该语言首次被用到时才会被动态 import(Vite 代码分割)。
-const streamLanguageLoader =
-  (loader: () => Promise<CodeMirrorStreamParser>) => async (): Promise<LanguageSupport> =>
-    new LanguageSupport(StreamLanguage.define(await loader()));
-
 // 规范 id → 语法支持懒加载器。这是本模块唯一与 @codemirror 解析器强耦合的部分;
 // 词表 / 别名 / 标签 / 展示名全部来自 language-registry。
 // 共享解析器:javascript 与 jsx 同用 javascript({jsx});css / scss / less 同用 css()。

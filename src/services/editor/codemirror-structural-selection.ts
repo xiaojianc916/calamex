@@ -11,7 +11,6 @@ import { expandRangeWithTreeSitter } from './codemirror-tree-sitter-structure';
  *
  * 仅对拥有真实 syntaxTree 的 Lezer 语言(js/ts/vue/html/css/json/md/cpp/go/java/
  * python/rust/sql/xml 等)能做到语法级精确扩选。shell 由 tree-sitter-bash 提供 AST
- * (见 codemirror-bash-language),同样支持语法级扩选;其余 StreamLanguage 暂无 AST,
  * 扩选会直接跳到整篇文档,属预期降级。
  */
 
