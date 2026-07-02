@@ -108,6 +108,14 @@ describe('ai-thread-entries 镜像持久化 storage', () => {
     mod.scheduleAiThreadEntriesPersist(snapshot);
     await vi.advanceTimersByTimeAsync(SAVE_WAIT_MS);
 
+    // data:image 抽取走 crypto.subtle.digest（libuv 线程池完成 → 宏任务回调），
+    // advanceTimersByTimeAsync 的微任务冲洗驱动不到它，落盘链仍挂起。
+    // 切回真实计时，用 vi.waitFor 轮询等待 idb.set 真正写入。
+    vi.useRealTimers();
+    await vi.waitFor(() => {
+      expect(idbMock.map.get(KEY)).toBeDefined();
+    });
+
     const written = idbMock.map.get(KEY);
     expect(written).toContain('idb://ai-conversation-attachment-preview/');
     expect(written).not.toContain('data:image/png;base64,XYZ');

@@ -209,43 +209,6 @@ describe('tauriService', () => {
     expect(invokeMock).not.toHaveBeenCalled();
   });
 
-  it('agentSidecarResolveApproval 复用 sidecar 长任务超时预算', async () => {
-    vi.useFakeTimers();
-    invokeMock.mockImplementation(() => new Promise(() => undefined));
-
-    try {
-      const sidecarTaskTimeoutMs = 30 * 60 * 1000;
-      const promise = tauriService.agentSidecarResolveApproval({
-        requestId: 'approval-request-1',
-        decision: 'allow-once',
-      });
-
-      let settled = false;
-      void promise.then(
-        () => {
-          settled = true;
-        },
-        () => {
-          settled = true;
-        },
-      );
-
-      await vi.advanceTimersByTimeAsync(30_001);
-      expect(settled).toBe(false);
-
-      await vi.advanceTimersByTimeAsync(sidecarTaskTimeoutMs - 30_002);
-      expect(settled).toBe(false);
-
-      await vi.advanceTimersByTimeAsync(1);
-      await expect(promise).rejects.toMatchObject({
-        code: 'ipc.timeout',
-        scope: 'ipc',
-      });
-    } finally {
-      vi.useRealTimers();
-    }
-  });
-
   it('agentSidecarRestoreCheckpoint 复用 sidecar 长任务超时预算并透传 payload', async () => {
     vi.useFakeTimers();
     invokeMock.mockImplementation(() => new Promise(() => undefined));

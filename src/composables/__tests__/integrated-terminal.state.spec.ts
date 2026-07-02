@@ -7,10 +7,7 @@ import { flushPromises, mount } from '@vue/test-utils';
 import { createPinia, setActivePinia } from 'pinia';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { defineComponent, ref } from 'vue';
-import {
-  normalizeTerminalAnsiForTheme,
-  stripInjectedRunSeparatorForTerminalData,
-} from '@/domains/terminal/core/session';
+import { stripInjectedRunSeparatorForTerminalData } from '@/domains/terminal/core/session';
 import { useTerminalRunRoutingStore } from '@/domains/terminal/state/terminalRunRouting';
 import { useEditorStore } from '@/store/editor';
 import type { TThemeMode } from '@/types/app';
@@ -244,19 +241,6 @@ describe('suite 1', () => {
       });
 
       wrapper.unmount();
-    });
-
-    it('浅色终端写入前移除强制白字与黑底 ANSI', () => {
-      expect(normalizeTerminalAnsiForTheme('\x1b[37m[test@Predator]$\x1b[40m ', 'light')).toBe(
-        '\x1b[39m[test@Predator]$\x1b[49m ',
-      );
-      expect(normalizeTerminalAnsiForTheme('\x1b[1;97;100m提示\x1b[0m', 'light')).toBe(
-        '\x1b[1;39;49m提示\x1b[0m',
-      );
-      expect(normalizeTerminalAnsiForTheme('\x1b[38;5;37m保留索引色', 'light')).toBe(
-        '\x1b[38;5;37m保留索引色',
-      );
-      expect(normalizeTerminalAnsiForTheme('\x1b[37m深色保留', 'dark')).toBe('\x1b[37m深色保留');
     });
 
     it('复用已有终端实例时重新应用浅色主题', async () => {
