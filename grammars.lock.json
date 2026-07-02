@@ -90,5 +90,13 @@
   "markdown": {
     "repo": "https://github.com/tree-sitter-grammars/tree-sitter-markdown",
     "commit": "c3570720f7f7bbad22fe96603f106276618e0cf5"
+  },
+  "lua": {
+    "repo": "https://github.com/tree-sitter-grammars/tree-sitter-lua",
+    "commit": "10fe0054734eec83049514ea2e718b2a56acd0c9"
+  },
+  "swift": {
+    "repo": "https://github.com/alex-pinkus/tree-sitter-swift",
+    "commit": "0c469cbb77457ebabe2702268bcf7f116b3fac8f"
   }
 }

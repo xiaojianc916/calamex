@@ -1,203 +1,94 @@
-#!/usr/bin/env node
-// 修复：查 GitHub 登录态 / 拉 PR 列表 / 配置 git 远程时，git/gh 子进程未隐藏
-// 控制台窗口，导致 Windows release 下切换 Git 侧边栏、窗口重新聚焦（含任务栏
-// 恢复）时出现短暂控制台闪窗。
-//
-// 涉及文件：
-//   src-tauri/src/commands/git/github_auth.rs
-//   src-tauri/src/commands/git/pull_request.rs
-//
-// 用法：
-//   node fix-git-credential-console-flash.mjs          # 预览
-//   node fix-git-credential-console-flash.mjs --apply  # 实际写入
+// 1.mjs — 一体化：内置仓库表 + git clone + tree-sitter generate/build --wasm + 落锁
+import { execFileSync } from "node:child_process"
+import { mkdirSync, rmSync, existsSync, readFileSync, writeFileSync } from "node:fs"
+import { join } from "node:path"
 
-import { readFileSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
+const ROOT = process.cwd()
+const LOCK_PATH = join(ROOT, "grammars.lock.json")
+const TMP_DIR = join(ROOT, ".grammar-tmp")
+const WASM_OUT = join(ROOT, "src/services/editor/tree-sitter/wasm")
+const TS_BIN = process.env.TREE_SITTER_BIN || "tree-sitter"
 
-const APPLY = process.argv.includes("--apply");
-const ROOT = process.cwd();
-
-function readText(path) {
-  const raw = readFileSync(path, "utf8");
-  const eol = raw.includes("\r\n") ? "\r\n" : "\n";
-  return { raw, eol, normalized: raw.replace(/\r\n/g, "\n") };
+const SOURCES = {
+	bash: { repo: "https://github.com/tree-sitter/tree-sitter-bash", ref: "master" },
+	javascript: { repo: "https://github.com/tree-sitter/tree-sitter-javascript", ref: "master" },
+	typescript: { repo: "https://github.com/tree-sitter/tree-sitter-typescript", ref: "master", subdir: "typescript", wasmName: "tree-sitter-typescript.wasm" },
+	tsx: { repo: "https://github.com/tree-sitter/tree-sitter-typescript", ref: "master", subdir: "tsx", wasmName: "tree-sitter-tsx.wasm" },
+	python: { repo: "https://github.com/tree-sitter/tree-sitter-python", ref: "master" },
+	rust: { repo: "https://github.com/tree-sitter/tree-sitter-rust", ref: "master" },
+	go: { repo: "https://github.com/tree-sitter/tree-sitter-go", ref: "master" },
+	c: { repo: "https://github.com/tree-sitter/tree-sitter-c", ref: "master" },
+	cpp: { repo: "https://github.com/tree-sitter/tree-sitter-cpp", ref: "master" },
+	java: { repo: "https://github.com/tree-sitter/tree-sitter-java", ref: "master" },
+	json: { repo: "https://github.com/tree-sitter/tree-sitter-json", ref: "master" },
+	html: { repo: "https://github.com/tree-sitter/tree-sitter-html", ref: "master" },
+	css: { repo: "https://github.com/tree-sitter/tree-sitter-css", ref: "master" },
+	ruby: { repo: "https://github.com/tree-sitter/tree-sitter-ruby", ref: "master" },
+	yaml: { repo: "https://github.com/tree-sitter-grammars/tree-sitter-yaml", ref: "master" },
+	toml: { repo: "https://github.com/tree-sitter-grammars/tree-sitter-toml", ref: "master" },
+	lua: { repo: "https://github.com/tree-sitter-grammars/tree-sitter-lua", ref: "main" },
+	"c-sharp": { repo: "https://github.com/tree-sitter/tree-sitter-c-sharp", ref: "master" },
+	kotlin: { repo: "https://github.com/fwcd/tree-sitter-kotlin", ref: "main" },
+	scala: { repo: "https://github.com/tree-sitter/tree-sitter-scala", ref: "master" },
+	swift: { repo: "https://github.com/alex-pinkus/tree-sitter-swift", ref: "main" },
+	dart: { repo: "https://github.com/UserNobody14/tree-sitter-dart", ref: "master" },
+	diff: { repo: "https://github.com/tree-sitter-grammars/tree-sitter-diff", ref: "main" },
+	dockerfile: { repo: "https://github.com/camdencheek/tree-sitter-dockerfile", ref: "main" },
+	markdown: { repo: "https://github.com/tree-sitter-grammars/tree-sitter-markdown", ref: "split_parser", subdir: "tree-sitter-markdown", wasmName: "tree-sitter-markdown.wasm" },
+	// vue 已移除：上游 ikatyang/tree-sitter-vue 的外部扫描器与新版 wasm 构建不兼容
 }
 
-function toEol(text, eol) {
-  return eol === "\r\n" ? text.replace(/\n/g, "\r\n") : text;
+const only = process.argv.slice(2)
+
+mkdirSync(WASM_OUT, { recursive: true })
+const lock = existsSync(LOCK_PATH) ? JSON.parse(readFileSync(LOCK_PATH, "utf8")) : {}
+
+const results = []
+
+for (const [name, cfg] of Object.entries(SOURCES)) {
+	if (only.length && !only.includes(name)) continue
+	const tmpDir = join(TMP_DIR, name)
+	rmSync(tmpDir, { recursive: true, force: true })
+	mkdirSync(tmpDir, { recursive: true })
+
+	const ref = lock[name]?.commit || cfg.ref
+	console.log(`\n=== ${name} (${cfg.repo}#${ref}) ===`)
+
+	try {
+		try {
+			execFileSync("git", ["clone", "--depth", "1", "--branch", ref, cfg.repo, tmpDir], { stdio: "inherit" })
+		} catch {
+			rmSync(tmpDir, { recursive: true, force: true })
+			mkdirSync(tmpDir, { recursive: true })
+			execFileSync("git", ["clone", cfg.repo, tmpDir], { stdio: "inherit" })
+			execFileSync("git", ["checkout", ref], { cwd: tmpDir, stdio: "inherit" })
+		}
+
+		const resolvedCommit = execFileSync("git", ["rev-parse", "HEAD"], { cwd: tmpDir }).toString().trim()
+		const grammarDir = cfg.subdir ? join(tmpDir, cfg.subdir) : tmpDir
+		const wasmName = cfg.wasmName || `tree-sitter-${name}.wasm`
+		const destWasm = join(WASM_OUT, wasmName)
+
+		try {
+			execFileSync(TS_BIN, ["generate"], { cwd: grammarDir, stdio: "inherit" })
+		} catch (genErr) {
+			console.log(`  (generate 跳过或失败，可能已有 parser.c: ${String(genErr.message).split("\n")[0]})`)
+		}
+
+		execFileSync(TS_BIN, ["build", "--wasm", grammarDir, "-o", destWasm], { stdio: "inherit" })
+
+		console.log(`✅ ${name} -> ${wasmName} (commit ${resolvedCommit.slice(0, 8)})`)
+		lock[name] = { repo: cfg.repo, commit: resolvedCommit }
+		results.push({ name, status: "✅" })
+	} catch (e) {
+		console.log(`❌ ${name} 失败: ${e.message}`)
+		results.push({ name, status: "❌" })
+	}
 }
 
-function countOccurrences(haystack, needle) {
-  return haystack.split(needle).length - 1;
-}
+writeFileSync(LOCK_PATH, JSON.stringify(lock, null, 2))
+rmSync(TMP_DIR, { recursive: true, force: true })
 
-function patchFile(relPath, patches) {
-  const filePath = join(ROOT, relPath);
-  const { eol, normalized } = readText(filePath);
-  let content = normalized;
-  let changed = false;
-
-  for (const { name, find, replace, alreadyDone } of patches) {
-    if (alreadyDone && content.includes(alreadyDone)) {
-      console.log(`  [skip] ${relPath} :: ${name} 已修复，跳过`);
-      continue;
-    }
-    const occurrences = countOccurrences(content, find);
-    if (occurrences === 0) {
-      throw new Error(`${relPath} :: ${name} 未找到锚点，代码可能已变化，请重新核对后再运行。`);
-    }
-    if (occurrences > 1) {
-      throw new Error(`${relPath} :: ${name} 锚点出现 ${occurrences} 次，不唯一，已中止。`);
-    }
-    content = content.replace(find, replace);
-    changed = true;
-    console.log(`  [ok] ${relPath} :: ${name}`);
-  }
-
-  if (!changed) return;
-  if (!APPLY) {
-    console.log(`  (预览模式，未写入 ${relPath}；加 --apply 实际写入)`);
-    return;
-  }
-  writeFileSync(filePath, toEol(content, eol), "utf8");
-  console.log(`  已写入 ${relPath}`);
-}
-
-console.log("== 修复 GitHub 凭据 / git 远程子进程控制台闪窗 ==");
-
-patchFile("src-tauri/src/commands/git/github_auth.rs", [
-  {
-    name: "resolve_git_credential_token 隐藏控制台窗口",
-    alreadyDone: `let mut command = tokio::process::Command::new("git");
-    crate::commands::configure_tokio_command_for_background(&mut command);`,
-    find: `async fn resolve_git_credential_token(
-    repository_root: &std::path::Path,
-    host: &str,
-) -> Option<String> {
-    let mut command = tokio::process::Command::new("git");
-    command
-        .arg("-C")
-        .arg(repository_root)
-        .arg("credential")
-        .arg("fill")
-        .env("GIT_TERMINAL_PROMPT", "0")
-        .stdin(std::process::Stdio::piped())
-        .stdout(std::process::Stdio::piped())
-        .stderr(std::process::Stdio::null());
-
-    let mut child = command.spawn().ok()?;`,
-    replace: `async fn resolve_git_credential_token(
-    repository_root: &std::path::Path,
-    host: &str,
-) -> Option<String> {
-    let mut command = tokio::process::Command::new("git");
-    crate::commands::configure_tokio_command_for_background(&mut command);
-    command
-        .arg("-C")
-        .arg(repository_root)
-        .arg("credential")
-        .arg("fill")
-        .env("GIT_TERMINAL_PROMPT", "0")
-        .stdin(std::process::Stdio::piped())
-        .stdout(std::process::Stdio::piped())
-        .stderr(std::process::Stdio::null());
-
-    let mut child = command.spawn().ok()?;`,
-  },
-  {
-    name: "resolve_github_cli_token 隐藏控制台窗口",
-    alreadyDone: `fn resolve_github_cli_token(host: &str) -> Option<String> {
-    let mut command = std::process::Command::new("gh");
-    crate::commands::configure_std_command_for_background(&mut command);`,
-    find: `fn resolve_github_cli_token(host: &str) -> Option<String> {
-    let output = std::process::Command::new("gh")
-        .arg("auth")
-        .arg("token")
-        .arg("--hostname")
-        .arg(host)
-        .env("GIT_TERMINAL_PROMPT", "0")
-        .output()
-        .ok()?;`,
-    replace: `fn resolve_github_cli_token(host: &str) -> Option<String> {
-    let mut command = std::process::Command::new("gh");
-    crate::commands::configure_std_command_for_background(&mut command);
-    let output = command
-        .arg("auth")
-        .arg("token")
-        .arg("--hostname")
-        .arg(host)
-        .env("GIT_TERMINAL_PROMPT", "0")
-        .output()
-        .ok()?;`,
-  },
-]);
-
-patchFile("src-tauri/src/commands/git/pull_request.rs", [
-  {
-    name: "run_git_remote_subcommand 隐藏控制台窗口",
-    alreadyDone: `let mut command = std::process::Command::new("git");
-    crate::commands::configure_std_command_for_background(&mut command);
-    let output = command
-        .arg("-C")
-        .arg(repository_root)
-        .arg("remote")`,
-    find: `let output = std::process::Command::new("git")
-        .arg("-C")
-        .arg(repository_root)
-        .arg("remote")
-        .arg(subcommand)
-        .arg(remote_name)
-        .arg(remote_url)
-        .output()
-        .map_err(|error| format!("调用 git 配置远程失败：{error}"))?;`,
-    replace: `let mut command = std::process::Command::new("git");
-    crate::commands::configure_std_command_for_background(&mut command);
-    let output = command
-        .arg("-C")
-        .arg(repository_root)
-        .arg("remote")
-        .arg(subcommand)
-        .arg(remote_name)
-        .arg(remote_url)
-        .output()
-        .map_err(|error| format!("调用 git 配置远程失败：{error}"))?;`,
-  },
-  {
-    name: "resolve_github_credential 隐藏控制台窗口",
-    alreadyDone: `let mut command = tokio::process::Command::new("git");
-        crate::commands::configure_tokio_command_for_background(&mut command);
-        command
-            .arg("-C")
-            .arg(repository_root)
-            .arg("credential")
-            .arg("fill")`,
-    find: `let mut command = tokio::process::Command::new("git");
-        command
-            .arg("-C")
-            .arg(repository_root)
-            .arg("credential")
-            .arg("fill")
-            .env("GIT_TERMINAL_PROMPT", "0")
-            .stdin(std::process::Stdio::piped())
-            .stdout(std::process::Stdio::piped())
-            .stderr(std::process::Stdio::null());
-
-        let mut child = command.spawn().ok()?;`,
-    replace: `let mut command = tokio::process::Command::new("git");
-        crate::commands::configure_tokio_command_for_background(&mut command);
-        command
-            .arg("-C")
-            .arg(repository_root)
-            .arg("credential")
-            .arg("fill")
-            .env("GIT_TERMINAL_PROMPT", "0")
-            .stdin(std::process::Stdio::piped())
-            .stdout(std::process::Stdio::piped())
-            .stderr(std::process::Stdio::null());
-
-        let mut child = command.spawn().ok()?;`,
-  },
-]);
-
-console.log("== 完成 ==");
-if (!APPLY) console.log("这是预览模式。确认无误后加 --apply 实际写入文件。");
+console.log("\n========== 汇总 ==========")
+for (const r of results) console.log(`${r.status} ${r.name}`)
+console.log(`\n锁定文件已写入: ${LOCK_PATH}`)
