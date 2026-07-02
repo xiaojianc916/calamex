@@ -1,73 +1,179 @@
-// scripts/dedupe-window-resize-state.mjs
-// 将全局窗口 resize 态（<html>.is-resizing）收敛为唯一持有者：仅保留常驻根组件 App.vue 的
-// useWindowResizeState()，移除 useWorkbench.ts 中的重复调用（避免 <html> 上叠加两个 ResizeObserver）。
-// 用法：node scripts/dedupe-window-resize-state.mjs           (dry-run)
-//       node scripts/dedupe-window-resize-state.mjs --apply   (写盘)
-import { readFileSync, writeFileSync } from 'node:fs';
-import { resolve } from 'node:path';
+#!/usr/bin/env node
+// Stage 3b · 清理迁移后的死代码：删 model-config-options.ts 里的 MODEL_CATALOG_META_KEY /
+// parseModelCatalogFromMeta（及其私有 helper isRecord/readString/parseEntry），并同步删测试。
+// 用法：node 4.mjs --dry-run  看命中；  node 4.mjs  落盘
+import fs from "node:fs"
+import path from "node:path"
+import process from "node:process"
 
-const APPLY = process.argv.includes('--apply');
-const APP_MARKER = 'RESIZE_STATE_SINGLE_OWNER';
+const ROOT = process.cwd()
+const DRY = process.argv.includes("--dry-run")
+const L = (arr) => arr.join("\n")
 
-const WORKBENCH = resolve(process.cwd(), 'src/app/composables/useWorkbench.ts');
-const APP = resolve(process.cwd(), 'src/app/App.vue');
+// ── A: builtin-agent/src/acp/model-config-options.ts（TAB 缩进）──
+const editsA = [
+	{
+		// A1·删 MODEL_CATALOG_META_KEY 常量 + 其文档（保留前后两行作锚）
+		kind: "replace",
+		label: "A1·删 MODEL_CATALOG_META_KEY 常量",
+		find: L([
+			'export const MODEL_CONFIG_OPTION_ID = "model"',
+			"",
+			"/** 宿主经 NewSessionRequest._meta 注入模型目录所用的命名空间键。 */",
+			'export const MODEL_CATALOG_META_KEY = "calamex.dev/modelCatalog"',
+			"",
+			"/** 单个可选模型及其凭据（宿主从已保存 AI 配置组装，best-effort 仅含有 Key 者）。 */",
+		]),
+		replace: L([
+			'export const MODEL_CONFIG_OPTION_ID = "model"',
+			"",
+			"/** 单个可选模型及其凭据（宿主从已保存 AI 配置组装，best-effort 仅含有 Key 者）。 */",
+		]),
+		alreadyIfAbsent: 'MODEL_CATALOG_META_KEY = "calamex.dev/modelCatalog"',
+	},
+	{
+		// A2·删 isRecord/readString/parseEntry/parseModelCatalogFromMeta 整段（区间删除）
+		kind: "cut",
+		label: "A2·删 parseModelCatalogFromMeta 及其私有 helper",
+		from: "const isRecord = (value: unknown): value is Record<string, unknown> =>",
+		to: "\treturn catalog\n}",
+		alreadyIfAbsent: "export const parseModelCatalogFromMeta",
+	},
+]
 
-// ── useWorkbench.ts：删除 import 行 + 调用行（保留 useTheme()）──
-const WB_IMPORT = `import { useWindowResizeState } from '@/composables/useWindowResizeState';\n`;
-const WB_CALL_CTX = `  useTheme();\n  useWindowResizeState();\n`;
-const WB_CALL_CTX_NEW = `  useTheme();\n`;
+// ── B: builtin-agent/src/acp/model-config-options.spec.ts（TAB 缩进）──
+const editsB = [
+	{
+		// B1·import 去掉 MODEL_CATALOG_META_KEY / parseModelCatalogFromMeta
+		kind: "replace",
+		label: "B1·清理测试 import",
+		find: L([
+			"import {",
+			"\tbuildModelConfigOptions,",
+			"\tMODEL_CATALOG_META_KEY,",
+			"\tMODEL_CONFIG_OPTION_ID,",
+			"\tparseModelCatalogFromMeta,",
+			"\tresolveCurrentModelId,",
+			"\tresolveModelConfigInput,",
+			'} from "./model-config-options.js"',
+		]),
+		replace: L([
+			"import {",
+			"\tbuildModelConfigOptions,",
+			"\tMODEL_CONFIG_OPTION_ID,",
+			"\tresolveCurrentModelId,",
+			"\tresolveModelConfigInput,",
+			'} from "./model-config-options.js"',
+		]),
+		alreadyIfAbsent: "\tparseModelCatalogFromMeta,",
+	},
+	{
+		// B2·删 meta() helper + 整个 parseModelCatalogFromMeta describe 块（区间删除，保留下一个 describe）
+		kind: "cut",
+		label: "B2·删 parseModelCatalogFromMeta 测试块",
+		from: "const meta = (catalog: unknown): Record<string, unknown> => ({",
+		to: "\t\texpect(result?.currentModelId).toBeUndefined()\n\t})\n})",
+		alreadyIfAbsent: 'describe("parseModelCatalogFromMeta"',
+	},
+]
 
-// ── App.vue：在唯一保留的调用上方补不变量注释（含幂等 marker）──
-const APP_CALL = `useWindowResizeState();`;
-const APP_CALL_NEW =
-  `// ${APP_MARKER}: 全局窗口 resize 态（<html>.is-resizing，见 assets/css/tailwind.css）的唯一持有点。\n` +
-  `// App.vue 是常驻根组件；不要在下层 composable（如 useWorkbench）重复调用，否则会在 <html> 上\n` +
-  `// 叠加多个 ResizeObserver + 多个 settle 计时器，每帧 resize 做重复功。\n` +
-  `useWindowResizeState();`;
+const FILES = [
+	{ rel: "builtin-agent/src/acp/model-config-options.ts", edits: editsA },
+	{ rel: "builtin-agent/src/acp/model-config-options.spec.ts", edits: editsB },
+]
 
-const edits = []; // { file, path, next }
-
-// ---- useWorkbench.ts ----
-let wb = readFileSync(WORKBENCH, 'utf8');
-if (wb.includes('useWindowResizeState')) {
-  for (const anchor of [WB_IMPORT, WB_CALL_CTX]) {
-    const n = wb.split(anchor).length - 1;
-    if (n !== 1) {
-      console.error(`✗ useWorkbench.ts 锚点命中 ${n} 次（应为 1），中止：\n---\n${anchor}\n---`);
-      process.exit(1);
-    }
-  }
-  wb = wb.replace(WB_IMPORT, '').replace(WB_CALL_CTX, WB_CALL_CTX_NEW);
-  if (wb.includes('useWindowResizeState')) {
-    console.error('✗ useWorkbench.ts 仍残留 useWindowResizeState 引用，中止。');
-    process.exit(1);
-  }
-  edits.push({ file: 'useWorkbench.ts', path: WORKBENCH, next: wb });
-} else {
-  console.log('· useWorkbench.ts 已无 useWindowResizeState，跳过。');
+// 单次唯一定位：返回 index，或 "MISSING" / "AMBIGUOUS"
+function locate(text, needle) {
+	const first = text.indexOf(needle)
+	if (first === -1) return "MISSING"
+	if (text.indexOf(needle, first + needle.length) !== -1) return "AMBIGUOUS"
+	return first
 }
 
-// ---- App.vue ----
-let app = readFileSync(APP, 'utf8');
-if (!app.includes(APP_MARKER)) {
-  const n = app.split(APP_CALL).length - 1; // import 行以 "useWindowResizeState';" 结尾，不会命中此串
-  if (n !== 1) {
-    console.error(`✗ App.vue 调用锚点命中 ${n} 次（应为 1），中止：\n---\n${APP_CALL}\n---`);
-    process.exit(1);
-  }
-  app = app.replace(APP_CALL, APP_CALL_NEW);
-  edits.push({ file: 'App.vue', path: APP, next: app });
-} else {
-  console.log('· App.vue 已含单一持有者注释，跳过。');
+function applyFile({ rel, edits }) {
+	const abs = path.join(ROOT, rel)
+	if (!fs.existsSync(abs)) {
+		console.log(`\n✗ 找不到文件（跳过）：${rel}`)
+		return
+	}
+	const original = fs.readFileSync(abs, "utf8")
+	const crlf = original.includes("\r\n")
+	let working = original.replace(/\r\n/g, "\n")
+
+	const report = []
+	let missing = 0
+	let changed = 0
+
+	for (const e of edits) {
+		if (e.alreadyIfAbsent && !working.includes(e.alreadyIfAbsent)) {
+			report.push(`  ✓ 已应用（跳过）：${e.label}`)
+			continue
+		}
+		if (e.kind === "replace") {
+			const at = locate(working, e.find)
+			if (at === "MISSING") {
+				report.push(`  ❗ 锚点未命中（本地与 HEAD 有出入）：${e.label}`)
+				missing++
+				continue
+			}
+			if (at === "AMBIGUOUS") {
+				report.push(`  ❗ 锚点不唯一（拒绝改）：${e.label}`)
+				missing++
+				continue
+			}
+			working = working.slice(0, at) + e.replace + working.slice(at + e.find.length)
+			report.push(`  ✎ 待改：${e.label}`)
+			changed++
+		} else if (e.kind === "cut") {
+			const start = locate(working, e.from)
+			const end = locate(working, e.to)
+			if (start === "MISSING" || end === "MISSING") {
+				report.push(`  ❗ 区间锚点未命中（本地与 HEAD 有出入）：${e.label}`)
+				missing++
+				continue
+			}
+			if (start === "AMBIGUOUS" || end === "AMBIGUOUS") {
+				report.push(`  ❗ 区间锚点不唯一（拒绝改）：${e.label}`)
+				missing++
+				continue
+			}
+			const endPos = end + e.to.length
+			if (endPos <= start) {
+				report.push(`  ❗ 区间方向异常（拒绝改）：${e.label}`)
+				missing++
+				continue
+			}
+			working = working.slice(0, start) + working.slice(endPos)
+			report.push(`  ✎ 待删（区间）：${e.label}`)
+			changed++
+		}
+	}
+
+	// 收尾：把删除接缝处 3+ 连续换行收敛为 1 个空行（与 biome 格式一致）
+	if (changed > 0) working = working.replace(/\n{3,}/g, "\n\n")
+
+	console.log(`\n✎ ${rel}`)
+	report.forEach((r) => console.log(r))
+
+	if (missing > 0) {
+		console.log(`  → 有 ${missing} 条未命中：整文件不写（事务回滚），请核对后重跑。`)
+		return
+	}
+	if (changed === 0) {
+		console.log("  → 无需改动（已是最新）。")
+		return
+	}
+	if (DRY) {
+		console.log(`  → [dry-run] 命中 ${changed} 条，未落盘。`)
+		return
+	}
+	fs.writeFileSync(abs, crlf ? working.replace(/\n/g, "\r\n") : working, "utf8")
+	console.log(`  → 已写入（${changed} 条，${crlf ? "CRLF" : "LF"} 保持）。`)
 }
 
-if (edits.length === 0) {
-  console.log('✓ 已是单一持有者状态，无需改动。');
-  process.exit(0);
-}
-if (!APPLY) {
-  console.log(`（dry-run）将修改 ${edits.length} 个文件：${edits.map((e) => e.file).join(', ')}。加 --apply 落盘。`);
-  process.exit(0);
-}
-for (const e of edits) writeFileSync(e.path, e.next, 'utf8');
-console.log(`✓ 已收敛 resize 态为单一持有者（改动：${edits.map((e) => e.file).join(', ')}）。`);
+console.log(`Stage 3b · 死代码清理${DRY ? "（dry-run）" : ""}`)
+console.log(`repo root: ${ROOT}`)
+for (const f of FILES) applyFile(f)
+console.log("\n── 验证门 ──")
+console.log("pnpm lint --fix && pnpm typecheck && pnpm test")
+console.log("pnpm dlx knip@6.23.0   # 确认无新增未用导出")
