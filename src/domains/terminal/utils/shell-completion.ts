@@ -1,8 +1,7 @@
 import type { Completion, CompletionContext, CompletionResult } from '@codemirror/autocomplete';
 import { snippet } from '@codemirror/autocomplete';
-import bashLanguageWasmUrl from 'tree-sitter-bash/tree-sitter-bash.wasm?url';
-import { Edit, Language, type Node, Parser, type Point, type Tree } from 'web-tree-sitter';
-import treeSitterWasmUrl from 'web-tree-sitter/web-tree-sitter.wasm?url';
+import { Edit, type Language, type Node, type Point, type Tree } from 'web-tree-sitter';
+import { ensureBashLanguage, ensureBashParser } from '@/services/editor/tree-sitter/bash-runtime';
 import { listShellCommandLabels, loadShellCommandSpec } from '@/services/shell/command-catalog';
 import type {
   IShellCommandArgumentSpec,
@@ -78,8 +77,6 @@ interface ICommandCatalogContext {
   positionalArgumentIndex: number;
 }
 
-let runtimePromise: Promise<Language> | null = null;
-let parserPromise: Promise<Parser> | null = null;
 let shellParseCache: IShellParseCacheEntry | null = null;
 let commandCatalogRootEntriesPromise: Promise<IShellCompletionEntry[]> | null = null;
 let lastProviderErrorMessage: string | null = null;
@@ -267,41 +264,6 @@ const KEYWORD_ENTRY_MAP = new Map(
   SHELL_KEYWORD_ENTRIES.map((entry) => [entry.label, entry] as const),
 );
 
-const ensureTreeSitterLanguage = async (): Promise<Language> => {
-  if (!runtimePromise) {
-    runtimePromise = (async () => {
-      try {
-        await Parser.init({
-          locateFile: () => treeSitterWasmUrl,
-        });
-        return await Language.load(bashLanguageWasmUrl);
-      } catch (error) {
-        runtimePromise = null;
-        throw error;
-      }
-    })();
-  }
-  return runtimePromise;
-};
-
-// 复用单例 Parser：避免每次补全都 new/delete 一个 tree-sitter 解析器。
-const ensureParser = async (): Promise<Parser> => {
-  if (!parserPromise) {
-    parserPromise = (async () => {
-      try {
-        const language = await ensureTreeSitterLanguage();
-        const parser = new Parser();
-        parser.setLanguage(language);
-        return parser;
-      } catch (error) {
-        parserPromise = null;
-        throw error;
-      }
-    })();
-  }
-  return parserPromise;
-};
-
 const reportShellCompletionProviderError = (error: unknown): void => {
   const nextMessage = error instanceof Error ? error.message : String(error);
   if (lastProviderErrorMessage === nextMessage) {
@@ -424,8 +386,8 @@ const getEntrySymbols = (entry: IShellParseCacheEntry): ISymbolSnapshot => {
 
 // 解析 shell 文档：命中缓存直接复用；文本变化时尽量增量重解析，异常回退全量解析。
 const parseShellDocument = async (source: string): Promise<IParsedShellDocument> => {
-  const language = await ensureTreeSitterLanguage();
-  const parser = await ensureParser();
+  const language = await ensureBashLanguage();
+  const parser = await ensureBashParser();
   const cached = shellParseCache;
 
   if (cached && cached.source === source) {
