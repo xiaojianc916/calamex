@@ -1,8 +1,4 @@
-import { readFileSync, writeFileSync, existsSync } from "node:fs";
-
-// ---- (A) new file: src-tauri/src/acp/terminal_bridge.rs ----
-const bridgePath = "src-tauri/src/acp/terminal_bridge.rs";
-const rust = String.raw`//! ACP terminal/* bridge.
+//! ACP terminal/* bridge.
 //!
 //! Runs agent-requested commands inside WSL2 through the same wsl.exe pipeline
 //! the interactive terminal domain uses (default distro, login shell for
@@ -306,32 +302,4 @@ impl TerminalRegistry {
         }
         Ok(ReleaseTerminalResponse::new())
     }
-}
-`;
-
-const nl = "\r\n";
-if (existsSync(bridgePath)) {
-  console.log(`skip: ${bridgePath} already exists (not overwriting)`);
-} else {
-  writeFileSync(bridgePath, rust.replace(/\n/g, nl));
-  console.log(`p9h: wrote ${bridgePath}`);
-}
-
-// ---- (B) register the module in acp/mod.rs ----
-const modPath = "src-tauri/src/acp/mod.rs";
-if (!existsSync(modPath)) throw new Error(`missing ${modPath}`);
-{
-  const src = readFileSync(modPath, "utf8");
-  const mnl = src.includes("\r\n") ? "\r\n" : "\n";
-  let lines = src.split(/\r?\n/);
-  if (lines.some((l) => l.includes("mod terminal_bridge;"))) {
-    console.log("p9h: mod terminal_bridge; already present");
-  } else {
-    let i = lines.findIndex((l) => l.trim() === "mod fs_bridge;");
-    if (i < 0) i = lines.findIndex((l) => l.trim() === "pub mod bridges;");
-    if (i < 0) throw new Error("anchor for module registration not found in acp/mod.rs");
-    lines.splice(i + 1, 0, "mod terminal_bridge;");
-    writeFileSync(modPath, lines.join(mnl));
-    console.log("p9h: registered mod terminal_bridge; in acp/mod.rs");
-  }
 }
