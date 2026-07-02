@@ -9,10 +9,10 @@ import fs from 'node:fs';
 import path from 'node:path';
 import {
   CheckResult,
-  ROOT,
   checkExemption,
   loadBaseline,
   printResult,
+  ROOT,
   summarize,
 } from './guard-utils.js';
 
