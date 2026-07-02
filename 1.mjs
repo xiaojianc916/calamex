@@ -3,14 +3,15 @@
 // 做法：全部为「逐字精确匹配 + 计数校验」；任一锚点对不上就抛错、且在此之前不写任何文件
 //       （因此天然幂等、绝不半改）。所有锚点均照 session.ts 现状逐字抄写，不再做花括号扫描/猜测。
 //       （上一版脚本正是把布尔字段 _shouldClearTextureAtlasOnViewportSync 误当成方法去扫花括号而崩。）
-// 换行符：Windows 下本 .mjs 常被存成 CRLF，而 session.ts 是 LF；故读入与所有锚点统一 toLF 规整
-//       后再匹配，避免 \r\n 与 \n 不一致导致 0 命中（上一版 import 锚点 0 命中即因此）。
+// 换行符规整（关键）：从 Notion 复制本脚本时，多行模板字符串里的换行会被转成字面量 <br>，
+//       且 Windows 存盘会带 CRLF。故 toLF 同时把 <br> 与 \r\n 都还原成 \n 再匹配，
+//       彻底消除「锚点字面正确却 0 命中」（前几版 import 锚点 0 命中的真正根因）。
 import { readFileSync, writeFileSync } from 'node:fs';
 
 const SESSION = 'src/domains/terminal/core/session.ts';
 const PKG = 'package.json';
 
-const toLF = (s) => s.replace(/\r\n/g, '\n');
+const toLF = (s) => s.replace(/<br\s*\/?>/gi, '\n').replace(/\r\n/g, '\n');
 let src = toLF(readFileSync(SESSION, 'utf8'));
 const done = [];
 const countOf = (needle) => src.split(needle).length - 1;

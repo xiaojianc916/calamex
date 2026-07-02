@@ -15,7 +15,6 @@
 
 import type { UnlistenFn } from '@tauri-apps/api/event';
 import { FitAddon } from '@xterm/addon-fit';
-import { WebglAddon } from '@xterm/addon-webgl';
 import { Terminal } from '@xterm/xterm';
 import { consola } from 'consola';
 import { markRaw, nextTick, type Ref, ref, shallowRef } from 'vue';
@@ -125,8 +124,6 @@ export class TerminalSession {
   // ── 私有：xterm 实例 ──────────────────────────────────────────
   private _terminalRef = shallowRef<Terminal | null>(null);
   private _fitAddonRef = shallowRef<FitAddon | null>(null);
-  // WebGL(GPU)渲染器附加组件：仅在 terminal.open() 之后加载；上下文丢失时置空并回退 DOM 渲染器。
-  private _webglAddon: WebglAddon | null = null;
 
   // ── 私有：DOM ──────────────────────────────────────────────────
   private _hostEl: HTMLElement | null = null;
@@ -167,7 +164,6 @@ export class TerminalSession {
   private _bellUnsubscribe: (() => void) | null = null;
 
   // ── 私有：视口同步标记 ──────────────────────────────────────
-  private _shouldClearTextureAtlasOnViewportSync = false;
   private _shouldRefreshViewportOnViewportSync = false;
   private _shouldScrollToBottomOnViewportSync = false;
   private _pendingLayoutSettleSync = false;
@@ -273,7 +269,6 @@ export class TerminalSession {
     this._syncTerminalSurfaceTone();
     this._scheduleLayoutSync({ settle: true });
     this._scheduleViewportSync({
-      clearTextureAtlas: true,
       refresh: true,
       scrollToBottom: true,
     });
@@ -522,7 +517,6 @@ export class TerminalSession {
         if (!this._visible) return;
         this._scheduleLayoutSync({ settle: true });
         this._scheduleViewportSync({
-          clearTextureAtlas: true,
           refresh: true,
           scrollToBottom: true,
         });
@@ -539,7 +533,6 @@ export class TerminalSession {
         if (document.visibilityState !== 'visible' || !this._visible) return;
         this._scheduleLayoutSync({ settle: true });
         this._scheduleViewportSync({
-          clearTextureAtlas: true,
           refresh: true,
           scrollToBottom: true,
         });
@@ -625,7 +618,6 @@ export class TerminalSession {
     this._terminalRef.value?.dispose();
     this._terminalRef.value = null;
     this._fitAddonRef.value = null;
-    this._webglAddon = null;
     this.session.value = null;
   }
 
@@ -843,12 +835,7 @@ export class TerminalSession {
     }
   }
 
-  private _scheduleViewportSync(options?: {
-    clearTextureAtlas?: boolean;
-    refresh?: boolean;
-    scrollToBottom?: boolean;
-  }): void {
-    if (options?.clearTextureAtlas) this._shouldClearTextureAtlasOnViewportSync = true;
+  private _scheduleViewportSync(options?: { refresh?: boolean; scrollToBottom?: boolean }): void {
     if (options?.refresh) this._shouldRefreshViewportOnViewportSync = true;
     if (options?.scrollToBottom) this._shouldScrollToBottomOnViewportSync = true;
     this._clearViewportFrame();
@@ -860,14 +847,11 @@ export class TerminalSession {
 
   private _refreshTerminalViewportNow(): void {
     const terminal = this._terminalRef.value;
-    const shouldClearAtlas = this._shouldClearTextureAtlasOnViewportSync;
-    const shouldRefresh = this._shouldRefreshViewportOnViewportSync || shouldClearAtlas;
+    const shouldRefresh = this._shouldRefreshViewportOnViewportSync;
     const shouldScrollToBottom = this._shouldScrollToBottomOnViewportSync;
-    this._shouldClearTextureAtlasOnViewportSync = false;
     this._shouldRefreshViewportOnViewportSync = false;
     this._shouldScrollToBottomOnViewportSync = false;
     if (!terminal) return;
-    if (shouldClearAtlas) this._clearTerminalTextureAtlas();
     if (
       shouldScrollToBottom &&
       this._visible &&
@@ -1002,10 +986,6 @@ export class TerminalSession {
     this._runSequencer.clearAll();
   }
 
-  private _clearTerminalTextureAtlas(): void {
-    this._terminalRef.value?.clearTextureAtlas();
-  }
-
   // -- Private: viewport helpers -------------------------------------------
 
   private _isViewportNearBottom(terminal: Terminal): boolean {
@@ -1117,7 +1097,7 @@ export class TerminalSession {
     this._syncTerminalSurfaceTone();
     terminal.refresh(0, Math.max(0, terminal.rows - 1));
     this._scheduleLayoutSync({ settle: true });
-    this._scheduleViewportSync({ clearTextureAtlas: true, refresh: true });
+    this._scheduleViewportSync({ refresh: true });
     this._applyBellBehavior();
   }
 
@@ -1193,37 +1173,14 @@ export class TerminalSession {
 
   // -- Private: terminal creation ------------------------------------------
 
-  // WebGL(GPU)渲染器：xterm 默认 DOM 渲染器在高吞吐输出（yes / cat 大文件 / htop）下，
-  // DOM reflow/repaint 会成为帧率瓶颈。WebGL2 渲染器把字形合成搬到 GPU，是 VS Code 集成
-  // 终端的同款范式。必须在 terminal.open() 之后加载（依赖已挂载的 screen 元素）。
-  private _activateWebglRenderer(terminal: Terminal): void {
-    if (this._webglAddon) return;
-    try {
-      const addon = new WebglAddon();
-      // GPU 上下文丢失（驱动重置 / 系统休眠唤醒 / WebView 回收 GPU）：释放附加组件，
-      // xterm 自动回退到 DOM 渲染器，避免终端画面永久冻结。
-      addon.onContextLoss(() => {
-        addon.dispose();
-        if (this._webglAddon === addon) this._webglAddon = null;
-      });
-      terminal.loadAddon(addon);
-      this._webglAddon = addon;
-    } catch (error) {
-      // WebGL2 不可用（无 GPU / 上下文创建被拒）：静默回退 DOM 渲染器，不影响功能。
-      this._webglAddon = null;
-      terminalLogger.warn('WebGL 渲染器不可用，已回退到 DOM 渲染器', error);
-    }
-  }
-
   private _attachTerminalToHost(): void {
     const terminal = this._terminalRef.value;
     const host = this._hostEl;
     if (!terminal || !host) return;
     if (!terminal.element) {
       terminal.open(host);
-      // [WebGL 诊断实验] 暂时禁用 WebGL 渲染器，确认空白终端根因；确认后用 --restore 恢复
-      // this._activateWebglRenderer(terminal);
-      terminalLogger.warn('[WebGL 诊断] 已禁用 WebGL 渲染器，使用 DOM 回退渲染器');
+      // 本架构使用 xterm DOM 渲染器：多面板常驻 + 隐藏页 0×0 + 主题改 CSS/canvas，
+      // 与 WebGL 的单活跃 GPU 表面模型结构性冲突，DOM 是正确默认值（见性能审查 F1）。
     } else if (terminal.element.parentElement !== host) {
       host.replaceChildren(terminal.element);
     }
@@ -1235,7 +1192,7 @@ export class TerminalSession {
     this._syncTerminalSurfaceTone();
     this._writeBuffer.pendingInitialPaintRecovery = true;
     this._scheduleLayoutSync({ settle: true });
-    this._scheduleViewportSync({ clearTextureAtlas: true, refresh: true, scrollToBottom: true });
+    this._scheduleViewportSync({ refresh: true, scrollToBottom: true });
     this._applyBellBehavior();
   }
 
