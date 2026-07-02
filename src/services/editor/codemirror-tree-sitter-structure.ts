@@ -1,19 +1,21 @@
 import { foldService, indentService } from '@codemirror/language';
-import { EditorState, type Extension } from '@codemirror/state';
+import { EditorState, type Extension, StateEffect, StateField } from '@codemirror/state';
 import { type EditorView, ViewPlugin, type ViewUpdate } from '@codemirror/view';
-import type { Node, Tree } from 'web-tree-sitter';
-import { Parser } from 'web-tree-sitter';
-import { byteOffsetToCharIndex, computeBashSourceEdit } from './tree-sitter/bash-runtime';
+import type { Node, Parser, Tree } from 'web-tree-sitter';
+import { byteOffsetToCharIndex } from './tree-sitter/bash-runtime';
 import { ensureTreeSitterParser } from './tree-sitter/core-runtime';
 import { TREE_SITTER_LANGUAGES } from './tree-sitter/language-registry.generated';
 
 /**
- * 通用（语言无关）tree-sitter 结构服务：折叠 / 缩进。
+ * 通用（语言无关）tree-sitter 结构服务：折叠 + 缩进 + 行注释语言数据。
  *
- * 参照 Zed 的地基原则——语法树是结构信息的唯一来源；不再为每个语言手写 StreamLanguage
- * 词法器或逐语言的折叠节点类型白名单。折叠规则通用化为"任意跨多行的节点都是折叠候选，
- * 同起始行取覆盖范围最大的一个"；缩进规则通用化为"数一下当前行严格被多少个跨行祖先节点
- * 包含"。这两条规则不依赖具体语言的节点类型命名，可直接套用在任意已编译好 wasm 的语言上。
+ * 参照 Zed 的地基原则——语法树是结构信息的唯一来源；不再为每个语言维护
+ * @codemirror/legacy-modes 下手写的正则/状态机词法器（那些只有token流，没有真正的语法树，
+ * 折叠/缩进能力很弱），也不为每个语言手写折叠节点类型白名单（如早期 bash 那样）。
+ *
+ * 折叠规则通用化为：任意跨多行的节点都是折叠候选（根节点除外），同起始行取覆盖范围最大者。
+ * 缩进规则通用化为：数一下当前行被多少个跨行祖先节点严格包含。这两条规则不依赖具体语言的
+ * 节点类型命名，可直接套用在任意已编译好 wasm 的 tree-sitter 语言上。
  *
  * 与 codemirror-tree-sitter-highlight 各自维护独立的 Tree（避免跨 ViewPlugin 共享同一个
  * wasm Tree 对象带来的生命周期风险），但通过 core-runtime 共享同一个 Parser/Language 实例，
@@ -21,6 +23,7 @@ import { TREE_SITTER_LANGUAGES } from './tree-sitter/language-registry.generated
  */
 
 const STRUCTURE_PARSE_DEBOUNCE_MS = 60;
+const MAX_STRUCTURE_SOURCE_LENGTH = 2_000_000;
 
 interface IStructureAnalysis {
   tree: Tree;
@@ -43,8 +46,8 @@ function computeGenericFoldByRow(rootNode: Node, source: string): Map<number, nu
       }
     }
     const children = node.children;
-    for (let i = 0; i < children.length; i += 1) {
-      const child = children[i];
+    for (let index = 0; index < children.length; index += 1) {
+      const child = children[index];
       if (child) stack.push(child);
     }
   }
@@ -64,8 +67,125 @@ function computeGenericIndentDepth(tree: Tree, row: number): number {
   return Math.max(0, depth - 1);
 }
 
-const setStructureAnalysis = require_StateEffect();
-function require_StateEffect() {
-  // 占位由下方真实实现替换（避免未使用 import 报错）；此函数不会被调用。
-  return null as unknown as never;
+const setStructureAnalysis = StateEffect.define<IStructureAnalysis | null>();
+
+const structureAnalysisField = StateField.define<IStructureAnalysis | null>({
+  create: () => null,
+  update(current, transaction) {
+    for (const effect of transaction.effects) {
+      if (effect.is(setStructureAnalysis)) {
+        const next = effect.value;
+        if (current && current.tree !== next?.tree) {
+          current.tree.delete();
+        }
+        return next;
+      }
+    }
+    return current;
+  },
+});
+
+const structureFoldService = foldService.of((state, _lineStart, lineEnd) => {
+  const analysis = state.field(structureAnalysisField, false);
+  if (!analysis) return null;
+  const row = state.doc.lineAt(lineEnd).number - 1;
+  const endChar = analysis.foldEndByRow.get(row);
+  if (endChar === undefined) return null;
+  const to = Math.min(endChar, state.doc.length);
+  return to > lineEnd ? { from: lineEnd, to } : null;
+});
+
+const structureIndentService = indentService.of((context, pos) => {
+  const analysis = context.state.field(structureAnalysisField, false);
+  if (!analysis) return null;
+  const row = context.state.doc.lineAt(pos).number - 1;
+  const depth = computeGenericIndentDepth(analysis.tree, row);
+  return depth > 0 ? depth * context.unit : null;
+});
+
+const structureParsePlugin = (langId: string) =>
+  ViewPlugin.fromClass(
+    class {
+      private generation = 0;
+      private timer: ReturnType<typeof setTimeout> | null = null;
+      private destroyed = false;
+
+      constructor(private readonly view: EditorView) {
+        this.runParse(view.state.doc.toString());
+      }
+
+      update(update: ViewUpdate): void {
+        if (!update.docChanged) return;
+        const next = update.state.doc.toString();
+        if (this.timer !== null) clearTimeout(this.timer);
+        this.timer = setTimeout(() => {
+          this.timer = null;
+          this.runParse(next);
+        }, STRUCTURE_PARSE_DEBOUNCE_MS);
+      }
+
+      destroy(): void {
+        this.destroyed = true;
+        if (this.timer !== null) clearTimeout(this.timer);
+      }
+
+      private runParse(source: string): void {
+        if (source.length > MAX_STRUCTURE_SOURCE_LENGTH) return;
+        this.generation += 1;
+        const generation = this.generation;
+        const entry = TREE_SITTER_LANGUAGES[langId];
+        void ensureTreeSitterParser(langId, entry.wasmUrl)
+          .then((parser: Parser) => {
+            if (this.destroyed || generation !== this.generation) return;
+            let tree: Tree | null = null;
+            try {
+              tree = parser.parse(source);
+            } catch {
+              return;
+            }
+            if (!tree) return;
+            if (this.destroyed || generation !== this.generation) {
+              tree.delete();
+              return;
+            }
+            const foldEndByRow = computeGenericFoldByRow(tree.rootNode, source);
+            this.view.dispatch({ effects: setStructureAnalysis.of({ tree, foldEndByRow }) });
+          })
+          .catch(() => {
+            // 语法加载失败：保持无结构信息，不影响编辑（与高亮引擎一致的降级策略）。
+          });
+      }
+    },
+  );
+
+// 各语言的行注释前缀（供 toggle-line-comment 等命令使用）。diff 无注释语法，不登记。
+const LINE_COMMENT_TOKENS: Readonly<Record<string, string>> = {
+  dockerfile: '#',
+  csharp: '//',
+  dart: '//',
+  kotlin: '//',
+  lua: '--',
+  powershell: '#',
+  proto: '//',
+  r: '#',
+  ruby: '#',
+  scala: '//',
+  latex: '%',
+  toml: '#',
+  ini: ';',
+};
+
+/** 供 codemirror-language 的 CODEMIRROR_LANGUAGE_LOADERS 使用：替代 legacy-modes 手写词法器。 */
+export function treeSitterStructureExtensions(langId: string): Extension {
+  const extensions: Extension[] = [
+    structureAnalysisField,
+    structureParsePlugin(langId),
+    structureFoldService,
+    structureIndentService,
+  ];
+  const lineComment = LINE_COMMENT_TOKENS[langId];
+  if (lineComment) {
+    extensions.push(EditorState.languageData.of(() => [{ commentTokens: { line: lineComment } }]));
+  }
+  return extensions;
 }
