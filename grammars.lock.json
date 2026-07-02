@@ -98,5 +98,9 @@
   "swift": {
     "repo": "https://github.com/alex-pinkus/tree-sitter-swift",
     "commit": "0c469cbb77457ebabe2702268bcf7f116b3fac8f"
+  },
+  "vue": {
+    "repo": "https://github.com/tree-sitter-grammars/tree-sitter-vue",
+    "commit": "7e48557b903a9db9c38cea3b7839ef7e1f36c693"
   }
 }
