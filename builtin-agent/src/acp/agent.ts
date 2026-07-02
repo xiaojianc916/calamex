@@ -418,7 +418,7 @@ export class CalamexAcpAgent implements Agent {
 				}
 				// 失败的回合：依 ACP 映射为 JSON-RPC error(报错由 SDK 包装)，不占用 stopReason。
 				if (response.errorMessage) {
-					throw new Error(response.errorMessage)
+					throw RequestError.internalError({ errorCode: response.errorCode, details: response.errorMessage })
 				}
 				// 审批门：本次运行以待裁决审批收尾 → 反向 session/request_permission 取裁决回灌续跑。
 				const pendingApproval = findPendingApproval(response.events)
@@ -568,7 +568,7 @@ export class CalamexAcpAgent implements Agent {
 			this.buildExtRunOptions(input.sessionId),
 		)
 		if (response.errorMessage) {
-			throw new Error(response.errorMessage)
+			throw RequestError.internalError({ errorCode: response.errorCode, details: response.errorMessage })
 		}
 		return toCheckpointRestoreExtResult(response)
 	}
@@ -593,7 +593,7 @@ export class CalamexAcpAgent implements Agent {
 			this.buildExtRunOptions(),
 		)
 		if (response.errorMessage) {
-			throw new Error(response.errorMessage)
+			throw RequestError.internalError({ errorCode: response.errorCode, details: response.errorMessage })
 		}
 		return toModelChatExtResult(response)
 	}
@@ -636,7 +636,11 @@ export class CalamexAcpAgent implements Agent {
 			outputEvent,
 		)
 		for (const notification of notifications) {
-			void this.connection.sessionUpdate(notification).catch(() => {})
+			void this.connection.sessionUpdate(notification).catch((err) => {
+				process.stderr.write(
+					`${JSON.stringify({ level: "error", scope: "builtin-agent-acp", event: "session-update.write-failed", message: err instanceof Error ? err.message : String(err), stack: err instanceof Error ? err.stack : undefined })}\n`,
+				)
+			})
 		}
 	}
 }
