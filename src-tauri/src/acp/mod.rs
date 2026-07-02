@@ -7,6 +7,7 @@
 mod approval;
 mod bridge;
 mod client;
+pub mod bridges;
 mod host;
 mod launch;
 mod provisioner;

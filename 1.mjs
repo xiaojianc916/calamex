@@ -1,55 +1,123 @@
-// scripts/fix-resize-bleed-webview2-default-bg.mjs
-// 用法: node scripts/fix-resize-bleed-webview2-default-bg.mjs
-// 作用: 原生层把 WebView2 controller.DefaultBackgroundColor 显式设为应用底色 #fafafa,
-//       消除窗口上下拖拽时上/下缘露出的白色漏底。仅 Windows 生效,依赖已在 Cargo.toml。
-//       改后需 `cargo build`(或 pnpm tauri dev)重新编译 Rust 侧验证。
-// 兼容 CRLF/LF;锚点仅匹配 with_webview 那一行,容忍缩进与行尾差异。
-import { readFileSync, writeFileSync } from 'node:fs';
+// 2-fetch-queries.mjs — 从各语法仓库拉取官方 queries（highlights/folds/indents/injections.scm），带克隆重试
+import { execFileSync } from "node:child_process"
+import { mkdirSync, rmSync, existsSync, readFileSync, writeFileSync, copyFileSync, readdirSync } from "node:fs"
+import { join } from "node:path"
 
-const FILE = 'src-tauri/src/main.rs';
-const src = readFileSync(FILE, 'utf8');
-const EOL = src.includes('\r\n') ? '\r\n' : '\n';
+const ROOT = process.cwd()
+const LOCK_PATH = join(ROOT, "grammars.lock.json")
+const TMP_DIR = join(ROOT, ".grammar-tmp")
+const QUERIES_OUT = join(ROOT, "src/services/editor/tree-sitter/queries")
 
-// 只锚定这一行(最稳定),插到它后面。\w+ 容忍变量名,[ \t]* 容忍空白差异。
-const OPEN_RE =
-  /^[ \t]*let\s+\w+\s*=\s*webview_window\.with_webview\(move \|webview\| unsafe \{[ \t]*$/m;
+const SOURCES = {
+	bash: { repo: "https://github.com/tree-sitter/tree-sitter-bash" },
+	javascript: { repo: "https://github.com/tree-sitter/tree-sitter-javascript" },
+	typescript: { repo: "https://github.com/tree-sitter/tree-sitter-typescript", subdir: "typescript" },
+	tsx: { repo: "https://github.com/tree-sitter/tree-sitter-typescript", subdir: "tsx" },
+	python: { repo: "https://github.com/tree-sitter/tree-sitter-python" },
+	rust: { repo: "https://github.com/tree-sitter/tree-sitter-rust" },
+	go: { repo: "https://github.com/tree-sitter/tree-sitter-go" },
+	c: { repo: "https://github.com/tree-sitter/tree-sitter-c" },
+	cpp: { repo: "https://github.com/tree-sitter/tree-sitter-cpp" },
+	java: { repo: "https://github.com/tree-sitter/tree-sitter-java" },
+	json: { repo: "https://github.com/tree-sitter/tree-sitter-json" },
+	html: { repo: "https://github.com/tree-sitter/tree-sitter-html" },
+	css: { repo: "https://github.com/tree-sitter/tree-sitter-css" },
+	ruby: { repo: "https://github.com/tree-sitter/tree-sitter-ruby" },
+	yaml: { repo: "https://github.com/tree-sitter-grammars/tree-sitter-yaml" },
+	toml: { repo: "https://github.com/tree-sitter-grammars/tree-sitter-toml" },
+	lua: { repo: "https://github.com/tree-sitter-grammars/tree-sitter-lua" },
+	"c-sharp": { repo: "https://github.com/tree-sitter/tree-sitter-c-sharp" },
+	kotlin: { repo: "https://github.com/fwcd/tree-sitter-kotlin" },
+	scala: { repo: "https://github.com/tree-sitter/tree-sitter-scala" },
+	swift: { repo: "https://github.com/alex-pinkus/tree-sitter-swift" },
+	dart: { repo: "https://github.com/UserNobody14/tree-sitter-dart" },
+	diff: { repo: "https://github.com/tree-sitter-grammars/tree-sitter-diff" },
+	dockerfile: { repo: "https://github.com/camdencheek/tree-sitter-dockerfile" },
+	markdown: { repo: "https://github.com/tree-sitter-grammars/tree-sitter-markdown", subdir: "tree-sitter-markdown" },
+}
 
-const BODY = [
-  `        // ── 窗口 resize 漏底根因修复(原生层)────────────────────────────────`,
-  `        // resize 时原生 HWND 随 OS 拖拽同步变大,但 WebView2 合成面重绘慢至少一帧;未被新帧`,
-  `        // 覆盖的那条,显示的是 controller 的 DefaultBackgroundColor —— 其默认值为白 #ffffff,`,
-  `        // 并非 tauri.conf backgroundColor / set_background_color 的 #fafafa(那是原生 HWND`,
-  `        // 刷子色,在合成器间隙里不生效)。编辑器内容恰为 #ffffff → 左右拖拽右缘露出与内容`,
-  `        // 同色、不可见;上/下缘紧贴的 chrome(标题栏/状态栏/侧栏)为 #fafafa → 白露出与之反差`,
-  `        // → 仅上下拖拽可见漏底。显式把 DefaultBackgroundColor 设为应用底色 #fafafa(与`,
-  `        // --app-bg / set_background_color 同源),上下缘露出即与 chrome 同色而消隐。`,
-  `        {`,
-  `            use webview2_com::Microsoft::Web::WebView2::Win32::{`,
-  `                COREWEBVIEW2_COLOR, ICoreWebView2Controller2,`,
-  `            };`,
-  `            use windows_core::Interface;`,
-  `            if let Ok(controller) = webview.controller().cast::<ICoreWebView2Controller2>() {`,
-  `                let _ = controller.SetDefaultBackgroundColor(COREWEBVIEW2_COLOR {`,
-  `                    A: 255,`,
-  `                    R: 250,`,
-  `                    G: 250,`,
-  `                    B: 250,`,
-  `                });`,
-  `            }`,
-  `        }`,
-].join(EOL);
+const QUERY_FILES = ["highlights.scm", "folds.scm", "indents.scm", "injections.scm", "locals.scm", "tags.scm"]
+const lock = existsSync(LOCK_PATH) ? JSON.parse(readFileSync(LOCK_PATH, "utf8")) : {}
+const only = process.argv.slice(2)
 
-if (src.includes('SetDefaultBackgroundColor')) {
-  console.log('[skip] 已设置 DefaultBackgroundColor,无需重复修改');
-} else {
-  const m = src.match(OPEN_RE);
-  if (!m) {
-    console.error('[fail] 未匹配到 with_webview 锚点行;请确认 harden_webview_settings 是否仍在 main.rs');
-    process.exit(1);
-  }
-  const openLine = m[0];
-  const out = src.replace(OPEN_RE, openLine + EOL + BODY);
-  writeFileSync(FILE, out);
-  console.log('[ok] main.rs 已注入 WebView2 DefaultBackgroundColor = #fafafa');
-  console.log('     下一步: cd src-tauri && cargo build  (或 pnpm tauri dev) 重新编译验证');
+function findQueriesDir(baseDir) {
+	const candidates = [join(baseDir, "queries")]
+	for (const c of candidates) {
+		if (existsSync(c)) return c
+	}
+	try {
+		for (const entry of readdirSync(baseDir, { withFileTypes: true })) {
+			if (entry.isDirectory()) {
+				const nested = join(baseDir, entry.name, "queries")
+				if (existsSync(nested)) return nested
+			}
+		}
+	} catch {}
+	return null
+}
+
+function cloneWithRetry(repo, tmpDir, ref, attempts = 3) {
+	let lastErr
+	for (let i = 0; i < attempts; i++) {
+		try {
+			rmSync(tmpDir, { recursive: true, force: true })
+			mkdirSync(tmpDir, { recursive: true })
+			if (ref) {
+				execFileSync("git", ["clone", repo, tmpDir], { stdio: "inherit" })
+				execFileSync("git", ["checkout", ref], { cwd: tmpDir, stdio: "inherit" })
+			} else {
+				execFileSync("git", ["clone", "--depth", "1", repo, tmpDir], { stdio: "inherit" })
+			}
+			return
+		} catch (e) {
+			lastErr = e
+			console.log(`  重试 ${i + 1}/${attempts} 失败: ${String(e.message).split("\n")[0]}`)
+		}
+	}
+	throw lastErr
+}
+
+const report = []
+
+for (const [name, cfg] of Object.entries(SOURCES)) {
+	if (only.length && !only.includes(name)) continue
+	const tmpDir = join(TMP_DIR, `q-${name}`)
+
+	const ref = lock[name]?.commit
+	console.log(`\n=== ${name} ===`)
+	try {
+		cloneWithRetry(cfg.repo, tmpDir, ref)
+
+		const grammarDir = cfg.subdir ? join(tmpDir, cfg.subdir) : tmpDir
+		const queriesDir = findQueriesDir(grammarDir) || findQueriesDir(tmpDir)
+
+		if (!queriesDir) {
+			console.log(`  ⚠️ 未找到 queries 目录`)
+			report.push({ name, found: [] })
+			continue
+		}
+
+		const destDir = join(QUERIES_OUT, name)
+		mkdirSync(destDir, { recursive: true })
+		const found = []
+		for (const qf of QUERY_FILES) {
+			const src = join(queriesDir, qf)
+			if (existsSync(src)) {
+				copyFileSync(src, join(destDir, qf))
+				found.push(qf)
+			}
+		}
+		console.log(`  ✅ 复制: ${found.join(", ") || "(无)"}`)
+		report.push({ name, found })
+	} catch (e) {
+		console.log(`  ❌ 失败: ${e.message}`)
+		report.push({ name, found: [], error: true })
+	}
+}
+
+rmSync(TMP_DIR, { recursive: true, force: true })
+
+console.log("\n========== 查询文件汇总 ==========")
+for (const r of report) {
+	console.log(`${r.error ? "❌" : r.found.length ? "✅" : "⚠️ "} ${r.name}: ${r.found.join(", ") || "无"}`)
 }
