@@ -214,8 +214,7 @@ const isIgnorableRuntimeError = (error: unknown): boolean => {
 let hasLoggedRecoverableLoop = false;
 let recoverableLoopCount = 0;
 
-const isRecoverableLoopWarning = (error: unknown): boolean =>
-  isRecoverableSchedulerWarning(error) || isBenignResizeObserverError(error);
+const isRecoverableLoopWarning = (error: unknown): boolean => isRecoverableSchedulerWarning(error);
 
 const logRecoverableLoopForDiagnosis = (error: unknown): void => {
   recoverableLoopCount += 1;

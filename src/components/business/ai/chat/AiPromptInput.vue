@@ -145,7 +145,7 @@ const selectedAgent = defineModel<TAiPromptAgentKind>('agentBackend', {
 const props = defineProps<{
   disabled: boolean;
   stopVisible?: boolean;
-  errorMessage: string;
+  errorMessage?: string;
   submitLabel: string;
   attachments: readonly IAiAttachedFile[];
   hasAttachments: boolean;
@@ -1185,7 +1185,7 @@ onMounted(() => {
           @remove="handleRemoveAttachment"
         />
       </div>
-      <AiErrorNotice :message="errorMessage" />
+      <AiErrorNotice :message="errorMessage ?? ''" />
       <InputGroup class="ai-prompt-shell">
         <div
           v-if="hasUserQuestions"
