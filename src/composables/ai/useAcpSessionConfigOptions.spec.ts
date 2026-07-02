@@ -129,8 +129,11 @@ describe('useAcpSessionConfigOptions', () => {
         },
       ],
     });
+    ensureAcpSession.mockResolvedValue({ configOptions: buildConfigOptions() });
     const vm = withScope(() => useAcpSessionConfigOptions());
-    vm.applyConfigOptionUpdate(buildConfigOptions());
+    // activeThreadId 仅由 ensureAcpSession 建立；set 回执只在 activeThreadId===threadId 时并入。
+    // 故用握手建立会话，替代仅 applyConfigOptionUpdate 播种（后者不设 activeThreadId）。
+    await vm.ensureAcpSession('thread-1', 'kimi');
 
     const ok = await vm.selectConfigOption('thread-1', 'model', 'k1');
 

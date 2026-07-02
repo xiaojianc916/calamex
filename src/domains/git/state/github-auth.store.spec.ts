@@ -55,7 +55,7 @@ const browserMock = vi.hoisted(() => ({
   openExternalUrl: vi.fn(),
 }));
 
-vi.mock('@/services/tauri.github-auth', () => ({
+vi.mock('@/services/tauri/github-auth', () => ({
   beginGithubBrowserAuth: githubAuthServiceMock.beginGithubBrowserAuth,
   completeGithubBrowserAuth: githubAuthServiceMock.completeGithubBrowserAuth,
   getGithubAuthStatus: githubAuthServiceMock.getGithubAuthStatus,

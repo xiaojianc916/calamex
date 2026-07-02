@@ -5,7 +5,7 @@ import AiPromptInput from '@/components/business/ai/chat/AiPromptInput.vue';
 import { pickAttachmentFilesViaNativeDialog } from '@/components/business/ai/chat/attachment-file-picker';
 import type { IAiTokenContextProps } from '@/composables/ai/useAiTokenContext';
 import { createDefaultAiConfigPayload } from '@/services/ipc/ai-config.service';
-import type { IAcpSessionConfigOptionsState } from '@/types/ai/sidecar';
+import type { TAcpSessionConfigOptions } from '@/types/ai/sidecar';
 
 vi.mock('@/components/business/ai/chat/attachment-file-picker', () => ({
   pickAttachmentFilesViaNativeDialog: vi.fn(() => Promise.resolve([])),
@@ -40,7 +40,7 @@ interface IAiPromptInputTestProps {
   executionMode: 'interactive' | 'autonomous';
   tokenContext?: IAiTokenContextProps;
   agentBackend?: 'builtin' | 'kimi';
-  sessionConfigOptions?: IAcpSessionConfigOptionsState | null;
+  sessionConfigOptions?: TAcpSessionConfigOptions | null;
   isSessionConfigOptionSwitching?: boolean;
   resolveAttachment: (file: File) => Promise<boolean>;
   'onUpdate:modelValue': (value: string) => void;
@@ -296,7 +296,8 @@ describe('AiPromptInput', () => {
   });
 
   it('renders a session config option selector per option only for the Kimi agent', () => {
-    const sessionConfigOptions: IAcpSessionConfigOptionsState = {
+    const sessionConfigOptions: TAcpSessionConfigOptions = {
+      kind: 'ready',
       configOptions: [
         {
           id: 'model',
@@ -321,7 +322,8 @@ describe('AiPromptInput', () => {
   });
 
   it('drives the Kimi model config option through the main model trigger', () => {
-    const sessionConfigOptions: IAcpSessionConfigOptionsState = {
+    const sessionConfigOptions: TAcpSessionConfigOptions = {
+      kind: 'ready',
       configOptions: [
         {
           id: 'model',
@@ -339,7 +341,9 @@ describe('AiPromptInput', () => {
   });
 
   it('locks the model trigger when Kimi publishes no switchable model', () => {
-    const wrapper = mountPromptInput({ sessionConfigOptions: null });
+    const wrapper = mountPromptInput({
+      sessionConfigOptions: { kind: 'ready', configOptions: [] },
+    });
 
     expect(wrapper.get('.ai-model-trigger__label').text()).toBe('Kimi 未公示可切换模型');
   });

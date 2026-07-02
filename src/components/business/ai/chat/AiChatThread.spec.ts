@@ -196,8 +196,15 @@ describe('AiChatThread（entries 渲染路径）', () => {
         threadEntries: [],
       },
       slots: {
-        'after-message': (slotProps: { message: { id: string } }) =>
-          h('div', { class: 'after-msg', 'data-message-id': slotProps.message.id }, 'checkpoint'),
+        'after-message': (slotProps: { messageId?: string; 'message-id'?: string }) =>
+          h(
+            'div',
+            {
+              class: 'after-msg',
+              'data-message-id': slotProps.messageId ?? slotProps['message-id'],
+            },
+            'checkpoint',
+          ),
       },
       global: { stubs },
     });
@@ -219,8 +226,15 @@ describe('AiChatThread（entries 渲染路径）', () => {
         threadEntries: [],
       },
       slots: {
-        'after-message': (slotProps: { message: { id: string } }) =>
-          h('div', { class: 'after-msg', 'data-message-id': slotProps.message.id }, 'checkpoint'),
+        'after-message': (slotProps: { messageId?: string; 'message-id'?: string }) =>
+          h(
+            'div',
+            {
+              class: 'after-msg',
+              'data-message-id': slotProps.messageId ?? slotProps['message-id'],
+            },
+            'checkpoint',
+          ),
       },
       global: { stubs },
     });

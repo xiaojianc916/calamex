@@ -3,7 +3,7 @@ import { describe, expect, it, vi } from 'vitest';
 import { defineComponent, ref } from 'vue';
 
 import type { useAiAssistant } from '@/composables/ai/useAiAssistant';
-import type { IAiChatMessage } from '@/types/ai';
+import type { IAiThread } from '@/types/ai/thread';
 
 import { useAiConversationHistory } from './useAiConversationHistory';
 
@@ -27,13 +27,15 @@ const withSetup = <T>(factory: () => T): T => {
   return result;
 };
 
-const createThread = (id: string, updatedAt: string, messageCount: number) => ({
-  id,
-  title: `会话 ${id}`,
-  createdAt: updatedAt,
-  updatedAt,
-  messages: Array.from({ length: messageCount }, () => ({}) as IAiChatMessage),
-});
+const createThread = (id: string, updatedAt: string, messageCount: number): IAiThread =>
+  ({
+    id,
+    title: `会话 ${id}`,
+    createdAt: updatedAt,
+    updatedAt,
+    // entries-native：源码按 entries 里的 user_message/assistant_message 计数，不再读 thread.messages。
+    entries: Array.from({ length: messageCount }, () => ({ type: 'user_message' })),
+  }) as unknown as IAiThread;
 
 const createAssistantStub = () => {
   const historyThreads = ref([
@@ -179,6 +181,8 @@ describe('useAiConversationHistory', () => {
     const history = withSetup(() => useAiConversationHistory(assistant));
 
     expect(typeof history.getHistoryTimestampLabel('2026-06-09T10:00:00.000Z')).toBe('string');
-    expect(history.getHistoryMessageCountLabel([{}, {}] as IAiChatMessage[])).toBe('2 条消息');
+    expect(
+      history.getHistoryMessageCountLabel(createThread('x', '2026-06-09T10:00:00.000Z', 2)),
+    ).toBe('2 条消息');
   });
 });

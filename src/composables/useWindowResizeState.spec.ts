@@ -9,6 +9,9 @@ let capturedCallback: TResizeObserverCallback | null = null;
 vi.mock('@vueuse/core', () => ({
   useResizeObserver: (_target: unknown, callback: TResizeObserverCallback) => {
     capturedCallback = callback;
+    // 真实 ResizeObserver 在 observe() 时立即回调一次初始尺寸，被 composable 用
+    // hasSeenInitialObservation 跳过；mock 必须模拟它，否则首个 fireResize() 会被当初始帧吞掉。
+    callback();
     return { stop: vi.fn() };
   },
 }));

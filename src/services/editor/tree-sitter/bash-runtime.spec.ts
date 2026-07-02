@@ -24,10 +24,16 @@ describe('utf8ByteLengthOfRange', () => {
 describe('byteOffsetToCharIndex', () => {
   it('与 getUtf8ByteLength 互为逆运算(字符边界处)', () => {
     const source = 'a中b😀c';
-    for (let charIndex = 0; charIndex <= source.length; charIndex += 1) {
+    // 用 for...of 按码点推进，跳过代理对内部的 UTF-16 码元中点（那里孤立高代理按 3 字节计，
+    // 与逆函数吃掉整对的 4 字节本就不互逆，属预期语义而非缺陷）。
+    let charIndex = 0;
+    for (const codePoint of source) {
       const byteOffset = utf8ByteLengthOfRange(source, 0, charIndex);
       expect(byteOffsetToCharIndex(source, byteOffset)).toBe(charIndex);
+      charIndex += codePoint.length;
     }
+    const totalBytes = utf8ByteLengthOfRange(source, 0, source.length);
+    expect(byteOffsetToCharIndex(source, totalBytes)).toBe(source.length);
   });
 
   it('字节偏移落在多字节字符中间时向上取整到字符边界', () => {

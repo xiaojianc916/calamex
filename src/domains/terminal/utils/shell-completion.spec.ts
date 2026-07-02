@@ -37,11 +37,18 @@ vi.mock('web-tree-sitter', () => {
     delete = mocks.parserDelete;
   }
 
+  class MockEdit {
+    constructor(init: Record<string, unknown>) {
+      Object.assign(this, init);
+    }
+  }
+
   return {
     Parser: MockParser,
     Language: {
       load: mocks.languageLoad,
     },
+    Edit: MockEdit,
   };
 });
 
