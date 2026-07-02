@@ -1,112 +1,38 @@
-// 2-fetch-queries.mjs — 从各语法仓库拉取官方 queries（highlights/folds/indents/injections.scm）
-import { execFileSync } from "node:child_process"
-import { mkdirSync, rmSync, existsSync, readFileSync, writeFileSync, copyFileSync, readdirSync } from "node:fs"
-import { join } from "node:path"
+// fix-p9a-declare-caps.mjs —— 仅声明 client_capabilities + client_info（幂等，CRLF 安全）
+import { readFileSync, writeFileSync } from "node:fs";
 
-const ROOT = process.cwd()
-const LOCK_PATH = join(ROOT, "grammars.lock.json")
-const TMP_DIR = join(ROOT, ".grammar-tmp")
-const QUERIES_OUT = join(ROOT, "src/services/editor/tree-sitter/queries")
+const f = "src-tauri/src/acp/client.rs";
+let s = readFileSync(f, "utf8");
+const orig = s;
 
-// 和 1.mjs 里一致的仓库表（含 subdir，用于定位 monorepo 语法的 queries 路径）
-const SOURCES = {
-	bash: { repo: "https://github.com/tree-sitter/tree-sitter-bash" },
-	javascript: { repo: "https://github.com/tree-sitter/tree-sitter-javascript" },
-	typescript: { repo: "https://github.com/tree-sitter/tree-sitter-typescript", subdir: "typescript" },
-	tsx: { repo: "https://github.com/tree-sitter/tree-sitter-typescript", subdir: "tsx" },
-	python: { repo: "https://github.com/tree-sitter/tree-sitter-python" },
-	rust: { repo: "https://github.com/tree-sitter/tree-sitter-rust" },
-	go: { repo: "https://github.com/tree-sitter/tree-sitter-go" },
-	c: { repo: "https://github.com/tree-sitter/tree-sitter-c" },
-	cpp: { repo: "https://github.com/tree-sitter/tree-sitter-cpp" },
-	java: { repo: "https://github.com/tree-sitter/tree-sitter-java" },
-	json: { repo: "https://github.com/tree-sitter/tree-sitter-json" },
-	html: { repo: "https://github.com/tree-sitter/tree-sitter-html" },
-	css: { repo: "https://github.com/tree-sitter/tree-sitter-css" },
-	ruby: { repo: "https://github.com/tree-sitter/tree-sitter-ruby" },
-	yaml: { repo: "https://github.com/tree-sitter-grammars/tree-sitter-yaml" },
-	toml: { repo: "https://github.com/tree-sitter-grammars/tree-sitter-toml" },
-	lua: { repo: "https://github.com/tree-sitter-grammars/tree-sitter-lua" },
-	"c-sharp": { repo: "https://github.com/tree-sitter/tree-sitter-c-sharp" },
-	kotlin: { repo: "https://github.com/fwcd/tree-sitter-kotlin" },
-	scala: { repo: "https://github.com/tree-sitter/tree-sitter-scala" },
-	swift: { repo: "https://github.com/alex-pinkus/tree-sitter-swift" },
-	dart: { repo: "https://github.com/UserNobody14/tree-sitter-dart" },
-	diff: { repo: "https://github.com/tree-sitter-grammars/tree-sitter-diff" },
-	dockerfile: { repo: "https://github.com/camdencheek/tree-sitter-dockerfile" },
-	markdown: { repo: "https://github.com/tree-sitter-grammars/tree-sitter-markdown", subdir: "tree-sitter-markdown" },
+// 1) 升级 initialize 调用（锚点唯一）
+const anchor = "InitializeRequest::new(ProtocolVersion::V1)";
+if (!s.includes(anchor)) throw new Error("找不到 InitializeRequest 锚点，请手动核对 client.rs");
+if (!s.includes(".client_capabilities(")) {
+  s = s.replace(
+    anchor,
+    `InitializeRequest::new(ProtocolVersion::V1)
+    .client_capabilities(
+        ClientCapabilities::new()
+            .fs(FileSystemCapabilities::new()
+                .read_text_file(true)
+                .write_text_file(true))
+            .terminal(true),
+    )
+    .client_info(Implementation::new("calamex", env!("CARGO_PKG_VERSION")))`
+  );
 }
 
-const QUERY_FILES = ["highlights.scm", "folds.scm", "indents.scm", "injections.scm", "locals.scm"]
-const lock = existsSync(LOCK_PATH) ? JSON.parse(readFileSync(LOCK_PATH, "utf8")) : {}
-const only = process.argv.slice(2)
-
-function findQueriesDir(baseDir) {
-	// 常见位置：<base>/queries、<base>/<subdir>/queries；有的仓库把 queries 放更深，做一次浅层搜索
-	const candidates = [join(baseDir, "queries")]
-	for (const c of candidates) {
-		if (existsSync(c)) return c
-	}
-	// 浅层递归找一层子目录里的 queries
-	try {
-		for (const entry of readdirSync(baseDir, { withFileTypes: true })) {
-			if (entry.isDirectory()) {
-				const nested = join(baseDir, entry.name, "queries")
-				if (existsSync(nested)) return nested
-			}
-		}
-	} catch {}
-	return null
+// 2) 补齐 schema 导入（只加缺的标识符）
+const need = ["ClientCapabilities", "FileSystemCapabilities", "Implementation"];
+const useRe = /use agent_client_protocol::schema::\{/;
+if (useRe.test(s)) {
+  const head = s.split("connect_with")[0];
+  const missing = need.filter((id) => !new RegExp(`\\b${id}\\b`).test(head));
+  if (missing.length) s = s.replace(useRe, (m) => `${m}\n\t${missing.join(", ")},`);
+} else {
+  console.warn("未找到 schema use 块，请手动补 import：", need.join(", "));
 }
 
-const report = []
-
-for (const [name, cfg] of Object.entries(SOURCES)) {
-	if (only.length && !only.includes(name)) continue
-	const tmpDir = join(TMP_DIR, `q-${name}`)
-	rmSync(tmpDir, { recursive: true, force: true })
-	mkdirSync(tmpDir, { recursive: true })
-
-	const ref = lock[name]?.commit
-	console.log(`\n=== ${name} ===`)
-	try {
-		if (ref) {
-			execFileSync("git", ["clone", cfg.repo, tmpDir], { stdio: "inherit" })
-			execFileSync("git", ["checkout", ref], { cwd: tmpDir, stdio: "inherit" })
-		} else {
-			execFileSync("git", ["clone", "--depth", "1", cfg.repo, tmpDir], { stdio: "inherit" })
-		}
-
-		const grammarDir = cfg.subdir ? join(tmpDir, cfg.subdir) : tmpDir
-		const queriesDir = findQueriesDir(grammarDir) || findQueriesDir(tmpDir)
-
-		if (!queriesDir) {
-			console.log(`  ⚠️ 未找到 queries 目录`)
-			report.push({ name, found: [] })
-			continue
-		}
-
-		const destDir = join(QUERIES_OUT, name)
-		mkdirSync(destDir, { recursive: true })
-		const found = []
-		for (const qf of QUERY_FILES) {
-			const src = join(queriesDir, qf)
-			if (existsSync(src)) {
-				copyFileSync(src, join(destDir, qf))
-				found.push(qf)
-			}
-		}
-		console.log(`  ✅ 复制: ${found.join(", ") || "(无)"}`)
-		report.push({ name, found })
-	} catch (e) {
-		console.log(`  ❌ 失败: ${e.message}`)
-		report.push({ name, found: [], error: true })
-	}
-}
-
-rmSync(TMP_DIR, { recursive: true, force: true })
-
-console.log("\n========== 查询文件汇总 ==========")
-for (const r of report) {
-	console.log(`${r.error ? "❌" : r.found.length ? "✅" : "⚠️ "} ${r.name}: ${r.found.join(", ") || "无"}`)
-}
+if (s !== orig) { writeFileSync(f, s, "utf8"); console.log("✔ 已声明 fs(read/write)+terminal 能力与 client_info"); }
+else console.log("• 已是最新，无需改动");

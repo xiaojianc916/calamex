@@ -17,6 +17,7 @@ use tokio::sync::{mpsc, oneshot};
 use crate::commands::contracts::SecretString;
 
 use agent_client_protocol::schema::{
+	ClientCapabilities, FileSystemCapabilities, Implementation,
     CancelNotification, ContentBlock, InitializeRequest, NewSessionRequest, PermissionOptionId,
     PromptRequest, ProtocolVersion, RequestPermissionOutcome, RequestPermissionRequest,
     RequestPermissionResponse, SelectedPermissionOutcome, SessionConfigId,
@@ -476,7 +477,15 @@ pub fn spawn_acp_client(
             .connect_with(transport, async move |cx| {
                 // 持有子进程句柄（kill_on_drop），连接断开时自动终止 AI 进程。
                 let _child_guard = child;
-                cx.send_request(InitializeRequest::new(ProtocolVersion::V1))
+                cx.send_request(InitializeRequest::new(ProtocolVersion::V1)
+    .client_capabilities(
+        ClientCapabilities::new()
+            .fs(FileSystemCapabilities::new()
+                .read_text_file(true)
+                .write_text_file(true))
+            .terminal(true),
+    )
+    .client_info(Implementation::new("calamex", env!("CARGO_PKG_VERSION"))))
                     .block_task()
                     .await?;
 
