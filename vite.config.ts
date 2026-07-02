@@ -48,14 +48,24 @@ const CHUNK_RULES: ReadonlyArray<{ name: string; patterns: string[] }> = [
     name: 'vendor-markdown',
     patterns: ['/node_modules/markstream-vue/', '/node_modules/katex/'],
   },
+  // 首帧关键：ShellWorkbenchView 静态 import reka-ui Resizable、侧栏静态用 @lucide 图标。
   {
-    name: 'vendor-ui',
-    patterns: [
-      '/node_modules/reka-ui/',
-      '/node_modules/motion-v/',
-      '/node_modules/@fancyapps/',
-      '/node_modules/@lucide/',
-    ],
+    name: 'vendor-reka',
+    patterns: ['/node_modules/reka-ui/'],
+  },
+  {
+    name: 'vendor-icons',
+    patterns: ['/node_modules/@lucide/'],
+  },
+  // 首帧不需要：动画库与灯箱只在异步组件里用。单独成 chunk，不再被 reka-ui 的
+  // 静态关键引用连坐拖进首帧下载。
+  {
+    name: 'vendor-motion',
+    patterns: ['/node_modules/motion-v/'],
+  },
+  {
+    name: 'vendor-lightbox',
+    patterns: ['/node_modules/@fancyapps/'],
   },
   {
     name: 'vendor-xterm',
