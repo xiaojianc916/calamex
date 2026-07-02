@@ -1,32 +1,15 @@
-// 本文件由 setup-tree-sitter-highlight.mjs 生成，请勿手改。
-// wasm 来自 tree-sitter-wasms（预编译）；highlights.scm 来自 nvim-treesitter 或各语法仓库（保留其 OSS 许可）。
-import shell_wasm from 'tree-sitter-bash/tree-sitter-bash.wasm?url';
-import c_wasm from 'tree-sitter-wasms/out/tree-sitter-c.wasm?url';
-import csharp_wasm from 'tree-sitter-wasms/out/tree-sitter-c_sharp.wasm?url';
-import cpp_wasm from 'tree-sitter-wasms/out/tree-sitter-cpp.wasm?url';
-import css_wasm from 'tree-sitter-wasms/out/tree-sitter-css.wasm?url';
-import go_wasm from 'tree-sitter-wasms/out/tree-sitter-go.wasm?url';
-import html_wasm from 'tree-sitter-wasms/out/tree-sitter-html.wasm?url';
-import java_wasm from 'tree-sitter-wasms/out/tree-sitter-java.wasm?url';
-import javascript_wasm from 'tree-sitter-wasms/out/tree-sitter-javascript.wasm?url';
-import jsx_wasm from 'tree-sitter-wasms/out/tree-sitter-javascript.wasm?url';
-import json_wasm from 'tree-sitter-wasms/out/tree-sitter-json.wasm?url';
-import kotlin_wasm from 'tree-sitter-wasms/out/tree-sitter-kotlin.wasm?url';
-import lua_wasm from 'tree-sitter-wasms/out/tree-sitter-lua.wasm?url';
-import python_wasm from 'tree-sitter-wasms/out/tree-sitter-python.wasm?url';
-import ruby_wasm from 'tree-sitter-wasms/out/tree-sitter-ruby.wasm?url';
-import rust_wasm from 'tree-sitter-wasms/out/tree-sitter-rust.wasm?url';
-import scala_wasm from 'tree-sitter-wasms/out/tree-sitter-scala.wasm?url';
-import swift_wasm from 'tree-sitter-wasms/out/tree-sitter-swift.wasm?url';
-import toml_wasm from 'tree-sitter-wasms/out/tree-sitter-toml.wasm?url';
-import tsx_wasm from 'tree-sitter-wasms/out/tree-sitter-tsx.wasm?url';
-import typescript_wasm from 'tree-sitter-wasms/out/tree-sitter-typescript.wasm?url';
+// 本文件由脚本生成，请勿手改。
+// wasm 为本地自编译产物（tree-sitter build --wasm，见 grammars.lock.json）；highlights.scm 来自各语法官方仓库（保留其 OSS 许可）。
+
+// vue 暂不支持：上游 ikatyang/tree-sitter-vue 的外部扫描器与新版 wasm 构建不兼容，保留旧引用（已知不可用，不影响其他语言）。
 import vue_wasm from 'tree-sitter-wasms/out/tree-sitter-vue.wasm?url';
-import yaml_wasm from 'tree-sitter-wasms/out/tree-sitter-yaml.wasm?url';
 import c_scm from './queries/c/highlights.scm?raw';
+import csharp_scm from './queries/c-sharp/highlights.scm?raw';
 import cpp_scm from './queries/cpp/highlights.scm?raw';
-import csharp_scm from './queries/csharp/highlights.scm?raw';
 import css_scm from './queries/css/highlights.scm?raw';
+import dart_scm from './queries/dart/highlights.scm?raw';
+import diff_scm from './queries/diff/highlights.scm?raw';
+import dockerfile_scm from './queries/dockerfile/highlights.scm?raw';
 import go_scm from './queries/go/highlights.scm?raw';
 import html_scm from './queries/html/highlights.scm?raw';
 import java_scm from './queries/java/highlights.scm?raw';
@@ -35,6 +18,7 @@ import json_scm from './queries/json/highlights.scm?raw';
 import jsx_scm from './queries/jsx/highlights.scm?raw';
 import kotlin_scm from './queries/kotlin/highlights.scm?raw';
 import lua_scm from './queries/lua/highlights.scm?raw';
+import markdown_scm from './queries/markdown/highlights.scm?raw';
 import python_scm from './queries/python/highlights.scm?raw';
 import ruby_scm from './queries/ruby/highlights.scm?raw';
 import rust_scm from './queries/rust/highlights.scm?raw';
@@ -46,6 +30,32 @@ import tsx_scm from './queries/tsx/highlights.scm?raw';
 import typescript_scm from './queries/typescript/highlights.scm?raw';
 import vue_scm from './queries/vue/highlights.scm?raw';
 import yaml_scm from './queries/yaml/highlights.scm?raw';
+import shell_wasm from './wasm/tree-sitter-bash.wasm?url';
+import c_wasm from './wasm/tree-sitter-c.wasm?url';
+import csharp_wasm from './wasm/tree-sitter-c-sharp.wasm?url';
+import cpp_wasm from './wasm/tree-sitter-cpp.wasm?url';
+import css_wasm from './wasm/tree-sitter-css.wasm?url';
+import dart_wasm from './wasm/tree-sitter-dart.wasm?url';
+import diff_wasm from './wasm/tree-sitter-diff.wasm?url';
+import dockerfile_wasm from './wasm/tree-sitter-dockerfile.wasm?url';
+import go_wasm from './wasm/tree-sitter-go.wasm?url';
+import html_wasm from './wasm/tree-sitter-html.wasm?url';
+import java_wasm from './wasm/tree-sitter-java.wasm?url';
+import javascript_wasm from './wasm/tree-sitter-javascript.wasm?url';
+import jsx_wasm from './wasm/tree-sitter-javascript.wasm?url';
+import json_wasm from './wasm/tree-sitter-json.wasm?url';
+import kotlin_wasm from './wasm/tree-sitter-kotlin.wasm?url';
+import lua_wasm from './wasm/tree-sitter-lua.wasm?url';
+import markdown_wasm from './wasm/tree-sitter-markdown.wasm?url';
+import python_wasm from './wasm/tree-sitter-python.wasm?url';
+import ruby_wasm from './wasm/tree-sitter-ruby.wasm?url';
+import rust_wasm from './wasm/tree-sitter-rust.wasm?url';
+import scala_wasm from './wasm/tree-sitter-scala.wasm?url';
+import swift_wasm from './wasm/tree-sitter-swift.wasm?url';
+import toml_wasm from './wasm/tree-sitter-toml.wasm?url';
+import tsx_wasm from './wasm/tree-sitter-tsx.wasm?url';
+import typescript_wasm from './wasm/tree-sitter-typescript.wasm?url';
+import yaml_wasm from './wasm/tree-sitter-yaml.wasm?url';
 
 export interface ITreeSitterLanguageEntry {
   readonly wasmUrl: string;
@@ -75,6 +85,10 @@ export const TREE_SITTER_LANGUAGES: Readonly<Record<string, ITreeSitterLanguageE
   kotlin: { wasmUrl: kotlin_wasm, scm: kotlin_scm },
   scala: { wasmUrl: scala_wasm, scm: scala_scm },
   swift: { wasmUrl: swift_wasm, scm: swift_scm },
+  dart: { wasmUrl: dart_wasm, scm: dart_scm },
+  diff: { wasmUrl: diff_wasm, scm: diff_scm },
+  dockerfile: { wasmUrl: dockerfile_wasm, scm: dockerfile_scm },
+  markdown: { wasmUrl: markdown_wasm, scm: markdown_scm },
   vue: { wasmUrl: vue_wasm, scm: vue_scm },
 };
 
@@ -101,6 +115,9 @@ const TS_LANGUAGE_ALIASES: Readonly<Record<string, string>> = {
   cs: 'csharp',
   kt: 'kotlin',
   kts: 'kotlin',
+  docker: 'dockerfile',
+  md: 'markdown',
+  patch: 'diff',
 };
 
 /** 原始语言标签 -> tree-sitter 语言 id；无覆盖时返回 null。 */

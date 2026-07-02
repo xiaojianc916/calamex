@@ -1,123 +1,140 @@
-// 2-fetch-queries.mjs — 从各语法仓库拉取官方 queries（highlights/folds/indents/injections.scm），带克隆重试
-import { execFileSync } from "node:child_process"
-import { mkdirSync, rmSync, existsSync, readFileSync, writeFileSync, copyFileSync, readdirSync } from "node:fs"
+// 3-update-registry.mjs — 重写 language-registry.generated.ts，全部改用本地自编译 wasm + 新拉取的 queries
+import { writeFileSync } from "node:fs"
 import { join } from "node:path"
 
-const ROOT = process.cwd()
-const LOCK_PATH = join(ROOT, "grammars.lock.json")
-const TMP_DIR = join(ROOT, ".grammar-tmp")
-const QUERIES_OUT = join(ROOT, "src/services/editor/tree-sitter/queries")
+const OUT = join(process.cwd(), "src/services/editor/tree-sitter/language-registry.generated.ts")
 
-const SOURCES = {
-	bash: { repo: "https://github.com/tree-sitter/tree-sitter-bash" },
-	javascript: { repo: "https://github.com/tree-sitter/tree-sitter-javascript" },
-	typescript: { repo: "https://github.com/tree-sitter/tree-sitter-typescript", subdir: "typescript" },
-	tsx: { repo: "https://github.com/tree-sitter/tree-sitter-typescript", subdir: "tsx" },
-	python: { repo: "https://github.com/tree-sitter/tree-sitter-python" },
-	rust: { repo: "https://github.com/tree-sitter/tree-sitter-rust" },
-	go: { repo: "https://github.com/tree-sitter/tree-sitter-go" },
-	c: { repo: "https://github.com/tree-sitter/tree-sitter-c" },
-	cpp: { repo: "https://github.com/tree-sitter/tree-sitter-cpp" },
-	java: { repo: "https://github.com/tree-sitter/tree-sitter-java" },
-	json: { repo: "https://github.com/tree-sitter/tree-sitter-json" },
-	html: { repo: "https://github.com/tree-sitter/tree-sitter-html" },
-	css: { repo: "https://github.com/tree-sitter/tree-sitter-css" },
-	ruby: { repo: "https://github.com/tree-sitter/tree-sitter-ruby" },
-	yaml: { repo: "https://github.com/tree-sitter-grammars/tree-sitter-yaml" },
-	toml: { repo: "https://github.com/tree-sitter-grammars/tree-sitter-toml" },
-	lua: { repo: "https://github.com/tree-sitter-grammars/tree-sitter-lua" },
-	"c-sharp": { repo: "https://github.com/tree-sitter/tree-sitter-c-sharp" },
-	kotlin: { repo: "https://github.com/fwcd/tree-sitter-kotlin" },
-	scala: { repo: "https://github.com/tree-sitter/tree-sitter-scala" },
-	swift: { repo: "https://github.com/alex-pinkus/tree-sitter-swift" },
-	dart: { repo: "https://github.com/UserNobody14/tree-sitter-dart" },
-	diff: { repo: "https://github.com/tree-sitter-grammars/tree-sitter-diff" },
-	dockerfile: { repo: "https://github.com/camdencheek/tree-sitter-dockerfile" },
-	markdown: { repo: "https://github.com/tree-sitter-grammars/tree-sitter-markdown", subdir: "tree-sitter-markdown" },
+const content = `// 本文件由脚本生成，请勿手改。
+// wasm 为本地自编译产物（tree-sitter build --wasm，见 grammars.lock.json）；highlights.scm 来自各语法官方仓库（保留其 OSS 许可）。
+import shell_wasm from './wasm/tree-sitter-bash.wasm?url';
+import c_wasm from './wasm/tree-sitter-c.wasm?url';
+import csharp_wasm from './wasm/tree-sitter-c-sharp.wasm?url';
+import cpp_wasm from './wasm/tree-sitter-cpp.wasm?url';
+import css_wasm from './wasm/tree-sitter-css.wasm?url';
+import go_wasm from './wasm/tree-sitter-go.wasm?url';
+import html_wasm from './wasm/tree-sitter-html.wasm?url';
+import java_wasm from './wasm/tree-sitter-java.wasm?url';
+import javascript_wasm from './wasm/tree-sitter-javascript.wasm?url';
+import jsx_wasm from './wasm/tree-sitter-javascript.wasm?url';
+import json_wasm from './wasm/tree-sitter-json.wasm?url';
+import kotlin_wasm from './wasm/tree-sitter-kotlin.wasm?url';
+import lua_wasm from './wasm/tree-sitter-lua.wasm?url';
+import python_wasm from './wasm/tree-sitter-python.wasm?url';
+import ruby_wasm from './wasm/tree-sitter-ruby.wasm?url';
+import rust_wasm from './wasm/tree-sitter-rust.wasm?url';
+import scala_wasm from './wasm/tree-sitter-scala.wasm?url';
+import swift_wasm from './wasm/tree-sitter-swift.wasm?url';
+import toml_wasm from './wasm/tree-sitter-toml.wasm?url';
+import tsx_wasm from './wasm/tree-sitter-tsx.wasm?url';
+import typescript_wasm from './wasm/tree-sitter-typescript.wasm?url';
+import yaml_wasm from './wasm/tree-sitter-yaml.wasm?url';
+import dart_wasm from './wasm/tree-sitter-dart.wasm?url';
+import diff_wasm from './wasm/tree-sitter-diff.wasm?url';
+import dockerfile_wasm from './wasm/tree-sitter-dockerfile.wasm?url';
+import markdown_wasm from './wasm/tree-sitter-markdown.wasm?url';
+// vue 暂不支持：上游 ikatyang/tree-sitter-vue 的外部扫描器与新版 wasm 构建不兼容，保留旧引用（已知不可用，不影响其他语言）。
+import vue_wasm from 'tree-sitter-wasms/out/tree-sitter-vue.wasm?url';
+
+import c_scm from './queries/c/highlights.scm?raw';
+import cpp_scm from './queries/cpp/highlights.scm?raw';
+import csharp_scm from './queries/c-sharp/highlights.scm?raw';
+import css_scm from './queries/css/highlights.scm?raw';
+import go_scm from './queries/go/highlights.scm?raw';
+import html_scm from './queries/html/highlights.scm?raw';
+import java_scm from './queries/java/highlights.scm?raw';
+import javascript_scm from './queries/javascript/highlights.scm?raw';
+import json_scm from './queries/json/highlights.scm?raw';
+import jsx_scm from './queries/jsx/highlights.scm?raw';
+import kotlin_scm from './queries/kotlin/highlights.scm?raw';
+import lua_scm from './queries/lua/highlights.scm?raw';
+import python_scm from './queries/python/highlights.scm?raw';
+import ruby_scm from './queries/ruby/highlights.scm?raw';
+import rust_scm from './queries/rust/highlights.scm?raw';
+import scala_scm from './queries/scala/highlights.scm?raw';
+import shell_scm from './queries/shell/highlights.scm?raw';
+import swift_scm from './queries/swift/highlights.scm?raw';
+import toml_scm from './queries/toml/highlights.scm?raw';
+import tsx_scm from './queries/tsx/highlights.scm?raw';
+import typescript_scm from './queries/typescript/highlights.scm?raw';
+import yaml_scm from './queries/yaml/highlights.scm?raw';
+import dart_scm from './queries/dart/highlights.scm?raw';
+import diff_scm from './queries/diff/highlights.scm?raw';
+import dockerfile_scm from './queries/dockerfile/highlights.scm?raw';
+import markdown_scm from './queries/markdown/highlights.scm?raw';
+import vue_scm from './queries/vue/highlights.scm?raw';
+
+export interface ITreeSitterLanguageEntry {
+	readonly wasmUrl: string;
+	readonly scm: string;
 }
 
-const QUERY_FILES = ["highlights.scm", "folds.scm", "indents.scm", "injections.scm", "locals.scm", "tags.scm"]
-const lock = existsSync(LOCK_PATH) ? JSON.parse(readFileSync(LOCK_PATH, "utf8")) : {}
-const only = process.argv.slice(2)
+export const TREE_SITTER_LANGUAGES: Readonly<Record<string, ITreeSitterLanguageEntry>> = {
+	shell: { wasmUrl: shell_wasm, scm: shell_scm },
+	javascript: { wasmUrl: javascript_wasm, scm: javascript_scm },
+	jsx: { wasmUrl: jsx_wasm, scm: jsx_scm },
+	typescript: { wasmUrl: typescript_wasm, scm: typescript_scm },
+	tsx: { wasmUrl: tsx_wasm, scm: tsx_scm },
+	python: { wasmUrl: python_wasm, scm: python_scm },
+	rust: { wasmUrl: rust_wasm, scm: rust_scm },
+	go: { wasmUrl: go_wasm, scm: go_scm },
+	c: { wasmUrl: c_wasm, scm: c_scm },
+	cpp: { wasmUrl: cpp_wasm, scm: cpp_scm },
+	java: { wasmUrl: java_wasm, scm: java_scm },
+	json: { wasmUrl: json_wasm, scm: json_scm },
+	html: { wasmUrl: html_wasm, scm: html_scm },
+	css: { wasmUrl: css_wasm, scm: css_scm },
+	ruby: { wasmUrl: ruby_wasm, scm: ruby_scm },
+	yaml: { wasmUrl: yaml_wasm, scm: yaml_scm },
+	toml: { wasmUrl: toml_wasm, scm: toml_scm },
+	lua: { wasmUrl: lua_wasm, scm: lua_scm },
+	csharp: { wasmUrl: csharp_wasm, scm: csharp_scm },
+	kotlin: { wasmUrl: kotlin_wasm, scm: kotlin_scm },
+	scala: { wasmUrl: scala_wasm, scm: scala_scm },
+	swift: { wasmUrl: swift_wasm, scm: swift_scm },
+	dart: { wasmUrl: dart_wasm, scm: dart_scm },
+	diff: { wasmUrl: diff_wasm, scm: diff_scm },
+	dockerfile: { wasmUrl: dockerfile_wasm, scm: dockerfile_scm },
+	markdown: { wasmUrl: markdown_wasm, scm: markdown_scm },
+	vue: { wasmUrl: vue_wasm, scm: vue_scm },
+};
 
-function findQueriesDir(baseDir) {
-	const candidates = [join(baseDir, "queries")]
-	for (const c of candidates) {
-		if (existsSync(c)) return c
+const TS_LANGUAGE_ALIASES: Readonly<Record<string, string>> = {
+	bash: 'shell',
+	sh: 'shell',
+	zsh: 'shell',
+	js: 'javascript',
+	mjs: 'javascript',
+	cjs: 'javascript',
+	ts: 'typescript',
+	mts: 'typescript',
+	cts: 'typescript',
+	py: 'python',
+	rs: 'rust',
+	h: 'c',
+	cc: 'cpp',
+	cxx: 'cpp',
+	hpp: 'cpp',
+	jsonc: 'json',
+	htm: 'html',
+	rb: 'ruby',
+	yml: 'yaml',
+	cs: 'csharp',
+	kt: 'kotlin',
+	kts: 'kotlin',
+	docker: 'dockerfile',
+	md: 'markdown',
+	patch: 'diff',
+};
+
+/** 原始语言标签 -> tree-sitter 语言 id；无覆盖时返回 null。 */
+export function resolveTreeSitterLanguageId(language: string): string | null {
+	const tag = language.trim().toLowerCase();
+	if (Object.hasOwn(TREE_SITTER_LANGUAGES, tag)) {
+		return tag;
 	}
-	try {
-		for (const entry of readdirSync(baseDir, { withFileTypes: true })) {
-			if (entry.isDirectory()) {
-				const nested = join(baseDir, entry.name, "queries")
-				if (existsSync(nested)) return nested
-			}
-		}
-	} catch {}
-	return null
+	return TS_LANGUAGE_ALIASES[tag] ?? null;
 }
+`
 
-function cloneWithRetry(repo, tmpDir, ref, attempts = 3) {
-	let lastErr
-	for (let i = 0; i < attempts; i++) {
-		try {
-			rmSync(tmpDir, { recursive: true, force: true })
-			mkdirSync(tmpDir, { recursive: true })
-			if (ref) {
-				execFileSync("git", ["clone", repo, tmpDir], { stdio: "inherit" })
-				execFileSync("git", ["checkout", ref], { cwd: tmpDir, stdio: "inherit" })
-			} else {
-				execFileSync("git", ["clone", "--depth", "1", repo, tmpDir], { stdio: "inherit" })
-			}
-			return
-		} catch (e) {
-			lastErr = e
-			console.log(`  重试 ${i + 1}/${attempts} 失败: ${String(e.message).split("\n")[0]}`)
-		}
-	}
-	throw lastErr
-}
-
-const report = []
-
-for (const [name, cfg] of Object.entries(SOURCES)) {
-	if (only.length && !only.includes(name)) continue
-	const tmpDir = join(TMP_DIR, `q-${name}`)
-
-	const ref = lock[name]?.commit
-	console.log(`\n=== ${name} ===`)
-	try {
-		cloneWithRetry(cfg.repo, tmpDir, ref)
-
-		const grammarDir = cfg.subdir ? join(tmpDir, cfg.subdir) : tmpDir
-		const queriesDir = findQueriesDir(grammarDir) || findQueriesDir(tmpDir)
-
-		if (!queriesDir) {
-			console.log(`  ⚠️ 未找到 queries 目录`)
-			report.push({ name, found: [] })
-			continue
-		}
-
-		const destDir = join(QUERIES_OUT, name)
-		mkdirSync(destDir, { recursive: true })
-		const found = []
-		for (const qf of QUERY_FILES) {
-			const src = join(queriesDir, qf)
-			if (existsSync(src)) {
-				copyFileSync(src, join(destDir, qf))
-				found.push(qf)
-			}
-		}
-		console.log(`  ✅ 复制: ${found.join(", ") || "(无)"}`)
-		report.push({ name, found })
-	} catch (e) {
-		console.log(`  ❌ 失败: ${e.message}`)
-		report.push({ name, found: [], error: true })
-	}
-}
-
-rmSync(TMP_DIR, { recursive: true, force: true })
-
-console.log("\n========== 查询文件汇总 ==========")
-for (const r of report) {
-	console.log(`${r.error ? "❌" : r.found.length ? "✅" : "⚠️ "} ${r.name}: ${r.found.join(", ") || "无"}`)
-}
+writeFileSync(OUT, content, "utf8")
+console.log(`已写入: ${OUT}`)
