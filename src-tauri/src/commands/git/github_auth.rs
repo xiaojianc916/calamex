@@ -369,6 +369,7 @@ async fn resolve_git_credential_token(
     host: &str,
 ) -> Option<String> {
     let mut command = tokio::process::Command::new("git");
+    crate::commands::configure_tokio_command_for_background(&mut command);
     command
         .arg("-C")
         .arg(repository_root)
@@ -395,7 +396,9 @@ async fn resolve_git_credential_token(
 }
 
 fn resolve_github_cli_token(host: &str) -> Option<String> {
-    let output = std::process::Command::new("gh")
+    let mut command = std::process::Command::new("gh");
+    crate::commands::configure_std_command_for_background(&mut command);
+    let output = command
         .arg("auth")
         .arg("token")
         .arg("--hostname")

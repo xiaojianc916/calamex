@@ -92,7 +92,9 @@ fn run_git_remote_subcommand(
     remote_name: &str,
     remote_url: &str,
 ) -> Result<(), String> {
-    let output = std::process::Command::new("git")
+    let mut command = std::process::Command::new("git");
+    crate::commands::configure_std_command_for_background(&mut command);
+    let output = command
         .arg("-C")
         .arg(repository_root)
         .arg("remote")
@@ -588,6 +590,7 @@ async fn resolve_github_credential(
 
     let token = async {
         let mut command = tokio::process::Command::new("git");
+        crate::commands::configure_tokio_command_for_background(&mut command);
         command
             .arg("-C")
             .arg(repository_root)
