@@ -484,7 +484,7 @@ fn persist_config(config: &AiRuntimeConfig) -> Result<(), String> {
         errors::error("AI_RESPONSE_INVALID", format!("AI 配置序列化失败：{error}"))
     })?;
 
-    fs::write(path, content).map_err(|error| {
+    crate::ai::edit::io::atomic_write::write_text(&path, &content).map_err(|error| {
         errors::error(
             "AI_PROVIDER_UNAVAILABLE",
             format!("AI 配置保存失败：{error}"),

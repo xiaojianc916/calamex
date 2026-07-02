@@ -75,7 +75,6 @@
     "@tauri-apps/plugin-dialog": "^2.7.1",
     "@tauri-apps/plugin-fs": "^2.5.1",
     "@tauri-apps/plugin-opener": "^2.5.4",
-    "@tauri-apps/plugin-store": "^2.4.3",
     "@texel/color": "^1.1.11",
     "@vueuse/core": "^14.3.0",
     "@wasm-fmt/shfmt": "^0.2.7",

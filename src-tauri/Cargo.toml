@@ -48,7 +48,6 @@ desktop = [
   "dep:tauri-build",
   "dep:tauri-plugin-dialog",
   "dep:tauri-plugin-fs",
-  "dep:tauri-plugin-store",
   "dep:tauri-plugin-single-instance",
   "dep:tauri-plugin-window-state",
   "dep:tracing",
@@ -100,7 +99,6 @@ slug = { version = "0.1", optional = true }
 tauri = { version = "2.10.3", features = ["protocol-asset", "tray-icon"], optional = true }
 tauri-plugin-dialog = { version = "2.7.0", optional = true }
 tauri-plugin-fs = { version = "2", optional = true }
-tauri-plugin-store = { version = "~2", optional = true }
 thiserror = "2.0.18"
 trash = "5"
 arc-swap = "1"
@@ -130,6 +128,8 @@ specta-typescript = "0.0.12"
 tauri-specta = { version = "2.0.0-rc.25", features = ["derive", "typescript"] }
 log = "0.4.30"
 jiff = "0.2.25"
+# 主目录解析交给 home crate（cargo/rustup 同款），替代手搜环境变量拼接。
+home = "0.5"
 backon = "1.6.0"
 vte = "0.15.0"
 # 子进程超时等待（cargo 自身亦使用）：替代 wsl_pty.rs 同步 wsl.exe 调用里的 25ms 轮询。

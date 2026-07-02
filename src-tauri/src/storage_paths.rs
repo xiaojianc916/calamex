@@ -16,7 +16,6 @@
 //! 主目录路径不写死、跨平台动态解析，且始终可写，便于集中备份与排查。
 //! 该模块是所有磁盘路径的唯一事实来源，避免各模块各自拼路径导致漂移。
 
-use std::ffi::OsString;
 use std::fs;
 use std::path::{Path, PathBuf};
 
@@ -25,41 +24,14 @@ pub const APP_STORAGE_DIR_NAME: &str = ".calamex";
 
 /// 解析当前用户主目录。
 ///
-/// 解析顺序（不写死任何用户名 / 盘符，跨平台）：
-/// 1. `USERPROFILE`（Windows 首选，例如 `C:\Users\陈小建`）
-/// 2. `HOMEDRIVE` + `HOMEPATH`（Windows 回退，拼成完整主目录）
-/// 3. `HOME`（类 Unix / 兜底）
+/// 交给 `home` crate（cargo / rustup 同款）跨平台解析：Windows 经
+/// SHGetKnownFolderPath(FOLDERID_Profile) 取真实用户 Profile，类 Unix 读 $HOME。
+/// 替换此前手搜的 USERPROFILE -> HOMEDRIVE+HOMEPATH -> HOME 逐环境变量解析
+/// （旧法在盘符拼接 / 空值 / 漫游重定向上都易错，属官方依赖可替代的手搜）。
 ///
-/// 全部缺失时返回 `None`。
+/// 解析失败或得到空路径时返回 `None`。
 pub fn home_dir() -> Option<PathBuf> {
-    resolve_home_from(|key| std::env::var_os(key))
-}
-
-/// 纯函数版便于单测：通过注入的取值闭包解析主目录，规则同 [`home_dir`]。
-fn resolve_home_from<F>(get_env: F) -> Option<PathBuf>
-where
-    F: Fn(&str) -> Option<OsString>,
-{
-    fn non_empty(value: OsString) -> Option<OsString> {
-        if value.is_empty() { None } else { Some(value) }
-    }
-
-    if let Some(user_profile) = get_env("USERPROFILE").and_then(non_empty) {
-        return Some(PathBuf::from(user_profile));
-    }
-
-    if let (Some(drive), Some(path)) = (
-        get_env("HOMEDRIVE").and_then(non_empty),
-        get_env("HOMEPATH").and_then(non_empty),
-    ) {
-        // 用字符串拼接而非 PathBuf::join：HOMEPATH 形如 `\Users\陈小建`，
-        // 直接 join 在某些平台会被当作绝对路径而丢弃盘符。
-        let mut combined = drive.to_string_lossy().into_owned();
-        combined.push_str(&path.to_string_lossy());
-        return Some(PathBuf::from(combined));
-    }
-
-    get_env("HOME").and_then(non_empty).map(PathBuf::from)
+    home::home_dir().filter(|path| !path.as_os_str().is_empty())
 }
 
 /// 统一存储根：`<home>/.calamex`。主目录不可解析时返回 `None`。
@@ -267,14 +239,6 @@ fn log_migration_warn(event: &str, path: &Path, detail: &str) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::collections::HashMap;
-    use std::ffi::OsString;
-
-    fn lookup<'a>(
-        map: &'a HashMap<&'static str, &'static str>,
-    ) -> impl Fn(&str) -> Option<OsString> + 'a {
-        move |key| map.get(key).map(|value| OsString::from(*value))
-    }
 
     fn unique_temp_dir(tag: &str) -> PathBuf {
         let dir = std::env::temp_dir().join(format!(
@@ -283,62 +247,6 @@ mod tests {
         ));
         fs::create_dir_all(&dir).expect("create temp dir");
         dir
-    }
-
-    #[test]
-    fn home_dir_prefers_userprofile() {
-        let env = HashMap::from([
-            ("USERPROFILE", "C:\\Users\\陈小建"),
-            ("HOMEDRIVE", "C:"),
-            ("HOMEPATH", "\\Users\\someone-else"),
-            ("HOME", "/home/someone-else"),
-        ]);
-        assert_eq!(
-            resolve_home_from(lookup(&env)),
-            Some(PathBuf::from("C:\\Users\\陈小建"))
-        );
-    }
-
-    #[test]
-    fn home_dir_falls_back_to_homedrive_homepath() {
-        let env = HashMap::from([
-            ("HOMEDRIVE", "C:"),
-            ("HOMEPATH", "\\Users\\陈小建"),
-            ("HOME", "/home/someone-else"),
-        ]);
-        assert_eq!(
-            resolve_home_from(lookup(&env)),
-            Some(PathBuf::from("C:\\Users\\陈小建"))
-        );
-    }
-
-    #[test]
-    fn home_dir_falls_back_to_home_when_windows_vars_absent() {
-        let env = HashMap::from([("HOME", "/home/陈小建")]);
-        assert_eq!(
-            resolve_home_from(lookup(&env)),
-            Some(PathBuf::from("/home/陈小建"))
-        );
-    }
-
-    #[test]
-    fn home_dir_ignores_empty_values() {
-        let env = HashMap::from([
-            ("USERPROFILE", ""),
-            ("HOMEDRIVE", ""),
-            ("HOMEPATH", ""),
-            ("HOME", "/home/陈小建"),
-        ]);
-        assert_eq!(
-            resolve_home_from(lookup(&env)),
-            Some(PathBuf::from("/home/陈小建"))
-        );
-    }
-
-    #[test]
-    fn home_dir_is_none_when_all_env_absent() {
-        let env: HashMap<&'static str, &'static str> = HashMap::new();
-        assert_eq!(resolve_home_from(lookup(&env)), None);
     }
 
     #[test]
