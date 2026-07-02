@@ -32,24 +32,17 @@ const CAPTURE_CLASS: Readonly<Record<string, string>> = {
   float: 'cm-tsh-number',
   boolean: 'cm-tsh-constant',
   constant: 'cm-tsh-constant',
-  variable: 'cm-tsh-variable',
-  'variable.parameter': 'cm-tsh-parameter',
-  parameter: 'cm-tsh-parameter',
-  property: 'cm-tsh-property',
-  field: 'cm-tsh-property',
   function: 'cm-tsh-function',
   method: 'cm-tsh-function',
   constructor: 'cm-tsh-function',
   keyword: 'cm-tsh-keyword',
   conditional: 'cm-tsh-keyword',
   repeat: 'cm-tsh-keyword',
-  operator: 'cm-tsh-operator',
   type: 'cm-tsh-type',
   namespace: 'cm-tsh-type',
   attribute: 'cm-tsh-attribute',
   tag: 'cm-tsh-tag',
   label: 'cm-tsh-label',
-  punctuation: 'cm-tsh-punctuation',
 };
 
 function classForCapture(name: string): string | undefined {
@@ -249,22 +242,19 @@ class TreeSitterHighlighter {
 }
 
 const treeSitterHighlightTheme = EditorView.baseTheme({
-  '.cm-tsh-comment': { color: '#6e7781', fontStyle: 'italic' },
+  // 取值对齐 GitHub Light Default（primer）；仅对 github-light 实际着色的类别上色，
+  // 普通变量/参数/操作符/标点保持默认前景色，注释不用斜体——与 Shiki 那条线视觉一致。
+  '.cm-tsh-comment': { color: '#6e7781' },
   '.cm-tsh-string': { color: '#0a3069' },
-  '.cm-tsh-escape': { color: '#0a3069', fontWeight: '600' },
+  '.cm-tsh-escape': { color: '#0550ae' },
   '.cm-tsh-number': { color: '#0550ae' },
   '.cm-tsh-constant': { color: '#0550ae' },
-  '.cm-tsh-variable': { color: '#953800' },
-  '.cm-tsh-parameter': { color: '#953800' },
-  '.cm-tsh-property': { color: '#0550ae' },
   '.cm-tsh-function': { color: '#8250df' },
   '.cm-tsh-keyword': { color: '#cf222e' },
-  '.cm-tsh-operator': { color: '#0550ae' },
   '.cm-tsh-type': { color: '#953800' },
   '.cm-tsh-attribute': { color: '#0550ae' },
   '.cm-tsh-tag': { color: '#116329' },
   '.cm-tsh-label': { color: '#0550ae' },
-  '.cm-tsh-punctuation': { color: '#24292f' },
 });
 
 function treeSitterHighlightExtension(languageId: string): Extension {
