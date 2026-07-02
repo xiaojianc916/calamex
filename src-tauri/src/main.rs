@@ -247,28 +247,6 @@ fn harden_webview_settings<R: tauri::Runtime>(webview_window: &tauri::WebviewWin
     let label = webview_window.label().to_string();
     let label_for_inner = label.clone();
     let access_result = webview_window.with_webview(move |webview| unsafe {
-        // ── 窗口 resize 漏底根因修复(原生层)────────────────────────────────
-        // resize 时原生 HWND 随 OS 拖拽同步变大,但 WebView2 合成面重绘慢至少一帧;未被新帧
-        // 覆盖的那条,显示的是 controller 的 DefaultBackgroundColor —— 其默认值为白 #ffffff,
-        // 并非 tauri.conf backgroundColor / set_background_color 的 #fafafa(那是原生 HWND
-        // 刷子色,在合成器间隙里不生效)。编辑器内容恰为 #ffffff → 左右拖拽右缘露出与内容
-        // 同色、不可见;上/下缘紧贴的 chrome(标题栏/状态栏/侧栏)为 #fafafa → 白露出与之反差
-        // → 仅上下拖拽可见漏底。显式把 DefaultBackgroundColor 设为应用底色 #fafafa(与
-        // --app-bg / set_background_color 同源),上下缘露出即与 chrome 同色而消隐。
-        {
-            use webview2_com::Microsoft::Web::WebView2::Win32::{
-                COREWEBVIEW2_COLOR, ICoreWebView2Controller2,
-            };
-            use windows_core::Interface;
-            if let Ok(controller) = webview.controller().cast::<ICoreWebView2Controller2>() {
-                let _ = controller.SetDefaultBackgroundColor(COREWEBVIEW2_COLOR {
-                    A: 255,
-                    R: 250,
-                    G: 250,
-                    B: 250,
-                });
-            }
-        }
         let outcome = webview
             .controller()
             .CoreWebView2()

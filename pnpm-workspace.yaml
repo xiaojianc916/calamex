@@ -14,4 +14,4 @@ allowBuilds:
   koffi: true
   node-pty: true
   '@tree-sitter-grammars/tree-sitter-markdown': set this to true or false
-  tree-sitter-cli: set this to true or false
+  tree-sitter-cli: false

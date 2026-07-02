@@ -1,113 +1,29 @@
-// fix-p9c-bridges.mjs —— fs/terminal 回调注入点（与现有 PermissionResolver 同构）
-import { readFileSync, writeFileSync, existsSync } from "node:fs";
+// revert-webview-defaultbg.mjs
+// 移除上一版注入 harden_webview_settings 的 DefaultBackgroundColor 补丁(已证无效),
+// 把 with_webview 闭包还原为改动前原样。幂等:未检测到补丁则不改动。无备份、可 git 追溯。
+import { readFileSync, writeFileSync } from "node:fs";
 
-const bridgesPath = "src-tauri/src/acp/bridges.rs";
-const content = `//! ACP 客户端 fs/* + terminal/* 桥接回调注入点。
-//!
-//! 与现有 \`PermissionResolver\` 同构：由命令层（持有 \`AppHandle\` + \`State<AiEditState>\`）
-//! 构造后经 \`spawn_acp_client\` 注入，\`client.rs\` 保持不依赖 Tauri 具体类型。
-#![allow(dead_code)]
+const FILE = "src-tauri/src/main.rs";
+const src = readFileSync(FILE, "utf8");
 
-use std::sync::Arc;
-
-use agent_client_protocol::BoxFuture;
-use agent_client_protocol::schema::{
-    CreateTerminalRequest, CreateTerminalResponse, KillTerminalRequest, KillTerminalResponse,
-    ReadTextFileRequest, ReadTextFileResponse, ReleaseTerminalRequest, ReleaseTerminalResponse,
-    TerminalOutputRequest, TerminalOutputResponse, WaitForTerminalExitRequest,
-    WaitForTerminalExitResponse, WriteTextFileRequest, WriteTextFileResponse,
-};
-
-/// 本协议版本的错误类型（= JSON-RPC error，构造器见 schema \`v1/error.rs\`）。
-pub type AcpResult<T> = Result<T, agent_client_protocol::Error>;
-
-pub type FsReadResolver = Arc<
-    dyn Fn(ReadTextFileRequest) -> BoxFuture<'static, AcpResult<ReadTextFileResponse>> + Send + Sync,
->;
-pub type FsWriteResolver = Arc<
-    dyn Fn(WriteTextFileRequest) -> BoxFuture<'static, AcpResult<WriteTextFileResponse>> + Send + Sync,
->;
-pub type TerminalCreateResolver = Arc<
-    dyn Fn(CreateTerminalRequest) -> BoxFuture<'static, AcpResult<CreateTerminalResponse>> + Send + Sync,
->;
-pub type TerminalOutputResolver = Arc<
-    dyn Fn(TerminalOutputRequest) -> BoxFuture<'static, AcpResult<TerminalOutputResponse>> + Send + Sync,
->;
-pub type TerminalWaitResolver = Arc<
-    dyn Fn(WaitForTerminalExitRequest) -> BoxFuture<'static, AcpResult<WaitForTerminalExitResponse>>
-        + Send
-        + Sync,
->;
-pub type TerminalKillResolver = Arc<
-    dyn Fn(KillTerminalRequest) -> BoxFuture<'static, AcpResult<KillTerminalResponse>> + Send + Sync,
->;
-pub type TerminalReleaseResolver = Arc<
-    dyn Fn(ReleaseTerminalRequest) -> BoxFuture<'static, AcpResult<ReleaseTerminalResponse>> + Send + Sync,
->;
-
-/// fs/terminal 全部回调的注入包。命令层构造，\`spawn_acp_client\` 注入。
-#[derive(Clone)]
-pub struct AcpBridges {
-    pub fs_read: FsReadResolver,
-    pub fs_write: FsWriteResolver,
-    pub terminal_create: TerminalCreateResolver,
-    pub terminal_output: TerminalOutputResolver,
-    pub terminal_wait: TerminalWaitResolver,
-    pub terminal_kill: TerminalKillResolver,
-    pub terminal_release: TerminalReleaseResolver,
+if (!/SetDefaultBackgroundColor/.test(src)) {
+  console.log("[skip] 未发现该补丁,文件可能已回退,未改动。");
+  process.exit(0);
 }
 
-// ── 命令层构造示例（在持有 AppHandle + State<AiEditState> 处填闭包体）──────────────
-//
-// let bridges = AcpBridges {
-//     // 读：该 path 有打开的 CodeMirror 缓冲则返回未存盘文本，否则读磁盘；按 line/limit 切片。
-//     //     文件不存在 -> Error::resource_not_found(Some(path))，读失败 -> Error::into_internal_error(e)
-//     fs_read: Arc::new(move |req| Box::pin(async move {
-//         let content = /* acp_fs_read(app, &req.path, req.line, req.limit).await? */;
-//         Ok(ReadTextFileResponse::new(content))
-//     })),
-//     // 写：不直接落盘，串 ai_propose_patch -> 审批 -> ai_apply_patch + 快照/时间线（edit.rs）。
-//     //     被拒/取消 -> Error::request_cancelled()
-//     fs_write: Arc::new(move |req| Box::pin(async move {
-//         /* propose+approve+apply(req.path, req.content).await? */
-//         Ok(WriteTextFileResponse::new())
-//     })),
-//     // terminal/*：桥接 src-tauri/src/terminal/（portable-pty）：登记 TerminalId、
-//     //     output 截断按 char_boundary→最后换行 置 truncated、wait_for_exit 共享 Shared<Task>。
-//     terminal_create:  Arc::new(move |req| Box::pin(async move { /* ... */ })),
-//     terminal_output:  Arc::new(move |req| Box::pin(async move { /* ... */ })),
-//     terminal_wait:    Arc::new(move |req| Box::pin(async move { /* ... */ })),
-//     terminal_kill:    Arc::new(move |req| Box::pin(async move { /* ... */ })),
-//     terminal_release: Arc::new(move |req| Box::pin(async move { /* ... */ })),
-// };
-// spawn_acp_client(config, sink, resolver, bridges)?;
-`;
-
-if (!existsSync(bridgesPath)) {
-  writeFileSync(bridgesPath, content, "utf8");
-  console.log("✔ 已建 " + bridgesPath);
-} else {
-  console.log("• bridges.rs 已存在，跳过");
+// 闭包开头 `unsafe {` 之后、到紧随的 `let outcome = webview` 之间,原本什么都没有;
+// 把这中间(即我插入的注释+DefaultBackgroundColor 块)整段删除即完整还原。CRLF/LF 兼容。
+const re = /(with_webview\(move \|webview\| unsafe \{\r?\n)[\s\S]*?\r?\n([ \t]*let outcome = webview\b)/;
+if (!re.test(src)) {
+  console.log("[fail] 命中补丁标识但未匹配到闭包锚点,请人工核对,未改动。");
+  process.exit(1);
 }
 
-// 注册 `pub mod bridges;` —— acp 模块根可能是 acp.rs 或 acp/mod.rs
-let registered = false;
-for (const modFile of ["src-tauri/src/acp/mod.rs", "src-tauri/src/acp.rs"]) {
-  if (!existsSync(modFile)) continue;
-  let m = readFileSync(modFile, "utf8");
-  if (!/\bmod\s+bridges\b/.test(m)) {
-    const nl = m.includes("\r\n") ? "\r\n" : "\n";
-    if (/(pub\s+)?mod\s+client;/.test(m)) {
-      m = m.replace(/((pub\s+)?mod\s+client;)/, `$1${nl}pub mod bridges;`);
-    } else {
-      m = `pub mod bridges;${nl}` + m;
-    }
-    writeFileSync(modFile, m, "utf8");
-    console.log("✔ 已注册 pub mod bridges; -> " + modFile);
-  } else {
-    console.log("• 模块已注册，跳过 (" + modFile + ")");
-  }
-  registered = true;
-  break;
+const out = src.replace(re, "$1$2");
+if (/SetDefaultBackgroundColor|ICoreWebView2Controller2|漏底根因修复/.test(out)) {
+  console.log("[fail] 回退后仍残留补丁片段,已放弃写入,请人工核对。");
+  process.exit(1);
 }
-if (!registered) console.warn("⚠ 未找到 acp 模块根（acp/mod.rs 或 acp.rs），请手动加 `pub mod bridges;`");
+
+writeFileSync(FILE, out, "utf8");
+console.log("[ok] 已移除补丁,harden_webview_settings 恢复原样。请 git add/commit/push。");
