@@ -34,10 +34,8 @@ use super::state::{
 static TERMINAL_DATA_SEQUENCE: AtomicU64 = AtomicU64::new(1);
 
 fn terminal_now_ms() -> i64 {
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map(|duration| i64::try_from(duration.as_millis()).unwrap_or(i64::MAX))
-        .unwrap_or(0)
+    // 统一走 jiff（与本模块 finished_at 同源），消除同文件两套时钟口径。
+    jiff::Timestamp::now().as_millisecond()
 }
 
 fn emit_session_state_transitions(
