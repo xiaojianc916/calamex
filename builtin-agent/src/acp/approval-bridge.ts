@@ -45,10 +45,13 @@ export type TPendingApproval = TApprovalRequiredEvent["request"]
  */
 export const APPROVAL_OPTION_ALLOW_ONCE = "allow-once" as const
 export const APPROVAL_OPTION_REJECT = "reject-once" as const
+export const APPROVAL_OPTION_ALLOW_ALWAYS = "allow-always" as const
+export const APPROVAL_OPTION_REJECT_ALWAYS = "reject-always" as const
 
 /** 选中即视为放行的 optionId 集合；其余 selected 视为拒绝，cancelled 视为取消。 */
 const APPROVE_OPTION_IDS: ReadonlySet<string> = new Set<string>([
 	APPROVAL_OPTION_ALLOW_ONCE,
+	APPROVAL_OPTION_ALLOW_ALWAYS,
 ])
 
 /**
@@ -77,8 +80,8 @@ export const findPendingApproval = (
  * toolCall.kind 复用 from-runtime-event 的 inferToolKind(request.toolName)，与同一 toolUseId 的
  * tool_call / tool_call_update 通知保持一致的 UI 分类（kind 仅用于图标/分组，schema 对未知值
  * .catch("other")；审批「判定」另由 MCP annotations 决定，不受此处影响）。镜像 codex-acp
- * 「按工具语义赋 kind、认不出用 Other」的做法，不在此另立名字映射，也不臆造「永久允许」策略。
- * 仅提供「允许一次 / 拒绝」两个选项。
+ * 「按工具语义赋 kind、认不出用 Other」的做法，不在此另立名字映射，按 ACP 标准公示全部四种 PermissionOptionKind（allow_once / allow_always / reject_once / reject_always）。
+ * "始终"类选项的记忆按 ACP 约定由客户端持久化；本 Agent 只公示选项并裁决当前这一次（allow*→approve、reject*→reject）。
  */
 export const toRequestPermissionRequest = (
 	sessionId: string,
@@ -88,7 +91,9 @@ export const toRequestPermissionRequest = (
 	const toolCallId = decoded?.toolCallId ?? request.id
 	const options: PermissionOption[] = [
 		{ optionId: APPROVAL_OPTION_ALLOW_ONCE, name: "允许", kind: "allow_once" },
+		{ optionId: APPROVAL_OPTION_ALLOW_ALWAYS, name: "始终允许", kind: "allow_always" },
 		{ optionId: APPROVAL_OPTION_REJECT, name: "拒绝", kind: "reject_once" },
+		{ optionId: APPROVAL_OPTION_REJECT_ALWAYS, name: "始终拒绝", kind: "reject_always" },
 	]
 	return {
 		sessionId,
