@@ -16,6 +16,9 @@ const FatalErrorScreen = defineAsyncComponent(
   () => import('@/components/common/FatalErrorScreen.vue'),
 );
 
+// RESIZE_STATE_SINGLE_OWNER: 全局窗口 resize 态（<html>.is-resizing，见 assets/css/tailwind.css）的唯一持有点。
+// App.vue 是常驻根组件；不要在下层 composable（如 useWorkbench）重复调用，否则会在 <html> 上
+// 叠加多个 ResizeObserver + 多个 settle 计时器，每帧 resize 做重复功。
 useWindowResizeState();
 
 // 窗口显示已彻底移出前端：窗口默认 visible:false，由 Rust 在 setup 阶段建窗后立即 show()

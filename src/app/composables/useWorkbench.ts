@@ -3,7 +3,6 @@ import { useDocumentLifecycle } from '@/composables/useDocumentLifecycle';
 import { useDocumentPersistence } from '@/composables/useDocumentPersistence';
 import { useMessage } from '@/composables/useMessage';
 import { useTheme } from '@/composables/useTheme';
-import { useWindowResizeState } from '@/composables/useWindowResizeState';
 import { useWorkbenchDocumentIO } from '@/composables/useWorkbenchDocumentIO';
 import { useGitStore } from '@/domains/git/state/git';
 import { useTerminalRun } from '@/domains/terminal/composables/useTerminalRun';
@@ -68,7 +67,6 @@ export const useWorkbench = () => {
   const gitStore = useGitStore();
   const notifier = useMessage();
   useTheme();
-  useWindowResizeState();
   const runtimeScope = createRuntimeScope('workbench');
   const executionEnvironmentRunner = runtimeScope.latestTask('execution-environment');
   let cancelExecutionEnvironmentSyncTimer: (() => void) | null = null;
