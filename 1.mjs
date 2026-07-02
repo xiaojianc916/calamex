@@ -1,110 +1,108 @@
 #!/usr/bin/env node
-// 用官方 @shikijs/themes/github-light 的真值改写 tree-sitter 引擎调色板：
-// 修正全部错误 hex；区分 用户实体(紫#6f42c1) / 内建(蓝#005cc5) / 标签(绿#22863a)；
-// 普通变量/参数/操作符/标点保持默认色。保持 capture->cm-tsh-*->baseTheme 单一词表，零新依赖。
+// startup reveal-first：把「显示纯色窗口」提到 托盘构建 / WebView 加固 / 孤儿收割线程 之前。
+// migrate_legacy_storage 与 mount_events 仍保留在 show() 之前（存储正确性 / 事件竞态安全）。
+// 纯启动顺序调整，零 UI / 行为语义改动。CRLF/LF 均安全（读入归一化匹配，写回保持原行尾）。
 import { readFileSync, writeFileSync } from 'node:fs';
-import { resolve } from 'node:path';
 
-const DRY = process.argv.includes('--dry');
-const FILE = resolve(process.cwd(), 'src/services/editor/codemirror-tree-sitter-highlight.ts');
+const FILE = 'src-tauri/src/main.rs';
+const raw = readFileSync(FILE, 'utf8');
+const isCRLF = raw.includes('\r\n');
+const src = isCRLF ? raw.replace(/\r\n/g, '\n') : raw;
 
-function replaceOnce(src, oldStr, newStr, label) {
-  const i = src.indexOf(oldStr);
-  if (i === -1) throw new Error('找不到锚点: ' + label);
-  if (src.indexOf(oldStr, i + oldStr.length) !== -1) throw new Error('锚点不唯一: ' + label);
-  return src.slice(0, i) + newStr + src.slice(i + oldStr.length);
+const OLD = `            let tray_started_at = Instant::now();
+            setup_system_tray(app)?;
+            emit_startup_step("tauri.setup.tray-ready", app_started_at, tray_started_at);
+
+            timed_step!("tauri.setup.webview-settings-ready", app_started_at, {
+                for webview_window in app.webview_windows().into_values() {
+                    harden_webview_settings(&webview_window);
+                }
+            });
+
+            timed_step!("tauri.setup.window-state-ready", app_started_at, {
+                if let Some(window) = app.get_webview_window(MAIN_WINDOW_LABEL) {
+                    let _ = window.unminimize();
+                }
+            });
+
+            // 孤儿会话收割：启动后台线程，周期性回收页面重载 / 崩溃后被前端遗弃（长时间无心跳）
+            // 且无活动运行的交互终端会话，终止其 PTY，避免遗留无人照管的 wsl.exe 进程。只做拆解、
+            // 零误杀（带活动运行的会话交由退出清理）。对照 VSCode ptyService.ts 的 orphan 回收。
+            {
+                let reaper_app = app.handle().clone();
+                let reaper_state = app.state::<TerminalSessionState>().inner().clone();
+                spawn_orphan_terminal_session_reaper(reaper_app, reaper_state);
+            }
+
+            // 原生秒显（对齐 VS Code / Zed / Electron backgroundColor 范式）：窗口配置
+            // visible:false，由 Rust 在 setup 阶段直接把原生底色设为应用底色 #fafafa 后立即
+            // show()——首帧即一块纯色原生窗口，不依赖前端跑到哪一步、也绝不画任何假骨架。真实
+            // UI 壳由 Vue 挂载后作为第一个内容帧无缝接管。这样彻底移除了旧「Rust 等前端 reveal、
+            // 前端隐藏态又跑不动」的死锁与 2.5s 兜底轮询。
+            timed_step!("tauri.setup.window-revealed", app_started_at, {
+                if let Some(window) = app.get_webview_window(MAIN_WINDOW_LABEL) {
+                    let _ =
+                        window.set_background_color(Some(tauri::window::Color(250, 250, 250, 255)));
+                    let _ = window.show();
+                    let _ = window.set_focus();
+                }
+            });`;
+
+const NEW = `            // window-state 插件在建窗时已恢复尺寸/位置/最大化；此处只补一次 unminimize
+            // （保存态为最小化时），保持在 show() 之前，避免「先显示再取消最小化」的闪跳。
+            timed_step!("tauri.setup.window-state-ready", app_started_at, {
+                if let Some(window) = app.get_webview_window(MAIN_WINDOW_LABEL) {
+                    let _ = window.unminimize();
+                }
+            });
+
+            // 原生秒显（对齐 VS Code / Zed / Electron backgroundColor 范式）：窗口配置
+            // visible:false，由 Rust 在 setup 阶段直接把原生底色设为应用底色 #fafafa 后立即
+            // show()——首帧即一块纯色原生窗口，不依赖前端跑到哪一步、也绝不画任何假骨架。真实
+            // UI 壳由 Vue 挂载后作为第一个内容帧无缝接管。这样彻底移除了旧「Rust 等前端 reveal、
+            // 前端隐藏态又跑不动」的死锁与 2.5s 兜底轮询。
+            //
+            // reveal-first：托盘构建、WebView 加固、孤儿收割线程都不影响首帧，且各自有可测的原生
+            // 开销（托盘建菜单/图标、harden 走 COM 访问 controller）。故把 show() 提到它们之前，
+            // 纯色窗口更早上屏；这些非首帧工作紧随其后在同一 setup 内完成。
+            timed_step!("tauri.setup.window-revealed", app_started_at, {
+                if let Some(window) = app.get_webview_window(MAIN_WINDOW_LABEL) {
+                    let _ =
+                        window.set_background_color(Some(tauri::window::Color(250, 250, 250, 255)));
+                    let _ = window.show();
+                    let _ = window.set_focus();
+                }
+            });
+
+            // ↓↓↓ 以下均为非首帧工作，已挪到 show() 之后 ↓↓↓
+            let tray_started_at = Instant::now();
+            setup_system_tray(app)?;
+            emit_startup_step("tauri.setup.tray-ready", app_started_at, tray_started_at);
+
+            timed_step!("tauri.setup.webview-settings-ready", app_started_at, {
+                for webview_window in app.webview_windows().into_values() {
+                    harden_webview_settings(&webview_window);
+                }
+            });
+
+            // 孤儿会话收割：启动后台线程，周期性回收页面重载 / 崩溃后被前端遗弃（长时间无心跳）
+            // 且无活动运行的交互终端会话，终止其 PTY，避免遗留无人照管的 wsl.exe 进程。只做拆解、
+            // 零误杀（带活动运行的会话交由退出清理）。对照 VSCode ptyService.ts 的 orphan 回收。
+            {
+                let reaper_app = app.handle().clone();
+                let reaper_state = app.state::<TerminalSessionState>().inner().clone();
+                spawn_orphan_terminal_session_reaper(reaper_app, reaper_state);
+            }`;
+
+if (src.includes('以下均为非首帧工作，已挪到 show() 之后')) {
+  console.log(`[skip] ${FILE} 已应用 reveal-first。`);
+  process.exit(0);
 }
-
-const OLD_MAP = `const CAPTURE_CLASS: Readonly<Record<string, string>> = {
-  comment: 'cm-tsh-comment',
-  string: 'cm-tsh-string',
-  character: 'cm-tsh-string',
-  'string.escape': 'cm-tsh-escape',
-  escape: 'cm-tsh-escape',
-  number: 'cm-tsh-number',
-  float: 'cm-tsh-number',
-  boolean: 'cm-tsh-constant',
-  constant: 'cm-tsh-constant',
-  function: 'cm-tsh-function',
-  method: 'cm-tsh-function',
-  constructor: 'cm-tsh-function',
-  keyword: 'cm-tsh-keyword',
-  conditional: 'cm-tsh-keyword',
-  repeat: 'cm-tsh-keyword',
-  type: 'cm-tsh-type',
-  namespace: 'cm-tsh-type',
-  attribute: 'cm-tsh-attribute',
-  tag: 'cm-tsh-tag',
-  label: 'cm-tsh-label',
-};`;
-
-const NEW_MAP = `const CAPTURE_CLASS: Readonly<Record<string, string>> = {
-  comment: 'cm-tsh-comment',
-  string: 'cm-tsh-string',
-  character: 'cm-tsh-string',
-  'string.escape': 'cm-tsh-escape',
-  escape: 'cm-tsh-escape',
-  number: 'cm-tsh-number',
-  float: 'cm-tsh-number',
-  boolean: 'cm-tsh-constant',
-  constant: 'cm-tsh-constant',
-  'variable.builtin': 'cm-tsh-constant',
-  function: 'cm-tsh-function',
-  'function.builtin': 'cm-tsh-constant',
-  method: 'cm-tsh-function',
-  constructor: 'cm-tsh-function',
-  keyword: 'cm-tsh-keyword',
-  conditional: 'cm-tsh-keyword',
-  repeat: 'cm-tsh-keyword',
-  type: 'cm-tsh-type',
-  'type.builtin': 'cm-tsh-constant',
-  namespace: 'cm-tsh-type',
-  attribute: 'cm-tsh-attribute',
-  tag: 'cm-tsh-tag',
-  label: 'cm-tsh-label',
-};`;
-
-const OLD_THEME = `const treeSitterHighlightTheme = EditorView.baseTheme({
-  // 取值对齐 GitHub Light Default（primer）；仅对 github-light 实际着色的类别上色，
-  // 普通变量/参数/操作符/标点保持默认前景色，注释不用斜体——与 Shiki 那条线视觉一致。
-  '.cm-tsh-comment': { color: '#6e7781' },
-  '.cm-tsh-string': { color: '#0a3069' },
-  '.cm-tsh-escape': { color: '#0550ae' },
-  '.cm-tsh-number': { color: '#0550ae' },
-  '.cm-tsh-constant': { color: '#0550ae' },
-  '.cm-tsh-function': { color: '#8250df' },
-  '.cm-tsh-keyword': { color: '#cf222e' },
-  '.cm-tsh-type': { color: '#953800' },
-  '.cm-tsh-attribute': { color: '#0550ae' },
-  '.cm-tsh-tag': { color: '#116329' },
-  '.cm-tsh-label': { color: '#0550ae' },
-});`;
-
-const NEW_THEME = `const treeSitterHighlightTheme = EditorView.baseTheme({
-  // 取值 100% 来自本地官方 @shikijs/themes/github-light（primer 经典版，默认前景 #24292e）。
-  // 继承依据：entity / entity.name = #6f42c1（用户函数/类型/属性）；entity.name.tag = #22863a；
-  // support / constant / variable.language = #005cc5（内建与常量）；storage/keyword = #d73a49；
-  // 普通变量(variable.other)/参数(variable.parameter.function)/操作符/标点 = 默认色，不着色。
-  '.cm-tsh-comment': { color: '#6a737d' },
-  '.cm-tsh-string': { color: '#032f62' },
-  '.cm-tsh-escape': { color: '#005cc5' },
-  '.cm-tsh-number': { color: '#005cc5' },
-  '.cm-tsh-constant': { color: '#005cc5' },
-  '.cm-tsh-function': { color: '#6f42c1' },
-  '.cm-tsh-keyword': { color: '#d73a49' },
-  '.cm-tsh-type': { color: '#6f42c1' },
-  '.cm-tsh-attribute': { color: '#6f42c1' },
-  '.cm-tsh-tag': { color: '#22863a' },
-  '.cm-tsh-label': { color: '#6f42c1' },
-});`;
-
-let src = readFileSync(FILE, 'utf8');
-src = replaceOnce(src, OLD_MAP, NEW_MAP, 'CAPTURE_CLASS');
-src = replaceOnce(src, OLD_THEME, NEW_THEME, 'baseTheme');
-
-if (DRY) {
-  console.log('两处锚点均命中且唯一，可安全替换：CAPTURE_CLASS、baseTheme。');
-} else {
-  writeFileSync(FILE, src, 'utf8');
-  console.log('已用官方 github-light 真值改写调色板 →', FILE);
+const hits = src.split(OLD).length - 1;
+if (hits !== 1) {
+  console.error(`[abort] ${FILE} 期望 1 处 setup 顺序锚点，实际 ${hits} 处（已归一化行尾）。本地或与 GitHub main 有差异，请贴出 setup(move |app|{...}) 那段。`);
+  process.exit(1);
 }
+const out = src.replace(OLD, NEW);
+writeFileSync(FILE, isCRLF ? out.replace(/\n/g, '\r\n') : out, 'utf8');
+console.log(`[ok] ${FILE}：window-revealed 已提前到 tray / harden / reaper 之前（行尾 ${isCRLF ? 'CRLF' : 'LF'} 保持）。`);

@@ -387,6 +387,33 @@ fn main() {
             // 挂载 specta 强类型事件;让前端 events.workspaceFsEvent.listen(...) 拿到 typed payload
             specta_bindings.mount_events(app);
 
+            // window-state 插件在建窗时已恢复尺寸/位置/最大化；此处只补一次 unminimize
+            // （保存态为最小化时），保持在 show() 之前，避免「先显示再取消最小化」的闪跳。
+            timed_step!("tauri.setup.window-state-ready", app_started_at, {
+                if let Some(window) = app.get_webview_window(MAIN_WINDOW_LABEL) {
+                    let _ = window.unminimize();
+                }
+            });
+
+            // 原生秒显（对齐 VS Code / Zed / Electron backgroundColor 范式）：窗口配置
+            // visible:false，由 Rust 在 setup 阶段直接把原生底色设为应用底色 #fafafa 后立即
+            // show()——首帧即一块纯色原生窗口，不依赖前端跑到哪一步、也绝不画任何假骨架。真实
+            // UI 壳由 Vue 挂载后作为第一个内容帧无缝接管。这样彻底移除了旧「Rust 等前端 reveal、
+            // 前端隐藏态又跑不动」的死锁与 2.5s 兜底轮询。
+            //
+            // reveal-first：托盘构建、WebView 加固、孤儿收割线程都不影响首帧，且各自有可测的原生
+            // 开销（托盘建菜单/图标、harden 走 COM 访问 controller）。故把 show() 提到它们之前，
+            // 纯色窗口更早上屏；这些非首帧工作紧随其后在同一 setup 内完成。
+            timed_step!("tauri.setup.window-revealed", app_started_at, {
+                if let Some(window) = app.get_webview_window(MAIN_WINDOW_LABEL) {
+                    let _ =
+                        window.set_background_color(Some(tauri::window::Color(250, 250, 250, 255)));
+                    let _ = window.show();
+                    let _ = window.set_focus();
+                }
+            });
+
+            // ↓↓↓ 以下均为非首帧工作，已挪到 show() 之后 ↓↓↓
             let tray_started_at = Instant::now();
             setup_system_tray(app)?;
             emit_startup_step("tauri.setup.tray-ready", app_started_at, tray_started_at);
@@ -394,12 +421,6 @@ fn main() {
             timed_step!("tauri.setup.webview-settings-ready", app_started_at, {
                 for webview_window in app.webview_windows().into_values() {
                     harden_webview_settings(&webview_window);
-                }
-            });
-
-            timed_step!("tauri.setup.window-state-ready", app_started_at, {
-                if let Some(window) = app.get_webview_window(MAIN_WINDOW_LABEL) {
-                    let _ = window.unminimize();
                 }
             });
 
@@ -411,20 +432,6 @@ fn main() {
                 let reaper_state = app.state::<TerminalSessionState>().inner().clone();
                 spawn_orphan_terminal_session_reaper(reaper_app, reaper_state);
             }
-
-            // 原生秒显（对齐 VS Code / Zed / Electron backgroundColor 范式）：窗口配置
-            // visible:false，由 Rust 在 setup 阶段直接把原生底色设为应用底色 #fafafa 后立即
-            // show()——首帧即一块纯色原生窗口，不依赖前端跑到哪一步、也绝不画任何假骨架。真实
-            // UI 壳由 Vue 挂载后作为第一个内容帧无缝接管。这样彻底移除了旧「Rust 等前端 reveal、
-            // 前端隐藏态又跑不动」的死锁与 2.5s 兜底轮询。
-            timed_step!("tauri.setup.window-revealed", app_started_at, {
-                if let Some(window) = app.get_webview_window(MAIN_WINDOW_LABEL) {
-                    let _ =
-                        window.set_background_color(Some(tauri::window::Color(250, 250, 250, 255)));
-                    let _ = window.show();
-                    let _ = window.set_focus();
-                }
-            });
 
             // 冷启动关联文件打开：进程首次启动（非二次实例）时，关联文件路径在 argv 中。
             // 前端监听器要等 Vue 挂载后才注册，存在竞态——此处不再「定时重发猜时序」，而是把待
