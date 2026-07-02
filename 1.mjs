@@ -1,42 +1,19 @@
 #!/usr/bin/env node
-// 只读探针：确认把 markdown 搬上 tree-sitter 的前置条件（不改任何文件）。
-import { createRequire } from 'node:module';
-const require = createRequire(import.meta.url);
+// 绕过 pnpm bug #10528：allowBuilds 里设 false 不会让 .modules.yaml 缓存失效，
+// 导致 pnpm install 仍报 ERR_PNPM_IGNORED_BUILDS。删掉这个缓存文件即可让"拒绝构建"的决定生效。
+import fs from "node:fs"
+import path from "node:path"
+import process from "node:process"
 
-function hasWasm(grammar) {
-  try {
-    require.resolve(`tree-sitter-wasms/out/tree-sitter-${grammar}.wasm`);
-    return true;
-  } catch {
-    return false;
-  }
-}
-for (const g of ['markdown', 'markdown_inline']) {
-  console.log(`wasm  tree-sitter-${g}.wasm :`, hasWasm(g) ? '✅ 有' : '❌ 缺');
-}
+const ROOT = process.cwd()
+const target = path.join(ROOT, "node_modules", ".modules.yaml")
 
-const BASES = [
-  'https://raw.githubusercontent.com/nvim-treesitter/nvim-treesitter/master/queries',
-  'https://raw.githubusercontent.com/nvim-treesitter/nvim-treesitter/main/queries',
-];
-async function probe(lang, file) {
-  for (const base of BASES) {
-    try {
-      const res = await fetch(`${base}/${lang}/${file}`);
-      if (res.ok) {
-        const t = await res.text();
-        return { ok: true, url: `${base}/${lang}/${file}`, bytes: t.length, head: t.split('\n').slice(0, 2).join(' | ') };
-      }
-    } catch {}
-  }
-  return { ok: false };
+if (fs.existsSync(target)) {
+	fs.rmSync(target)
+	console.log("✎ 已删除陈旧缓存：node_modules/.modules.yaml")
+} else {
+	console.log("✓ 无需处理：node_modules/.modules.yaml 不存在")
 }
-for (const [lang, file] of [
-  ['markdown', 'highlights.scm'],
-  ['markdown', 'injections.scm'],
-  ['markdown_inline', 'highlights.scm'],
-  ['markdown_inline', 'injections.scm'],
-]) {
-  const r = await probe(lang, file);
-  console.log(`scm   ${lang}/${file} :`, r.ok ? `✅ ${r.bytes}B  (${r.head})` : '❌ 未找到');
-}
+console.log("\n── 接着跑 ──")
+console.log("pnpm install")
+console.log('git commit -m "fix(core): 修复已知问题"')

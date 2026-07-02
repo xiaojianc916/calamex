@@ -70,11 +70,11 @@ import {
 	toCreateElicitationRequest,
 } from "./ask-user-bridge.js"
 
+import { buildModelCatalogFromEnv } from "./model-catalog-env.js"
 import {
 	buildModelConfigOptions,
 	type IAcpModelCatalog,
 	MODEL_CONFIG_OPTION_ID,
-	parseModelCatalogFromMeta,
 	resolveCurrentModelId,
 	resolveModelConfigInput,
 } from "./model-config-options.js"
@@ -210,6 +210,7 @@ export class CalamexAcpAgent implements Agent {
 	private readonly defaultMode: TAgentMode
 	private readonly turnTimeoutMs: number
 	private readonly generateRequestId: () => string
+	private readonly envModelCatalog = buildModelCatalogFromEnv()
 
 	constructor(
 		connection: IAcpAgentConnection,
@@ -240,10 +241,10 @@ export class CalamexAcpAgent implements Agent {
 	async newSession(
 		params: NewSessionRequest,
 	): Promise<NewSessionResponse> {
-		// 模型目录由宿主经 NewSessionRequest._meta 注入（calamex.dev/modelCatalog，含凭据）：
-		// builtin 凭据在宿主侧、launch 不注入子进程，故经会话级 _meta 一次性下发，据此公示官方
-		// 模型选择器（session config option）并预置当前回合模型配置。缺省时回退环境兜底（行为不变）。
-		const modelCatalog = parseModelCatalogFromMeta(params._meta)
+		// 模型目录由宿主经进程环境变量注入（Zed 范式：见 acp/launch.rs 的 build_builtin_agent_env
+		// 与 builtin-agent model-catalog-env.ts）：边车启动时自省 env 声明可用模型目录（含凭据 + 当前
+		// 项），据此公示官方模型选择器（session config option）并预置当前回合模型配置。无可用模型时为 undefined。
+		const modelCatalog = this.envModelCatalog
 		const modelConfig = modelCatalog
 			? resolveModelConfigInput(modelCatalog, resolveCurrentModelId(modelCatalog))
 			: undefined

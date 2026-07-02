@@ -369,7 +369,7 @@ export type AgentExternalChatResultPayload = {
  * 
  *  每个附件在宿主侧被投影为一个 ACP embedded resource 内容块（协议首选的上下文注入方式，见
  *  agent-client-protocol content.rs：`ContentBlock::Resource`），与用户正文 text 块并列送达，
- *  而非拼进正文字符串——避免正文分隔符冲突/提示注入，并保留 name/uri/mimeType 语义。
+ *  而非拼进正文字符串——避免正文分隔符冲突/提示注入；uri 即资源身份、mimeType 标注类型、text 承载原文（ACP TextResourceContents 无 name 槽位）。
  */
 export type AgentPromptAttachment = AgentPromptAttachment_Serialize | AgentPromptAttachment_Deserialize;
 
@@ -378,10 +378,9 @@ export type AgentPromptAttachment = AgentPromptAttachment_Serialize | AgentPromp
  * 
  *  每个附件在宿主侧被投影为一个 ACP embedded resource 内容块（协议首选的上下文注入方式，见
  *  agent-client-protocol content.rs：`ContentBlock::Resource`），与用户正文 text 块并列送达，
- *  而非拼进正文字符串——避免正文分隔符冲突/提示注入，并保留 name/uri/mimeType 语义。
+ *  而非拼进正文字符串——避免正文分隔符冲突/提示注入；uri 即资源身份、mimeType 标注类型、text 承载原文（ACP TextResourceContents 无 name 槽位）。
  */
 export type AgentPromptAttachment_Deserialize = {
-	name: string,
 	uri: string,
 	text: string,
 	mimeType: string | null,
@@ -392,10 +391,9 @@ export type AgentPromptAttachment_Deserialize = {
  * 
  *  每个附件在宿主侧被投影为一个 ACP embedded resource 内容块（协议首选的上下文注入方式，见
  *  agent-client-protocol content.rs：`ContentBlock::Resource`），与用户正文 text 块并列送达，
- *  而非拼进正文字符串——避免正文分隔符冲突/提示注入，并保留 name/uri/mimeType 语义。
+ *  而非拼进正文字符串——避免正文分隔符冲突/提示注入；uri 即资源身份、mimeType 标注类型、text 承载原文（ACP TextResourceContents 无 name 槽位）。
  */
 export type AgentPromptAttachment_Serialize = {
-	name: string,
 	uri: string,
 	text: string,
 	mimeType?: string | null,

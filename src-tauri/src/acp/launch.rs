@@ -10,10 +10,10 @@
 //!     而非旧 `dist/server.js`；
 //!   * stdio 无 HTTP 监听，故不注入 `BUILTIN_AGENT_PORT` / `BUILTIN_AGENT_TOKEN`
 //!     （二者仅用于旧 HTTP 服务的端口与 Bearer 鉴权）；
-//!   * 模型配置走逐请求通道（chat / restore 请求携带 `model_config`），而 stdio-entry 仅在
-//!     启动时用 env 做可选预热（`createMastraModelConfigFromEnv()`，缺失会优雅跳过），故
-//!     launch 层不耦合凭证 / 网关，不注入模型 env（职责分离更干净；预热仅推迟到首
-//!     个请求，不影响正确性）。
+//!   * 模型配置经 env 注入（宿主从 keyring 解析用户全部可用模型后，经 `CALAMEX_AI_MODEL_IDS` /
+//!     `CALAMEX_AI_CURRENT_MODEL_ID` 及按 provider 去重的 `CALAMEX_AI_KEY__<P>` /
+//!     `CALAMEX_AI_BASE_URL__<P>` 注入子进程），边车启动时据此自声明可用模型目录与当前项
+//!     （Zed 范式：唯一事实源在宿主 keyring，子进程零硬编码，不再经会话级 _meta 下发）。
 //!
 //! SDK 的 `AcpAgent::spawn_process` 只设置 command / args / env，不设 `cwd`；故 `program`
 //! 与入口路径均采用绝对路径，保证与工作目录无关。
@@ -40,6 +40,15 @@ const TAVILY_API_KEY_ENV: &str = "TAVILY_API_KEY";
 /// 全局技能目录的跨进程契约：宿主解析后经此 env 注入边车，Node 侧据此定位技能库
 /// （见 builtin-agent workspace.ts 的 resolveGlobalSkillsDirectory / CALAMEX_SKILLS_DIR 分支）。
 const SKILLS_DIR_ENV: &str = "CALAMEX_SKILLS_DIR";
+/// 模型目录（Zed 范式）的跨进程契约：宿主从 keyring 解析用户全部可用模型后经这些 env 注入边车，
+/// Node 侧据此自声明模型目录与当前项（见 builtin-agent model-catalog-env.ts）。IDS 为逗号分隔的
+/// 全量 modelId（非机密）；CURRENT_MODEL_ID 为当前主模型（可缺省）；KEY__<PROVIDER> 为按 provider
+/// （modelId 的 `/` 前缀大写）去重的明文 Key（机密，仅 keyring 来源）；BASE_URL__<PROVIDER> 为对应
+/// provider 的自定义 / 默认端点（可缺省）。
+const MODEL_IDS_ENV: &str = "CALAMEX_AI_MODEL_IDS";
+const CURRENT_MODEL_ID_ENV: &str = "CALAMEX_AI_CURRENT_MODEL_ID";
+const MODEL_KEY_ENV_PREFIX: &str = "CALAMEX_AI_KEY__";
+const MODEL_BASE_URL_ENV_PREFIX: &str = "CALAMEX_AI_BASE_URL__";
 
 /// 可挂载的 ACP 后端标识（ADR-0015）。`Builtin` 为自家 Node 边车（默认后端，行为与历史
 /// 一致）；其余为外部 ACP 编码 agent，其启动配置与凭证预置由 `provisioner` 模块的各
@@ -112,7 +121,9 @@ fn resolve_entry_args(sidecar_root: &Path) -> Result<Vec<String>, String> {
 /// 构造子进程环境变量。仅含 stdio 入口真正需要的项：
 ///   * `NODE_COMPILE_CACHE`：复用编译缓存，缩短冷启动（落 cache/node-compile）；
 ///   * `TAVILY_API_KEY`：web 工具所需，统一从 OS keyring 读取（与其它 AI 凭证同源）；
-///   * `AGENT_MCP_UVX_PATH`：MCP 工具拉起 uvx 所需（Windows 解析）。
+///   * `AGENT_MCP_UVX_PATH`：MCP 工具拉起 uvx 所需（Windows 解析）；
+///   * `CALAMEX_AI_MODEL_IDS` / `CALAMEX_AI_CURRENT_MODEL_ID` / `CALAMEX_AI_KEY__<P>` /
+///     `CALAMEX_AI_BASE_URL__<P>`：模型目录（Zed 范式），边车启动时据此自声明可用模型与当前项。
 fn build_builtin_agent_env() -> Vec<(String, String)> {
     let mut env: Vec<(String, String)> = Vec::new();
 
@@ -138,7 +149,72 @@ fn build_builtin_agent_env() -> Vec<(String, String)> {
         env.push((SKILLS_DIR_ENV.to_string(), path_to_string(&root.join("skills"))));
     }
 
+    // 模型目录（Zed 范式）：宿主从 keyring 解析「用户全部可用模型 + 当前项」后经 env 注入，边车
+    // 启动时据此自声明模型目录（见 builtin-agent model-catalog-env.ts），不再经会话级 _meta 下发。
+    push_model_catalog_env(&mut env);
+
     env
+}
+
+/// 组装模型目录 env（Zed 范式）：把「用户全部可用模型（有 Key）+ 当前主模型」投影为一组进程环境
+/// 变量注入边车，供其启动时自省声明模型目录（见 builtin-agent model-catalog-env.ts）。models 取
+/// `seeded_sidecar_model_configs`（已逐条 best-effort 跳过无凭据 / 无厂商前缀者，base_url 已解析为
+/// 默认或自定义端点）；currentModelId 取当前主模型（解析失败则省略）。Key / base_url 按 provider
+/// （modelId 的 `/` 前缀大写）去重注入——同一 provider 的多个模型共享同一凭据，只注入一次，避免
+/// env 冗余与覆盖歧义。
+fn push_model_catalog_env(env: &mut Vec<(String, String)>) {
+    let seeded = crate::ai::gateway::seeded_sidecar_model_configs();
+    if seeded.is_empty() {
+        return;
+    }
+
+    let model_ids: Vec<String> = seeded.iter().map(|config| config.model_id.clone()).collect();
+    env.push((MODEL_IDS_ENV.to_string(), model_ids.join(",")));
+
+    if let Some(current_model_id) = crate::ai::gateway::current_sidecar_model_config()
+        .ok()
+        .map(|config| config.model_id)
+    {
+        env.push((CURRENT_MODEL_ID_ENV.to_string(), current_model_id));
+    }
+
+    // 按 provider 去重注入明文 Key + base_url：同一 provider 的多个模型共享同一凭据，只注入一次。
+    let mut seen_providers: Vec<String> = Vec::new();
+    for config in &seeded {
+        let Some(provider) = model_catalog_provider(&config.model_id) else {
+            continue;
+        };
+        if seen_providers.contains(&provider) {
+            continue;
+        }
+        seen_providers.push(provider.clone());
+
+        env.push((
+            format!("{MODEL_KEY_ENV_PREFIX}{provider}"),
+            config.api_key.expose().to_string(),
+        ));
+        if let Some(base_url) = config
+            .base_url
+            .as_deref()
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+        {
+            env.push((
+                format!("{MODEL_BASE_URL_ENV_PREFIX}{provider}"),
+                base_url.to_string(),
+            ));
+        }
+    }
+}
+
+/// 从 modelId 提取 provider 段（`/` 前缀）转大写，作为 KEY__ / BASE_URL__ 的 env 后缀键。无 `/`
+/// 前缀或前缀为空时返回 None（与 seeded 的 best-effort 跳过语义一致）。
+fn model_catalog_provider(model_id: &str) -> Option<String> {
+    model_id
+        .split_once('/')
+        .map(|(provider, _)| provider.trim())
+        .filter(|provider| !provider.is_empty())
+        .map(str::to_uppercase)
 }
 
 fn resolve_builtin_agent_root() -> Result<PathBuf, String> {

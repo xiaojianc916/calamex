@@ -1,11 +1,14 @@
 <template>
 <aside class="app-sidebar-shell flex h-full min-h-0 min-w-0 flex-col overflow-hidden" :class="{ 'source-control-sidebar-host': isSourceControlView, 'explorer-sidebar-host': isExplorerView, 'search-sidebar-host': isSearchView, 'ssh-sidebar-host': isSshView, }" >
-  <!-- 性能优化：所有侧边栏面板全常驻挂载，仅用 v-show 切换可见性，彻底避免切换时的 mount/unmount 与同步渲染开销。 各面板内部的数据加载仍由 is-active 等条件控制（例如仅在对应 view 激活时才加载/刷新），隐藏时不空跑。 -->
-  <SourceControlPanel v-show="isSourceControlView" class="h-full min-h-0 w-full flex-1" :is-active="isSourceControlView" :is-desktop-runtime="isDesktopRuntime" :workspace-root-path="workspaceRootPath" :active-path="document.path" @open-file="handleOpenFile" @open-diff="handleOpenGitDiff" />
-  <WorkspaceExplorerPanel v-show="isExplorerView" :document="document" :is-active="isExplorerView" :is-desktop-runtime="isDesktopRuntime" :workspace-root-path="workspaceRootPath" :preloaded-workspace-root="preloadedWorkspaceRoot" :startup-explorer-expanded-paths="startupExplorerExpandedPaths" :startup-explorer-selected-path="startupExplorerSelectedPath" @open-file="handleOpenFile" @open-folder="emit('open-folder')" @explorer-state-change="emit('explorer-state-change', $event)" />
-  <SearchSidebarPanel v-show="isSearchView" :is-active="isSearchView" :document-path="document.path" :is-desktop-runtime="isDesktopRuntime" :workspace-root-path="workspaceRootPath" :preloaded-workspace-root="preloadedWorkspaceRoot" @open-file="handleOpenFile" />
-  <RunSidebarPanel v-show="isRunView" :is-active="isRunView" />
-  <div v-show="isSshView" class="ssh-sidebar-host-shell flex min-h-0 w-full flex-1 flex-col overflow-hidden" >
+  <!-- SIDEBAR_LAZY_VIEWLET_MARKER viewlet 懒挂载 + 缓存（对齐 VS Code viewlet）：每个面板首次被激活时才 mount
+       (v-if=mountedViews.has(view))，此后常驻缓存、仅用 v-show 切换可见性，切回不 remount。
+       首帧只付「初始视图」一个面板的 mount/解析代价（TTFP 优先），切换成本仍为 0；
+       面板内部数据加载仍由 is-active 控制，隐藏时不空跑。 -->
+  <SourceControlPanel v-if="mountedViews.has('source-control')" v-show="isSourceControlView" class="h-full min-h-0 w-full flex-1" :is-active="isSourceControlView" :is-desktop-runtime="isDesktopRuntime" :workspace-root-path="workspaceRootPath" :active-path="document.path" @open-file="handleOpenFile" @open-diff="handleOpenGitDiff" />
+  <WorkspaceExplorerPanel v-if="mountedViews.has('explorer')" v-show="isExplorerView" :document="document" :is-active="isExplorerView" :is-desktop-runtime="isDesktopRuntime" :workspace-root-path="workspaceRootPath" :preloaded-workspace-root="preloadedWorkspaceRoot" :startup-explorer-expanded-paths="startupExplorerExpandedPaths" :startup-explorer-selected-path="startupExplorerSelectedPath" @open-file="handleOpenFile" @open-folder="emit('open-folder')" @explorer-state-change="emit('explorer-state-change', $event)" />
+  <SearchSidebarPanel v-if="mountedViews.has('search')" v-show="isSearchView" :is-active="isSearchView" :document-path="document.path" :is-desktop-runtime="isDesktopRuntime" :workspace-root-path="workspaceRootPath" :preloaded-workspace-root="preloadedWorkspaceRoot" @open-file="handleOpenFile" />
+  <RunSidebarPanel v-if="mountedViews.has('run')" v-show="isRunView" :is-active="isRunView" />
+  <div v-if="mountedViews.has('extensions')" v-show="isSshView" class="ssh-sidebar-host-shell flex min-h-0 w-full flex-1 flex-col overflow-hidden" >
     <SshSidebarPanel :is-active="isSshView" @open-terminal="emit('open-terminal')" />
   </div>
   <!-- fallback placeholder (rare) -->
@@ -35,13 +38,26 @@
 </template>
 
 <script setup lang="ts">
-import { computed } from 'vue';
+import { computed, defineAsyncComponent, reactive, watch } from 'vue';
 import { Button } from '@/components/ui/button';
-import WorkspaceExplorerPanel from '@/components/workbench/sidebar/explorer/WorkspaceExplorerPanel.vue';
-import RunSidebarPanel from '@/components/workbench/sidebar/run/RunSidebarPanel.vue';
-import SearchSidebarPanel from '@/components/workbench/sidebar/search/SearchSidebarPanel.vue';
-import SourceControlPanel from '@/components/workbench/sidebar/source-control/SourceControlPanel.vue';
-import SshSidebarPanel from '@/components/workbench/sidebar/ssh/SshSidebarPanel.vue';
+
+// 5 个侧栏面板惰性化：未激活的面板其代码不进首屏入口 chunk，首访时才按需下载/求值。
+const WorkspaceExplorerPanel = defineAsyncComponent(
+  () => import('@/components/workbench/sidebar/explorer/WorkspaceExplorerPanel.vue'),
+);
+const RunSidebarPanel = defineAsyncComponent(
+  () => import('@/components/workbench/sidebar/run/RunSidebarPanel.vue'),
+);
+const SearchSidebarPanel = defineAsyncComponent(
+  () => import('@/components/workbench/sidebar/search/SearchSidebarPanel.vue'),
+);
+const SourceControlPanel = defineAsyncComponent(
+  () => import('@/components/workbench/sidebar/source-control/SourceControlPanel.vue'),
+);
+const SshSidebarPanel = defineAsyncComponent(
+  () => import('@/components/workbench/sidebar/ssh/SshSidebarPanel.vue'),
+);
+
 import type { TWorkbenchSidebarView } from '@/types/app';
 import type {
   IActiveRunSummary,
@@ -163,6 +179,16 @@ const isSourceControlView = computed(() => props.view === 'source-control');
 const isRunView = computed(() => props.view === 'run');
 const isSshView = computed(() => props.view === 'extensions');
 const panelMeta = computed(() => SIDEBAR_META[props.view] ?? SIDEBAR_META.ai);
+
+// viewlet 登记表：记录已激活过的视图；首次激活才 mount，其后 v-show 缓存常驻。
+const mountedViews = reactive(new Set<TWorkbenchSidebarView>());
+watch(
+  () => props.view,
+  (view) => {
+    mountedViews.add(view);
+  },
+  { immediate: true },
+);
 
 const handleOpenFile = (payload: TWorkbenchOpenFilePayload): void => {
   emit('open-file', payload);
