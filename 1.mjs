@@ -1,31 +1,38 @@
 #!/usr/bin/env node
-// scripts/fix-aipanelframe-comment.mjs
-// 幂等修正：删除启动骨架(StartupAiWorkbenchShell)后，AiPanelFrame.vue 顶部注释失真。
-// 用法：node scripts/fix-aipanelframe-comment.mjs        # dry-run，只预览
-//       node scripts/fix-aipanelframe-comment.mjs --apply # 实际写盘
+// scripts/prefetch-editor-surface.mjs
+// 目的：外壳首帧画出后，尽快把「编辑器」这个主 UI 加载出来，压缩“外壳已出、编辑器区还空着”的窗口。
+// 用法：node scripts/prefetch-editor-surface.mjs        # 预览
+//       node scripts/prefetch-editor-surface.mjs --apply # 写盘
 import { readFileSync, writeFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 
 const APPLY = process.argv.includes('--apply');
-const FILE = resolve(process.cwd(), 'src/components/business/ai/shell/AiPanelFrame.vue');
+const FILE = resolve(process.cwd(), 'src/app/ShellWorkbenchView.vue');
 
-// —— EOL 无关读写：匹配统一在 LF 上做，写回时还原原始换行符 ——
 const readText = (p) => {
   const raw = readFileSync(p, 'utf8');
   return { nl: raw.includes('\r\n') ? '\r\n' : '\n', text: raw.replace(/\r\n/g, '\n') };
 };
 const toEol = (text, nl) => (nl === '\r\n' ? text.replace(/\n/g, '\r\n') : text);
 
-// 新注释里独有的短语，作为“已应用”幂等标记（旧注释里没有“的通用结构与尺寸”）
-const APPLIED_MARKER = '的通用结构与尺寸，';
+const APPLIED_MARKER = 'const prefetchEditorSurface';
 
-// 整段失真注释：从首行锚点到末行锚点，中间(含引号)一律不敏感
-const BLOCK_RE = /\/\/ 共享 AI 面板外壳[\s\S]*?既同源又不拖慢启动。/;
+const NEW_FN =
+  '// 编辑器是首屏最先要看到的主 UI：initializeWorkbench 会先 await 运行时(~160ms)、再 restore 会话\n' +
+  '// 重开文档才令 doc.kind=\'text\' 触发下面 DeferredSmartScriptEditor 的加载。趁「外壳已出、编辑器区\n' +
+  '// 还空」这段空窗立即预取编辑器 chunk（CodeMirror/高亮），让 restore 到达时编辑器近乎即时挂载，\n' +
+  '// 消除“外壳有了、编辑器区白着数百毫秒~数秒”的窗口。不 await、不挡首帧绘制。\n' +
+  'const prefetchEditorSurface = (): void => {\n' +
+  '  if (typeof window === \'undefined\') {\n' +
+  '    return;\n' +
+  '  }\n' +
+  '\n' +
+  '  void import(\'@/components/editor/SmartScriptEditor.vue\');\n' +
+  '};\n';
 
-const NEW_COMMENT =
-  '// AI 面板外壳：头部 provider 标记 + 操作按钮 + 内容区 + 底部 composer 的通用结构与尺寸，\n' +
-  '// 供 AiAssistantPanel 复用。刻意保持轻量、不依赖任何 AI 子系统（useAiAssistant / CopilotKit 等），\n' +
-  '// 会话线程、建议气泡、输入框等重内核全部通过插槽注入。';
+const ANCHOR_FN = 'const prefetchAiSurfaceWhenIdle = (): void => {';
+const ANCHOR_MOUNT = 'onMounted(() => {\n  prefetchAiSurfaceWhenIdle();\n});';
+const NEXT_MOUNT = 'onMounted(() => {\n  prefetchEditorSurface();\n  prefetchAiSurfaceWhenIdle();\n});';
 
 let src;
 try {
@@ -36,17 +43,21 @@ try {
 }
 
 if (src.text.includes(APPLIED_MARKER)) {
-  console.log('✓ 已是新注释，无需改动（幂等跳过）。');
+  console.log('✓ 已预取编辑器，无需改动（幂等跳过）。');
   process.exit(0);
 }
 
-const count = (src.text.match(new RegExp(BLOCK_RE, 'g')) || []).length;
-if (count !== 1) {
-  console.error(`✗ 注释锚点命中 ${count} 次（应为 1），中止。文件可能已变动，请人工核对。`);
+const countFn = src.text.split(ANCHOR_FN).length - 1;
+const countMount = src.text.split(ANCHOR_MOUNT).length - 1;
+if (countFn !== 1 || countMount !== 1) {
+  console.error(`✗ 锚点命中异常（函数锚点 ${countFn}，onMounted 锚点 ${countMount}，均应为 1），中止。文件可能已变动，请人工核对。`);
   process.exit(1);
 }
 
-const nextText = src.text.replace(BLOCK_RE, NEW_COMMENT);
+const nextText = src.text
+  .replace(ANCHOR_FN, () => `${NEW_FN}\n${ANCHOR_FN}`)
+  .replace(ANCHOR_MOUNT, () => NEXT_MOUNT);
+
 if (nextText === src.text) {
   console.error('✗ 替换后内容无变化，中止。');
   process.exit(1);
@@ -54,7 +65,7 @@ if (nextText === src.text) {
 
 if (!APPLY) {
   console.log('— DRY RUN（未写盘，加 --apply 生效）—');
-  console.log('将把 AiPanelFrame.vue 顶部 7 行失真注释替换为 3 行新注释。');
+  console.log('将新增 prefetchEditorSurface() 并在 onMounted 首行调用（AI 预取之前）。');
   process.exit(0);
 }
 

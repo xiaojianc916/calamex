@@ -108,7 +108,12 @@ const queryCache = new Map<string, Query>();
 
 function ensureCore(): Promise<void> {
   if (!corePromise) {
-    corePromise = Parser.init({ locateFile: () => treeSitterWasmUrl });
+    console.info('[tsh] Parser.init core wasm =', treeSitterWasmUrl);
+    corePromise = Parser.init({ locateFile: () => treeSitterWasmUrl }).catch((e) => {
+      console.error('[tsh] Parser.init FAILED', e);
+      corePromise = null;
+      throw e;
+    });
   }
   return corePromise;
 }
@@ -168,6 +173,7 @@ class TreeSitterHighlighter {
     private readonly langId: string,
   ) {
     this.source = view.state.doc.toString();
+    console.info('[tsh] constructed', this.langId);
     void this.init();
   }
 
@@ -178,8 +184,9 @@ class TreeSitterHighlighter {
       this.parser = parser;
       this.reparse(true);
       this.publish();
-    } catch {
+    } catch (error) {
       // 语法加载失败：保持无色，不影响编辑
+      console.error('[tsh] init FAILED', this.langId, error);
     }
   }
 
@@ -226,7 +233,13 @@ class TreeSitterHighlighter {
 
   private build(): DecorationSet {
     const query = queryCache.get(this.langId);
-    if (!query || !this.tree) return Decoration.none;
+    if (!query || !this.tree) {
+      console.warn('[tsh] build skip', this.langId, {
+        hasQuery: Boolean(query),
+        hasTree: Boolean(this.tree),
+      });
+      return Decoration.none;
+    }
     const doc = this.view.state.doc;
     const { visibleRanges } = this.view;
     if (visibleRanges.length === 0) return Decoration.none;

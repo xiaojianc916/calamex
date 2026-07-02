@@ -289,6 +289,18 @@ const DeferredRunPanel = defineAsyncComponent({
   suspensible: false,
 });
 
+// 编辑器是首屏最先要看到的主 UI：initializeWorkbench 会先 await 运行时(~160ms)、再 restore 会话
+// 重开文档才令 doc.kind='text' 触发下面 DeferredSmartScriptEditor 的加载。趁「外壳已出、编辑器区
+// 还空」这段空窗立即预取编辑器 chunk（CodeMirror/高亮），让 restore 到达时编辑器近乎即时挂载，
+// 消除“外壳有了、编辑器区白着数百毫秒~数秒”的窗口。不 await、不挡首帧绘制。
+const prefetchEditorSurface = (): void => {
+  if (typeof window === 'undefined') {
+    return;
+  }
+
+  void import('@/components/editor/SmartScriptEditor.vue');
+};
+
 const prefetchAiSurfaceWhenIdle = (): void => {
   if (typeof window === 'undefined') {
     return;
@@ -307,6 +319,7 @@ const prefetchAiSurfaceWhenIdle = (): void => {
 };
 
 onMounted(() => {
+  prefetchEditorSurface();
   prefetchAiSurfaceWhenIdle();
 });
 
