@@ -3,12 +3,6 @@ import { VueQueryPlugin } from '@tanstack/vue-query';
 import { queryClient, setupQueryPersistence } from '@/lib/query-client';
 import { applyWindowStage } from '@/services/ipc/window.service';
 import { pinia } from '@/store';
-import { useAiThreadStore } from '@/store/aiThread';
-import { installAuthoritativeEntriesMirror } from '@/store/aiThread/authoritativeEntriesMirror';
-import {
-  runStartupPersistedRead,
-  defaultDeps as startupPersistedReadDefaultDeps,
-} from '@/store/aiThread/startupPersistedReadWiring';
 import { initEditorScrollbarActivity } from '@/utils/editor/editor-scrollbar-activity';
 import { renderFatalBootstrapError } from '@/utils/error/bootstrap-fatal-error';
 import {
@@ -123,19 +117,32 @@ const bootstrap = async (): Promise<void> => {
 
     const hydrateAiConversationAfterBootstrap = (): void => {
       // AI 历史不是首屏必需：延后到首屏后 idle，避免和 session hydrate / Vue mount 抢 IO。
+      // aiThread 全套（store + 权威镜像 + 启动读接线）仅在此 idle 任务用到，改为动态 import，
+      // 把这张依赖图移出入口 chunk 的解析/求值关键路径（与 command-catalog / launch-open 同范式）。
       scheduleIdle(() => {
-        void runStartupPersistedRead({
-          ...startupPersistedReadDefaultDeps,
-          // ④.1 §C：持久化 SoT 收敛到 aiThread 权威 entries，启动读结果直接灌入
-          // 权威线程（不再走 legacy 回退槽），后续由权威镜像负责落盘。
-          applyPersisted: (threads, activeThreadId) =>
-            useAiThreadStore().setAuthoritativeThreads(threads, activeThreadId),
-        })
-          .then(() => {
-            // ④.1 §C 双写接线：必须在权威线程灌入之后再装权威镜像，否则首帧立即镜像会把
-            // 空态写入 entries key，导致下次启动读到“空且权威”而丢历史。
-            installAuthoritativeEntriesMirror(useAiThreadStore());
-          })
+        void Promise.all([
+          import('@/store/aiThread'),
+          import('@/store/aiThread/authoritativeEntriesMirror'),
+          import('@/store/aiThread/startupPersistedReadWiring'),
+        ])
+          .then(
+            ([
+              { useAiThreadStore },
+              { installAuthoritativeEntriesMirror },
+              { runStartupPersistedRead, defaultDeps: startupPersistedReadDefaultDeps },
+            ]) =>
+              runStartupPersistedRead({
+                ...startupPersistedReadDefaultDeps,
+                // ④.1 §C：持久化 SoT 收敛到 aiThread 权威 entries，启动读结果直接灌入
+                // 权威线程（不再走 legacy 回退槽），后续由权威镜像负责落盘。
+                applyPersisted: (threads, activeThreadId) =>
+                  useAiThreadStore().setAuthoritativeThreads(threads, activeThreadId),
+              }).then(() => {
+                // ④.1 §C 双写接线：必须在权威线程灌入之后再装权威镜像，否则首帧立即镜像会把
+                // 空态写入 entries key，导致下次启动读到“空且权威”而丢历史。
+                installAuthoritativeEntriesMirror(useAiThreadStore());
+              }),
+          )
           .catch((error: unknown) => {
             console.warn('AI 会话历史后台 hydrate 失败', error);
           });

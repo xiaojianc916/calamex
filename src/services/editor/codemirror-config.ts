@@ -1,5 +1,5 @@
 import { closeBrackets } from '@codemirror/autocomplete';
-import { codeFolding, foldGutter, indentUnit } from '@codemirror/language';
+import { bracketMatching, codeFolding, foldGutter, indentUnit } from '@codemirror/language';
 import { EditorState, type Extension } from '@codemirror/state';
 import {
   EditorView,
@@ -40,6 +40,12 @@ const buildFoldPlaceholder = (_view: EditorView, onclick: (event: Event) => void
   }
   return pill;
 };
+
+/** 括号匹配配色：取自官方 github-light（brackethighlighter=#586069，unmatched=#b31d28）。 */
+const bracketMatchTheme = EditorView.baseTheme({
+  '.cm-matchingBracket': { color: '#586069', backgroundColor: 'rgba(88, 96, 105, 0.12)' },
+  '.cm-nonmatchingBracket': { color: '#b31d28', backgroundColor: 'rgba(179, 29, 40, 0.12)' },
+});
 
 export interface ICodeMirrorSettingsOptions {
   activeLine?: boolean;
@@ -82,5 +88,7 @@ export const buildCodeMirrorSettingsExtensions = (
         ]
       : [],
     enableAutoClosingPairs ? closeBrackets() : [],
+    bracketMatching(),
+    bracketMatchTheme,
   ];
 };

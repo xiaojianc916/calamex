@@ -179,8 +179,15 @@ export class ThemeManager {
   /**
    * 获取当前 xterm 主题对象。
    * 在 init() 调用之前为 null。
+   * 惰性构造：init()/切换后首次读取时按当前变体 roles 构造并缓存；切换时被置 null 失效。
    */
   getTerminalTheme(): Readonly<IXtermTheme> | null {
+    if (this.#currentTerminalTheme === null && this.#currentTokens !== null) {
+      const roles = VARIANT_MAP.get(this.#currentId)?.roles;
+      if (roles) {
+        this.#currentTerminalTheme = buildTerminalTheme(roles);
+      }
+    }
     return this.#currentTerminalTheme;
   }
 
@@ -259,7 +266,10 @@ export class ThemeManager {
 
     // 缓存派生结果
     this.#currentTokens = tokens;
-    this.#currentTerminalTheme = buildTerminalTheme(roles);
+    // 终端主题仅由 useIntegratedTerminal 消费，且终端在首帧绘制后（双 rAF）才 attach。
+    // 不再于切换/init() 的同步关键路径急切构造 buildTerminalTheme：此处置 null 失效，
+    // 由 getTerminalTheme() 首次读取时惰性构造并缓存，把该派生移出 mount 前关键路径。
+    this.#currentTerminalTheme = null;
     this.#currentId = id;
 
     if (persist) {
