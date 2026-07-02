@@ -15,6 +15,10 @@ use serde_json::Value;
 use tokio::sync::{mpsc, oneshot};
 
 use crate::commands::contracts::SecretString;
+use crate::acp::bridges::AcpBridges;
+use agent_client_protocol::schema::{
+    ReadTextFileRequest, ReadTextFileResponse, WriteTextFileRequest, WriteTextFileResponse,
+};
 
 use agent_client_protocol::schema::{
 	ClientCapabilities, FileSystemCapabilities, Implementation,
@@ -360,6 +364,7 @@ pub fn spawn_acp_client(
     config: AcpClientConfig,
     sink: EventSink,
     resolver: PermissionResolver,
+    bridges: AcpBridges,
 ) -> Result<AcpClientHandle, AcpClientError> {
     let (cmd_tx, mut cmd_rx) = mpsc::unbounded_channel::<Command>();
     let seq = Arc::new(AtomicU64::new(0));
@@ -414,6 +419,7 @@ pub fn spawn_acp_client(
         let transport = ByteStreams::new(child_stdin.compat_write(), child_stdout.compat());
         // === END ===
 
+        let AcpBridges { fs_read, fs_write } = bridges;
         let result = Client
             .builder()
             .name("calamex")
@@ -474,6 +480,42 @@ pub fn spawn_acp_client(
                 },
                 on_receive_request!(),
             )
+            .on_receive_request(
+                move |req: ReadTextFileRequest, responder: Responder<ReadTextFileResponse>, _cx: ConnectionTo<Agent>| {
+                    let cb = fs_read.clone();
+                    async move {
+                        tokio::spawn(async move {
+                            let reply = match cb(req).await {
+                                Ok(resp) => responder.respond(resp),
+                                Err(err) => responder.respond_with_error(err),
+                            };
+                            if let Err(error) = reply {
+                                log::warn!("acp fs/read_text_file responder failed: {error}");
+                            }
+                        });
+                        Ok::<(), agent_client_protocol::Error>(())
+                    }
+                },
+                on_receive_request!(),
+            )
+            .on_receive_request(
+                move |req: WriteTextFileRequest, responder: Responder<WriteTextFileResponse>, _cx: ConnectionTo<Agent>| {
+                    let cb = fs_write.clone();
+                    async move {
+                        tokio::spawn(async move {
+                            let reply = match cb(req).await {
+                                Ok(resp) => responder.respond(resp),
+                                Err(err) => responder.respond_with_error(err),
+                            };
+                            if let Err(error) = reply {
+                                log::warn!("acp fs/write_text_file responder failed: {error}");
+                            }
+                        });
+                        Ok::<(), agent_client_protocol::Error>(())
+                    }
+                },
+                on_receive_request!(),
+            )
             .connect_with(transport, async move |cx| {
                 // 持有子进程句柄（kill_on_drop），连接断开时自动终止 AI 进程。
                 let _child_guard = child;
@@ -483,7 +525,7 @@ pub fn spawn_acp_client(
             .fs(FileSystemCapabilities::new()
                 .read_text_file(true)
                 .write_text_file(true))
-            .terminal(true),
+            .terminal(false),
     )
     .client_info(Implementation::new("calamex", env!("CARGO_PKG_VERSION"))))
                     .block_task()

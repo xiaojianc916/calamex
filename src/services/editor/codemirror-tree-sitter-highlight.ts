@@ -6,9 +6,9 @@ import {
   ViewPlugin,
   type ViewUpdate,
 } from '@codemirror/view';
-import { Language, Parser, Query } from 'web-tree-sitter';
-import treeSitterWasmUrl from 'web-tree-sitter/web-tree-sitter.wasm?url';
+import { type Language, Parser, Query } from 'web-tree-sitter';
 import { computeBashSourceEdit, type Point, type Tree } from './tree-sitter/bash-runtime';
+import { ensureTreeSitterLanguage } from './tree-sitter/core-runtime';
 import {
   resolveTreeSitterLanguageId,
   TREE_SITTER_LANGUAGES,
@@ -115,34 +115,14 @@ function posForPoint(doc: Text, point: Point): number {
 }
 
 // 每语言的 Parser / Query 单例缓存（tree-sitter 查询是为逐键解析设计的，编译一次即可复用）。
-let corePromise: Promise<void> | null = null;
-const languagePromises = new Map<string, Promise<Language>>();
+// Language 加载统一委托给 tree-sitter/core-runtime：与 bash-runtime 等其他消费者共享同一份
+// 已编译 Language（按 langId 缓存），避免同一语法被独立加载多份。
 const parserPromises = new Map<string, Promise<Parser>>();
 const queryCache = new Map<string, Query>();
 
-function ensureCore(): Promise<void> {
-  if (!corePromise) {
-    console.info('[tsh] Parser.init core wasm =', treeSitterWasmUrl);
-    corePromise = Parser.init({ locateFile: () => treeSitterWasmUrl }).catch((e) => {
-      console.error('[tsh] Parser.init FAILED', e);
-      corePromise = null;
-      throw e;
-    });
-  }
-  return corePromise;
-}
-
 function ensureLanguage(langId: string): Promise<Language> {
-  let promise = languagePromises.get(langId);
-  if (!promise) {
-    const entry = TREE_SITTER_LANGUAGES[langId];
-    promise = (async () => {
-      await ensureCore();
-      return Language.load(entry.wasmUrl);
-    })();
-    languagePromises.set(langId, promise);
-  }
-  return promise;
+  const entry = TREE_SITTER_LANGUAGES[langId];
+  return ensureTreeSitterLanguage(langId, entry.wasmUrl);
 }
 
 function ensureParser(langId: string): Promise<Parser> {

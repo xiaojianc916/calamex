@@ -1,134 +1,181 @@
-// 4-enable-full-highlighting.mjs — 补齐 capture 映射（markdown/diff/rust 等）+ 修复 vue wasm 引用
-import { readFileSync, writeFileSync } from "node:fs"
+// 5-unify-bash-runtime.mjs — 消除 bash 语法重复加载，统一为共享 Language 缓存 + 单一 wasm 来源
+import { readFileSync, writeFileSync, mkdirSync } from "node:fs"
 import { join } from "node:path"
 
 const ROOT = process.cwd()
+const CORE_RUNTIME_PATH = join(ROOT, "src/services/editor/tree-sitter/core-runtime.ts")
 const HIGHLIGHT_TS = join(ROOT, "src/services/editor/codemirror-tree-sitter-highlight.ts")
-const REGISTRY_TS = join(ROOT, "src/services/editor/tree-sitter/language-registry.generated.ts")
+const BASH_RUNTIME_TS = join(ROOT, "src/services/editor/tree-sitter/bash-runtime.ts")
 
-// ── 1) 修复 vue wasm 引用：从坏掉的 npm 包切到本地自编译产物 ──
-{
-	let content = readFileSync(REGISTRY_TS, "utf8")
-	const before = content
-	content = content.replace(
-		/\/\/ vue 暂不支持[^\n]*\nimport vue_wasm from 'tree-sitter-wasms\/out\/tree-sitter-vue\.wasm\?url';/,
-		"import vue_wasm from './wasm/tree-sitter-vue.wasm?url';",
-	)
-	if (content === before) {
-		console.log("⚠️ 未找到 vue_wasm 旧引用锚点，请人工检查 language-registry.generated.ts 是否已手动改过")
-	} else {
-		writeFileSync(REGISTRY_TS, content, "utf8")
-		console.log("✅ vue_wasm 已切换为本地自编译产物")
-	}
+// ── 1) 新建共享核心运行时：唯一的 Parser.init + 按 cacheKey 缓存的 Language.load ──
+const CORE_RUNTIME_CONTENT = `import { Language, Parser } from 'web-tree-sitter';
+import treeSitterWasmUrl from 'web-tree-sitter/web-tree-sitter.wasm?url';
+
+/**
+ * tree-sitter 核心运行时的唯一入口：Parser.init（wasm 引擎）与按 key 缓存的 Language 加载。
+ *
+ * 所有消费者（通用高亮引擎 codemirror-tree-sitter-highlight、bash 语言服务
+ * tree-sitter/bash-runtime、终端补全 shell-completion 等）都必须经由本模块获取 Language，
+ * 禁止各自独立 Parser.init / Language.load。同一 cacheKey 只会触发一次 wasm 解码与语法编译，
+ * 后续调用直接复用同一个 Promise<Language>，避免同一语法被加载多份、占用双倍内存，也避免
+ * 不同调用点各自指向不同 wasm 文件造成的语法版本漂移。
+ */
+
+let corePromise: Promise<void> | null = null;
+
+export function ensureTreeSitterCore(): Promise<void> {
+  if (!corePromise) {
+    corePromise = Parser.init({ locateFile: () => treeSitterWasmUrl }).catch((error) => {
+      corePromise = null;
+      throw error;
+    });
+  }
+  return corePromise;
 }
 
-// ── 2) 扩充 CAPTURE_CLASS 与主题，覆盖 markdown/diff/rust 等官方查询实际用到、但当前未映射的 capture ──
+const languagePromises = new Map<string, Promise<Language>>();
+
+/** 按 cacheKey 缓存加载 Language；同一 cacheKey 重复调用直接复用同一个 Promise。 */
+export function ensureTreeSitterLanguage(cacheKey: string, wasmUrl: string): Promise<Language> {
+  let promise = languagePromises.get(cacheKey);
+  if (!promise) {
+    promise = (async () => {
+      await ensureTreeSitterCore();
+      return Language.load(wasmUrl);
+    })().catch((error) => {
+      languagePromises.delete(cacheKey);
+      throw error;
+    });
+    languagePromises.set(cacheKey, promise);
+  }
+  return promise;
+}
+`
+mkdirSync(join(ROOT, "src/services/editor/tree-sitter"), { recursive: true })
+writeFileSync(CORE_RUNTIME_PATH, CORE_RUNTIME_CONTENT, "utf8")
+console.log("✅ 新建 core-runtime.ts")
+
+// ── 2) codemirror-tree-sitter-highlight.ts：core/Language 加载改为委托给 core-runtime ──
 {
 	let content = readFileSync(HIGHLIGHT_TS, "utf8")
 
-	const oldCaptureBlock = `const CAPTURE_CLASS: Readonly<Record<string, string>> = {
-  comment: 'cm-tsh-comment',
-  string: 'cm-tsh-string',
-  character: 'cm-tsh-string',
-  'string.escape': 'cm-tsh-escape',
-  escape: 'cm-tsh-escape',
-  number: 'cm-tsh-number',
-  float: 'cm-tsh-number',
-  boolean: 'cm-tsh-constant',
-  constant: 'cm-tsh-constant',
-  'variable.builtin': 'cm-tsh-constant',
-  function: 'cm-tsh-function',
-  'function.builtin': 'cm-tsh-constant',
-  method: 'cm-tsh-function',
-  constructor: 'cm-tsh-function',
-  keyword: 'cm-tsh-keyword',
-  conditional: 'cm-tsh-keyword',
-  repeat: 'cm-tsh-keyword',
-  type: 'cm-tsh-type',
-  'type.builtin': 'cm-tsh-constant',
-  namespace: 'cm-tsh-type',
-  attribute: 'cm-tsh-attribute',
-  tag: 'cm-tsh-tag',
-  label: 'cm-tsh-label',
-};`
+	const oldImportLine = `import { Language, Parser, Query } from 'web-tree-sitter';\nimport treeSitterWasmUrl from 'web-tree-sitter/web-tree-sitter.wasm?url';`
+	const newImportLine = `import { Language, Parser, Query } from 'web-tree-sitter';\nimport { ensureTreeSitterLanguage } from './tree-sitter/core-runtime';`
 
-	const newCaptureBlock = `const CAPTURE_CLASS: Readonly<Record<string, string>> = {
-  comment: 'cm-tsh-comment',
-  string: 'cm-tsh-string',
-  character: 'cm-tsh-string',
-  'string.escape': 'cm-tsh-escape',
-  escape: 'cm-tsh-escape',
-  number: 'cm-tsh-number',
-  float: 'cm-tsh-number',
-  boolean: 'cm-tsh-constant',
-  constant: 'cm-tsh-constant',
-  'variable.builtin': 'cm-tsh-constant',
-  function: 'cm-tsh-function',
-  'function.builtin': 'cm-tsh-constant',
-  method: 'cm-tsh-function',
-  constructor: 'cm-tsh-function',
-  keyword: 'cm-tsh-keyword',
-  conditional: 'cm-tsh-keyword',
-  repeat: 'cm-tsh-keyword',
-  type: 'cm-tsh-type',
-  'type.builtin': 'cm-tsh-constant',
-  namespace: 'cm-tsh-type',
-  attribute: 'cm-tsh-attribute',
-  tag: 'cm-tsh-tag',
-  label: 'cm-tsh-label',
-  // 字段/属性访问（如 rust 的 field_identifier、多语言的 @property）：与 entity 同色。
-  property: 'cm-tsh-attribute',
-  // Markdown（官方 highlights.scm 用旧版 nvim-treesitter 的 @text.* 体系）。
-  'text.title': 'cm-tsh-heading',
-  'text.literal': 'cm-tsh-code',
-  'text.uri': 'cm-tsh-link',
-  'text.reference': 'cm-tsh-link',
-  'text.strong': 'cm-tsh-strong',
-  'text.emphasis': 'cm-tsh-emphasis',
-  // 同名新版 nvim-treesitter/Zed 的 @markup.* 体系，双路兼容未来切换的查询文件。
-  'markup.heading': 'cm-tsh-heading',
-  'markup.raw': 'cm-tsh-code',
-  'markup.link.url': 'cm-tsh-link',
-  'markup.link.label': 'cm-tsh-link',
-  'markup.strong': 'cm-tsh-strong',
-  'markup.italic': 'cm-tsh-emphasis',
-  // Diff：新增/删除行是 diff 视图最核心的视觉信息，必须着色。
-  'diff.plus': 'cm-tsh-diff-plus',
-  'diff.minus': 'cm-tsh-diff-minus',
-  'diff.delta': 'cm-tsh-diff-delta',
-};`
+	const oldCoreBlock = `// 每语言的 Parser / Query 单例缓存（tree-sitter 查询是为逐键解析设计的，编译一次即可复用）。
+let corePromise: Promise<void> | null = null;
+const languagePromises = new Map<string, Promise<Language>>();
+const parserPromises = new Map<string, Promise<Parser>>();
+const queryCache = new Map<string, Query>();
 
-	if (!content.includes(oldCaptureBlock)) {
-		console.log("⚠️ 未找到 CAPTURE_CLASS 原始块（文件可能已被手动改过），跳过此项，请人工检查")
+function ensureCore(): Promise<void> {
+  if (!corePromise) {
+    console.info('[tsh] Parser.init core wasm =', treeSitterWasmUrl);
+    corePromise = Parser.init({ locateFile: () => treeSitterWasmUrl }).catch((e) => {
+      console.error('[tsh] Parser.init FAILED', e);
+      corePromise = null;
+      throw e;
+    });
+  }
+  return corePromise;
+}
+
+function ensureLanguage(langId: string): Promise<Language> {
+  let promise = languagePromises.get(langId);
+  if (!promise) {
+    const entry = TREE_SITTER_LANGUAGES[langId];
+    promise = (async () => {
+      await ensureCore();
+      return Language.load(entry.wasmUrl);
+    })();
+    languagePromises.set(langId, promise);
+  }
+  return promise;
+}`
+
+	const newCoreBlock = `// 每语言的 Parser / Query 单例缓存（tree-sitter 查询是为逐键解析设计的，编译一次即可复用）。
+// Language 加载统一委托给 tree-sitter/core-runtime：与 bash-runtime 等其他消费者共享同一份
+// 已编译 Language（按 langId 缓存），避免同一语法被独立加载多份。
+const parserPromises = new Map<string, Promise<Parser>>();
+const queryCache = new Map<string, Query>();
+
+function ensureLanguage(langId: string): Promise<Language> {
+  const entry = TREE_SITTER_LANGUAGES[langId];
+  return ensureTreeSitterLanguage(langId, entry.wasmUrl);
+}`
+
+	if (!content.includes(oldImportLine)) {
+		console.log("⚠️ 未找到 highlight 文件的原始 import 行，跳过 import 替换，请人工检查")
 	} else {
-		content = content.replace(oldCaptureBlock, newCaptureBlock)
-		console.log("✅ CAPTURE_CLASS 已扩充（markdown/diff/property）")
+		content = content.replace(oldImportLine, newImportLine)
 	}
 
-	const oldThemeTail = `  '.cm-tsh-tag': { color: '#22863a' },
-  '.cm-tsh-label': { color: '#6f42c1' },
-});`
-
-	const newThemeTail = `  '.cm-tsh-tag': { color: '#22863a' },
-  '.cm-tsh-label': { color: '#6f42c1' },
-  '.cm-tsh-heading': { color: '#005cc5', fontWeight: '600' },
-  '.cm-tsh-code': { color: '#032f62' },
-  '.cm-tsh-link': { color: '#032f62', textDecoration: 'underline' },
-  '.cm-tsh-strong': { fontWeight: '700' },
-  '.cm-tsh-emphasis': { fontStyle: 'italic' },
-  '.cm-tsh-diff-plus': { color: '#22863a', backgroundColor: 'rgba(34,134,58,0.08)' },
-  '.cm-tsh-diff-minus': { color: '#d73a49', backgroundColor: 'rgba(215,58,73,0.08)' },
-  '.cm-tsh-diff-delta': { color: '#6f42c1' },
-});`
-
-	if (!content.includes(oldThemeTail)) {
-		console.log("⚠️ 未找到主题结尾块（文件可能已被手动改过），跳过此项，请人工检查")
+	if (!content.includes(oldCoreBlock)) {
+		console.log("⚠️ 未找到 highlight 文件的原始 core 加载块，跳过该项替换，请人工检查")
 	} else {
-		content = content.replace(oldThemeTail, newThemeTail)
-		console.log("✅ 主题颜色已扩充")
+		content = content.replace(oldCoreBlock, newCoreBlock)
+		console.log("✅ codemirror-tree-sitter-highlight.ts 已改为委托 core-runtime")
 	}
 
 	writeFileSync(HIGHLIGHT_TS, content, "utf8")
 }
 
-console.log("\n完成。重启 dev，测试 .md / .diff / .vue / .rs 文件。")
+// ── 3) bash-runtime.ts：Language 加载改为复用共享缓存（cacheKey='shell'，wasm 来源统一为 registry） ──
+{
+	let content = readFileSync(BASH_RUNTIME_TS, "utf8")
+
+	const oldHeader = `import bashLanguageWasmUrl from 'tree-sitter-bash/tree-sitter-bash.wasm?url';
+import { Edit, Language, type Node, Parser, type Point, type Tree } from 'web-tree-sitter';
+import treeSitterWasmUrl from 'web-tree-sitter/web-tree-sitter.wasm?url';`
+
+	const newHeader = `import { Edit, type Node, Parser, type Point, type Tree } from 'web-tree-sitter';
+import { ensureTreeSitterLanguage } from './core-runtime';
+import { TREE_SITTER_LANGUAGES } from './language-registry.generated';`
+
+	const oldLoaders = `let runtimePromise: Promise<Language> | null = null;
+let parserPromise: Promise<Parser> | null = null;
+
+/** 加载并缓存 bash 文法;失败时清空 promise 以便下次重试。 */
+export const ensureBashLanguage = async (): Promise<Language> => {
+  if (!runtimePromise) {
+    runtimePromise = (async () => {
+      try {
+        await Parser.init({ locateFile: () => treeSitterWasmUrl });
+        return await Language.load(bashLanguageWasmUrl);
+      } catch (error) {
+        runtimePromise = null;
+        throw error;
+      }
+    })();
+  }
+  return runtimePromise;
+};`
+
+	const newLoaders = `let parserPromise: Promise<Parser> | null = null;
+
+/**
+ * 复用通用高亮引擎（codemirror-tree-sitter-highlight）同一份 shell Language 缓存：
+ * cacheKey 与 wasm 来源都取自 language-registry（唯一真源），既避免本模块曾经独立
+ * Parser.init + Language.load 造成的「同一语法加载两份、内存翻倍」，也消除了两处各自
+ * 指向不同 bash wasm 文件（npm 包 vs 自编译产物）的版本漂移风险。
+ */
+export const ensureBashLanguage = () =>
+  ensureTreeSitterLanguage('shell', TREE_SITTER_LANGUAGES.shell.wasmUrl);`
+
+	if (!content.includes(oldHeader)) {
+		console.log("⚠️ 未找到 bash-runtime 原始 import 头，跳过替换，请人工检查")
+	} else {
+		content = content.replace(oldHeader, newHeader)
+	}
+
+	if (!content.includes(oldLoaders)) {
+		console.log("⚠️ 未找到 bash-runtime 原始 ensureBashLanguage 实现，跳过替换，请人工检查")
+	} else {
+		content = content.replace(oldLoaders, newLoaders)
+		console.log("✅ bash-runtime.ts 已改为复用共享 Language 缓存")
+	}
+
+	writeFileSync(BASH_RUNTIME_TS, content, "utf8")
+}
+
+console.log("\n完成。重启 dev，打开 .sh 文件确认：高亮 / 折叠 / 缩进 / 结构选区（Mod-i）均正常。")

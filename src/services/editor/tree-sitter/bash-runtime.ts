@@ -1,6 +1,6 @@
-import bashLanguageWasmUrl from 'tree-sitter-bash/tree-sitter-bash.wasm?url';
-import { Edit, Language, type Node, Parser, type Point, type Tree } from 'web-tree-sitter';
-import treeSitterWasmUrl from 'web-tree-sitter/web-tree-sitter.wasm?url';
+import { Edit, type Node, Parser, type Point, type Tree } from 'web-tree-sitter';
+import { ensureTreeSitterLanguage } from './core-runtime';
+import { TREE_SITTER_LANGUAGES } from './language-registry.generated';
 
 /**
  * tree-sitter bash 运行时与坐标换算原语。
@@ -11,24 +11,16 @@ import treeSitterWasmUrl from 'web-tree-sitter/web-tree-sitter.wasm?url';
  * 必须经由本模块的字节<->字符换算,确保非 ASCII 文本下折叠/缩进/结构选区定位准确。
  */
 
-let runtimePromise: Promise<Language> | null = null;
 let parserPromise: Promise<Parser> | null = null;
 
-/** 加载并缓存 bash 文法;失败时清空 promise 以便下次重试。 */
-export const ensureBashLanguage = async (): Promise<Language> => {
-  if (!runtimePromise) {
-    runtimePromise = (async () => {
-      try {
-        await Parser.init({ locateFile: () => treeSitterWasmUrl });
-        return await Language.load(bashLanguageWasmUrl);
-      } catch (error) {
-        runtimePromise = null;
-        throw error;
-      }
-    })();
-  }
-  return runtimePromise;
-};
+/**
+ * 复用通用高亮引擎（codemirror-tree-sitter-highlight）同一份 shell Language 缓存：
+ * cacheKey 与 wasm 来源都取自 language-registry（唯一真源），既避免本模块曾经独立
+ * Parser.init + Language.load 造成的「同一语法加载两份、内存翻倍」，也消除了两处各自
+ * 指向不同 bash wasm 文件（npm 包 vs 自编译产物）的版本漂移风险。
+ */
+export const ensureBashLanguage = () =>
+  ensureTreeSitterLanguage('shell', TREE_SITTER_LANGUAGES.shell.wasmUrl);
 
 /** 复用单例 Parser:避免每次解析都 new/delete 一个 tree-sitter 解析器。 */
 export const ensureBashParser = async (): Promise<Parser> => {
