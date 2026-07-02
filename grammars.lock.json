@@ -102,5 +102,41 @@
   "vue": {
     "repo": "https://github.com/tree-sitter-grammars/tree-sitter-vue",
     "commit": "7e48557b903a9db9c38cea3b7839ef7e1f36c693"
+  },
+  "scss": {
+    "repo": "https://github.com/tree-sitter-grammars/tree-sitter-scss",
+    "commit": "2ef6d42e3ad7a8208900f9346f4529806ae0f9f9"
+  },
+  "less": {
+    "repo": "https://github.com/jimliang/tree-sitter-less",
+    "commit": "e5ae6245f841b5778c79ac93b28fa4f56b679c5d"
+  },
+  "powershell": {
+    "repo": "https://github.com/airbus-cert/tree-sitter-powershell",
+    "commit": "d398441825243b00e317e87e1829b9d6a3e54ce0"
+  },
+  "sql": {
+    "repo": "https://github.com/DerekStride/tree-sitter-sql",
+    "commit": "c2e1e08db1ea20dc23bdb8d228a81a8756e9c450"
+  },
+  "xml": {
+    "repo": "https://github.com/tree-sitter-grammars/tree-sitter-xml",
+    "commit": "5000ae8f22d11fbe93939b05c1e37cf21117162d"
+  },
+  "r": {
+    "repo": "https://github.com/r-lib/tree-sitter-r",
+    "commit": "58a22794466c0fc15b0d3b40531db751593721e8"
+  },
+  "latex": {
+    "repo": "https://github.com/latex-lsp/tree-sitter-latex",
+    "commit": "7e0ecdc02926c7b9b2e0c76003d4fe7b0944f957"
+  },
+  "proto": {
+    "repo": "https://github.com/coder3101/tree-sitter-proto",
+    "commit": "cf8e4eba6e5b4afb9eb16c9178bba3d2504b46c2"
+  },
+  "ini": {
+    "repo": "https://github.com/justinmk/tree-sitter-ini",
+    "commit": "e4018b5176132b4f3c5d6e61cea383f42288d0f5"
   }
 }
