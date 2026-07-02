@@ -40,3 +40,23 @@ export function ensureTreeSitterLanguage(cacheKey: string, wasmUrl: string): Pro
   }
   return promise;
 }
+
+const parserPromises = new Map<string, Promise<Parser>>();
+
+/** 按 cacheKey 缓存已绑定语言的 Parser 实例；同一 cacheKey 的所有消费者共用同一个 Parser。 */
+export function ensureTreeSitterParser(cacheKey: string, wasmUrl: string): Promise<Parser> {
+  let promise = parserPromises.get(cacheKey);
+  if (!promise) {
+    promise = (async () => {
+      const language = await ensureTreeSitterLanguage(cacheKey, wasmUrl);
+      const parser = new Parser();
+      parser.setLanguage(language);
+      return parser;
+    })().catch((error) => {
+      parserPromises.delete(cacheKey);
+      throw error;
+    });
+    parserPromises.set(cacheKey, promise);
+  }
+  return promise;
+}

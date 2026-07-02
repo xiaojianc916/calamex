@@ -3,6 +3,7 @@ import type { Extension } from '@codemirror/state';
 import { LANGUAGE_DEFINITIONS } from '@/utils/editor/language-registry';
 import { logger } from '@/utils/platform/logger';
 import { withTreeSitterHighlight } from './codemirror-tree-sitter-highlight';
+import { treeSitterStructureExtensions } from './codemirror-tree-sitter-structure';
 
 export type TCodeMirrorLanguageId = string;
 
@@ -47,54 +48,30 @@ const CODEMIRROR_LANGUAGE_LOADERS: Readonly<Record<string, () => Promise<Extensi
   less: () => import('@codemirror/lang-css').then((m) => m.css()),
   json: () => import('@codemirror/lang-json').then((m) => m.json()),
   markdown: () => import('@codemirror/lang-markdown').then((m) => m.markdown()),
-  dockerfile: streamLanguageLoader(() =>
-    import('@codemirror/legacy-modes/mode/dockerfile').then((m) => m.dockerFile),
-  ),
-  diff: streamLanguageLoader(() =>
-    import('@codemirror/legacy-modes/mode/diff').then((m) => m.diff),
-  ),
+  dockerfile: async () => treeSitterStructureExtensions('dockerfile'),
+  diff: async () => treeSitterStructureExtensions('diff'),
   c: () => import('@codemirror/lang-cpp').then((m) => m.cpp()),
   cpp: () => import('@codemirror/lang-cpp').then((m) => m.cpp()),
-  csharp: streamLanguageLoader(() =>
-    import('@codemirror/legacy-modes/mode/clike').then((m) => m.csharp),
-  ),
-  dart: streamLanguageLoader(() =>
-    import('@codemirror/legacy-modes/mode/clike').then((m) => m.dart),
-  ),
+  csharp: async () => treeSitterStructureExtensions('csharp'),
+  dart: async () => treeSitterStructureExtensions('dart'),
   go: () => import('@codemirror/lang-go').then((m) => m.go()),
   java: () => import('@codemirror/lang-java').then((m) => m.java()),
-  kotlin: streamLanguageLoader(() =>
-    import('@codemirror/legacy-modes/mode/clike').then((m) => m.kotlin),
-  ),
-  lua: streamLanguageLoader(() => import('@codemirror/legacy-modes/mode/lua').then((m) => m.lua)),
-  powershell: streamLanguageLoader(() =>
-    import('@codemirror/legacy-modes/mode/powershell').then((m) => m.powerShell),
-  ),
-  proto: streamLanguageLoader(() =>
-    import('@codemirror/legacy-modes/mode/protobuf').then((m) => m.protobuf),
-  ),
+  kotlin: async () => treeSitterStructureExtensions('kotlin'),
+  lua: async () => treeSitterStructureExtensions('lua'),
+  powershell: async () => treeSitterStructureExtensions('powershell'),
+  proto: async () => treeSitterStructureExtensions('proto'),
   python: () => import('@codemirror/lang-python').then((m) => m.python()),
-  r: streamLanguageLoader(() => import('@codemirror/legacy-modes/mode/r').then((m) => m.r)),
-  ruby: streamLanguageLoader(() =>
-    import('@codemirror/legacy-modes/mode/ruby').then((m) => m.ruby),
-  ),
+  r: async () => treeSitterStructureExtensions('r'),
+  ruby: async () => treeSitterStructureExtensions('ruby'),
   rust: () => import('@codemirror/lang-rust').then((m) => m.rust()),
-  scala: streamLanguageLoader(() =>
-    import('@codemirror/legacy-modes/mode/clike').then((m) => m.scala),
-  ),
+  scala: async () => treeSitterStructureExtensions('scala'),
   sql: () => import('@codemirror/lang-sql').then((m) => m.sql({})),
-  latex: streamLanguageLoader(() =>
-    import('@codemirror/legacy-modes/mode/stex').then((m) => m.stex),
-  ),
+  latex: async () => treeSitterStructureExtensions('latex'),
   swift: streamLanguageLoader(() =>
     import('@codemirror/legacy-modes/mode/swift').then((m) => m.swift),
   ),
-  toml: streamLanguageLoader(() =>
-    import('@codemirror/legacy-modes/mode/toml').then((m) => m.toml),
-  ),
-  ini: streamLanguageLoader(() =>
-    import('@codemirror/legacy-modes/mode/properties').then((m) => m.properties),
-  ),
+  toml: async () => treeSitterStructureExtensions('toml'),
+  ini: async () => treeSitterStructureExtensions('ini'),
   xml: () => import('@codemirror/lang-xml').then((m) => m.xml()),
   yaml: () => import('@codemirror/lang-yaml').then((m) => m.yaml()),
 };
