@@ -1,5 +1,4 @@
 import {
-    BUILTIN_AGENT_RESPONSE_SCHEMA_VERSION,
     type TAgentSidecarResponse,
     type TAgentUiEvent,
     type TLanguageModelUsage,
@@ -193,7 +192,6 @@ export const toAgentUiEvent = (event: TAgentRuntimeOutputEvent): TAgentUiEvent =
 export const toAgentSidecarResponse = (
     response: IAgentRuntimeResponse,
 ): TAgentSidecarResponse => ({
-    schemaVersion: BUILTIN_AGENT_RESPONSE_SCHEMA_VERSION,
     sessionId: response.sessionId,
     events: response.errorMessage
         ? [...response.events, { type: 'error' as const, message: response.errorMessage }]

@@ -4,7 +4,7 @@ import { randomUUID } from 'node:crypto';
  * 内部 runtime event 协议版本。
  *
  * 这是 sidecar 内部事件契约（`TAgentRuntimeEvent`），
- * 不是 UI wire envelope（后者由 `events.ts.BUILTIN_AGENT_RESPONSE_SCHEMA_VERSION` 管）。
+ * 不是 UI wire envelope（信封本身已无独立协议版本字段）。
  */
 export const AGENT_RUNTIME_EVENT_SCHEMA_VERSION = 1 as const;
 

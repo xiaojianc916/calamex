@@ -9,18 +9,6 @@ import { languageModelUsageSchema, type TLanguageModelUsage } from '../models/us
 import { agentPlanRecordSchema, agentPlanSchema, agentPlanStatusSchema } from './plan.js';
 
 // ----------------------------------------------------------------------
-// Schema version
-// ----------------------------------------------------------------------
-
-/**
- * 顶层 sidecar → UI 协议版本。
- * - bump 时，新增/重命名字段也必须保证 client 能优雅降级。
- * - 不要为 narrow 改动 bump（比如缩窄字面量）。
- */
-export const BUILTIN_AGENT_RESPONSE_SCHEMA_VERSION = 2 as const;
-export type TAgentSidecarResponseSchemaVersion = typeof BUILTIN_AGENT_RESPONSE_SCHEMA_VERSION;
-
-// ----------------------------------------------------------------------
 // JSON value
 // ----------------------------------------------------------------------
 
@@ -245,7 +233,6 @@ export const agentUiEventSchema = z.discriminatedUnion('type', [
 // ----------------------------------------------------------------------
 
 export const agentSidecarResponseSchema = z.object({
-  schemaVersion: z.literal(BUILTIN_AGENT_RESPONSE_SCHEMA_VERSION),
   sessionId: z.string().min(1),
   events: z.array(agentUiEventSchema),
   result: z.string().nullable(),
@@ -290,7 +277,6 @@ export type TAgentUiEventNarrowed = TAgentUiEvent;
  * 用 `z.infer<typeof agentSidecarResponseSchema>`。
  */
 export type TAgentSidecarResponse = {
-  schemaVersion: TAgentSidecarResponseSchemaVersion;
   sessionId: string;
   events: TAgentUiEvent[];
   result: string | null;

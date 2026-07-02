@@ -1,7 +1,6 @@
 import assert from "node:assert/strict"
 import { test } from "node:test"
 
-import { BUILTIN_AGENT_RESPONSE_SCHEMA_VERSION } from "../schemas/events.js"
 import {
 	CALAMEX_AGENT_CAPABILITY_META,
 	CALAMEX_EXT_NAMESPACE,
@@ -69,7 +68,6 @@ test("toModelChatExtResult：投影为标准 sidecar 响应信封", () => {
 		events: [],
 		result: "标题：ACP 透传方案",
 	})
-	assert.equal(result.schemaVersion, BUILTIN_AGENT_RESPONSE_SCHEMA_VERSION)
 	assert.equal(result.sessionId, "sess-1")
 	assert.equal(result.result, "标题：ACP 透传方案")
 	assert.deepEqual(result.events, [])
