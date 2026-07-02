@@ -1,80 +1,151 @@
-// vue-setup.mjs — 专门处理 Vue：改用 Zed 官方使用的 tree-sitter-grammars/tree-sitter-vue（不是 ikatyang 那个坏掉的仓库）
-import { execFileSync } from "node:child_process"
-import { mkdirSync, rmSync, existsSync, readFileSync, writeFileSync, copyFileSync } from "node:fs"
-import { join } from "node:path"
+import { readFileSync, writeFileSync, existsSync } from "node:fs";
 
-const ROOT = process.cwd()
-const LOCK_PATH = join(ROOT, "grammars.lock.json")
-const TMP_DIR = join(ROOT, ".grammar-tmp", "vue-fix")
-const WASM_OUT = join(ROOT, "src/services/editor/tree-sitter/wasm")
-const QUERIES_OUT = join(ROOT, "src/services/editor/tree-sitter/queries/vue")
-const TS_BIN = process.env.TREE_SITTER_BIN || "tree-sitter"
+const bridgesPath = "src-tauri/src/acp/bridges.rs";
+const fsBridgePath = "src-tauri/src/acp/fs_bridge.rs";
+const modPath = "src-tauri/src/acp/mod.rs";
 
-// Zed 官方 Vue 扩展实际使用的仓库 + commit（见 zed-extensions/vue 的 extension.toml）
-const REPO = "https://github.com/tree-sitter-grammars/tree-sitter-vue"
-const PINNED_COMMIT = "7e48557b903a9db9c38cea3b7839ef7e1f36c693"
-
-function fetchWithRetry(ref, attempts = 4) {
-	let lastErr
-	for (let i = 0; i < attempts; i++) {
-		try {
-			rmSync(TMP_DIR, { recursive: true, force: true })
-			mkdirSync(TMP_DIR, { recursive: true })
-			execFileSync("git", ["init", "-q", TMP_DIR])
-			execFileSync("git", ["remote", "add", "origin", REPO], { cwd: TMP_DIR })
-			execFileSync("git", ["fetch", "--depth", "1", "origin", ref], { cwd: TMP_DIR, stdio: "inherit" })
-			execFileSync("git", ["checkout", "-q", "FETCH_HEAD"], { cwd: TMP_DIR })
-			return
-		} catch (e) {
-			lastErr = e
-			console.log(`  重试 ${i + 1}/${attempts} 失败: ${String(e.message).split("\n")[0]}`)
-		}
-	}
-	throw lastErr
+for (const p of [bridgesPath, modPath]) {
+  if (!existsSync(p)) throw new Error(`missing ${p}`);
 }
 
-console.log(`=== vue（改用 ${REPO}#${PINNED_COMMIT}） ===`)
+const nlOf = (t) => (t.includes("\r\n") ? "\r\n" : "\n");
 
-try {
-	fetchWithRetry(PINNED_COMMIT)
+// ---- 1) bridges.rs -> fs-only ----
+const nl1 = nlOf(readFileSync(bridgesPath, "utf8"));
+const bridges = [
+  "#![allow(dead_code)]",
+  "",
+  "use agent_client_protocol::{",
+  "    BoxFuture,",
+  "    schema::{",
+  "        ReadTextFileRequest, ReadTextFileResponse, WriteTextFileRequest, WriteTextFileResponse,",
+  "    },",
+  "};",
+  "use std::sync::Arc;",
+  "",
+  "pub type AcpResult<T> = Result<T, agent_client_protocol::Error>;",
+  "",
+  "pub type FsReadResolver = Arc<",
+  "    dyn Fn(ReadTextFileRequest) -> BoxFuture<'static, AcpResult<ReadTextFileResponse>>",
+  "        + Send",
+  "        + Sync,",
+  ">;",
+  "",
+  "pub type FsWriteResolver = Arc<",
+  "    dyn Fn(WriteTextFileRequest) -> BoxFuture<'static, AcpResult<WriteTextFileResponse>>",
+  "        + Send",
+  "        + Sync,",
+  ">;",
+  "",
+  "#[derive(Clone)]",
+  "pub struct AcpBridges {",
+  "    pub fs_read: FsReadResolver,",
+  "    pub fs_write: FsWriteResolver,",
+  "}",
+  "",
+  "impl AcpBridges {",
+  "    pub fn disk_backed() -> Self {",
+  "        Self {",
+  "            fs_read: super::fs_bridge::fs_read_resolver(),",
+  "            fs_write: super::fs_bridge::fs_write_resolver(),",
+  "        }",
+  "    }",
+  "}",
+  "",
+].join(nl1);
+writeFileSync(bridgesPath, bridges);
 
-	const resolvedCommit = execFileSync("git", ["rev-parse", "HEAD"], { cwd: TMP_DIR }).toString().trim()
-	console.log(`  已拉取 commit: ${resolvedCommit}`)
+// ---- 2) fs_bridge.rs (new, disk-backed) ----
+const fsNl = existsSync(fsBridgePath) ? nlOf(readFileSync(fsBridgePath, "utf8")) : nl1;
+const fsBridge = [
+  "use agent_client_protocol::{",
+  "    BoxFuture, Error,",
+  "    schema::{",
+  "        ReadTextFileRequest, ReadTextFileResponse, WriteTextFileRequest, WriteTextFileResponse,",
+  "    },",
+  "};",
+  "use std::sync::Arc;",
+  "",
+  "use super::bridges::{AcpResult, FsReadResolver, FsWriteResolver};",
+  "",
+  "pub fn fs_read_resolver() -> FsReadResolver {",
+  "    Arc::new(",
+  "        |req: ReadTextFileRequest| -> BoxFuture<'static, AcpResult<ReadTextFileResponse>> {",
+  "            Box::pin(async move {",
+  "                let path = req.path.clone();",
+  "                let content = std::fs::read_to_string(&path).map_err(|err| {",
+  "                    if err.kind() == std::io::ErrorKind::NotFound {",
+  "                        Error::resource_not_found(Some(path.display().to_string()))",
+  "                    } else {",
+  "                        Error::into_internal_error(err)",
+  "                    }",
+  "                })?;",
+  "                let sliced = slice_lines(&content, req.line, req.limit);",
+  "                Ok(ReadTextFileResponse::new(sliced))",
+  "            })",
+  "        },",
+  "    )",
+  "}",
+  "",
+  "pub fn fs_write_resolver() -> FsWriteResolver {",
+  "    Arc::new(",
+  "        |req: WriteTextFileRequest| -> BoxFuture<'static, AcpResult<WriteTextFileResponse>> {",
+  "            Box::pin(async move {",
+  "                if let Some(parent) = req.path.parent()",
+  "                    && !parent.as_os_str().is_empty()",
+  "                {",
+  "                    std::fs::create_dir_all(parent).map_err(Error::into_internal_error)?;",
+  "                }",
+  "                std::fs::write(&req.path, req.content.as_bytes())",
+  "                    .map_err(Error::into_internal_error)?;",
+  "                Ok(WriteTextFileResponse::new())",
+  "            })",
+  "        },",
+  "    )",
+  "}",
+  "",
+  "fn slice_lines(content: &str, line: Option<u32>, limit: Option<u32>) -> String {",
+  "    if line.is_none() && limit.is_none() {",
+  "        return content.to_string();",
+  "    }",
+  "    let start = line.map(|value| value.saturating_sub(1) as usize).unwrap_or(0);",
+  "    let selected = content.lines().skip(start);",
+  "    let collected: Vec<&str> = match limit {",
+  "        Some(count) => selected.take(count as usize).collect(),",
+  "        None => selected.collect(),",
+  "    };",
+  '    collected.join("\\n")',
+  "}",
+  "",
+  "#[cfg(test)]",
+  "mod tests {",
+  "    use super::*;",
+  "",
+  "    #[test]",
+  "    fn slice_lines_returns_all_when_unbounded() {",
+  '        let input = "a\\nb\\nc";',
+  '        assert_eq!(slice_lines(input, None, None), "a\\nb\\nc");',
+  "    }",
+  "",
+  "    #[test]",
+  "    fn slice_lines_applies_offset_and_limit() {",
+  '        let input = "a\\nb\\nc\\nd";',
+  '        assert_eq!(slice_lines(input, Some(2), Some(2)), "b\\nc");',
+  "    }",
+  "}",
+  "",
+].join(fsNl);
+writeFileSync(fsBridgePath, fsBridge);
 
-	// 1) 编译 wasm
-	const destWasm = join(WASM_OUT, "tree-sitter-vue.wasm")
-	mkdirSync(WASM_OUT, { recursive: true })
-	try {
-		execFileSync(TS_BIN, ["generate"], { cwd: TMP_DIR, stdio: "inherit" })
-	} catch (genErr) {
-		console.log(`  (generate 跳过或失败，可能已有 parser.c: ${String(genErr.message).split("\n")[0]})`)
-	}
-	execFileSync(TS_BIN, ["build", "--wasm", TMP_DIR, "-o", destWasm], { stdio: "inherit" })
-	console.log(`  ✅ wasm 编译成功 -> ${destWasm}`)
-
-	// 2) 复制 queries
-	const queriesSrcDir = join(TMP_DIR, "queries")
-	mkdirSync(QUERIES_OUT, { recursive: true })
-	const queryFiles = ["highlights.scm", "folds.scm", "indents.scm", "injections.scm", "locals.scm", "tags.scm"]
-	const copied = []
-	for (const qf of queryFiles) {
-		const src = join(queriesSrcDir, qf)
-		if (existsSync(src)) {
-			copyFileSync(src, join(QUERIES_OUT, qf))
-			copied.push(qf)
-		}
-	}
-	console.log(`  ✅ queries 复制: ${copied.join(", ") || "(无)"}`)
-
-	// 3) 更新 lock 文件
-	const lock = existsSync(LOCK_PATH) ? JSON.parse(readFileSync(LOCK_PATH, "utf8")) : {}
-	lock.vue = { repo: REPO, commit: resolvedCommit }
-	writeFileSync(LOCK_PATH, JSON.stringify(lock, null, 2))
-	console.log(`  ✅ grammars.lock.json 已更新 vue 条目`)
-
-	console.log("\n🎉 Vue 修复完成！wasm 和 queries 都已就位。")
-} catch (e) {
-	console.log(`❌ 失败: ${e.message}`)
-} finally {
-	rmSync(TMP_DIR, { recursive: true, force: true })
+// ---- 3) mod.rs: register mod fs_bridge; after pub mod bridges; ----
+let mod = readFileSync(modPath, "utf8");
+const modNl = nlOf(mod);
+if (!/^[ \t]*mod fs_bridge;[ \t]*$/m.test(mod)) {
+  if (!/^[ \t]*pub mod bridges;[ \t]*$/m.test(mod)) {
+    throw new Error("anchor 'pub mod bridges;' not found in mod.rs");
+  }
+  mod = mod.replace(/^([ \t]*pub mod bridges;)[ \t]*$/m, `$1${modNl}mod fs_bridge;`);
+  writeFileSync(modPath, mod);
 }
+
+console.log("p9d: bridges.rs (fs-only) + fs_bridge.rs written, mod fs_bridge registered.");

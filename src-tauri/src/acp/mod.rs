@@ -8,6 +8,7 @@ mod approval;
 mod bridge;
 mod client;
 pub mod bridges;
+mod fs_bridge;
 mod host;
 mod launch;
 mod provisioner;

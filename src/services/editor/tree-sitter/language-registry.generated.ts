@@ -1,8 +1,5 @@
-// 本文件由脚本生成，请勿手改。
 // wasm 为本地自编译产物（tree-sitter build --wasm，见 grammars.lock.json）；highlights.scm 来自各语法官方仓库（保留其 OSS 许可）。
 
-// vue 暂不支持：上游 ikatyang/tree-sitter-vue 的外部扫描器与新版 wasm 构建不兼容，保留旧引用（已知不可用，不影响其他语言）。
-import vue_wasm from 'tree-sitter-wasms/out/tree-sitter-vue.wasm?url';
 import c_scm from './queries/c/highlights.scm?raw';
 import csharp_scm from './queries/c-sharp/highlights.scm?raw';
 import cpp_scm from './queries/cpp/highlights.scm?raw';
@@ -55,6 +52,7 @@ import swift_wasm from './wasm/tree-sitter-swift.wasm?url';
 import toml_wasm from './wasm/tree-sitter-toml.wasm?url';
 import tsx_wasm from './wasm/tree-sitter-tsx.wasm?url';
 import typescript_wasm from './wasm/tree-sitter-typescript.wasm?url';
+import vue_wasm from './wasm/tree-sitter-vue.wasm?url';
 import yaml_wasm from './wasm/tree-sitter-yaml.wasm?url';
 
 export interface ITreeSitterLanguageEntry {
