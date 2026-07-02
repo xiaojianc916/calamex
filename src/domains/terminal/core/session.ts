@@ -77,10 +77,7 @@ import { TerminalWriteBuffer } from './terminal-write-buffer';
 
 // ─── Re-export 公共 API（保持消费者导入路径不变） ──────────────────────────────
 
-export {
-  normalizeTerminalAnsiForTheme,
-  stripInjectedRunSeparatorForTerminalData,
-} from './session-ansi';
+export { stripInjectedRunSeparatorForTerminalData } from './session-ansi';
 export type {
   ITerminalSessionCallbacks,
   ITerminalSessionOptions,
@@ -216,7 +213,6 @@ export class TerminalSession {
     this._writeBuffer = new TerminalWriteBuffer({
       getTerminal: () => this._terminalRef.value,
       isVisible: () => this._visible,
-      getThemeMode: () => this._theme,
       getShowRunSeparator: () => this._showRunSeparator,
       syncTerminalLayout: () => this._syncTerminalLayout(),
       scheduleViewportSync: (opts) => this._scheduleViewportSync(opts),
