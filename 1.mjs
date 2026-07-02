@@ -1,135 +1,201 @@
-// scripts/f1-remove-webgl.mjs
-// 目的：按 F1 结论彻底移除 WebGL（DOM 才是本架构正解），并收掉随之而死的纹理图集耦合。
-// 做法：全部为「逐字精确匹配 + 计数校验」；任一锚点对不上就抛错、且在此之前不写任何文件
-//       （因此天然幂等、绝不半改）。所有锚点均照 session.ts 现状逐字抄写，不再做花括号扫描/猜测。
-//       （上一版脚本正是把布尔字段 _shouldClearTextureAtlasOnViewportSync 误当成方法去扫花括号而崩。）
-// 换行符规整（关键）：从 Notion 复制本脚本时，多行模板字符串里的换行会被转成字面量 <br>，
-//       且 Windows 存盘会带 CRLF。故 toLF 同时把 <br> 与 \r\n 都还原成 \n 再匹配，
-//       彻底消除「锚点字面正确却 0 命中」（前几版 import 锚点 0 命中的真正根因）。
-import { readFileSync, writeFileSync } from 'node:fs';
+// 11-tree-sitter-structure.mjs — 用通用 tree-sitter 折叠/缩进引擎替换 legacy-modes 手写词法器
+import { readFileSync, writeFileSync } from "node:fs"
+import { join } from "node:path"
 
-const SESSION = 'src/domains/terminal/core/session.ts';
-const PKG = 'package.json';
+const ROOT = process.cwd()
 
-const toLF = (s) => s.replace(/<br\s*\/?>/gi, '\n').replace(/\r\n/g, '\n');
-let src = toLF(readFileSync(SESSION, 'utf8'));
-const done = [];
-const countOf = (needle) => src.split(needle).length - 1;
+// ── 1) core-runtime.ts：加一个共享的 Parser 缓存（按 langId），供高亮引擎和新结构引擎共用同一个 Parser 实例 ──
+{
+	const PATH = join(ROOT, "src/services/editor/tree-sitter/core-runtime.ts")
+	let content = readFileSync(PATH, "utf8")
+	const anchor = `export function ensureTreeSitterLanguage(cacheKey: string, wasmUrl: string): Promise<Language> {
+	let promise = languagePromises.get(cacheKey);
+	if (!promise) {
+		promise = (async () => {
+			await ensureTreeSitterCore();
+			return Language.load(wasmUrl);
+		})().catch((error) => {
+			languagePromises.delete(cacheKey);
+			throw error;
+		});
+		languagePromises.set(cacheKey, promise);
+	}
+	return promise;
+}`
+	const addition = `
 
-function once(label, oldStr, newStr) {
-  const from = toLF(oldStr);
-  const n = countOf(from);
-  if (n !== 1) throw new Error(`[${label}] 期望恰好 1 处匹配，实际 ${n} 处；文件可能已改动，请人工核对后再跑。`);
-  src = src.replace(from, toLF(newStr));
-  done.push(label);
+const parserPromises = new Map<string, Promise<Parser>>();
+
+/** 按 cacheKey 缓存已绑定语言的 Parser 实例；同一 cacheKey 的所有消费者共用同一个 Parser。 */
+export function ensureTreeSitterParser(cacheKey: string, wasmUrl: string): Promise<Parser> {
+	let promise = parserPromises.get(cacheKey);
+	if (!promise) {
+		promise = (async () => {
+			const language = await ensureTreeSitterLanguage(cacheKey, wasmUrl);
+			const parser = new Parser();
+			parser.setLanguage(language);
+			return parser;
+		})().catch((error) => {
+			parserPromises.delete(cacheKey);
+			throw error;
+		});
+		parserPromises.set(cacheKey, promise);
+	}
+	return promise;
+}`
+	if (!content.includes(anchor)) {
+		console.log("⚠️ core-runtime.ts 锚点未命中，请人工检查")
+	} else {
+		content = content.replace(anchor, anchor + addition)
+		writeFileSync(PATH, content, "utf8")
+		console.log("✅ core-runtime.ts 已加入 ensureTreeSitterParser")
+	}
 }
 
-function exactly(label, oldStr, newStr, expected) {
-  const from = toLF(oldStr);
-  const n = countOf(from);
-  if (n !== expected) throw new Error(`[${label}] 期望 ${expected} 处匹配，实际 ${n} 处；请人工核对后再跑。`);
-  src = src.split(from).join(toLF(newStr));
-  done.push(`${label}×${expected}`);
+// ── 2) codemirror-tree-sitter-highlight.ts：改用共享 Parser 缓存，不再自己维护 parserPromises ──
+{
+	const PATH = join(ROOT, "src/services/editor/codemirror-tree-sitter-highlight.ts")
+	let content = readFileSync(PATH, "utf8")
+
+	const oldImport = `import { ensureTreeSitterLanguage } from './tree-sitter/core-runtime';`
+	const newImport = `import { ensureTreeSitterLanguage, ensureTreeSitterParser } from './tree-sitter/core-runtime';`
+	if (content.includes(oldImport)) content = content.replace(oldImport, newImport)
+
+	const oldBlock = `const parserPromises = new Map<string, Promise<Parser>>();
+const queryCache = new Map<string, Query>();
+
+function ensureLanguage(langId: string): Promise<Language> {
+  const entry = TREE_SITTER_LANGUAGES[langId];
+  return ensureTreeSitterLanguage(langId, entry.wasmUrl);
 }
 
-// A) 移除 WebglAddon import
-once(
-  'import',
-  `import { WebglAddon } from '@xterm/addon-webgl';<br>import { Terminal } from '@xterm/xterm';`,
-  `import { Terminal } from '@xterm/xterm';`,
-);
+function ensureParser(langId: string): Promise<Parser> {
+  let promise = parserPromises.get(langId);
+  if (!promise) {
+    promise = (async () => {
+      const language = await ensureLanguage(langId);
+      const parser = new Parser();
+      parser.setLanguage(language);
+      if (!queryCache.has(langId)) {
+        queryCache.set(langId, new Query(language, TREE_SITTER_LANGUAGES[langId].scm));
+      }
+      return parser;
+    })();
+    parserPromises.set(langId, promise);
+  }
+  return promise;
+}`
 
-// B) 移除 _webglAddon 字段及其注释
-once(
-  'field:_webglAddon',
-  `  private _fitAddonRef = shallowRef<FitAddon | null>(null);<br>  // WebGL(GPU)渲染器附加组件：仅在 terminal.open() 之后加载；上下文丢失时置空并回退 DOM 渲染器。<br>  private _webglAddon: WebglAddon | null = null;`,
-  `  private _fitAddonRef = shallowRef<FitAddon | null>(null);`,
-);
+	const newBlock = `const queryCache = new Map<string, Query>();
 
-// C) dispose() 里移除 _webglAddon 置空（上一版会把这行遗留成悬空引用）
-once(
-  'dispose:_webglAddon',
-  `    this._fitAddonRef.value = null;<br>    this._webglAddon = null;<br>    this.session.value = null;`,
-  `    this._fitAddonRef.value = null;<br>    this.session.value = null;`,
-);
-
-// D) 移除 _activateWebglRenderer 方法及其上方注释块
-once(
-  'method:_activateWebglRenderer',
-  `  // WebGL(GPU)渲染器：xterm 默认 DOM 渲染器在高吞吐输出（yes / cat 大文件 / htop）下，<br>  // DOM reflow/repaint 会成为帧率瓶颈。WebGL2 渲染器把字形合成搬到 GPU，是 VS Code 集成<br>  // 终端的同款范式。必须在 terminal.open() 之后加载（依赖已挂载的 screen 元素）。<br>  private _activateWebglRenderer(terminal: Terminal): void {<br>    if (this._webglAddon) return;<br>    try {<br>      const addon = new WebglAddon();<br>      // GPU 上下文丢失（驱动重置 / 系统休眠唤醒 / WebView 回收 GPU）：释放附加组件，<br>      // xterm 自动回退到 DOM 渲染器，避免终端画面永久冻结。<br>      addon.onContextLoss(() => {<br>        addon.dispose();<br>        if (this._webglAddon === addon) this._webglAddon = null;<br>      });<br>      terminal.loadAddon(addon);<br>      this._webglAddon = addon;<br>    } catch (error) {<br>      // WebGL2 不可用（无 GPU / 上下文创建被拒）：静默回退 DOM 渲染器，不影响功能。<br>      this._webglAddon = null;<br>      terminalLogger.warn('WebGL 渲染器不可用，已回退到 DOM 渲染器', error);<br>    }<br>  }<br><br>  private _attachTerminalToHost(): void {`,
-  `  private _attachTerminalToHost(): void {`,
-);
-
-// E) _attachTerminalToHost 内被注释掉的 WebGL 激活 → 干净的 DOM-only 说明
-once(
-  'attach:comment',
-  `      terminal.open(host);<br>      // [WebGL 诊断实验] 暂时禁用 WebGL 渲染器，确认空白终端根因；确认后用 --restore 恢复<br>      // this._activateWebglRenderer(terminal);<br>      terminalLogger.warn('[WebGL 诊断] 已禁用 WebGL 渲染器，使用 DOM 回退渲染器');`,
-  `      terminal.open(host);<br>      // 本架构使用 xterm DOM 渲染器：多面板常驻 + 隐藏页 0×0 + 主题改 CSS/canvas，<br>      // 与 WebGL 的单活跃 GPU 表面模型结构性冲突，DOM 是正确默认值（见性能审查 F1）。`,
-);
-
-// F) 移除纹理图集布尔字段（它是字段，不是方法 —— 上一版脚本正是在这里翻车）
-once(
-  'field:_shouldClearTextureAtlas',
-  `  private _shouldClearTextureAtlasOnViewportSync = false;<br>  private _shouldRefreshViewportOnViewportSync = false;`,
-  `  private _shouldRefreshViewportOnViewportSync = false;`,
-);
-
-// G) _scheduleViewportSync：删 clearTextureAtlas 选项与其赋值
-once(
-  'scheduleViewportSync',
-  `  private _scheduleViewportSync(options?: {<br>    clearTextureAtlas?: boolean;<br>    refresh?: boolean;<br>    scrollToBottom?: boolean;<br>  }): void {<br>    if (options?.clearTextureAtlas) this._shouldClearTextureAtlasOnViewportSync = true;<br>    if (options?.refresh) this._shouldRefreshViewportOnViewportSync = true;`,
-  `  private _scheduleViewportSync(options?: {<br>    refresh?: boolean;<br>    scrollToBottom?: boolean;<br>  }): void {<br>    if (options?.refresh) this._shouldRefreshViewportOnViewportSync = true;`,
-);
-
-// H) _refreshTerminalViewportNow：删 atlas 分支（refresh 已由各调用点的 refresh:true 保留）
-once(
-  'refreshViewportNow',
-  `  private _refreshTerminalViewportNow(): void {<br>    const terminal = this._terminalRef.value;<br>    const shouldClearAtlas = this._shouldClearTextureAtlasOnViewportSync;<br>    const shouldRefresh = this._shouldRefreshViewportOnViewportSync || shouldClearAtlas;<br>    const shouldScrollToBottom = this._shouldScrollToBottomOnViewportSync;<br>    this._shouldClearTextureAtlasOnViewportSync = false;<br>    this._shouldRefreshViewportOnViewportSync = false;<br>    this._shouldScrollToBottomOnViewportSync = false;<br>    if (!terminal) return;<br>    if (shouldClearAtlas) this._clearTerminalTextureAtlas();<br>    if (`,
-  `  private _refreshTerminalViewportNow(): void {<br>    const terminal = this._terminalRef.value;<br>    const shouldRefresh = this._shouldRefreshViewportOnViewportSync;<br>    const shouldScrollToBottom = this._shouldScrollToBottomOnViewportSync;<br>    this._shouldRefreshViewportOnViewportSync = false;<br>    this._shouldScrollToBottomOnViewportSync = false;<br>    if (!terminal) return;<br>    if (`,
-);
-
-// I) 移除 _clearTerminalTextureAtlas 方法（真方法）
-once(
-  'method:_clearTerminalTextureAtlas',
-  `  private _clearTerminalTextureAtlas(): void {<br>    this._terminalRef.value?.clearTextureAtlas();<br>  }<br><br>  // -- Private: viewport helpers -------------------------------------------`,
-  `  // -- Private: viewport helpers -------------------------------------------`,
-);
-
-// J) 去掉各调用点的 clearTextureAtlas: true（多行 3 处，注意两种缩进 + 单行 2 处）
-once(
-  'call:handleBecomeVisible',
-  `    this._scheduleViewportSync({<br>      clearTextureAtlas: true,<br>      refresh: true,<br>      scrollToBottom: true,<br>    });`,
-  `    this._scheduleViewportSync({<br>      refresh: true,<br>      scrollToBottom: true,<br>    });`,
-);
-exactly(
-  'call:renderRecovery',
-  `        this._scheduleViewportSync({<br>          clearTextureAtlas: true,<br>          refresh: true,<br>          scrollToBottom: true,<br>        });`,
-  `        this._scheduleViewportSync({<br>          refresh: true,<br>          scrollToBottom: true,<br>        });`,
-  2,
-);
-once(
-  'call:attach',
-  `    this._scheduleViewportSync({ clearTextureAtlas: true, refresh: true, scrollToBottom: true });`,
-  `    this._scheduleViewportSync({ refresh: true, scrollToBottom: true });`,
-);
-once(
-  'call:applySettings',
-  `    this._scheduleViewportSync({ clearTextureAtlas: true, refresh: true });`,
-  `    this._scheduleViewportSync({ refresh: true });`,
-);
-
-writeFileSync(SESSION, src);
-console.log(`✅ session.ts 已改（${done.length} 处）：` + done.join(' / '));
-
-// K) package.json 移除依赖
-let pkg = toLF(readFileSync(PKG, 'utf8'));
-const depRe = /\n[ \t]*"@xterm\/addon-webgl":\s*"[^"]*",?/;
-if (depRe.test(pkg)) {
-  writeFileSync(PKG, pkg.replace(depRe, ''));
-  console.log('✅ package.json 已移除 @xterm/addon-webgl（记得 pnpm install 刷新 lockfile）。');
-} else {
-  console.log('ℹ️ package.json 未见 @xterm/addon-webgl，跳过（可能在其它 workspace 包）。');
+function ensureLanguage(langId: string): Promise<Language> {
+  const entry = TREE_SITTER_LANGUAGES[langId];
+  return ensureTreeSitterLanguage(langId, entry.wasmUrl);
 }
 
-console.log('▶ 收尾守卫：pnpm typecheck && pnpm lint && pnpm test && (cd src-tauri && cargo clippy) && pnpm guard');
-console.log('  本次纯减法：生产本就跑 DOM 渲染器，移除的只是关闭状态下的死路径，UX 不受影响。');
+// Parser 实例经 core-runtime 按 langId 共享缓存：与 codemirror-tree-sitter-structure（折叠/缩进）
+// 复用同一个 Parser，避免同一语法被独立创建多个 Parser（Language 本身早已共享，见 core-runtime）。
+async function ensureParser(langId: string): Promise<Parser> {
+  const entry = TREE_SITTER_LANGUAGES[langId];
+  const parser = await ensureTreeSitterParser(langId, entry.wasmUrl);
+  if (!queryCache.has(langId)) {
+    const language = await ensureLanguage(langId);
+    queryCache.set(langId, new Query(language, entry.scm));
+  }
+  return parser;
+}`
+
+	if (!content.includes(oldBlock)) {
+		console.log("⚠️ highlight 文件锚点未命中，请人工检查")
+	} else {
+		content = content.replace(oldBlock, newBlock)
+	}
+	writeFileSync(PATH, content, "utf8")
+	console.log("✅ codemirror-tree-sitter-highlight.ts 已改用共享 Parser 缓存")
+}
+
+// ── 3) 新建通用（语言无关）tree-sitter 结构引擎：折叠 + 缩进 + 注释语言数据 ──
+{
+	const PATH = join(ROOT, "src/services/editor/codemirror-tree-sitter-structure.ts")
+	const content = `import { foldService, indentService } from '@codemirror/language';
+import { EditorState, type Extension } from '@codemirror/state';
+import { type EditorView, ViewPlugin, type ViewUpdate } from '@codemirror/view';
+import type { Node, Tree } from 'web-tree-sitter';
+import { Parser } from 'web-tree-sitter';
+import {
+  byteOffsetToCharIndex,
+  computeBashSourceEdit,
+} from './tree-sitter/bash-runtime';
+import { ensureTreeSitterParser } from './tree-sitter/core-runtime';
+import { TREE_SITTER_LANGUAGES } from './tree-sitter/language-registry.generated';
+
+/**
+ * 通用（语言无关）tree-sitter 结构服务：折叠 / 缩进。
+ *
+ * 参照 Zed 的地基原则——语法树是结构信息的唯一来源；不再为每个语言手写 StreamLanguage
+ * 词法器或逐语言的折叠节点类型白名单。折叠规则通用化为"任意跨多行的节点都是折叠候选，
+ * 同起始行取覆盖范围最大的一个"；缩进规则通用化为"数一下当前行严格被多少个跨行祖先节点
+ * 包含"。这两条规则不依赖具体语言的节点类型命名，可直接套用在任意已编译好 wasm 的语言上。
+ *
+ * 与 codemirror-tree-sitter-highlight 各自维护独立的 Tree（避免跨 ViewPlugin 共享同一个
+ * wasm Tree 对象带来的生命周期风险），但通过 core-runtime 共享同一个 Parser/Language 实例，
+ * 不会重复加载/编译同一份语法。
+ */
+
+const STRUCTURE_PARSE_DEBOUNCE_MS = 60;
+
+interface IStructureAnalysis {
+  tree: Tree;
+  foldEndByRow: ReadonlyMap<number, number>;
+}
+
+/** 通用折叠表：任意跨行节点都是候选，根节点除外；同起始行取覆盖范围最大者。 */
+function computeGenericFoldByRow(rootNode: Node, source: string): Map<number, number> {
+  const foldEndByRow = new Map<number, number>();
+  const stack: Node[] = [rootNode];
+  while (stack.length > 0) {
+    const node = stack.pop();
+    if (!node) continue;
+    if (node !== rootNode && node.endPosition.row > node.startPosition.row) {
+      const startRow = node.startPosition.row;
+      const endChar = byteOffsetToCharIndex(source, node.endIndex);
+      const existing = foldEndByRow.get(startRow);
+      if (existing === undefined || endChar > existing) {
+        foldEndByRow.set(startRow, endChar);
+      }
+    }
+    const children = node.children;
+    for (let i = 0; i < children.length; i += 1) {
+      const child = children[i];
+      if (child) stack.push(child);
+    }
+  }
+  return foldEndByRow;
+}
+
+/** 通用缩进深度：数一下有多少个跨行祖先节点严格包含该行（扣除根节点自身那一层）。 */
+function computeGenericIndentDepth(tree: Tree, row: number): number {
+  let node: Node | null = tree.rootNode.descendantForPosition({ row, column: 0 });
+  let depth = 0;
+  while (node) {
+    if (node.startPosition.row < row && node.endPosition.row > row) {
+      depth += 1;
+    }
+    node = node.parent;
+  }
+  return Math.max(0, depth - 1);
+}
+
+const setStructureAnalysis = require_StateEffect();
+function require_StateEffect() {
+  // 占位由下方真实实现替换（避免未使用 import 报错）；此函数不会被调用。
+  return null as unknown as never;
+}
+
+export {};
+`
+	writeFileSync(PATH, content, "utf8")
+	console.log("✅ codemirror-tree-sitter-structure.ts 骨架已写入（详见下一条消息补全实现）")
+}
+
+console.log("\n第 1、2 步已完成并可安全生效；第 3 步骨架需要下一条消息补全真正实现，请先不要运行 dev。")

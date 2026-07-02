@@ -6,9 +6,9 @@ import {
   ViewPlugin,
   type ViewUpdate,
 } from '@codemirror/view';
-import { type Language, Parser, Query } from 'web-tree-sitter';
+import { type Language, type Parser, Query } from 'web-tree-sitter';
 import { computeBashSourceEdit, type Point, type Tree } from './tree-sitter/bash-runtime';
-import { ensureTreeSitterLanguage } from './tree-sitter/core-runtime';
+import { ensureTreeSitterLanguage, ensureTreeSitterParser } from './tree-sitter/core-runtime';
 import {
   resolveTreeSitterLanguageId,
   TREE_SITTER_LANGUAGES,
@@ -117,7 +117,6 @@ function posForPoint(doc: Text, point: Point): number {
 // 每语言的 Parser / Query 单例缓存（tree-sitter 查询是为逐键解析设计的，编译一次即可复用）。
 // Language 加载统一委托给 tree-sitter/core-runtime：与 bash-runtime 等其他消费者共享同一份
 // 已编译 Language（按 langId 缓存），避免同一语法被独立加载多份。
-const parserPromises = new Map<string, Promise<Parser>>();
 const queryCache = new Map<string, Query>();
 
 function ensureLanguage(langId: string): Promise<Language> {
@@ -125,21 +124,16 @@ function ensureLanguage(langId: string): Promise<Language> {
   return ensureTreeSitterLanguage(langId, entry.wasmUrl);
 }
 
-function ensureParser(langId: string): Promise<Parser> {
-  let promise = parserPromises.get(langId);
-  if (!promise) {
-    promise = (async () => {
-      const language = await ensureLanguage(langId);
-      const parser = new Parser();
-      parser.setLanguage(language);
-      if (!queryCache.has(langId)) {
-        queryCache.set(langId, new Query(language, TREE_SITTER_LANGUAGES[langId].scm));
-      }
-      return parser;
-    })();
-    parserPromises.set(langId, promise);
+// Parser 实例经 core-runtime 按 langId 共享缓存：与 codemirror-tree-sitter-structure（折叠/缩进）
+// 复用同一个 Parser，避免同一语法被独立创建多个 Parser（Language 本身早已共享，见 core-runtime）。
+async function ensureParser(langId: string): Promise<Parser> {
+  const entry = TREE_SITTER_LANGUAGES[langId];
+  const parser = await ensureTreeSitterParser(langId, entry.wasmUrl);
+  if (!queryCache.has(langId)) {
+    const language = await ensureLanguage(langId);
+    queryCache.set(langId, new Query(language, entry.scm));
   }
-  return promise;
+  return parser;
 }
 
 const setTreeSitterDecorations = StateEffect.define<DecorationSet>();
