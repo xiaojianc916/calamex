@@ -15,6 +15,7 @@
 
 import type { UnlistenFn } from '@tauri-apps/api/event';
 import { FitAddon } from '@xterm/addon-fit';
+import { WebglAddon } from '@xterm/addon-webgl';
 import { Terminal } from '@xterm/xterm';
 import { consola } from 'consola';
 import { markRaw, nextTick, type Ref, ref, shallowRef } from 'vue';
@@ -86,7 +87,7 @@ export type {
   ITerminalTauriService,
 } from './session-types';
 
-// ─── TerminalSession 类 ───────────────────────────────────────────────────────
+// ─── TerminalSession 类 ───────────────────────────────────────────────
 
 // 终端会话错误日志统一走 consola（与 IPC 层 consola.withTag('ipc') 同口径）。
 const terminalLogger = consola.withTag('terminal');
@@ -105,17 +106,17 @@ const TERMINAL_PTY_RESIZE_DEBOUNCE_MS = 120;
  * 终端会话实体，遵循 R-20.2.3 定义的接口契约；一个实例对应一个 PTY 连接。
  */
 export class TerminalSession {
-  // ── 公共响应式状态 ─────────────────────────────────────────────────────────
+  // ── 公共响应式状态 ───────────────────────────────────────────
   readonly id: string;
   readonly status: Ref<TTerminalConnectionState>;
   readonly statusMessage: Ref<string>;
   readonly session: Ref<ITerminalSessionPayload | null>;
 
-  // ── 私有：服务依赖 ─────────────────────────────────────────────────────────
+  // ── 私有：服务依赖 ────────────────────────────────────────────
   private readonly _tauri: ITerminalTauriService;
   private readonly _resetOrphanedBackendSession: boolean;
 
-  // ── 私有：回调 ────────────────────────────────────────────────────────────
+  // ── 私有：回调 ───────────────────────────────────────────────
   private _onStatusChange: ((p: ITerminalStatusChangePayload) => void) | null = null;
   private _onRunCompleted: ((p: ITerminalRunCompletedPayload) => void) | null = null;
   private _onInputRoute: ((p: ITerminalInputRoutePayload) => void) | null = null;
@@ -124,14 +125,16 @@ export class TerminalSession {
   private _onBufferDiagnostic: ((p: ITerminalBufferDiagnostic) => void) | null = null;
   private _onTitleChange: ((title: string) => void) | null = null;
 
-  // ── 私有：xterm 实例 ────────────────────────────────────────────────────────
+  // ── 私有：xterm 实例 ──────────────────────────────────────────
   private _terminalRef = shallowRef<Terminal | null>(null);
   private _fitAddonRef = shallowRef<FitAddon | null>(null);
+  // WebGL(GPU)渲染器附加组件：仅在 terminal.open() 之后加载；上下文丢失时置空并回退 DOM 渲染器。
+  private _webglAddon: WebglAddon | null = null;
 
-  // ── 私有：DOM ───────────────────────────────────────────────────────────────
+  // ── 私有：DOM ──────────────────────────────────────────────────
   private _hostEl: HTMLElement | null = null;
 
-  // ── 私有：主题与设置（UI 层传入） ───────────────────────────────────────────
+  // ── 私有：主题与设置（UI 层传入） ─────────────────────────────
   private _theme: TThemeMode = 'dark';
   private _settings: ITerminalSettings | null = null;
 
@@ -139,7 +142,7 @@ export class TerminalSession {
   private _visible = false;
   private _showRunSeparator = true;
 
-  // ── 私有：定时器（布局/视口） ────────────────────────────────────────────────
+  // ── 私有：定时器（布局/视口） ───────────────────────────────────
   private _layoutFrameId: number | null = null;
   private _layoutSettleTimeoutId: number | null = null;
   private _viewportFrameId: number | null = null;
@@ -156,17 +159,17 @@ export class TerminalSession {
   private _eventListenerRegistration: Promise<void> | null = null;
   private _listenerVersion = 0;
 
-  // ── 私有：DOM 副作用清理函数 ───────────────────────────────────────────────
+  // ── 私有：DOM 副作用清理函数 ──────────────────────────────────
   private _fontLoadingCleanup: (() => void) | null = null;
   private _visibilityChangeCleanup: (() => void) | null = null;
   private _windowFocusCleanup: (() => void) | null = null;
   private _windowResizeCleanup: (() => void) | null = null;
   private _resizeObserver: ResizeObserver | null = null;
 
-  // ── 私有：bell ─────────────────────────────────────────────────────────────
+  // ── 私有：bell ──────────────────────────────────────────────
   private _bellUnsubscribe: (() => void) | null = null;
 
-  // ── 私有：视口同步标记 ─────────────────────────────────────────────────────
+  // ── 私有：视口同步标记 ──────────────────────────────────────
   private _shouldClearTextureAtlasOnViewportSync = false;
   private _shouldRefreshViewportOnViewportSync = false;
   private _shouldScrollToBottomOnViewportSync = false;
@@ -188,7 +191,7 @@ export class TerminalSession {
   private _previousHostSize = { width: 0, height: 0 };
   private _previousTerminalSize = { cols: 0, rows: 0 };
 
-  // ── 私有：委托模块 ──────────────────────────────────────────────────────────
+  // ── 私有：委托模块 ───────────────────────────────────────────
   private readonly _writeBuffer: TerminalWriteBuffer;
   private readonly _runSequencer: RunVisualSequencer;
 
@@ -626,10 +629,11 @@ export class TerminalSession {
     this._terminalRef.value?.dispose();
     this._terminalRef.value = null;
     this._fitAddonRef.value = null;
+    this._webglAddon = null;
     this.session.value = null;
   }
 
-  // ── 私有：存活心跳 ───────────────────────────────────────────────────────────
+  // ── 私有：存活心跳 ────────────────────────────────────────────
 
   private _startHeartbeat(): void {
     if (this._heartbeatTimerId !== null) return;
@@ -648,7 +652,7 @@ export class TerminalSession {
     }
   }
 
-  // ── 私有：emit 方法 ──────────────────────────────────────────────────────────
+  // ── 私有：emit 方法 ────────────────────────────────────────────
 
   private _emitStatus(state: TTerminalConnectionState, message: string): void {
     this.status.value = state;
@@ -721,7 +725,7 @@ export class TerminalSession {
     };
   }
 
-  // ── 私有：定时器清理 ─────────────────────────────────────────────────────────
+  // ── 私有：定时器清理 ─────────────────────────────────────────
 
   private _clearLayoutFrame(): void {
     if (this._layoutFrameId !== null) {
@@ -1121,7 +1125,7 @@ export class TerminalSession {
     this._applyBellBehavior();
   }
 
-  // ── 私有：bell ─────────────────────────────────────────────────────────────
+  // ── 私有：bell ──────────────────────────────────────────────
 
   private _applyBellBehavior(): void {
     const terminal = this._terminalRef.value;
@@ -1145,7 +1149,7 @@ export class TerminalSession {
     this._bellUnsubscribe = () => disposable.dispose();
   }
 
-  // ── 私有：剪贴板 ─────────────────────────────────────────────────────────────
+  // ── 私有：剪贴板 ─────────────────────────────────────────────
 
   private async _writeSelectionToClipboard(): Promise<void> {
     if (!this._terminalRef.value || !this._settings?.copyOnSelect) return;
@@ -1154,7 +1158,7 @@ export class TerminalSession {
     void writeClipboardText(selection).catch(() => {});
   }
 
-  // ── 私有：ResizeObserver 绑定 ─────────────────────────────────────────────────
+  // ── 私有：ResizeObserver 绑定 ────────────────────────────────────
 
   private _bindResizeObserver(): void {
     if (typeof ResizeObserver === 'undefined' || !this._hostEl) return;
@@ -1193,12 +1197,35 @@ export class TerminalSession {
 
   // -- Private: terminal creation ------------------------------------------
 
+  // WebGL(GPU)渲染器：xterm 默认 DOM 渲染器在高吞吐输出（yes / cat 大文件 / htop）下，
+  // DOM reflow/repaint 会成为帧率瓶颈。WebGL2 渲染器把字形合成搬到 GPU，是 VS Code 集成
+  // 终端的同款范式。必须在 terminal.open() 之后加载（依赖已挂载的 screen 元素）。
+  private _activateWebglRenderer(terminal: Terminal): void {
+    if (this._webglAddon) return;
+    try {
+      const addon = new WebglAddon();
+      // GPU 上下文丢失（驱动重置 / 系统休眠唤醒 / WebView 回收 GPU）：释放附加组件，
+      // xterm 自动回退到 DOM 渲染器，避免终端画面永久冻结。
+      addon.onContextLoss(() => {
+        addon.dispose();
+        if (this._webglAddon === addon) this._webglAddon = null;
+      });
+      terminal.loadAddon(addon);
+      this._webglAddon = addon;
+    } catch (error) {
+      // WebGL2 不可用（无 GPU / 上下文创建被拒）：静默回退 DOM 渲染器，不影响功能。
+      this._webglAddon = null;
+      terminalLogger.warn('WebGL 渲染器不可用，已回退到 DOM 渲染器', error);
+    }
+  }
+
   private _attachTerminalToHost(): void {
     const terminal = this._terminalRef.value;
     const host = this._hostEl;
     if (!terminal || !host) return;
     if (!terminal.element) {
       terminal.open(host);
+      this._activateWebglRenderer(terminal);
     } else if (terminal.element.parentElement !== host) {
       host.replaceChildren(terminal.element);
     }
