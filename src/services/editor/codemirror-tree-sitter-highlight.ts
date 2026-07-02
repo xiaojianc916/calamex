@@ -8,7 +8,12 @@ import {
 } from '@codemirror/view';
 import { Language, Parser, Query } from 'web-tree-sitter';
 import treeSitterWasmUrl from 'web-tree-sitter/web-tree-sitter.wasm?url';
-import { computeBashSourceEdit, type Point, type Tree } from './tree-sitter/bash-runtime';
+import {
+  computeBashSourceEdit,
+  type Point,
+  type Tree,
+  utf8ByteLengthOfRange,
+} from './tree-sitter/bash-runtime';
 import {
   resolveTreeSitterLanguageId,
   TREE_SITTER_LANGUAGES,
@@ -20,6 +25,7 @@ import {
  */
 const TS_HIGHLIGHT_DEBOUNCE_MS = 24;
 const MAX_TS_SOURCE_LENGTH = 2_000_000; // 超大文件跳过，避免主线程长任务
+const TS_HIGHLIGHT_OVERSCAN_LINES = 100; // 视口上下额外着色的行数，滚动衔接缓冲
 
 // capture 名 -> CSS class；点分名右向左回退（function.method -> function）。
 const CAPTURE_CLASS: Readonly<Record<string, string>> = {
@@ -188,7 +194,11 @@ class TreeSitterHighlighter {
   }
 
   update(update: ViewUpdate): void {
-    if (!update.docChanged) return;
+    if (!update.docChanged) {
+      // 纯滚动/视口变化：不重解析，仅按新视口重建装饰（着色视口化的关键）。
+      if (update.viewportChanged) this.schedulePublish();
+      return;
+    }
     const next = update.state.doc.toString();
     if (this.parser && this.tree && next.length <= MAX_TS_SOURCE_LENGTH) {
       this.tree.edit(computeBashSourceEdit(this.source, next));
@@ -218,8 +228,22 @@ class TreeSitterHighlighter {
     const query = queryCache.get(this.langId);
     if (!query || !this.tree) return Decoration.none;
     const doc = this.view.state.doc;
+    const { visibleRanges } = this.view;
+    if (visibleRanges.length === 0) return Decoration.none;
+    // 只查可见视口 + overscan（对齐 Zed / CodeMirror 官方 highlighter）：字符范围换算为
+    // tree-sitter 期望的 UTF-8 字节范围，query 仅遍历与该范围相交的节点，成本随视口而非文件大小。
+    const firstLine = Math.max(
+      1,
+      doc.lineAt(visibleRanges[0].from).number - TS_HIGHLIGHT_OVERSCAN_LINES,
+    );
+    const lastLine = Math.min(
+      doc.lines,
+      doc.lineAt(visibleRanges[visibleRanges.length - 1].to).number + TS_HIGHLIGHT_OVERSCAN_LINES,
+    );
+    const startIndex = utf8ByteLengthOfRange(this.source, 0, doc.line(firstLine).from);
+    const endIndex = utf8ByteLengthOfRange(this.source, 0, doc.line(lastLine).to);
     const items: Array<{ from: number; to: number; span: number; deco: Decoration }> = [];
-    for (const capture of query.captures(this.tree.rootNode)) {
+    for (const capture of query.captures(this.tree.rootNode, { startIndex, endIndex })) {
       const cls = classForCapture(capture.name);
       if (!cls) continue;
       const from = posForPoint(doc, capture.node.startPosition);

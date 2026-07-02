@@ -1,122 +1,65 @@
-// scripts/inline-critical-font.mjs  （EOL 无关版）
-// 首帧即最终字体：woff2 → public/（稳定 URL）；@font-face + preload 内联进 index.html；
-// 删除 main.ts 的 JS import 与 inter.css（单一源）。CRLF/LF 工作树均可运行。
-// 用法：node scripts/inline-critical-font.mjs           (dry-run)
-//       node scripts/inline-critical-font.mjs --apply   (写盘)
-import {
-  copyFileSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync, readdirSync, rmdirSync,
-} from 'node:fs';
-import { resolve } from 'node:path';
+#!/usr/bin/env node
+// fix-ts-highlight-viewport.mjs
+// 把 tree-sitter 编辑器着色从「每次 publish 全文档 query」改为「仅视口 + overscan」。
+// capture→class 逻辑不变，纯性能。幂等、带唯一锚点校验。
+// 用法：node fix-ts-highlight-viewport.mjs [--dry-run]
+// 前提：web-tree-sitter ^0.26（Query.captures 支持 { startIndex, endIndex } 选项，字节坐标）。
+import { readFile, writeFile } from 'node:fs/promises';
+import { join } from 'node:path';
 
-const APPLY = process.argv.includes('--apply');
-const R = (p) => resolve(process.cwd(), p);
-const MARKER = 'FONT_INLINE_PRELOAD_MARKER';
+const DRY = process.argv.includes('--dry-run');
+const FILE = join(process.cwd(), 'src/services/editor/codemirror-tree-sitter-highlight.ts');
+let src = await readFile(FILE, 'utf8');
+const original = src;
 
-// —— EOL 无关读写：匹配用 LF，写回按原文件 EOL 还原 ——
-const readText = (p) => {
-  const raw = readFileSync(p, 'utf8');
-  return { nl: raw.includes('\r\n') ? '\r\n' : '\n', text: raw.replace(/\r\n/g, '\n') };
+if (src.includes('TS_HIGHLIGHT_OVERSCAN_LINES')) {
+  console.log('已应用过（检测到 TS_HIGHLIGHT_OVERSCAN_LINES），跳过。');
+  process.exit(0);
+}
+
+const replace = (label, from, to) => {
+  const n = src.split(from).length - 1;
+  if (n === 0) throw new Error(`锚点未命中: ${label}（文件可能已改动，请人工核对后再跑）`);
+  if (n > 1) throw new Error(`锚点不唯一(${n} 处): ${label}`);
+  src = src.replace(from, to);
 };
-const toEol = (text, nl) => (nl === '\r\n' ? text.replace(/\n/g, '\r\n') : text);
 
-const SRC_WOFF2 = R('src/assets/fonts/inter/InterVariable.woff2');
-const DST_DIR = R('public/fonts');
-const DST_WOFF2 = R('public/fonts/InterVariable.woff2');
-const INTER_CSS = R('src/assets/fonts/inter/inter.css');
-const MAIN_TS = R('src/app/main.ts');
-const INDEX_HTML = R('index.html');
+// 1) import 补 utf8ByteLengthOfRange（字符→UTF-8 字节换算，tree-sitter 用字节坐标）
+replace(
+  'import bash-runtime',
+  `import { computeBashSourceEdit, type Point, type Tree } from './tree-sitter/bash-runtime';`,
+  `import {\n  computeBashSourceEdit,\n  type Point,\n  type Tree,\n  utf8ByteLengthOfRange,\n} from './tree-sitter/bash-runtime';`,
+);
 
-const MAIN_IMPORT = `import '@/assets/fonts/inter/inter.css';\n`;
+// 2) overscan 常量
+replace(
+  'overscan 常量',
+  `const MAX_TS_SOURCE_LENGTH = 2_000_000; // 超大文件跳过，避免主线程长任务`,
+  `const MAX_TS_SOURCE_LENGTH = 2_000_000; // 超大文件跳过，避免主线程长任务\nconst TS_HIGHLIGHT_OVERSCAN_LINES = 100; // 视口上下额外着色的行数，滚动衔接缓冲`,
+);
 
-const HTML_ANCHOR = `  <title>Calamex</title>\n  <style>\n`;
-const HTML_REPLACEMENT =
-  `  <title>Calamex</title>\n` +
-  `  <!-- ${MARKER}: 关键字体在 HTML 解析时即被发现并并行 preload，首帧直接以最终字体渲染，\n` +
-  `       消除 FOUT/字体 swap。字体置于 public/（稳定 URL，Tauri 按 dist 根提供服务）。\n` +
-  `       唯一字体源：不再经 main.ts 的 JS import inter.css。 -->\n` +
-  `  <link rel="preload" href="/fonts/InterVariable.woff2" as="font" type="font/woff2" crossorigin />\n` +
-  `  <style>\n` +
-  `    @font-face {\n` +
-  `      font-family: 'Inter';\n` +
-  `      font-weight: 100 900;\n` +
-  `      font-style: normal;\n` +
-  `      font-display: swap;\n` +
-  `      src: url('/fonts/InterVariable.woff2') format('woff2-variations');\n` +
-  `    }\n` +
-  `    @font-face {\n` +
-  `      font-family: 'Inter Variable';\n` +
-  `      font-weight: 100 900;\n` +
-  `      font-style: normal;\n` +
-  `      font-display: swap;\n` +
-  `      src: url('/fonts/InterVariable.woff2') format('woff2-variations');\n` +
-  `    }\n`;
+// 3) update() 响应视口变化：纯滚动不重解析，仅按新视口重建装饰
+replace(
+  'update 视口分支',
+  `  update(update: ViewUpdate): void {\n    if (!update.docChanged) return;\n    const next = update.state.doc.toString();`,
+  `  update(update: ViewUpdate): void {\n    if (!update.docChanged) {\n      // 纯滚动/视口变化：不重解析，仅按新视口重建装饰（着色视口化的关键）。\n      if (update.viewportChanged) this.schedulePublish();\n      return;\n    }\n    const next = update.state.doc.toString();`,
+);
 
-const planned = [];
+// 4) build() 只查可见视口 + overscan 的字节范围
+replace(
+  'build 视口化',
+  `    const query = queryCache.get(this.langId);\n    if (!query || !this.tree) return Decoration.none;\n    const doc = this.view.state.doc;\n    const items: Array<{ from: number; to: number; span: number; deco: Decoration }> = [];\n    for (const capture of query.captures(this.tree.rootNode)) {`,
+  `    const query = queryCache.get(this.langId);\n    if (!query || !this.tree) return Decoration.none;\n    const doc = this.view.state.doc;\n    const { visibleRanges } = this.view;\n    if (visibleRanges.length === 0) return Decoration.none;\n    // 只查可见视口 + overscan（对齐 Zed / CodeMirror 官方 highlighter）：字符范围换算为\n    // tree-sitter 期望的 UTF-8 字节范围，query 仅遍历与该范围相交的节点，成本随视口而非文件大小。\n    const firstLine = Math.max(\n      1,\n      doc.lineAt(visibleRanges[0].from).number - TS_HIGHLIGHT_OVERSCAN_LINES,\n    );\n    const lastLine = Math.min(\n      doc.lines,\n      doc.lineAt(visibleRanges[visibleRanges.length - 1].to).number +\n        TS_HIGHLIGHT_OVERSCAN_LINES,\n    );\n    const startIndex = utf8ByteLengthOfRange(this.source, 0, doc.line(firstLine).from);\n    const endIndex = utf8ByteLengthOfRange(this.source, 0, doc.line(lastLine).to);\n    const items: Array<{ from: number; to: number; span: number; deco: Decoration }> = [];\n    for (const capture of query.captures(this.tree.rootNode, { startIndex, endIndex })) {`,
+);
 
-// 幂等总判据：index.html 已含 marker 视为整体已迁移。
-const html = readText(INDEX_HTML);
-if (html.text.includes(MARKER)) {
-  console.log('✓ 已是内联字体 + preload 范式（含 marker），跳过。');
+if (src === original) {
+  console.log('无改动。');
   process.exit(0);
 }
-
-// 1. 移动 woff2 → public/fonts/
-if (existsSync(DST_WOFF2)) {
-  console.log('· public/fonts/InterVariable.woff2 已存在，跳过移动。');
-} else if (existsSync(SRC_WOFF2)) {
-  planned.push(() => {
-    mkdirSync(DST_DIR, { recursive: true });
-    copyFileSync(SRC_WOFF2, DST_WOFF2);
-    rmSync(SRC_WOFF2);
-  });
-} else {
-  console.error('✗ 找不到 src/assets/fonts/inter/InterVariable.woff2，且 public 下也没有，中止。');
-  process.exit(1);
-}
-
-// 2. 删除 inter.css（@font-face 已内联进 index.html）
-if (existsSync(INTER_CSS)) {
-  planned.push(() => {
-    rmSync(INTER_CSS);
-    try {
-      const dir = R('src/assets/fonts/inter');
-      if (existsSync(dir) && readdirSync(dir).length === 0) rmdirSync(dir);
-    } catch { /* 忽略：非空或已删 */ }
-  });
-}
-
-// 3. 移除 main.ts 的 JS import
-const main = readText(MAIN_TS);
-if (main.text.includes(MAIN_IMPORT)) {
-  const n = main.text.split(MAIN_IMPORT).length - 1;
-  if (n !== 1) {
-    console.error(`✗ main.ts 中 inter.css import 命中 ${n} 次（应为 1），中止。`);
-    process.exit(1);
-  }
-  planned.push(() => writeFileSync(MAIN_TS, toEol(main.text.replace(MAIN_IMPORT, ''), main.nl), 'utf8'));
-} else {
-  console.log('· main.ts 已无 inter.css import，跳过。');
-}
-
-// 4. index.html：注入 preload + 内联 @font-face
-{
-  const n = html.text.split(HTML_ANCHOR).length - 1;
-  if (n !== 1) {
-    console.error(`✗ index.html 锚点命中 ${n} 次（应为 1），中止：\n---\n${HTML_ANCHOR}\n---`);
-    process.exit(1);
-  }
-  planned.push(() =>
-    writeFileSync(INDEX_HTML, toEol(html.text.replace(HTML_ANCHOR, HTML_REPLACEMENT), html.nl), 'utf8'),
-  );
-}
-
-if (planned.length === 0) {
-  console.log('✓ 无需改动。');
+if (DRY) {
+  console.log('[dry-run] 4 处锚点均命中，未写盘。');
   process.exit(0);
 }
-if (!APPLY) {
-  console.log(`（dry-run）将执行 ${planned.length} 步：移动 woff2 → public/fonts、删除 inter.css、移除 main.ts import、内联 index.html。加 --apply 落盘。`);
-  process.exit(0);
-}
-for (const step of planned) step();
-console.log('✓ 已切换为内联关键字体 + preload（单一源，EOL 已保留）。');
+await writeFile(FILE, src, 'utf8');
+console.log('✔ 已改写 codemirror-tree-sitter-highlight.ts（视口化）。');
+console.log('  验证：pnpm tsc --noEmit && pnpm test && 打开一个数千行文件，滚动看高亮无回归/无闪。');
