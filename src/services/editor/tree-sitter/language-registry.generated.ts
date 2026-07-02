@@ -1,6 +1,5 @@
-// @generated 由 setup-tree-sitter-highlight.mjs 生成，请勿手改。
-// wasm: tree-sitter-wasms（预编译语法）；scm: nvim-treesitter（MIT，标准 capture）。
-
+// 本文件由 setup-tree-sitter-highlight.mjs 生成，请勿手改。
+// wasm 来自 tree-sitter-wasms（预编译）；highlights.scm 来自 nvim-treesitter 或各语法仓库（保留其 OSS 许可）。
 import shell_wasm from 'tree-sitter-wasms/out/tree-sitter-bash.wasm?url';
 import c_wasm from 'tree-sitter-wasms/out/tree-sitter-c.wasm?url';
 import csharp_wasm from 'tree-sitter-wasms/out/tree-sitter-c_sharp.wasm?url';
@@ -14,7 +13,6 @@ import jsx_wasm from 'tree-sitter-wasms/out/tree-sitter-javascript.wasm?url';
 import json_wasm from 'tree-sitter-wasms/out/tree-sitter-json.wasm?url';
 import kotlin_wasm from 'tree-sitter-wasms/out/tree-sitter-kotlin.wasm?url';
 import lua_wasm from 'tree-sitter-wasms/out/tree-sitter-lua.wasm?url';
-import php_wasm from 'tree-sitter-wasms/out/tree-sitter-php.wasm?url';
 import python_wasm from 'tree-sitter-wasms/out/tree-sitter-python.wasm?url';
 import ruby_wasm from 'tree-sitter-wasms/out/tree-sitter-ruby.wasm?url';
 import rust_wasm from 'tree-sitter-wasms/out/tree-sitter-rust.wasm?url';
@@ -37,7 +35,6 @@ import json_scm from './queries/json/highlights.scm?raw';
 import jsx_scm from './queries/jsx/highlights.scm?raw';
 import kotlin_scm from './queries/kotlin/highlights.scm?raw';
 import lua_scm from './queries/lua/highlights.scm?raw';
-import php_scm from './queries/php/highlights.scm?raw';
 import python_scm from './queries/python/highlights.scm?raw';
 import ruby_scm from './queries/ruby/highlights.scm?raw';
 import rust_scm from './queries/rust/highlights.scm?raw';
@@ -50,9 +47,12 @@ import typescript_scm from './queries/typescript/highlights.scm?raw';
 import vue_scm from './queries/vue/highlights.scm?raw';
 import yaml_scm from './queries/yaml/highlights.scm?raw';
 
-export type TreeSitterLanguageEntry = { wasmUrl: string; scm: string };
+export interface ITreeSitterLanguageEntry {
+  readonly wasmUrl: string;
+  readonly scm: string;
+}
 
-export const TREE_SITTER_LANGUAGES: Record<string, TreeSitterLanguageEntry> = {
+export const TREE_SITTER_LANGUAGES: Readonly<Record<string, ITreeSitterLanguageEntry>> = {
   shell: { wasmUrl: shell_wasm, scm: shell_scm },
   javascript: { wasmUrl: javascript_wasm, scm: javascript_scm },
   jsx: { wasmUrl: jsx_wasm, scm: jsx_scm },
@@ -63,69 +63,51 @@ export const TREE_SITTER_LANGUAGES: Record<string, TreeSitterLanguageEntry> = {
   go: { wasmUrl: go_wasm, scm: go_scm },
   c: { wasmUrl: c_wasm, scm: c_scm },
   cpp: { wasmUrl: cpp_wasm, scm: cpp_scm },
-  csharp: { wasmUrl: csharp_wasm, scm: csharp_scm },
   java: { wasmUrl: java_wasm, scm: java_scm },
-  kotlin: { wasmUrl: kotlin_wasm, scm: kotlin_scm },
-  ruby: { wasmUrl: ruby_wasm, scm: ruby_scm },
-  php: { wasmUrl: php_wasm, scm: php_scm },
-  swift: { wasmUrl: swift_wasm, scm: swift_scm },
-  scala: { wasmUrl: scala_wasm, scm: scala_scm },
-  lua: { wasmUrl: lua_wasm, scm: lua_scm },
   json: { wasmUrl: json_wasm, scm: json_scm },
   html: { wasmUrl: html_wasm, scm: html_scm },
-  vue: { wasmUrl: vue_wasm, scm: vue_scm },
   css: { wasmUrl: css_wasm, scm: css_scm },
+  ruby: { wasmUrl: ruby_wasm, scm: ruby_scm },
   yaml: { wasmUrl: yaml_wasm, scm: yaml_scm },
   toml: { wasmUrl: toml_wasm, scm: toml_scm },
+  lua: { wasmUrl: lua_wasm, scm: lua_scm },
+  csharp: { wasmUrl: csharp_wasm, scm: csharp_scm },
+  kotlin: { wasmUrl: kotlin_wasm, scm: kotlin_scm },
+  scala: { wasmUrl: scala_wasm, scm: scala_scm },
+  swift: { wasmUrl: swift_wasm, scm: swift_scm },
+  vue: { wasmUrl: vue_wasm, scm: vue_scm },
 };
 
-export const TS_LANGUAGE_ALIASES: Record<string, string> = {
-  shell: 'shell',
+const TS_LANGUAGE_ALIASES: Readonly<Record<string, string>> = {
   bash: 'shell',
   sh: 'shell',
   zsh: 'shell',
-  javascript: 'javascript',
   js: 'javascript',
   mjs: 'javascript',
   cjs: 'javascript',
-  jsx: 'jsx',
-  typescript: 'typescript',
   ts: 'typescript',
-  tsx: 'tsx',
-  python: 'python',
+  mts: 'typescript',
+  cts: 'typescript',
   py: 'python',
-  rust: 'rust',
   rs: 'rust',
-  go: 'go',
-  c: 'c',
-  cpp: 'cpp',
-  'c++': 'cpp',
+  h: 'c',
   cc: 'cpp',
+  cxx: 'cpp',
   hpp: 'cpp',
-  csharp: 'csharp',
+  jsonc: 'json',
+  htm: 'html',
+  rb: 'ruby',
+  yml: 'yaml',
   cs: 'csharp',
-  java: 'java',
-  kotlin: 'kotlin',
   kt: 'kotlin',
   kts: 'kotlin',
-  ruby: 'ruby',
-  rb: 'ruby',
-  php: 'php',
-  swift: 'swift',
-  scala: 'scala',
-  lua: 'lua',
-  json: 'json',
-  jsonc: 'json',
-  html: 'html',
-  vue: 'vue',
-  css: 'css',
-  yaml: 'yaml',
-  yml: 'yaml',
-  toml: 'toml',
 };
 
-export const resolveTreeSitterLanguageId = (language: string): string | null => {
-  if (!language) return null;
-  const id = TS_LANGUAGE_ALIASES[language.toLowerCase()] ?? null;
-  return id && id in TREE_SITTER_LANGUAGES ? id : null;
-};
+/** 原始语言标签 -> tree-sitter 语言 id；无覆盖时返回 null。 */
+export function resolveTreeSitterLanguageId(language: string): string | null {
+  const tag = language.trim().toLowerCase();
+  if (Object.hasOwn(TREE_SITTER_LANGUAGES, tag)) {
+    return tag;
+  }
+  return TS_LANGUAGE_ALIASES[tag] ?? null;
+}
