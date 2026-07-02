@@ -120,17 +120,17 @@ type TSidecarTauriService = Pick<
 export const sidecarTauriService: TSidecarTauriService = {
   agentSidecarHealth: () =>
     runCommand(SIDECAR_COMMAND_META.agentSidecarHealth, undefined, undefined, () =>
-      commands.agentSidecarHealth(),
+      commands.builtinAgentHealth(),
     ),
 
   agentSidecarRestart: () =>
     runCommand(SIDECAR_COMMAND_META.agentSidecarRestart, undefined, undefined, () =>
-      commands.agentSidecarRestart(),
+      commands.builtinAgentRestart(),
     ),
 
   agentSidecarWarmup: () =>
     runCommand(SIDECAR_COMMAND_META.agentSidecarWarmup, undefined, undefined, () =>
-      commands.agentSidecarWarmup(),
+      commands.builtinAgentWarmup(),
     ),
 
   agentSidecarChat(payload, options?: IIpcCallOptions) {
@@ -141,7 +141,7 @@ export const sidecarTauriService: TSidecarTauriService = {
 
   agentSidecarExternalChat(payload, options?: IIpcCallOptions) {
     return runCommand(SIDECAR_COMMAND_META.agentSidecarExternalChat, payload, options, () =>
-      commands.agentSidecarExternalChat(payload as unknown as AgentExternalChatRequest_Deserialize),
+      commands.builtinAgentExternalChat(payload as unknown as AgentExternalChatRequest_Deserialize),
     ) as Promise<IAgentExternalChatResultPayload>;
   },
 
@@ -163,7 +163,7 @@ export const sidecarTauriService: TSidecarTauriService = {
 
   agentSidecarRestoreCheckpoint(payload, options?: IIpcCallOptions) {
     return runCommand(SIDECAR_COMMAND_META.agentSidecarRestoreCheckpoint, payload, options, () =>
-      commands.agentSidecarRestoreCheckpoint(
+      commands.builtinAgentRestoreCheckpoint(
         payload as unknown as AgentSidecarCheckpointRestoreRequest_Deserialize,
       ),
     ) as Promise<IAgentSidecarResponsePayload>;

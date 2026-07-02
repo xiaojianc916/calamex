@@ -9,7 +9,6 @@ mod bridge;
 mod client;
 pub mod bridges;
 mod fs_bridge;
-mod terminal_bridge;
 mod host;
 mod launch;
 mod provisioner;

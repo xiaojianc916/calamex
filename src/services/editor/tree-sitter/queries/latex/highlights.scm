@@ -1,193 +1,4 @@
-// 10-fix-missing-queries.mjs — 补齐 xml 与 latex 缺失的 highlights.scm（修复 Vite 编译崩溃）
-import { mkdirSync, writeFileSync } from "node:fs"
-import { join } from "node:path"
-
-const ROOT = process.cwd()
-const QUERIES_DIR = join(ROOT, "src/services/editor/tree-sitter/queries")
-
-// ── xml：tree-sitter-grammars/tree-sitter-xml 的 queries 按语法分子目录存放（queries/xml/highlights.scm），
-// 之前脚本按扁平结构抓取没找到，这里直接补上真实内容。──
-const xmlDir = join(QUERIES_DIR, "xml")
-mkdirSync(xmlDir, { recursive: true })
-writeFileSync(
-	join(xmlDir, "highlights.scm"),
-	`;; XML declaration
-
-"xml" @keyword
-
-[ "version" "encoding" "standalone" ] @property
-
-(EncName) @string.special
-
-(VersionNum) @number
-
-[ "yes" "no" ] @boolean
-
-;; Processing instructions
-
-(PI) @embedded
-
-(PI (PITarget) @keyword)
-
-;; Element declaration
-
-(elementdecl
-  "ELEMENT" @keyword
-  (Name) @tag)
-
-(contentspec
-  (_ (Name) @property))
-
-"#PCDATA" @type.builtin
-
-[ "EMPTY" "ANY" ] @string.special.symbol
-
-[ "*" "?" "+" ] @operator
-
-;; Entity declaration
-
-(GEDecl
-  "ENTITY" @keyword
-  (Name) @constant)
-
-(GEDecl (EntityValue) @string)
-
-(NDataDecl
-  "NDATA" @keyword
-  (Name) @label)
-
-;; Parsed entity declaration
-
-(PEDecl
-  "ENTITY" @keyword
-  "%" @operator
-  (Name) @constant)
-
-(PEDecl (EntityValue) @string)
-
-;; Notation declaration
-
-(NotationDecl
-  "NOTATION" @keyword
-  (Name) @constant)
-
-(NotationDecl
-  (ExternalID
-    (SystemLiteral (URI) @string.special)))
-
-;; Attlist declaration
-
-(AttlistDecl
-  "ATTLIST" @keyword
-  (Name) @tag)
-
-(AttDef (Name) @property)
-
-(AttDef (Enumeration (Nmtoken) @string))
-
-(DefaultDecl (AttValue) @string)
-
-[
-  (StringType)
-  (TokenizedType)
-] @type.builtin
-
-(NotationType "NOTATION" @type.builtin)
-
-[
-  "#REQUIRED"
-  "#IMPLIED"
-  "#FIXED"
-] @attribute
-
-;; Entities
-
-(EntityRef) @constant
-
-((EntityRef) @constant.builtin
- (#any-of? @constant.builtin
-   "&amp;" "&lt;" "&gt;" "&quot;" "&apos;"))
-
-(CharRef) @constant
-
-(PEReference) @constant
-
-;; External references
-
-[ "PUBLIC" "SYSTEM" ] @keyword
-
-(PubidLiteral) @string.special
-
-(SystemLiteral (URI) @markup.link)
-
-;; Processing instructions
-
-(XmlModelPI "xml-model" @keyword)
-
-(StyleSheetPI "xml-stylesheet" @keyword)
-
-(PseudoAtt (Name) @property)
-
-(PseudoAtt (PseudoAttValue) @string)
-
-;; Doctype declaration
-
-(doctypedecl "DOCTYPE" @keyword)
-
-(doctypedecl (Name) @type)
-
-;; Tags
-
-(STag (Name) @tag)
-
-(ETag (Name) @tag)
-
-(EmptyElemTag (Name) @tag)
-
-;; Attributes
-
-(Attribute (Name) @property)
-
-(Attribute (AttValue) @string)
-
-;; Delimiters & punctuation
-
-[
- "<?" "?>"
- "<!" "]]>"
- "<" ">"
- "</" "/>"
-] @punctuation.delimiter
-
-[ "(" ")" "[" "]" ] @punctuation.bracket
-
-[ "\\"" "'" ] @punctuation.delimiter
-
-[ "," "|" "=" ] @operator
-
-;; Text
-
-(CharData) @markup
-
-(CDSect
-  (CDStart) @markup.heading
-  (CData) @markup.raw
-  "]]>" @markup.heading)
-
-;; Misc
-
-(Comment) @comment
-`,
-	"utf8",
-)
-console.log("✅ 已写入 queries/xml/highlights.scm")
-
-// ── latex：latex-lsp/tree-sitter-latex 官方不带查询文件，用 nvim-treesitter 标准版（Apache-2.0）。──
-const latexDir = join(QUERIES_DIR, "latex")
-mkdirSync(latexDir, { recursive: true })
-writeFileSync(
-	join(latexDir, "highlights.scm"),
-	`; 来源：nvim-treesitter/nvim-treesitter runtime/queries/latex/highlights.scm（Apache-2.0）。
+; 来源：nvim-treesitter/nvim-treesitter runtime/queries/latex/highlights.scm（Apache-2.0）。
 (command_name) @function @nospell
 
 (caption
@@ -221,7 +32,7 @@ writeFileSync(
   "^"
 ] @operator
 
-"\\\\item" @punctuation.special
+"\\item" @punctuation.special
 
 (delimiter) @punctuation.delimiter
 
@@ -368,17 +179,17 @@ writeFileSync(
   command: (command_name) @_name
   arg: (curly_group
     (_) @markup.italic))
-  (#any-of? @_name "\\\\emph" "\\\\textit" "\\\\mathit"))
+  (#any-of? @_name "\\emph" "\\textit" "\\mathit"))
 
 ((generic_command
   command: (command_name) @_name
   arg: (curly_group
     (_) @markup.strong))
-  (#any-of? @_name "\\\\textbf" "\\\\mathbf"))
+  (#any-of? @_name "\\textbf" "\\mathbf"))
 
 ((generic_command
   (command_name) @keyword.conditional)
-  (#any-of? @keyword.conditional "\\\\fi" "\\\\else"))
+  (#any-of? @keyword.conditional "\\fi" "\\else"))
 
 (class_include
   command: _ @keyword.import
@@ -413,9 +224,3 @@ writeFileSync(
   (block_comment)
   (comment_environment)
 ] @comment @spell
-`,
-	"utf8",
-)
-console.log("✅ 已写入 queries/latex/highlights.scm")
-
-console.log("\n完成。重启 dev server。")

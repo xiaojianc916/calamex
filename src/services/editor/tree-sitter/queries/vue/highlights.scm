@@ -94,8 +94,7 @@
   (attribute_name) @_attr
   (quoted_attribute_value
     (attribute_value) @string.special.url))
-  (#any-of? @_attr "href" "src")
-  (#set! @string.special.url url @string.special.url))
+  (#any-of? @_attr "href" "src"))
 
 [
   "<"

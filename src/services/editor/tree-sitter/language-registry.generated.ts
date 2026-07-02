@@ -9,23 +9,32 @@ import diff_scm from './queries/diff/highlights.scm?raw';
 import dockerfile_scm from './queries/dockerfile/highlights.scm?raw';
 import go_scm from './queries/go/highlights.scm?raw';
 import html_scm from './queries/html/highlights.scm?raw';
+import ini_scm from './queries/ini/highlights.scm?raw';
 import java_scm from './queries/java/highlights.scm?raw';
 import javascript_scm from './queries/javascript/highlights.scm?raw';
 import json_scm from './queries/json/highlights.scm?raw';
 import jsx_scm from './queries/jsx/highlights.scm?raw';
 import kotlin_scm from './queries/kotlin/highlights.scm?raw';
+import latex_scm from './queries/latex/highlights.scm?raw';
+import less_scm from './queries/less/highlights.scm?raw';
 import lua_scm from './queries/lua/highlights.scm?raw';
 import markdown_scm from './queries/markdown/highlights.scm?raw';
+import powershell_scm from './queries/powershell/highlights.scm?raw';
+import proto_scm from './queries/proto/highlights.scm?raw';
 import python_scm from './queries/python/highlights.scm?raw';
+import r_scm from './queries/r/highlights.scm?raw';
 import ruby_scm from './queries/ruby/highlights.scm?raw';
 import rust_scm from './queries/rust/highlights.scm?raw';
 import scala_scm from './queries/scala/highlights.scm?raw';
+import scss_scm from './queries/scss/highlights.scm?raw';
 import shell_scm from './queries/shell/highlights.scm?raw';
+import sql_scm from './queries/sql/highlights.scm?raw';
 import swift_scm from './queries/swift/highlights.scm?raw';
 import toml_scm from './queries/toml/highlights.scm?raw';
 import tsx_scm from './queries/tsx/highlights.scm?raw';
 import typescript_scm from './queries/typescript/highlights.scm?raw';
 import vue_scm from './queries/vue/highlights.scm?raw';
+import xml_scm from './queries/xml/highlights.scm?raw';
 import yaml_scm from './queries/yaml/highlights.scm?raw';
 import shell_wasm from './wasm/tree-sitter-bash.wasm?url';
 import c_wasm from './wasm/tree-sitter-c.wasm?url';
@@ -37,22 +46,31 @@ import diff_wasm from './wasm/tree-sitter-diff.wasm?url';
 import dockerfile_wasm from './wasm/tree-sitter-dockerfile.wasm?url';
 import go_wasm from './wasm/tree-sitter-go.wasm?url';
 import html_wasm from './wasm/tree-sitter-html.wasm?url';
+import ini_wasm from './wasm/tree-sitter-ini.wasm?url';
 import java_wasm from './wasm/tree-sitter-java.wasm?url';
 import javascript_wasm from './wasm/tree-sitter-javascript.wasm?url';
 import jsx_wasm from './wasm/tree-sitter-javascript.wasm?url';
 import json_wasm from './wasm/tree-sitter-json.wasm?url';
 import kotlin_wasm from './wasm/tree-sitter-kotlin.wasm?url';
+import latex_wasm from './wasm/tree-sitter-latex.wasm?url';
+import less_wasm from './wasm/tree-sitter-less.wasm?url';
 import lua_wasm from './wasm/tree-sitter-lua.wasm?url';
 import markdown_wasm from './wasm/tree-sitter-markdown.wasm?url';
+import powershell_wasm from './wasm/tree-sitter-powershell.wasm?url';
+import proto_wasm from './wasm/tree-sitter-proto.wasm?url';
 import python_wasm from './wasm/tree-sitter-python.wasm?url';
+import r_wasm from './wasm/tree-sitter-r.wasm?url';
 import ruby_wasm from './wasm/tree-sitter-ruby.wasm?url';
 import rust_wasm from './wasm/tree-sitter-rust.wasm?url';
 import scala_wasm from './wasm/tree-sitter-scala.wasm?url';
+import scss_wasm from './wasm/tree-sitter-scss.wasm?url';
+import sql_wasm from './wasm/tree-sitter-sql.wasm?url';
 import swift_wasm from './wasm/tree-sitter-swift.wasm?url';
 import toml_wasm from './wasm/tree-sitter-toml.wasm?url';
 import tsx_wasm from './wasm/tree-sitter-tsx.wasm?url';
 import typescript_wasm from './wasm/tree-sitter-typescript.wasm?url';
 import vue_wasm from './wasm/tree-sitter-vue.wasm?url';
+import xml_wasm from './wasm/tree-sitter-xml.wasm?url';
 import yaml_wasm from './wasm/tree-sitter-yaml.wasm?url';
 
 export interface ITreeSitterLanguageEntry {
@@ -88,6 +106,15 @@ export const TREE_SITTER_LANGUAGES: Readonly<Record<string, ITreeSitterLanguageE
   dockerfile: { wasmUrl: dockerfile_wasm, scm: dockerfile_scm },
   markdown: { wasmUrl: markdown_wasm, scm: markdown_scm },
   vue: { wasmUrl: vue_wasm, scm: vue_scm },
+  scss: { wasmUrl: scss_wasm, scm: scss_scm },
+  less: { wasmUrl: less_wasm, scm: less_scm },
+  powershell: { wasmUrl: powershell_wasm, scm: powershell_scm },
+  sql: { wasmUrl: sql_wasm, scm: sql_scm },
+  xml: { wasmUrl: xml_wasm, scm: xml_scm },
+  r: { wasmUrl: r_wasm, scm: r_scm },
+  latex: { wasmUrl: latex_wasm, scm: latex_scm },
+  proto: { wasmUrl: proto_wasm, scm: proto_scm },
+  ini: { wasmUrl: ini_wasm, scm: ini_scm },
 };
 
 const TS_LANGUAGE_ALIASES: Readonly<Record<string, string>> = {
