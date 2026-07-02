@@ -135,7 +135,7 @@ export interface IAgentModelCompletedEvent extends IAgentRuntimeEventBase {
 
 export interface IAgentToolStartedEvent extends IAgentRuntimeEventBase {
   type: 'agent.tool.started';
-  toolUseId?: string;
+  toolUseId: string;
   toolName: string;
   inputPreview?: string;
   riskLevel?: TToolRiskLevel;

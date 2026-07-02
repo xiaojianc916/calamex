@@ -545,6 +545,15 @@ export class MastraRuntimeBase {
 
             if (isToolErrorChunk(chunk)) {
                 const errorMessage = normalizeMastraError(chunk.payload.error);
+                // 与 tool-result 同源：从按名 FIFO 队列出队恢复 toolCallId，使失败状态挂到正确的
+                // tool_call（同名并发也不串台），顺带回收原本永不出队的泄漏条目。
+                const pendingToolErrorIds = pendingToolCallIdsByName.get(chunk.payload.toolName) ?? [];
+                const queuedToolErrorId = pendingToolErrorIds.shift();
+                if (pendingToolErrorIds.length === 0) {
+                    pendingToolCallIdsByName.delete(chunk.payload.toolName);
+                }
+                const toolErrorUseId =
+                    (chunk.payload as { toolCallId?: string }).toolCallId ?? queuedToolErrorId;
 
                 if (createRuntimeEvent) {
                     pushUiEvent(events, createRuntimeEvent({
@@ -553,6 +562,7 @@ export class MastraRuntimeBase {
                         level: 'error',
                         toolName: chunk.payload.toolName,
                         ok: false,
+                        ...(toolErrorUseId ? { toolUseId: toolErrorUseId } : {}),
                         errorMessage,
                     }), options);
                 }
